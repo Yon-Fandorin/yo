@@ -2,12 +2,10 @@ use std::{env, fs, time::Duration};
 
 use reqwest::{Client, Url, redirect};
 use serde_json::{Value, json};
+use yo_core::{ApiDialect, EffectiveModelBinding, ModelProfileLayer, VersionedProfileId};
+use yo_test_support::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
 
 use super::*;
-use crate::{
-    ApiDialect, EffectiveModelBinding, ModelProfileLayer, VersionedProfileId,
-    model_connector::tests::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child},
-};
 
 fn base_profile() -> EffectiveModelProfile {
     profile_with_tool_policy("local-tools/v1")
@@ -528,7 +526,7 @@ fn fetch_from_local_tls_with_timeouts(
 #[test]
 fn fetches_the_authenticated_account_catalog_over_local_tls() {
     if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::fetches_the_authenticated_account_catalog_over_local_tls",
+        "discovery::tests::fetches_the_authenticated_account_catalog_over_local_tls",
     ) {
         return;
     }
@@ -554,7 +552,7 @@ fn fetches_the_authenticated_account_catalog_over_local_tls() {
 #[test]
 fn rejects_cross_origin_redirect_before_forwarding_the_credential() {
     if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::rejects_cross_origin_redirect_before_forwarding_the_credential",
+        "discovery::tests::rejects_cross_origin_redirect_before_forwarding_the_credential",
     ) {
         return;
     }
@@ -573,9 +571,8 @@ fn rejects_cross_origin_redirect_before_forwarding_the_credential() {
 // in-memory candidate를 유지하되 origin 검증 뒤에만 다시 보내는지 확인합니다.
 #[test]
 fn follows_a_same_origin_redirect_with_the_same_candidate() {
-    if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::follows_a_same_origin_redirect_with_the_same_candidate",
-    ) {
+    if run_in_tls_child("discovery::tests::follows_a_same_origin_redirect_with_the_same_candidate")
+    {
         return;
     }
     let server = LocalTlsServer::start(LocalServerMode::Redirect {
@@ -599,7 +596,7 @@ fn follows_a_same_origin_redirect_with_the_same_candidate() {
 #[test]
 fn follows_same_origin_redirect_query_without_forwarding_fragment() {
     if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::follows_same_origin_redirect_query_without_forwarding_fragment",
+        "discovery::tests::follows_same_origin_redirect_query_without_forwarding_fragment",
     ) {
         return;
     }
@@ -624,7 +621,7 @@ fn follows_same_origin_redirect_query_without_forwarding_fragment() {
 #[test]
 fn distinguishes_response_header_and_body_inactivity_deadlines() {
     if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::distinguishes_response_header_and_body_inactivity_deadlines",
+        "discovery::tests::distinguishes_response_header_and_body_inactivity_deadlines",
     ) {
         return;
     }
@@ -661,7 +658,7 @@ fn distinguishes_response_header_and_body_inactivity_deadlines() {
 #[test]
 fn each_redirect_attempt_gets_a_fresh_response_header_deadline() {
     if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::each_redirect_attempt_gets_a_fresh_response_header_deadline",
+        "discovery::tests::each_redirect_attempt_gets_a_fresh_response_header_deadline",
     ) {
         return;
     }
@@ -686,9 +683,7 @@ fn each_redirect_attempt_gets_a_fresh_response_header_deadline() {
 // absolute bound를 제거하면 같은 fixture가 세 응답을 모두 받아 다른 오류가 됩니다.
 #[test]
 fn absolute_deadline_caps_the_complete_redirect_chain() {
-    if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::absolute_deadline_caps_the_complete_redirect_chain",
-    ) {
+    if run_in_tls_child("discovery::tests::absolute_deadline_caps_the_complete_redirect_chain") {
         return;
     }
     let server = LocalTlsServer::start(LocalServerMode::DelayedRedirectChain {
@@ -712,9 +707,7 @@ fn absolute_deadline_caps_the_complete_redirect_chain() {
 // 보내지 않은 채 limit 오류가 되어 credential 재전송 횟수를 닫는지 판별합니다.
 #[test]
 fn rejects_a_fourth_same_origin_redirect() {
-    if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::rejects_a_fourth_same_origin_redirect",
-    ) {
+    if run_in_tls_child("discovery::tests::rejects_a_fourth_same_origin_redirect") {
         return;
     }
     let server = LocalTlsServer::start(LocalServerMode::RedirectLoop);
@@ -728,9 +721,8 @@ fn rejects_a_fourth_same_origin_redirect() {
 // 어느 한쪽 guard를 제거해도 다른 guard가 대신 테스트를 통과시키지 못하게 합니다.
 #[test]
 fn rejects_oversize_declared_and_streamed_response_bodies() {
-    if run_in_tls_child(
-        "model_service::openrouter_discovery::tests::rejects_oversize_declared_and_streamed_response_bodies",
-    ) {
+    if run_in_tls_child("discovery::tests::rejects_oversize_declared_and_streamed_response_bodies")
+    {
         return;
     }
     let declared = LocalTlsServer::start(LocalServerMode::DeclaredOversize);
@@ -745,4 +737,43 @@ fn rejects_oversize_declared_and_streamed_response_bodies() {
     let streamed_error = fetch_from_local_tls(&streamed).unwrap_err();
     assert_eq!(streamed_error.kind(), OpenRouterDiscoveryFailureKind::Limit);
     streamed.wait_for_response_sent();
+}
+// 중립 discovery seed를 OpenRouter 경계에서 다시 검증하고 다른 Provider는 요청 전에 거절합니다.
+#[test]
+fn reconstructs_neutral_discovery_seed_without_provider_fallback() {
+    for provider in ["openrouter", "other"] {
+        let resolved = OpenRouterDiscoverySeed::new(
+            ProviderId::new(provider).unwrap(),
+            AccountId::new("named").unwrap(),
+            Some("Service".to_owned()),
+            Some("Account".to_owned()),
+            NormalizedEndpoint::parse("https://openrouter.ai/api/v1").unwrap(),
+            base_profile(),
+            Vec::new(),
+        );
+        if provider == "openrouter" {
+            let original = resolved.unwrap();
+            let neutral = yo_core::ConnectionCatalogSeed::discovery(
+                original.provider.clone(),
+                original.account.clone(),
+                original.provider_display_name.clone(),
+                original.account_display_name.clone(),
+                original.endpoint.clone(),
+                original.base_profile.clone(),
+            )
+            .unwrap();
+            let seed = OpenRouterDiscoverySeed::from_connection_seed(&neutral)
+                .unwrap()
+                .unwrap();
+            assert_eq!(seed.provider(), neutral.provider());
+            assert_eq!(seed.account(), neutral.account());
+            assert_eq!(seed.provider_display_name.as_deref(), Some("Service"));
+            assert_eq!(seed.account_display_name.as_deref(), Some("Account"));
+        } else {
+            assert_eq!(
+                resolved.unwrap_err().to_string(),
+                "OpenRouter discovery seed requires ProviderId openrouter"
+            );
+        }
+    }
 }

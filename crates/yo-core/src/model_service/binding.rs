@@ -151,7 +151,7 @@ impl NormalizedEndpoint {
         Ok(endpoint)
     }
 
-    pub(crate) fn append_path_segments(&self, segments: &[&str]) -> Result<Url, ModelServiceError> {
+    pub fn append_path_segments(&self, segments: &[&str]) -> Result<Url, ModelServiceError> {
         let mut endpoint = self.0.clone();
         let mut path = endpoint
             .path_segments_mut()

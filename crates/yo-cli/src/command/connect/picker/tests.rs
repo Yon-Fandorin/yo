@@ -214,7 +214,7 @@ fn every_picker_line_uses_grapheme_cell_width_at_narrow_terminals() {
 // 미검토 일반 K2.7의 비활성 사유가 최종 panel까지 손실 없이 전달되는지 판별합니다.
 #[test]
 fn kimi_inventory_fields_reach_the_rendered_picker_panel() {
-    let seed = yo_core::KimiCatalogSeed::resolve(
+    let seed = yo_provider_kimi::KimiCatalogSeed::resolve(
         yo_core::VersionedProfileId::new("kimi-platform-ai/v1").unwrap(),
         yo_core::ProviderId::new("kimi").unwrap(),
         yo_core::AccountId::new("team").unwrap(),
@@ -227,7 +227,7 @@ fn kimi_inventory_fields_reach_the_rendered_picker_panel() {
         {"object":"model","id":"kimi-k2.7-code-highspeed","context_length":262144},
         {"object":"model","id":"kimi-k2.7","context_length":262144}
     ]}"#;
-    let items = yo_core::parse_kimi_catalog_snapshot(&seed, snapshot)
+    let items = yo_provider_kimi::parse_kimi_catalog_snapshot(&seed, snapshot)
         .unwrap()
         .iter()
         .map(ModelPickerItem::from_kimi)
@@ -259,7 +259,7 @@ fn kimi_inventory_fields_reach_the_rendered_picker_panel() {
 // badge로 표시하고 Platform 이름을 섞지 않은 채 exact ModelId를 선택합니다.
 #[test]
 fn kimi_code_inventory_renders_recommendation_and_high_speed_badges() {
-    let seed = yo_core::KimiCatalogSeed::resolve(
+    let seed = yo_provider_kimi::KimiCatalogSeed::resolve(
         yo_core::VersionedProfileId::new("kimi-code-membership/v1").unwrap(),
         yo_core::ProviderId::new("kimi").unwrap(),
         yo_core::AccountId::new("coding").unwrap(),
@@ -272,7 +272,7 @@ fn kimi_code_inventory_renders_recommendation_and_high_speed_badges() {
         {"object":"model","id":"k3-256k","context_length":262144},
         {"object":"model","id":"kimi-for-coding-highspeed","context_length":262144}
     ]}"#;
-    let items = yo_core::parse_kimi_catalog_snapshot(&seed, snapshot)
+    let items = yo_provider_kimi::parse_kimi_catalog_snapshot(&seed, snapshot)
         .unwrap()
         .iter()
         .map(ModelPickerItem::from_kimi)
@@ -306,7 +306,7 @@ fn kimi_cross_product_rows_do_not_borrow_reasoning_presentation() {
             "reasoning required/max",
         ),
     ] {
-        let seed = yo_core::KimiCatalogSeed::resolve(
+        let seed = yo_provider_kimi::KimiCatalogSeed::resolve(
             yo_core::VersionedProfileId::new(profile).unwrap(),
             yo_core::ProviderId::new("kimi").unwrap(),
             yo_core::AccountId::new("team").unwrap(),
@@ -317,7 +317,7 @@ fn kimi_cross_product_rows_do_not_borrow_reasoning_presentation() {
         let snapshot = format!(
             r#"{{"object":"list","data":[{{"object":"model","id":"{foreign_model}","context_length":1048576}}]}}"#
         );
-        let item = yo_core::parse_kimi_catalog_snapshot(&seed, snapshot.as_bytes())
+        let item = yo_provider_kimi::parse_kimi_catalog_snapshot(&seed, snapshot.as_bytes())
             .unwrap()
             .into_iter()
             .map(|model| ModelPickerItem::from_kimi(&model))
@@ -345,7 +345,7 @@ fn kimi_cross_product_rows_do_not_borrow_reasoning_presentation() {
 // generic reasoning-unknown으로 보이지 않고 정확히 unknown/off를 표시합니다.
 #[test]
 fn kimi_k26_missing_or_malformed_reasoning_is_explicitly_unknown_and_off() {
-    let seed = yo_core::KimiCatalogSeed::resolve(
+    let seed = yo_provider_kimi::KimiCatalogSeed::resolve(
         yo_core::VersionedProfileId::new("kimi-platform-ai/v1").unwrap(),
         yo_core::ProviderId::new("kimi").unwrap(),
         yo_core::AccountId::new("team").unwrap(),
@@ -358,7 +358,7 @@ fn kimi_k26_missing_or_malformed_reasoning_is_explicitly_unknown_and_off() {
         r#"{"object":"model","id":"kimi-k2.6","context_length":262144,"supports_reasoning":"unknown"}"#,
     ] {
         let snapshot = format!(r#"{{"object":"list","data":[{row}]}}"#);
-        let model = yo_core::parse_kimi_catalog_snapshot(&seed, snapshot.as_bytes())
+        let model = yo_provider_kimi::parse_kimi_catalog_snapshot(&seed, snapshot.as_bytes())
             .unwrap()
             .into_iter()
             .next()

@@ -5,12 +5,14 @@ use jiff::Timestamp;
 use reqwest::{Client, Url, header, redirect};
 use serde_json::{Map, Value};
 use tokio::time::{Instant, timeout_at};
-
-use super::{KimiCatalogProduct, KimiCatalogSeed};
-use crate::{
+use yo_core::{
     AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
     ApiCredential,
 };
+#[cfg(test)]
+use yo_test_support::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
+
+use crate::catalog::KimiCatalogSeed;
 
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_LIMIT_ROWS: usize = 32;
@@ -65,13 +67,13 @@ pub fn read_kimi_account_capacity(
     credential: &ApiCredential,
 ) -> Result<AccountCapacitySnapshot, KimiAccountCapacityError> {
     require_code_membership(seed)?;
-    let profile_url = seed.endpoint.append_path_segment("me").map_err(|_| {
+    let profile_url = seed.endpoint().append_path_segment("me").map_err(|_| {
         failure(
             KimiAccountCapacityFailureKind::Configuration,
             "Kimi Code endpoint cannot accept the account-profile path",
         )
     })?;
-    let usage_url = seed.endpoint.append_path_segment("usages").map_err(|_| {
+    let usage_url = seed.endpoint().append_path_segment("usages").map_err(|_| {
         failure(
             KimiAccountCapacityFailureKind::Configuration,
             "Kimi Code endpoint cannot accept the usages path",
@@ -175,8 +177,8 @@ fn parse_kimi_account_capacity_snapshot_with_plan(
     }
 
     Ok(AccountCapacitySnapshot::new(
-        seed.provider.clone(),
-        seed.account.clone(),
+        seed.provider().clone(),
+        seed.account().clone(),
         buckets,
     ))
 }
@@ -195,7 +197,7 @@ fn parse_kimi_account_plan(bytes: &[u8]) -> Result<String, KimiAccountCapacityEr
 }
 
 fn require_code_membership(seed: &KimiCatalogSeed) -> Result<(), KimiAccountCapacityError> {
-    if seed.product == KimiCatalogProduct::CodeMembership {
+    if seed.is_code_membership() {
         Ok(())
     } else {
         Err(failure(
@@ -577,12 +579,9 @@ mod tests {
 
     use reqwest::{Client, redirect};
     use serde_json::json;
+    use yo_core::{AccountId, NormalizedEndpoint, ProviderId, VersionedProfileId};
 
     use super::*;
-    use crate::{
-        AccountId, NormalizedEndpoint, ProviderId, VersionedProfileId,
-        model_connector::tests::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child},
-    };
 
     fn code_seed() -> KimiCatalogSeed {
         KimiCatalogSeed::resolve(
@@ -759,7 +758,7 @@ mod tests {
     #[test]
     fn fetches_one_authenticated_usage_snapshot_over_local_tls() {
         if run_in_tls_child(
-            "model_service::kimi_catalog::usage::tests::fetches_one_authenticated_usage_snapshot_over_local_tls",
+            "account_capacity::tests::fetches_one_authenticated_usage_snapshot_over_local_tls",
         ) {
             return;
         }
@@ -812,7 +811,7 @@ mod tests {
     #[test]
     fn fetches_one_authenticated_account_profile_over_local_tls() {
         if run_in_tls_child(
-            "model_service::kimi_catalog::usage::tests::fetches_one_authenticated_account_profile_over_local_tls",
+            "account_capacity::tests::fetches_one_authenticated_account_profile_over_local_tls",
         ) {
             return;
         }

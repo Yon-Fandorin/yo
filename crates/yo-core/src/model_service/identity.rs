@@ -61,7 +61,7 @@ pub struct ModelServiceError {
 }
 
 impl ModelServiceError {
-    pub(super) fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             kind: ModelServiceErrorKind::Generic,
             message: message.into(),

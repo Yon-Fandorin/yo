@@ -1,10 +1,13 @@
+#[cfg(test)]
 use std::{
     any::Any,
+    panic::{AssertUnwindSafe, catch_unwind},
+};
+use std::{
     env,
     ffi::OsStr,
     fs::{self, File, OpenOptions},
     io::{self, Read},
-    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -20,11 +23,12 @@ const CHILD_STDERR_LIMIT: usize = 4 * 1024;
 // certificates well below that bound, with the root outliving the server leaf.
 const LOCAL_TLS_ROOT_VALIDITY_DAYS: &str = "398";
 const LOCAL_TLS_SERVER_VALIDITY_DAYS: &str = "397";
+#[cfg(test)]
 const FIXTURE_CERTIFICATE_MAX_VALIDITY_SECONDS: &str = "71280000";
 const TEMP_DIRECTORY_CREATE_ATTEMPTS: usize = 16;
 static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) enum LocalServerMode {
+pub enum LocalServerMode {
     Success {
         body: Vec<u8>,
         content_type: String,
@@ -49,7 +53,7 @@ pub(crate) enum LocalServerMode {
     ResponseHeaderStall,
 }
 
-pub(crate) struct LocalTlsServer {
+pub struct LocalTlsServer {
     _child: ChildGuard,
     _root: TempDirectory,
     requests: PathBuf,
@@ -59,7 +63,7 @@ pub(crate) struct LocalTlsServer {
 }
 
 impl LocalTlsServer {
-    pub(crate) fn start(mode: LocalServerMode) -> Self {
+    pub fn start(mode: LocalServerMode) -> Self {
         let certificate = env::var_os("YO_MODEL_CONNECTOR_TEST_CERT")
             .expect("the local TLS child must provide its test certificate path");
         let key = env::var_os("YO_MODEL_CONNECTOR_TEST_KEY")
@@ -169,22 +173,22 @@ impl LocalTlsServer {
         }
     }
 
-    pub(crate) fn endpoint(&self) -> &str {
+    pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
 
-    pub(crate) fn wait_for_response_sent(&self) {
+    pub fn wait_for_response_sent(&self) {
         self.wait_for_marker(
             &self.sent,
             "local TLS listener did not report its response boundary",
         );
     }
 
-    pub(crate) fn accepted_connections(&self) -> usize {
+    pub fn accepted_connections(&self) -> usize {
         self.marker_count(&self.accepted)
     }
 
-    pub(crate) fn requests(&self) -> Vec<serde_json::Value> {
+    pub fn requests(&self) -> Vec<serde_json::Value> {
         let mut source = String::new();
         File::open(&self.requests)
             .unwrap()
@@ -540,6 +544,7 @@ fn truncate_diagnostic(text: String) -> String {
     truncated
 }
 
+#[cfg(test)]
 fn diagnostic_test_child(
     script: &str,
     location: &str,
@@ -548,6 +553,7 @@ fn diagnostic_test_child(
     diagnostic_test_child_in(root, script, location)
 }
 
+#[cfg(test)]
 fn diagnostic_test_child_in(
     root: TempDirectory,
     script: &str,
@@ -593,6 +599,7 @@ fn diagnostic_test_child_in(
     (child, root, ready, sent)
 }
 
+#[cfg(test)]
 fn panic_message(payload: Box<dyn Any + Send>) -> String {
     if let Some(message) = payload.downcast_ref::<String>() {
         return message.clone();
@@ -603,6 +610,7 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
     "panic payload was not a string".to_owned()
 }
 
+#[cfg(test)]
 fn wait_for_test_marker(path: &Path, expected: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     loop {
@@ -929,6 +937,7 @@ impl LocalTlsMaterial {
         }
     }
 
+    #[cfg(test)]
     fn assert_server_auth_and_conservative_validity(&self) {
         openssl(&[
             "verify",
@@ -975,7 +984,7 @@ fn generates_current_server_auth_material_that_expires_within_apple_limit() {
 
 // OS별 platform verifier의 SSL_CERT_FILE 해석에 의존하지 않고, child process의 test-only
 // client에만 ephemeral root를 명시적으로 더해 HTTPS loopback listener를 띄웁니다.
-pub(crate) fn run_in_tls_child(test_name: &str) -> bool {
+pub fn run_in_tls_child(test_name: &str) -> bool {
     if env::var_os("YO_MODEL_CONNECTOR_TEST_CHILD").is_some() {
         let marker = env::var_os("YO_MODEL_CONNECTOR_TEST_MARKER")
             .expect("the local TLS child must provide its execution marker path");

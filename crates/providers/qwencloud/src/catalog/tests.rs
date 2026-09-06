@@ -1,7 +1,6 @@
-use super::super::{
-    AccountId, ModelId, ProviderId, QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason,
-    QwenCloudCatalogSeed, VersionedProfileId,
-};
+use yo_core::{AccountId, ModelId, ProviderId, VersionedProfileId};
+
+use super::{QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogSeed};
 
 fn seed(profile: &str) -> QwenCloudCatalogSeed {
     QwenCloudCatalogSeed::resolve(
@@ -155,5 +154,36 @@ fn qwencloud_catalog_rejects_unknown_or_mismatched_profiles() {
     assert_eq!(
         seed.models()[0].entry().unwrap().provider_display_name(),
         Some("QwenCloud")
+    );
+}
+// 중립 저장 seed의 정확한 Provider·Account·profile을 다시 검증해 같은 서비스 seed로 복원합니다.
+#[test]
+fn reconstructs_exact_neutral_catalog_seed() {
+    let neutral = yo_core::ConnectionCatalogSeed::built_in(
+        VersionedProfileId::new("qwencloud-token-plan-team-intl/v1").unwrap(),
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("named").unwrap(),
+        Some("Service".to_owned()),
+        Some("Account".to_owned()),
+    )
+    .unwrap();
+    let seed = QwenCloudCatalogSeed::from_connection_seed(&neutral)
+        .unwrap()
+        .unwrap();
+    assert_eq!(seed.provider(), neutral.provider());
+    assert_eq!(seed.account(), neutral.account());
+    assert_eq!(seed.profile(), neutral.built_in_profile().unwrap());
+    let other = yo_core::ConnectionCatalogSeed::built_in(
+        VersionedProfileId::new("kimi-code-membership/v1").unwrap(),
+        ProviderId::new("kimi").unwrap(),
+        AccountId::new("named").unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        QwenCloudCatalogSeed::from_connection_seed(&other)
+            .unwrap()
+            .is_none()
     );
 }

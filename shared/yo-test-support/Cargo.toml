@@ -1,0 +1,12 @@
+[package]
+name = "yo-test-support"
+version = "0.0.0"
+edition.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde_json = "1.0.140"
+
+[lints]
+workspace = true

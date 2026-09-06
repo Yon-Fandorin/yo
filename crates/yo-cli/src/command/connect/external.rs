@@ -4,8 +4,11 @@ use yo_core::{
     AccountId, CompleteModelBinding, ConnectionAccount, ConnectionCatalogSeed, ConnectionSnapshot,
     ModelCatalog, ModelCatalogEntry, ModelSelection, PreparedConnectionMutation, ProviderId,
     StartupPolicy, StartupSelectionSources, StartupTarget, StoredModelBinding,
-    discover_kimi_models, discover_openrouter_models, resolve_startup_target,
+    resolve_startup_target,
 };
+use yo_provider_kimi::{KimiCatalogSeed, discover_kimi_models};
+use yo_provider_openrouter::{OpenRouterDiscoverySeed, discover_openrouter_models};
+use yo_provider_qwencloud::QwenCloudCatalogSeed;
 
 use super::{
     Command as ConnectCommand,
@@ -353,7 +356,7 @@ fn same_catalog_seed_definition(
             match (current.built_in_profile(), replacement.built_in_profile()) {
                 (Some(current), Some(replacement)) => current == replacement,
                 (None, None) => {
-                    current.openrouter_definition() == replacement.openrouter_definition()
+                    current.discovery_definition() == replacement.discovery_definition()
                 },
                 _ => false,
             }
@@ -392,7 +395,7 @@ fn catalog_seed_summary(seed: Option<&ConnectionCatalogSeed>) -> String {
     if let Some(catalog) = seed.built_in_profile() {
         return format!("built-in catalog {catalog}");
     }
-    let Some((endpoint, profile)) = seed.openrouter_definition() else {
+    let Some((endpoint, profile)) = seed.discovery_definition() else {
         return "invalid catalog seed".to_owned();
     };
     let max_output_tokens = profile
@@ -466,7 +469,7 @@ fn execute_external_connect_with_discovery<I>(
     command: ConnectCommand,
     input: &mut I,
     discover_and_select: impl FnOnce(
-        &yo_core::OpenRouterDiscoverySeed,
+        &OpenRouterDiscoverySeed,
         &yo_core::ApiCredential,
         &mut I,
     ) -> Result<Option<ModelCatalogEntry>, AppError>,
@@ -518,12 +521,12 @@ fn execute_external_connect_with_catalogs<I>(
     command: ConnectCommand,
     input: &mut I,
     discover_openrouter_and_select: impl FnOnce(
-        &yo_core::OpenRouterDiscoverySeed,
+        &OpenRouterDiscoverySeed,
         &yo_core::ApiCredential,
         &mut I,
     ) -> Result<Option<ModelCatalogEntry>, AppError>,
     discover_kimi_and_select: impl FnOnce(
-        &yo_core::KimiCatalogSeed,
+        &KimiCatalogSeed,
         &yo_core::ApiCredential,
         &mut I,
     ) -> Result<Option<ModelCatalogEntry>, AppError>,
@@ -557,7 +560,8 @@ where
     )? {
         Some((provider, account)) if provider.as_str() == "openrouter" => {
             let seed = snapshot
-                .openrouter_discovery_seed(&provider, &account)
+                .catalog_seed(&provider, &account)
+                .map(OpenRouterDiscoverySeed::from_connection_seed).transpose().map(Option::flatten)
                 .map_err(|error| AppError::single("reading the stored OpenRouter seed", error))?
                 .ok_or_else(|| {
                     AppError::message(format!(
@@ -574,7 +578,10 @@ where
         },
         Some((provider, account)) if provider.as_str() == "kimi" => {
             let seed = snapshot
-                .kimi_catalog_seed(&provider, &account)
+                .catalog_seed(&provider, &account)
+                .map(KimiCatalogSeed::from_connection_seed)
+                .transpose()
+                .map(Option::flatten)
                 .map_err(|error| AppError::single("reading the stored Kimi seed", error))?
                 .ok_or_else(|| {
                     AppError::message(format!(
@@ -591,7 +598,10 @@ where
         },
         Some((provider, account)) => {
             let seed = snapshot
-                .qwencloud_catalog_seed(&provider, &account)
+                .catalog_seed(&provider, &account)
+                .map(QwenCloudCatalogSeed::from_connection_seed)
+                .transpose()
+                .map(Option::flatten)
                 .map_err(|error| AppError::single("reading the stored QwenCloud seed", error))?
                 .ok_or_else(|| {
                     AppError::message(format!(
@@ -873,8 +883,7 @@ fn selected_entry(
         return Ok(entry);
     }
     for stored_seed in snapshot.catalog_seeds() {
-        let Some(seed) = stored_seed
-            .qwencloud_seed()
+        let Some(seed) = QwenCloudCatalogSeed::from_connection_seed(stored_seed)
             .map_err(|error| AppError::single("reading the stored QwenCloud seed", error))?
         else {
             continue;
@@ -890,8 +899,12 @@ fn selected_entry(
         }) {
             return row.entry().cloned().ok_or_else(|| {
                 let reason = match row.availability() {
-                    yo_core::QwenCloudCatalogAvailability::Enabled => "invalid catalog row",
-                    yo_core::QwenCloudCatalogAvailability::Disabled(reason) => reason.as_str(),
+                    yo_provider_qwencloud::QwenCloudCatalogAvailability::Enabled => {
+                        "invalid catalog row"
+                    },
+                    yo_provider_qwencloud::QwenCloudCatalogAvailability::Disabled(reason) => {
+                        reason.as_str()
+                    },
                 };
                 AppError::message(format!(
                     "QwenCloud catalog model {reference:?} is disabled: {reason}"

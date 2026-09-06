@@ -42,7 +42,7 @@ SOT-first contract Slice and activation before implementation.
 
 ## Give the Provider its own boundary
 
-Create one cohesive Provider module under `yo-core/src/model_service`, with
+Create one cohesive Provider crate under `crates/providers/<provider>`, with
 transport and normalization submodules only when each has a distinct
 responsibility. Reuse the provider-neutral catalog entry, complete binding,
 picker, structural admission, journal, and connection transaction. Do not add a

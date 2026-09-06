@@ -1,4 +1,5 @@
-use yo_core::{AccountCapacitySnapshot, AccountId, KimiCatalogSeed, ProviderId};
+use yo_core::{AccountCapacitySnapshot, AccountId, ProviderId};
+use yo_provider_kimi::KimiCatalogSeed;
 
 use super::qwencloud;
 use crate::AppError;
@@ -241,7 +242,10 @@ pub(super) fn has_kimi_code_membership_binding(
     target: &AccountCoordinate,
 ) -> bool {
     connections
-        .kimi_catalog_seed(&target.provider, &target.account)
+        .catalog_seed(&target.provider, &target.account)
+        .map(KimiCatalogSeed::from_connection_seed)
+        .transpose()
+        .map(Option::flatten)
         .ok()
         .flatten()
         .is_some_and(|seed| seed.profile().as_str() == "kimi-code-membership/v1")

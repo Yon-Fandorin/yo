@@ -919,6 +919,14 @@ OpenRouter discovery uses the explicit shape but omits `models`; it is the only
 Provider allowed to do so. Its stored seed supplies the endpoint and base
 profile for the bounded authenticated picker.
 
+The three `yo-provider-*` crates own service-specific seed reconstruction,
+catalog/discovery, and account-capacity requests. Core stores only neutral
+catalog metadata and source descriptors, retaining strict historical wire-tag
+and built-in identity checks. CLI validates the provider seed before preview,
+credential capture, or mutation; it still owns input, retry orchestration, and
+credential/public CAS. Providers depend on core, never the reverse, and do not
+select or re-export connectors.
+
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
 in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
 `120`; live startup reads it once and applies it to retained TUI generations.

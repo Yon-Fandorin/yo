@@ -2307,19 +2307,16 @@ name = "yo-cli"
 version = "0.0.0"
 dependencies = [
  "clap",
- "futures-util",
  "getrandom 0.4.3",
  "jiff",
  "libc",
  "memchr",
  "nix",
- "reqwest",
  "rustix",
  "serde",
  "serde_json",
  "signal-hook",
  "tiktoken-rs",
- "tokio",
  "unicode-segmentation",
  "yo-backend-delegated-codex",
  "yo-backend-delegated-grok",
@@ -2328,6 +2325,9 @@ dependencies = [
  "yo-connector-openai-chat-completions",
  "yo-connector-openai-responses",
  "yo-core",
+ "yo-provider-kimi",
+ "yo-provider-openrouter",
+ "yo-provider-qwencloud",
  "yo-tui",
  "yo-yaml",
 ]
@@ -2379,17 +2379,14 @@ dependencies = [
 name = "yo-core"
 version = "0.0.0"
 dependencies = [
- "futures-util",
  "getrandom 0.4.3",
  "icu_properties",
  "jiff",
  "libc",
- "reqwest",
  "rustix",
  "serde",
  "serde_json",
  "sha2",
- "tokio",
  "tokio-util",
  "unicode-normalization",
  "unicode-segmentation",
@@ -2397,6 +2394,51 @@ dependencies = [
  "uuid",
  "yo-backend",
  "yo-yaml",
+]
+
+[[package]]
+name = "yo-provider-kimi"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "jiff",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "yo-core",
+ "yo-test-support",
+]
+
+[[package]]
+name = "yo-provider-openrouter"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "unicode-normalization",
+ "yo-core",
+ "yo-test-support",
+]
+
+[[package]]
+name = "yo-provider-qwencloud"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "yo-core",
+]
+
+[[package]]
+name = "yo-test-support"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

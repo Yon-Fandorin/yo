@@ -1,13 +1,12 @@
 use std::{error::Error, fmt};
 
-use super::{
+use yo_core::{
     AccountId, ApiCredential, ApiDialect, ConnectorId, EffectiveModelBinding, ModelCatalogEntry,
     ModelId, ModelServiceError, NormalizedEndpoint, ProviderId, VersionedProfileId,
 };
 
 mod normalize;
 mod transport;
-mod usage;
 
 use self::normalize::normalize_catalog;
 
@@ -35,6 +34,26 @@ pub struct KimiCatalogSeed {
 }
 
 impl KimiCatalogSeed {
+    /// Reconstructs and validates service configuration from neutral persisted catalog data.
+    pub fn from_connection_seed(
+        seed: &yo_core::ConnectionCatalogSeed,
+    ) -> Result<Option<Self>, ModelServiceError> {
+        if seed.provider().as_str() != "kimi" {
+            return Ok(None);
+        }
+        let Some(profile) = seed.built_in_profile() else {
+            return Ok(None);
+        };
+        Self::resolve(
+            profile.clone(),
+            seed.provider().clone(),
+            seed.account().clone(),
+            seed.provider_display_name().map(str::to_owned),
+            seed.account_display_name().map(str::to_owned),
+        )
+        .map(Some)
+    }
+
     pub fn resolve(
         profile: VersionedProfileId,
         provider: ProviderId,
@@ -56,8 +75,12 @@ impl KimiCatalogSeed {
                 )));
             },
         };
-        super::catalog::validate_display_name("Provider", provider_display_name.as_deref())?;
-        super::catalog::validate_display_name("Account", account_display_name.as_deref())?;
+        yo_core::ConnectionAccount::new(
+            provider.clone(),
+            account.clone(),
+            provider_display_name.clone(),
+            account_display_name.clone(),
+        )?;
         Ok(Self {
             profile,
             provider,
@@ -79,6 +102,14 @@ impl KimiCatalogSeed {
 
     pub const fn account(&self) -> &AccountId {
         &self.account
+    }
+
+    pub(super) const fn endpoint(&self) -> &NormalizedEndpoint {
+        &self.endpoint
+    }
+
+    pub(super) fn is_code_membership(&self) -> bool {
+        self.product == KimiCatalogProduct::CodeMembership
     }
 
     /// Recovers the Code Membership product seed from an exact durable Kimi binding.
@@ -245,11 +276,6 @@ pub fn parse_kimi_catalog_snapshot(
 ) -> Result<Vec<KimiCatalogModel>, KimiCatalogError> {
     normalize_catalog(seed, bytes)
 }
-
-pub use usage::{
-    KimiAccountCapacityError, KimiAccountCapacityFailureKind, parse_kimi_account_capacity_snapshot,
-    read_kimi_account_capacity,
-};
 
 fn failure(kind: KimiCatalogFailureKind, message: impl Into<String>) -> KimiCatalogError {
     KimiCatalogError::new(kind, message)

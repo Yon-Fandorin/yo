@@ -1,6 +1,6 @@
 use crate::{
-    AccountId, EffectiveModelProfile, KimiCatalogSeed, ModelServiceError, NormalizedEndpoint,
-    OpenRouterDiscoverySeed, ProviderId, QwenCloudCatalogSeed, VersionedProfileId,
+    AccountId, EffectiveModelProfile, ModelServiceError, NormalizedEndpoint, ProviderId,
+    VersionedProfileId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,7 +14,7 @@ pub struct ConnectionCatalogSeed {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CatalogSource {
-    OpenRouter {
+    Discovery {
         endpoint: NormalizedEndpoint,
         profile: Box<EffectiveModelProfile>,
     },
@@ -24,7 +24,7 @@ pub(crate) enum CatalogSource {
 }
 
 impl ConnectionCatalogSeed {
-    pub fn openrouter(
+    pub fn discovery(
         provider: ProviderId,
         account: AccountId,
         provider_display_name: Option<String>,
@@ -32,21 +32,25 @@ impl ConnectionCatalogSeed {
         endpoint: NormalizedEndpoint,
         profile: EffectiveModelProfile,
     ) -> Result<Self, ModelServiceError> {
-        OpenRouterDiscoverySeed::new(
+        // This neutral descriptor still encodes the historical openrouter_discovery
+        // wire kind; reject a mismatched durable identity before it is representable.
+        if provider.as_str() != "openrouter" {
+            return Err(ModelServiceError::new(
+                "OpenRouter discovery seed requires ProviderId openrouter",
+            ));
+        }
+        crate::ConnectionAccount::new(
             provider.clone(),
             account.clone(),
             provider_display_name.clone(),
             account_display_name.clone(),
-            endpoint.clone(),
-            profile.clone(),
-            Vec::new(),
         )?;
         Ok(Self {
             provider,
             account,
             provider_display_name,
             account_display_name,
-            source: CatalogSource::OpenRouter {
+            source: CatalogSource::Discovery {
                 endpoint,
                 profile: Box::new(profile),
             },
@@ -60,24 +64,25 @@ impl ConnectionCatalogSeed {
         provider_display_name: Option<String>,
         account_display_name: Option<String>,
     ) -> Result<Self, ModelServiceError> {
-        match provider.as_str() {
-            "qwencloud" => {
-                QwenCloudCatalogSeed::resolve(
-                    catalog.clone(),
-                    provider.clone(),
-                    account.clone(),
-                    provider_display_name.clone(),
-                    account_display_name.clone(),
-                )?;
+        // These exact persisted source identities keep durable decoding closed. Service
+        // endpoints, model rows, and catalog resolution belong to provider crates.
+        match (provider.as_str(), catalog.as_str()) {
+            ("kimi", "kimi-platform-ai/v1" | "kimi-code-membership/v1")
+            | (
+                "qwencloud",
+                "qwencloud-coding-plan-cn/v1"
+                | "qwencloud-coding-plan-intl/v1"
+                | "qwencloud-token-plan-team-intl/v1",
+            ) => {},
+            ("kimi", _) => {
+                return Err(ModelServiceError::new(format!(
+                    "unsupported Kimi catalog profile {catalog}"
+                )));
             },
-            "kimi" => {
-                KimiCatalogSeed::resolve(
-                    catalog.clone(),
-                    provider.clone(),
-                    account.clone(),
-                    provider_display_name.clone(),
-                    account_display_name.clone(),
-                )?;
+            ("qwencloud", _) => {
+                return Err(ModelServiceError::new(format!(
+                    "unsupported QwenCloud catalog profile {catalog}"
+                )));
             },
             _ => {
                 return Err(ModelServiceError::new(format!(
@@ -85,6 +90,12 @@ impl ConnectionCatalogSeed {
                 )));
             },
         }
+        crate::ConnectionAccount::new(
+            provider.clone(),
+            account.clone(),
+            provider_display_name.clone(),
+            account_display_name.clone(),
+        )?;
         Ok(Self {
             provider,
             account,
@@ -102,6 +113,14 @@ impl ConnectionCatalogSeed {
         &self.account
     }
 
+    pub fn provider_display_name(&self) -> Option<&str> {
+        self.provider_display_name.as_deref()
+    }
+
+    pub fn account_display_name(&self) -> Option<&str> {
+        self.account_display_name.as_deref()
+    }
+
     pub(crate) const fn source(&self) -> &CatalogSource {
         &self.source
     }
@@ -111,66 +130,16 @@ impl ConnectionCatalogSeed {
     pub fn built_in_profile(&self) -> Option<&VersionedProfileId> {
         match &self.source {
             CatalogSource::BuiltIn { catalog } => Some(catalog),
-            CatalogSource::OpenRouter { .. } => None,
+            CatalogSource::Discovery { .. } => None,
         }
     }
 
-    /// Returns the exact endpoint and effective profile when this is an OpenRouter seed.
+    /// Returns the exact endpoint and effective profile of the persisted discovery source.
     #[must_use]
-    pub fn openrouter_definition(&self) -> Option<(&NormalizedEndpoint, &EffectiveModelProfile)> {
+    pub fn discovery_definition(&self) -> Option<(&NormalizedEndpoint, &EffectiveModelProfile)> {
         match &self.source {
-            CatalogSource::OpenRouter { endpoint, profile } => Some((endpoint, profile.as_ref())),
+            CatalogSource::Discovery { endpoint, profile } => Some((endpoint, profile.as_ref())),
             CatalogSource::BuiltIn { .. } => None,
         }
-    }
-
-    pub fn openrouter_seed(&self) -> Result<Option<OpenRouterDiscoverySeed>, ModelServiceError> {
-        let CatalogSource::OpenRouter { endpoint, profile } = &self.source else {
-            return Ok(None);
-        };
-        OpenRouterDiscoverySeed::new(
-            self.provider.clone(),
-            self.account.clone(),
-            self.provider_display_name.clone(),
-            self.account_display_name.clone(),
-            endpoint.clone(),
-            profile.as_ref().clone(),
-            Vec::new(),
-        )
-        .map(Some)
-    }
-
-    pub fn qwencloud_seed(&self) -> Result<Option<QwenCloudCatalogSeed>, ModelServiceError> {
-        let CatalogSource::BuiltIn { catalog } = &self.source else {
-            return Ok(None);
-        };
-        if self.provider.as_str() != "qwencloud" {
-            return Ok(None);
-        }
-        QwenCloudCatalogSeed::resolve(
-            catalog.clone(),
-            self.provider.clone(),
-            self.account.clone(),
-            self.provider_display_name.clone(),
-            self.account_display_name.clone(),
-        )
-        .map(Some)
-    }
-
-    pub fn kimi_seed(&self) -> Result<Option<KimiCatalogSeed>, ModelServiceError> {
-        let CatalogSource::BuiltIn { catalog } = &self.source else {
-            return Ok(None);
-        };
-        if self.provider.as_str() != "kimi" {
-            return Ok(None);
-        }
-        KimiCatalogSeed::resolve(
-            catalog.clone(),
-            self.provider.clone(),
-            self.account.clone(),
-            self.provider_display_name.clone(),
-            self.account_display_name.clone(),
-        )
-        .map(Some)
     }
 }

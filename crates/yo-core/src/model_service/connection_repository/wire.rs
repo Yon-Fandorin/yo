@@ -132,7 +132,7 @@ enum WireCatalog {
 impl From<&ConnectionCatalogSeed> for WireCatalog {
     fn from(seed: &ConnectionCatalogSeed) -> Self {
         match seed.source() {
-            CatalogSource::OpenRouter { endpoint, profile } => Self::OpenrouterDiscovery {
+            CatalogSource::Discovery { endpoint, profile } => Self::OpenrouterDiscovery {
                 provider: seed.provider().as_str().to_owned(),
                 account: seed.account().as_str().to_owned(),
                 base_url: endpoint.as_str().to_owned(),
@@ -481,7 +481,7 @@ fn parse_catalog(
             let provider = ProviderId::new(provider)?;
             let account = AccountId::new(account)?;
             let metadata = catalog_account(accounts, &provider, &account)?;
-            ConnectionCatalogSeed::openrouter(
+            ConnectionCatalogSeed::discovery(
                 provider,
                 account,
                 metadata.provider_display_name().map(str::to_owned),

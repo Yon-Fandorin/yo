@@ -4,7 +4,7 @@ use std::{
     fmt,
 };
 
-use super::{
+use yo_core::{
     AccountId, ApiCredential, EffectiveModelProfile, ModelCatalogEntry, ModelId, ModelServiceError,
     NormalizedEndpoint, ProviderId,
 };
@@ -71,6 +71,25 @@ pub struct OpenRouterDiscoverySeed {
 }
 
 impl OpenRouterDiscoverySeed {
+    /// Reconstructs and validates service configuration from neutral persisted catalog data.
+    pub fn from_connection_seed(
+        seed: &yo_core::ConnectionCatalogSeed,
+    ) -> Result<Option<Self>, ModelServiceError> {
+        let Some((endpoint, profile)) = seed.discovery_definition() else {
+            return Ok(None);
+        };
+        Self::new(
+            seed.provider().clone(),
+            seed.account().clone(),
+            seed.provider_display_name().map(str::to_owned),
+            seed.account_display_name().map(str::to_owned),
+            endpoint.clone(),
+            profile.clone(),
+            Vec::new(),
+        )
+        .map(Some)
+    }
+
     pub fn new(
         provider: ProviderId,
         account: AccountId,
@@ -85,8 +104,12 @@ impl OpenRouterDiscoverySeed {
                 "OpenRouter discovery seed requires ProviderId openrouter",
             ));
         }
-        super::catalog::validate_display_name("Provider", provider_display_name.as_deref())?;
-        super::catalog::validate_display_name("Account", account_display_name.as_deref())?;
+        yo_core::ConnectionAccount::new(
+            provider.clone(),
+            account.clone(),
+            provider_display_name.clone(),
+            account_display_name.clone(),
+        )?;
         let mut indexed = HashMap::new();
         for authored in authored_models {
             let binding = authored.entry.binding();
@@ -136,7 +159,7 @@ pub struct OpenRouterDiscoveredModel {
     capabilities: Option<OpenRouterModelCapabilities>,
     input_limit: Option<u64>,
     output_limit: Option<u64>,
-    effective_tool_policy: Option<super::VersionedProfileId>,
+    effective_tool_policy: Option<yo_core::VersionedProfileId>,
     reasoning: Option<bool>,
     availability: OpenRouterModelAvailability,
 }
@@ -184,7 +207,7 @@ impl OpenRouterDiscoveredModel {
     }
 
     #[must_use]
-    pub const fn effective_tool_policy(&self) -> Option<&super::VersionedProfileId> {
+    pub const fn effective_tool_policy(&self) -> Option<&yo_core::VersionedProfileId> {
         self.effective_tool_policy.as_ref()
     }
 

@@ -9,11 +9,8 @@ mod connection_operation;
 mod connection_repository;
 mod credential;
 mod identity;
-mod kimi_catalog;
 mod local_credentials;
-mod openrouter_discovery;
 mod profile;
-mod qwencloud_catalog;
 mod selection;
 mod startup;
 
@@ -45,29 +42,14 @@ pub use connection_repository::{
 };
 pub use credential::{ApiCredential, CredentialStore};
 pub use identity::{AccountId, ModelId, ModelServiceError, ModelServiceErrorKind, ProviderId};
-pub use kimi_catalog::{
-    KimiAccountCapacityError, KimiAccountCapacityFailureKind, KimiCatalogAvailability,
-    KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind, KimiCatalogModel,
-    KimiCatalogSeed, discover_kimi_models, parse_kimi_account_capacity_snapshot,
-    parse_kimi_catalog_snapshot, read_kimi_account_capacity,
-};
 pub use local_credentials::{
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
     CredentialSnapshot, LocalCredentialRepository, LocalCredentialStore, LocalCredentialStoreError,
     PreparedAccountSessionMutation, PreparedCredentialMutation,
 };
-pub use openrouter_discovery::{
-    OpenRouterAuthoredModel, OpenRouterDisabledReason, OpenRouterDiscoveredModel,
-    OpenRouterDiscoveryError, OpenRouterDiscoveryFailureKind, OpenRouterDiscoverySeed,
-    OpenRouterModelAvailability, OpenRouterModelCapabilities, discover_openrouter_models,
-};
 pub use profile::{
     EffectiveModelProfile, KIMI_PRIVATE_REPLAY_PROFILE, ModelProfileLayer, ModelProfileParameters,
     SEMANTIC_REPLAY_PROFILE, VersionedProfileId,
-};
-pub use qwencloud_catalog::{
-    QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogModel,
-    QwenCloudCatalogSeed,
 };
 pub use selection::{
     HostCatalogModel, HostModelCatalog, HostModelSelection, ModelPickerChoice, ModelPickerSection,

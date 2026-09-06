@@ -1,20 +1,20 @@
 [package]
-name = "yo-connector-transport"
+name = "yo-provider-openrouter"
 version = "0.0.0"
 edition.workspace = true
 repository.workspace = true
 publish = false
 
-[features]
-test-support = []
-
 [dependencies]
+unicode-normalization = "=0.1.25"
+yo-core = { path = "../../yo-core" }
 futures-util = "=0.3.33"
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
 serde_json = "1.0.140"
-tokio = { version = "=1.53.1", features = ["macros", "net", "rt", "sync", "time"] }
-tokio-util = "=0.7.19"
-yo-core = { path = "../../yo-core" }
+tokio = { version = "=1.53.1", features = ["rt", "time"] }
+
+[dev-dependencies]
+yo-test-support = { path = "../../../shared/yo-test-support" }
 
 [lints]
 workspace = true

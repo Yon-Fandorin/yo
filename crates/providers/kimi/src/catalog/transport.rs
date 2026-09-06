@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use reqwest::{Client, StatusCode, Url, header, redirect};
 use tokio::time::{Instant as TokioInstant, timeout_at};
+use yo_core::{ApiCredential, NormalizedEndpoint};
 
 use super::{KimiCatalogError, KimiCatalogFailureKind, failure, limit_failure, timeout_failure};
-use crate::{ApiCredential, NormalizedEndpoint};
 
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;

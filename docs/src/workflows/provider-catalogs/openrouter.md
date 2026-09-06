@@ -17,8 +17,8 @@ official.
 
 | Responsibility | Owner |
 |---|---|
-| Bounded authenticated transport | [`openrouter_discovery/transport.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery/transport.rs) |
-| Response parsing, normalization, availability, and authored overrides | [`openrouter_discovery.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery.rs) and [`openrouter_discovery/normalize.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery/normalize.rs) |
+| Bounded authenticated transport | [`discovery/transport.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/openrouter/src/discovery/transport.rs) |
+| Response parsing, normalization, availability, and authored overrides | [`discovery.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/openrouter/src/discovery.rs) and [`discovery/normalize.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/openrouter/src/discovery/normalize.rs) |
 | Configured discovery seed | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/config.rs) |
 | Connect orchestration and picker handoff | [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs) and [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/picker.rs) |
 
@@ -43,7 +43,7 @@ official.
 Focused checks:
 
 ```bash
-cargo test --locked -p yo-core openrouter_discovery
+cargo test --locked -p yo-provider-openrouter
 cargo test --locked -p yo-cli command::connect::external::discovery_tests
 cargo test --locked -p yo-cli command::connect::picker
 ```

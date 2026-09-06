@@ -2,15 +2,15 @@ use std::collections::{BTreeSet, HashSet};
 
 use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
+use yo_core::{
+    EffectiveModelBinding, EffectiveModelProfile, ModelCatalogEntry, ModelId, ModelProfileLayer,
+    ModelServiceError, VersionedProfileId,
+};
 
 use super::{
     OpenRouterDisabledReason, OpenRouterDiscoveredModel, OpenRouterDiscoveryError,
     OpenRouterDiscoveryFailureKind, OpenRouterDiscoverySeed, OpenRouterModelAvailability,
     OpenRouterModelCapabilities, failure, limit_failure,
-};
-use crate::{
-    EffectiveModelBinding, EffectiveModelProfile, ModelCatalogEntry, ModelId, ModelProfileLayer,
-    ModelServiceError, VersionedProfileId,
 };
 
 pub(super) const MAX_ROWS: usize = 4_096;

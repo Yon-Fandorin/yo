@@ -35,7 +35,7 @@ bounded 입력으로 취급한다.
 
 | 책임 | 소유자 |
 |---|---|
-| 제품별 Account seed, bounded discovery transport, normalization, 검토된 overlay, typed disabled reason | [`kimi_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog.rs)와 `kimi_catalog/` 하위 모듈 |
+| 제품별 Account seed, bounded discovery transport, normalization, 검토된 overlay, typed disabled reason | [`catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/kimi/src/catalog.rs)와 `catalog/` 하위 모듈 |
 | exact Platform/Code profile admission, Kimi request·stream 문법, typed private payload codec·projection, encoded-size 계산 | [`connectors/kimi`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/kimi/src/lib.rs) |
 | opaque provider-private envelope 제한, physical 저장, replay-profile/schema 상관관계, neutral projection 비교, Provider-neutral Session별 cache-affinity hint 생성 | [`yo-backend evidence/replay.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence/replay.rs), [`yo-core backend/evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence.rs), [`journal/codec`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/codec), [`backends/managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) |
 | Config seed, picker, disclosure, 복구 가능한 연결 transaction | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/config.rs), [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs), [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/picker.rs) |
@@ -77,7 +77,7 @@ bounded 입력으로 취급한다.
 
 ```bash
 cargo test --locked -p yo-connector-kimi
-cargo test --locked -p yo-core kimi
+cargo test --locked -p yo-provider-kimi
 cargo test --locked -p yo-core journal::codec::tests::correlation::continuation
 cargo test --locked -p yo-core backend::native
 cargo test --locked -p yo-cli kimi

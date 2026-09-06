@@ -188,7 +188,7 @@ fn expired_qwencloud_session_is_replaced_and_retried_exactly_once() {
         |session| {
             refreshes += 1;
             if session.expose_secret().ends_with("=expired") {
-                Err(qwencloud::expired_session_error())
+                Err(qwencloud::fixture_capacity_error(true))
             } else {
                 Ok(qwen_snapshot(&fixture.provider, &fixture.account))
             }
@@ -236,7 +236,7 @@ fn replacement_rejection_does_not_start_a_third_refresh() {
         },
         |_| {
             refreshes += 1;
-            Err::<AccountCapacitySnapshot, _>(qwencloud::expired_session_error())
+            Err::<AccountCapacitySnapshot, _>(qwencloud::fixture_capacity_error(true))
         },
     )
     .unwrap_err();
@@ -364,7 +364,7 @@ fn concurrent_session_replacement_is_not_overwritten_after_expiry() {
             ApiCredential::new("cna=x; login_qwencloud_ticket=stale-replacement")
                 .map_err(|source| AppError::single("fixture replacement", source))
         },
-        |_| Err::<AccountCapacitySnapshot, _>(qwencloud::expired_session_error()),
+        |_| Err::<AccountCapacitySnapshot, _>(qwencloud::fixture_capacity_error(true)),
     )
     .unwrap_err();
 

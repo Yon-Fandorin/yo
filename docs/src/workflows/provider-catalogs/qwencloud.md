@@ -24,7 +24,7 @@ quota, or entitlement.
 
 The static profile definitions, endpoints, rows, typed capabilities, and
 deterministic ordering live in
-[`qwencloud_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/qwencloud_catalog.rs).
+[`catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/qwencloud/src/catalog.rs).
 Configuration resolves a profile into a non-routable seed in
 [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/config.rs).
 The shared selection and recoverable connection transaction live in
@@ -56,7 +56,7 @@ and
 Focused checks:
 
 ```bash
-cargo test --locked -p yo-core qwencloud_catalog
+cargo test --locked -p yo-provider-qwencloud catalog
 cargo test --locked -p yo-cli qwencloud_catalog
 cargo test --locked -p yo-cli command::connect::picker
 ```

@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 
 use serde_json::{Value, json};
+use yo_core::{
+    ApiDialect, EffectiveModelBinding, EffectiveModelProfile, ModelCatalogEntry, ModelId,
+    ModelProfileLayer, ModelProfileParameters, VersionedProfileId,
+};
 
 use super::{
     KimiCatalogAvailability, KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind,
     KimiCatalogModel, KimiCatalogProduct, KimiCatalogSeed, failure, limit_failure,
-};
-use crate::{
-    ApiDialect, EffectiveModelBinding, EffectiveModelProfile, ModelCatalogEntry, ModelId,
-    ModelProfileLayer, ModelProfileParameters, VersionedProfileId,
 };
 
 const MAX_ROWS: usize = 4_096;
@@ -92,8 +92,8 @@ pub(super) fn normalize_catalog(
         });
     }
     models.sort_by(|left, right| {
-        crate::normalized_search_key(left.model_id().as_str())
-            .cmp(&crate::normalized_search_key(right.model_id().as_str()))
+        yo_core::normalized_search_key(left.model_id().as_str())
+            .cmp(&yo_core::normalized_search_key(right.model_id().as_str()))
             .then_with(|| left.model_id().cmp(right.model_id()))
     });
     Ok(models)
@@ -198,7 +198,7 @@ fn build_entry(
     seed: &KimiCatalogSeed,
     model_id: &ModelId,
     profile: OverlayProfile,
-) -> Result<ModelCatalogEntry, crate::ModelServiceError> {
+) -> Result<ModelCatalogEntry, yo_core::ModelServiceError> {
     let (input, output, reasoning, optional, replay) = match profile {
         OverlayProfile::K3 { input, code } => (
             input,

@@ -633,15 +633,15 @@ fn catalog_only_group_round_trips_as_one_stored_definition() {
     assert!(snapshot.preference().is_none());
     assert_eq!(
         snapshot
-            .qwencloud_catalog_seed(
+            .catalog_seed(
                 &ProviderId::new("qwencloud").unwrap(),
                 &AccountId::new("default").unwrap(),
             )
             .unwrap()
+            .built_in_profile()
             .unwrap()
-            .models()
-            .len(),
-        18
+            .as_str(),
+        "qwencloud-token-plan-team-intl/v1"
     );
     let raw = std::fs::read_to_string(repository.path()).unwrap();
     assert!(raw.contains("kind: built_in"));
@@ -1219,4 +1219,44 @@ fn exact_binding_republication_preserves_activation_but_changed_binding_enables(
         .unwrap();
     repository.commit(&mutation).unwrap();
     assert!(repository.capture().unwrap().models()[0].is_enabled());
+}
+// Discovery의 기존 wire kind는 생성 시 다른 Provider를 거절하고 저장·재읽기에도 같은 제약을
+// 유지합니다.
+#[test]
+fn discovery_seed_rejects_mismatched_wire_identity_before_mutation() {
+    let binding = stored_binding("model", "low");
+    let complete = binding.complete();
+    let (directory, repository) = repository("discovery-identity");
+    let seed_for = |provider| {
+        ConnectionCatalogSeed::discovery(
+            ProviderId::new(provider).unwrap(),
+            AccountId::new("default").unwrap(),
+            None,
+            None,
+            complete.binding().endpoint().clone(),
+            complete.profile().clone(),
+        )
+    };
+    assert_eq!(
+        seed_for("other").unwrap_err().to_string(),
+        "OpenRouter discovery seed requires ProviderId openrouter"
+    );
+    assert!(!repository.path().exists());
+    let seed = seed_for("openrouter").unwrap();
+    let account =
+        ConnectionAccount::new(seed.provider().clone(), seed.account().clone(), None, None)
+            .unwrap();
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_group_replace(account, Vec::new(), Some(seed.clone()))
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    assert_eq!(repository.capture().unwrap().catalog_seeds(), &[seed]);
+    let invalid = fs::read_to_string(repository.path())
+        .unwrap()
+        .replace("provider: openrouter", "provider: other");
+    fs::write(repository.path(), invalid).unwrap();
+    assert!(repository.capture().is_err());
+    drop(directory);
 }

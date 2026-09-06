@@ -23,7 +23,7 @@ allowlist와 plan별 endpoint를 공개한다. 등록은 구조적 admission만 
 
 Static profile definition, endpoint, row, typed capability, deterministic
 ordering은
-[`qwencloud_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/qwencloud_catalog.rs)가
+[`catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/qwencloud/src/catalog.rs)가
 소유한다. Configuration은
 [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/config.rs)에서
 profile을 non-routable seed로 해석한다. Shared selection과 recoverable connection
@@ -56,7 +56,7 @@ transaction은
 집중 검사:
 
 ```bash
-cargo test --locked -p yo-core qwencloud_catalog
+cargo test --locked -p yo-provider-qwencloud catalog
 cargo test --locked -p yo-cli qwencloud_catalog
 cargo test --locked -p yo-cli command::connect::picker
 ```

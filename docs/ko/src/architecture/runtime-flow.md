@@ -840,6 +840,13 @@ Catalog identity나 ModelId만으로 그 동의를 만들 수 없다.
 OpenRouter discovery는 explicit shape에서 `models`만 생략하며 이를 허용하는 유일한
 Provider다. 저장 seed가 bounded authenticated picker에 endpoint와 base profile을 제공한다.
 
+세 `yo-provider-*` crate가 서비스별 seed 재구성, catalog·discovery, account-capacity
+요청을 소유한다. Core는 중립 catalog metadata와 source descriptor만 저장하고,
+기존 wire tag와 built-in identity의 엄격한 검사를 유지한다. CLI는 preview·credential
+capture·mutation 전에 provider seed를 검증하며 입력, 재시도 조립, credential·public CAS를
+계속 소유한다. Provider는 core에 의존하지만 역방향 의존은 없고 connector를 선택하거나
+재노출하지 않는다.
+
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
 한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. Whole-field

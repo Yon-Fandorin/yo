@@ -3,7 +3,6 @@ mod binding_profile;
 mod catalog;
 mod credentials;
 mod profile;
-mod qwencloud_catalog;
 mod selection;
 mod startup;
 mod support;

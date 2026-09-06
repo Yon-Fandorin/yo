@@ -40,7 +40,7 @@ Slice와 activation을 완료한다.
 
 ## Provider 전용 경계 만들기
 
-`yo-core/src/model_service` 아래에 하나의 응집된 Provider module을 만든다.
+`crates/providers/<provider>` 아래에 하나의 응집된 Provider crate를 만든다.
 Transport와 normalization의 책임이 실제로 다를 때만 submodule로 나눈다.
 Provider-neutral catalog entry, complete binding, picker, 구조적 admission, journal,
 connection transaction을 재사용한다. Typed adapter가 같은 handoff를 만들 수

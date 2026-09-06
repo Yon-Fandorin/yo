@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::{
+use yo_core::{
     AccountId, ApiDialect, EffectiveModelBinding, EffectiveModelProfile, ModelCatalogEntry,
     ModelId, ModelProfileLayer, ModelProfileParameters, ModelServiceError, NormalizedEndpoint,
     ProviderId, VersionedProfileId,
@@ -115,6 +115,26 @@ pub struct QwenCloudCatalogSeed {
 }
 
 impl QwenCloudCatalogSeed {
+    /// Reconstructs and validates service configuration from neutral persisted catalog data.
+    pub fn from_connection_seed(
+        seed: &yo_core::ConnectionCatalogSeed,
+    ) -> Result<Option<Self>, ModelServiceError> {
+        if seed.provider().as_str() != "qwencloud" {
+            return Ok(None);
+        }
+        let Some(profile) = seed.built_in_profile() else {
+            return Ok(None);
+        };
+        Self::resolve(
+            profile.clone(),
+            seed.provider().clone(),
+            seed.account().clone(),
+            seed.provider_display_name().map(str::to_owned),
+            seed.account_display_name().map(str::to_owned),
+        )
+        .map(Some)
+    }
+
     pub fn resolve(
         profile: VersionedProfileId,
         provider: ProviderId,
@@ -163,8 +183,8 @@ impl QwenCloudCatalogSeed {
             )?);
         }
         models.sort_by(|left, right| {
-            crate::normalized_search_key(left.display_name())
-                .cmp(&crate::normalized_search_key(right.display_name()))
+            yo_core::normalized_search_key(left.display_name())
+                .cmp(&yo_core::normalized_search_key(right.display_name()))
                 .then_with(|| left.model_id().cmp(right.model_id()))
         });
         Ok(Self {
@@ -390,3 +410,6 @@ fn empty_parameters() -> ModelProfileParameters {
 fn valid_profile(value: &str) -> VersionedProfileId {
     VersionedProfileId::new(value).expect("the built-in profile identifier is valid")
 }
+
+#[cfg(test)]
+mod tests;

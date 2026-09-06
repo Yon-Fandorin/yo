@@ -5,10 +5,11 @@ use yo_backend_delegated_grok::{
     GrokBackendConfig, read_account_capacity as read_grok_account_capacity,
 };
 use yo_core::{
-    AccountCapacitySnapshot, AccountId, ApiCredential, CredentialSnapshot, KimiCatalogSeed,
+    AccountCapacitySnapshot, AccountId, ApiCredential, CredentialSnapshot,
     LocalConnectionOperationRepositories, LocalConnectionOperationSession,
-    LocalConnectionRepository, LocalCredentialRepository, ProviderId, read_kimi_account_capacity,
+    LocalConnectionRepository, LocalCredentialRepository, ProviderId,
 };
+use yo_provider_kimi::{KimiCatalogSeed, read_kimi_account_capacity};
 
 use super::{
     domain::{
@@ -257,7 +258,10 @@ pub(super) fn read_kimi_capacity(account: &str) -> Result<AccountCapacitySnapsho
         .capture()
         .map_err(|error| AppError::single("reading stored model connections", error))?;
     let seed = connections
-        .kimi_catalog_seed(&provider, &account)
+        .catalog_seed(&provider, &account)
+        .map(KimiCatalogSeed::from_connection_seed)
+        .transpose()
+        .map(Option::flatten)
         .map_err(|error| AppError::single("resolving the stored Kimi account", error))?;
     let seed = match seed {
         Some(seed) => Some(seed),

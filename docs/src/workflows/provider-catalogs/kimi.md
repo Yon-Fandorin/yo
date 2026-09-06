@@ -33,7 +33,7 @@ product. Treat every response byte as untrusted and bounded.
 
 | Responsibility | Owner |
 |---|---|
-| Product-specific Account seed, bounded discovery transport, normalization, reviewed overlays, and typed disabled reasons | [`kimi_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog.rs) and its `kimi_catalog/` children |
+| Product-specific Account seed, bounded discovery transport, normalization, reviewed overlays, and typed disabled reasons | [`catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/kimi/src/catalog.rs) and its `catalog/` children |
 | Exact Platform/Code profile admission, Kimi request and stream grammar, typed private payload codec/projection, and encoded-size accounting | [`connectors/kimi`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/kimi/src/lib.rs) |
 | Opaque provider-private envelope bounds, physical persistence, replay-profile/schema correlation, neutral projection comparison, and Provider-neutral per-Session cache-affinity hint creation | [`yo-backend evidence/replay.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence/replay.rs), [`yo-core backend/evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence.rs), [`journal/codec`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/codec), and [`backends/managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) |
 | Config seed, picker, disclosure, and recoverable connection transaction | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/config.rs), [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs), and [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/picker.rs) |
@@ -75,7 +75,7 @@ Focused checks:
 
 ```bash
 cargo test --locked -p yo-connector-kimi
-cargo test --locked -p yo-core kimi
+cargo test --locked -p yo-provider-kimi
 cargo test --locked -p yo-core journal::codec::tests::correlation::continuation
 cargo test --locked -p yo-core backend::native
 cargo test --locked -p yo-cli kimi

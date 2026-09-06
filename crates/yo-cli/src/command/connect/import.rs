@@ -253,6 +253,17 @@ fn resolve(decoded: Definition) -> Result<ImportedDefinition, AppError> {
             account_display_name,
         )
         .map_err(&invalid)?;
+        match catalog_seed.provider().as_str() {
+            "kimi" => {
+                yo_provider_kimi::KimiCatalogSeed::from_connection_seed(&catalog_seed)
+                    .map_err(&invalid)?;
+            },
+            "qwencloud" => {
+                yo_provider_qwencloud::QwenCloudCatalogSeed::from_connection_seed(&catalog_seed)
+                    .map_err(&invalid)?;
+            },
+            _ => return Err(AppError::message("unsupported built-in catalog Provider")),
+        }
         return Ok(ImportedDefinition {
             account: stored_account,
             bindings: Vec::new(),
@@ -280,7 +291,7 @@ fn resolve(decoded: Definition) -> Result<ImportedDefinition, AppError> {
         let profile =
             EffectiveModelProfile::resolve(Some(&base_profile), &ModelProfileLayer::default())
                 .map_err(&invalid)?;
-        let seed = ConnectionCatalogSeed::openrouter(
+        let seed = ConnectionCatalogSeed::discovery(
             provider,
             account,
             provider_display_name,
@@ -289,6 +300,8 @@ fn resolve(decoded: Definition) -> Result<ImportedDefinition, AppError> {
             profile,
         )
         .map_err(&invalid)?;
+        yo_provider_openrouter::OpenRouterDiscoverySeed::from_connection_seed(&seed)
+            .map_err(&invalid)?;
         return Ok(ImportedDefinition {
             account: stored_account,
             bindings: Vec::new(),

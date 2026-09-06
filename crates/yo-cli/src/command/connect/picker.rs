@@ -72,10 +72,12 @@ pub(crate) struct ModelPickerItem {
 }
 
 impl ModelPickerItem {
-    pub(crate) fn from_openrouter(model: &yo_core::OpenRouterDiscoveredModel) -> Self {
+    pub(crate) fn from_openrouter(
+        model: &yo_provider_openrouter::OpenRouterDiscoveredModel,
+    ) -> Self {
         let disabled_reason = match model.availability() {
-            yo_core::OpenRouterModelAvailability::Enabled => None,
-            yo_core::OpenRouterModelAvailability::Disabled(reason) => {
+            yo_provider_openrouter::OpenRouterModelAvailability::Enabled => None,
+            yo_provider_openrouter::OpenRouterModelAvailability::Disabled(reason) => {
                 Some(reason.as_str().to_owned())
             },
         };
@@ -97,10 +99,10 @@ impl ModelPickerItem {
         }
     }
 
-    pub(crate) fn from_qwencloud(model: &yo_core::QwenCloudCatalogModel) -> Self {
+    pub(crate) fn from_qwencloud(model: &yo_provider_qwencloud::QwenCloudCatalogModel) -> Self {
         let disabled_reason = match model.availability() {
-            yo_core::QwenCloudCatalogAvailability::Enabled => None,
-            yo_core::QwenCloudCatalogAvailability::Disabled(reason) => {
+            yo_provider_qwencloud::QwenCloudCatalogAvailability::Enabled => None,
+            yo_provider_qwencloud::QwenCloudCatalogAvailability::Disabled(reason) => {
                 Some(reason.as_str().to_owned())
             },
         };
@@ -120,10 +122,12 @@ impl ModelPickerItem {
         }
     }
 
-    pub(crate) fn from_kimi(model: &yo_core::KimiCatalogModel) -> Self {
+    pub(crate) fn from_kimi(model: &yo_provider_kimi::KimiCatalogModel) -> Self {
         let disabled_reason = match model.availability() {
-            yo_core::KimiCatalogAvailability::Enabled => None,
-            yo_core::KimiCatalogAvailability::Disabled(reason) => Some(reason.as_str().to_owned()),
+            yo_provider_kimi::KimiCatalogAvailability::Enabled => None,
+            yo_provider_kimi::KimiCatalogAvailability::Disabled(reason) => {
+                Some(reason.as_str().to_owned())
+            },
         };
         let mut badges = Vec::new();
         if model.recommended() {

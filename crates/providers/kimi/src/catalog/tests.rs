@@ -2,14 +2,12 @@ use std::{env, fs};
 
 use reqwest::{Client, redirect};
 use serde_json::json;
+use yo_core::{AccountId, ProviderId, VersionedProfileId};
+use yo_test_support::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
 
 use super::{
     KimiCatalogAvailability, KimiCatalogDisabledReason, KimiCatalogSeed,
     normalize::normalize_catalog,
-};
-use crate::{
-    AccountId, ProviderId, VersionedProfileId,
-    model_connector::tests::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child},
 };
 
 fn seed() -> KimiCatalogSeed {
@@ -253,9 +251,7 @@ fn direct_snapshot_parser_keeps_the_transport_byte_limit() {
 // 관찰해 production HTTP 경계가 pure snapshot parser와 따로 놀지 않는지 판별합니다.
 #[test]
 fn fetches_one_authenticated_kimi_inventory_over_local_tls() {
-    if run_in_tls_child(
-        "model_service::kimi_catalog::tests::fetches_one_authenticated_kimi_inventory_over_local_tls",
-    ) {
+    if run_in_tls_child("catalog::tests::fetches_one_authenticated_kimi_inventory_over_local_tls") {
         return;
     }
     let body = serde_json::to_vec(&json!({
@@ -275,7 +271,7 @@ fn fetches_one_authenticated_kimi_inventory_over_local_tls() {
         .retry(reqwest::retry::never())
         .build()
         .unwrap();
-    let url = crate::NormalizedEndpoint::parse(server.endpoint())
+    let url = yo_core::NormalizedEndpoint::parse(server.endpoint())
         .unwrap()
         .append_path_segment("models")
         .unwrap();
@@ -286,7 +282,7 @@ fn fetches_one_authenticated_kimi_inventory_over_local_tls() {
         .block_on(super::transport::fetch(
             &client,
             url,
-            &crate::ApiCredential::new("sentinel-kimi-catalog-key").unwrap(),
+            &yo_core::ApiCredential::new("sentinel-kimi-catalog-key").unwrap(),
         ))
         .unwrap();
     assert_eq!(received, body);
@@ -301,5 +297,36 @@ fn fetches_one_authenticated_kimi_inventory_over_local_tls() {
         !serde_json::to_string(&requests)
             .unwrap()
             .contains("sentinel-kimi-catalog-key")
+    );
+}
+// 중립 저장 seed의 정확한 Provider·Account·profile을 다시 검증해 같은 서비스 seed로 복원합니다.
+#[test]
+fn reconstructs_exact_neutral_catalog_seed() {
+    let neutral = yo_core::ConnectionCatalogSeed::built_in(
+        VersionedProfileId::new("kimi-code-membership/v1").unwrap(),
+        ProviderId::new("kimi").unwrap(),
+        AccountId::new("named").unwrap(),
+        Some("Service".to_owned()),
+        Some("Account".to_owned()),
+    )
+    .unwrap();
+    let seed = KimiCatalogSeed::from_connection_seed(&neutral)
+        .unwrap()
+        .unwrap();
+    assert_eq!(seed.provider(), neutral.provider());
+    assert_eq!(seed.account(), neutral.account());
+    assert_eq!(seed.profile(), neutral.built_in_profile().unwrap());
+    let other = yo_core::ConnectionCatalogSeed::built_in(
+        VersionedProfileId::new("qwencloud-token-plan-team-intl/v1").unwrap(),
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("named").unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        KimiCatalogSeed::from_connection_seed(&other)
+            .unwrap()
+            .is_none()
     );
 }

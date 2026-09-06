@@ -109,46 +109,15 @@ impl ConnectionSnapshot {
         &self.catalog_seeds
     }
 
-    pub fn openrouter_discovery_seed(
+    /// Returns only the exact Provider-and-Account persisted seed, without service resolution.
+    pub fn catalog_seed(
         &self,
         provider: &super::ProviderId,
         account: &super::AccountId,
-    ) -> Result<Option<super::OpenRouterDiscoverySeed>, ConnectionRepositoryError> {
+    ) -> Option<&ConnectionCatalogSeed> {
         self.catalog_seeds
             .iter()
             .find(|seed| seed.provider() == provider && seed.account() == account)
-            .map(ConnectionCatalogSeed::openrouter_seed)
-            .transpose()
-            .map_err(|_| ConnectionRepositoryError::InvalidMutation)
-            .map(Option::flatten)
-    }
-
-    pub fn qwencloud_catalog_seed(
-        &self,
-        provider: &super::ProviderId,
-        account: &super::AccountId,
-    ) -> Result<Option<super::QwenCloudCatalogSeed>, ConnectionRepositoryError> {
-        self.catalog_seeds
-            .iter()
-            .find(|seed| seed.provider() == provider && seed.account() == account)
-            .map(ConnectionCatalogSeed::qwencloud_seed)
-            .transpose()
-            .map_err(|_| ConnectionRepositoryError::InvalidMutation)
-            .map(Option::flatten)
-    }
-
-    pub fn kimi_catalog_seed(
-        &self,
-        provider: &super::ProviderId,
-        account: &super::AccountId,
-    ) -> Result<Option<super::KimiCatalogSeed>, ConnectionRepositoryError> {
-        self.catalog_seeds
-            .iter()
-            .find(|seed| seed.provider() == provider && seed.account() == account)
-            .map(ConnectionCatalogSeed::kimi_seed)
-            .transpose()
-            .map_err(|_| ConnectionRepositoryError::InvalidMutation)
-            .map(Option::flatten)
     }
 
     pub fn model_catalog(&self) -> Result<ModelCatalog, ConnectionRepositoryError> {

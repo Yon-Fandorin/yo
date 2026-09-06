@@ -16,8 +16,8 @@ OpenRouter의 공식
 
 | 책임 | 소유자 |
 |---|---|
-| 크기가 제한된 authenticated transport | [`openrouter_discovery/transport.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery/transport.rs) |
-| Response parsing, normalization, availability, authored override | [`openrouter_discovery.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery.rs)와 [`openrouter_discovery/normalize.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery/normalize.rs) |
+| 크기가 제한된 authenticated transport | [`discovery/transport.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/openrouter/src/discovery/transport.rs) |
+| Response parsing, normalization, availability, authored override | [`discovery.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/openrouter/src/discovery.rs)와 [`discovery/normalize.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/openrouter/src/discovery/normalize.rs) |
 | 설정된 discovery seed | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/config.rs) |
 | Connect orchestration과 picker handoff | [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs)와 [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/picker.rs) |
 
@@ -41,7 +41,7 @@ OpenRouter의 공식
 집중 검사:
 
 ```bash
-cargo test --locked -p yo-core openrouter_discovery
+cargo test --locked -p yo-provider-openrouter
 cargo test --locked -p yo-cli command::connect::external::discovery_tests
 cargo test --locked -p yo-cli command::connect::picker
 ```
