@@ -25,7 +25,7 @@ const TEMP_DIRECTORY_CREATE_ATTEMPTS: usize = 16;
 static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[allow(dead_code)]
-pub(crate) enum LocalServerMode {
+pub(super) enum LocalServerMode {
     Success {
         body: Vec<u8>,
         content_type: String,
@@ -63,7 +63,7 @@ pub(crate) enum LocalServerMode {
     TlsHandshakeStall,
 }
 
-pub(crate) struct LocalTlsServer {
+pub(super) struct LocalTlsServer {
     _child: ChildGuard,
     _root: TempDirectory,
     requests: PathBuf,
@@ -74,7 +74,7 @@ pub(crate) struct LocalTlsServer {
 }
 
 impl LocalTlsServer {
-    pub(crate) fn start(mode: LocalServerMode) -> Self {
+    pub(super) fn start(mode: LocalServerMode) -> Self {
         let certificate = env::var_os("YO_MODEL_CONNECTOR_TEST_CERT")
             .expect("the local TLS child must provide its test certificate path");
         let key = env::var_os("YO_MODEL_CONNECTOR_TEST_KEY")
@@ -220,29 +220,29 @@ impl LocalTlsServer {
         }
     }
 
-    pub(crate) fn endpoint(&self) -> &str {
+    pub(super) fn endpoint(&self) -> &str {
         &self.endpoint
     }
 
-    pub(crate) fn wait_for_response_sent(&self) {
+    pub(super) fn wait_for_response_sent(&self) {
         self.wait_for_marker(
             &self.sent,
             "local TLS listener did not report its response boundary",
         );
     }
 
-    pub(crate) fn wait_for_peer_closed(&self) {
+    pub(super) fn wait_for_peer_closed(&self) {
         self.wait_for_marker(
             &self.closed,
             "local TLS listener did not observe the connector closing its peer",
         );
     }
 
-    pub(crate) fn accepted_connections(&self) -> usize {
+    pub(super) fn accepted_connections(&self) -> usize {
         self.marker_count(&self.accepted)
     }
 
-    pub(crate) fn requests(&self) -> Vec<serde_json::Value> {
+    pub(super) fn requests(&self) -> Vec<serde_json::Value> {
         let mut source = String::new();
         File::open(&self.requests)
             .unwrap()
@@ -1033,7 +1033,7 @@ fn generates_current_server_auth_material_that_expires_within_apple_limit() {
 
 // OS별 platform verifier의 SSL_CERT_FILE 해석에 의존하지 않고, child process의 test-only
 // client에만 ephemeral root를 명시적으로 더해 HTTPS loopback listener를 띄웁니다.
-pub(crate) fn run_in_tls_child(test_name: &str) -> bool {
+pub(super) fn run_in_tls_child(test_name: &str) -> bool {
     if env::var_os("YO_MODEL_CONNECTOR_TEST_CHILD").is_some() {
         let marker = env::var_os("YO_MODEL_CONNECTOR_TEST_MARKER")
             .expect("the local TLS child must provide its execution marker path");

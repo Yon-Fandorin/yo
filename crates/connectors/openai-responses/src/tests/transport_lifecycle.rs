@@ -11,7 +11,9 @@ use yo_core::{
     ModelConnectorTerminal, ModelId, NormalizedEndpoint, ProviderId, RequestToolExposure,
 };
 
-use super::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
+mod local_tls;
+
+use self::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
 use crate::OpenAiResponsesConnector;
 
 fn event(value: Value) -> String {

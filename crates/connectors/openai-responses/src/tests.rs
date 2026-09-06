@@ -9,7 +9,6 @@ use yo_core::{
 use super::*;
 
 mod bounds_cancellation;
-mod local_tls;
 mod transport_lifecycle;
 
 fn responses_binding(model: &str) -> EffectiveModelBinding {
