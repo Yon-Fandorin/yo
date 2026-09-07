@@ -6,7 +6,8 @@ use super::{
 };
 use crate::{
     appearance::{
-        ActivityMotionFrame, ActivityStyles, AppearanceCandidate, AppearanceState, GlyphProfile,
+        ActivityMotionFrame, ActivityStyles, AppearanceCandidate, AppearanceState, ColorCapability,
+        GlyphProfile, MotionPreference,
     },
     input::editor::binding::NewlineBinding,
     runner::PresentationMode,
@@ -136,10 +137,9 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
     assert_eq!(row(&minimal), "Esc/^C");
 }
 
-// Working 문구와 marker는 같은 elapsed 표본을 사용하며, marker frame이 바뀌어도
-// label 내용과 16ms repaint 요구는 유지되고 각 frame의 marker cell은 같은 pulse를 쓴다.
+// marker는 회전하지만 Working의 내용·좌표·색상·굵기는 그대로 유지한다.
 #[test]
-fn working_row_animates_marker_frames_and_text_sheen_from_one_elapsed_sample() {
+fn working_row_animates_marker_without_changing_label_ink() {
     let styles = ShellChromeStyles {
         activity: ActivityStyles {
             marker: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
@@ -183,14 +183,81 @@ fn working_row_animates_marker_frames_and_text_sheen_from_one_elapsed_sample() {
         row(&second).split_once(' ').unwrap().1
     );
     assert_ne!(first, second);
-    assert_eq!(row(&first), "⠦ Working");
-    assert_eq!(row(&second), "⠹ Working");
-    assert!((0..9).any(|x| {
-        first.cell(Point::new(x, 0)).unwrap().style()
-            != second.cell(Point::new(x, 0)).unwrap().style()
-    }));
+    assert_eq!(row(&first), "⠴ Working");
+    assert_eq!(row(&second), "⠙ Working");
+    for x in 2..9 {
+        assert_eq!(first.cell(Point::new(x, 0)), second.cell(Point::new(x, 0)));
+        assert_eq!(
+            first.cell(Point::new(x, 0)).unwrap().style(),
+            styles.activity.marker
+        );
+    }
     assert_eq!(first_period, Some(Duration::from_millis(16)));
     assert_eq!(second_period, first_period);
+}
+
+// 단어 전체가 같은 색으로 밝아지되 좌표와 굵기는 고정된다. fallback은 정적이며
+// marker가 없는 좁은 행도 TrueColor의 전체 단어 pulse에만 repaint를 요청한다.
+#[test]
+fn working_label_stays_identical_across_entire_motion_cycles() {
+    for capability in [
+        ColorCapability::TrueColor,
+        ColorCapability::Limited,
+        ColorCapability::Unknown,
+    ] {
+        let appearance =
+            AppearanceState::new(AppearanceCandidate::for_profile_with_host_preferences(
+                GlyphProfile::Rich,
+                capability,
+                MotionPreference::Standard,
+            ))
+            .unwrap();
+        let pin = appearance.pin();
+        let styles = pin.snapshot().styles().chrome;
+        for width in [7, 32] {
+            let mut baseline: Option<Surface> = None;
+            for millis in (0..=4000).step_by(16) {
+                let mut surface = Surface::new(Size::new(width, 1)).unwrap();
+                let period = paint_transient(
+                    &mut surface
+                        .view(Rect::new(Point::new(0, 0), Size::new(width, 1)))
+                        .unwrap(),
+                    snapshot("codex", "~/projects/yo"),
+                    styles,
+                    pin.snapshot()
+                        .activity_motion_frame(Duration::from_millis(millis)),
+                    false,
+                )
+                .unwrap();
+                let start = if width == 7 { 0 } else { 2 };
+                assert_eq!(
+                    row(&surface).chars().position(|c| c == 'W'),
+                    Some(usize::from(start))
+                );
+                assert_eq!(
+                    period.is_some(),
+                    width != 7 || capability == ColorCapability::TrueColor
+                );
+                if let Some(first) = &baseline {
+                    for x in start..start + 7 {
+                        let cell = surface.cell(Point::new(x, 0)).unwrap();
+                        let initial = first.cell(Point::new(x, 0)).unwrap();
+                        assert_eq!(cell.content(), initial.content());
+                        assert_eq!(cell.style().attributes, initial.style().attributes);
+                        assert_eq!(
+                            cell.style(),
+                            surface.cell(Point::new(start, 0)).unwrap().style()
+                        );
+                        if capability != ColorCapability::TrueColor {
+                            assert_eq!(cell, initial);
+                        }
+                    }
+                } else {
+                    baseline = Some(surface);
+                }
+            }
+        }
+    }
 }
 
 // 현재 frame이 폭 2인 한글·두 ASCII grapheme·폭 1인 점으로 바뀌어도 최대 2셀 marker

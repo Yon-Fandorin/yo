@@ -6,6 +6,7 @@ mod exit;
 mod help;
 mod model;
 mod palette;
+mod preview;
 mod registry;
 
 pub(crate) use definition::{CommandDefinition, CommandEffect, CommandId};

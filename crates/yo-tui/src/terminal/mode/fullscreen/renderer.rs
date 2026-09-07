@@ -10,6 +10,9 @@ use crate::{
     terminal::{AnsiEncodeError, AnsiEncoder, TerminalOp, TerminalOps},
 };
 
+const BEGIN_UPDATE: &[u8] = b"\x1b[?2026h";
+const END_UPDATE: &[u8] = b"\x1b[?2026l";
+
 #[derive(Debug)]
 pub(crate) enum FullscreenRenderError {
     AlternateScreenNotOwned,
@@ -56,12 +59,14 @@ impl From<AnsiEncodeError> for FullscreenRenderError {
 
 pub(crate) struct FullscreenRenderer<Writer> {
     ansi: AnsiEncoder<Writer>,
+    frame_bytes: Vec<u8>,
 }
 
 impl<Writer: Write> FullscreenRenderer<Writer> {
     pub(crate) const fn new(writer: Writer) -> Self {
         Self {
             ansi: AnsiEncoder::new(writer),
+            frame_bytes: Vec::new(),
         }
     }
 
@@ -73,12 +78,33 @@ impl<Writer: Write> FullscreenRenderer<Writer> {
     ) -> Result<(), FullscreenRenderError> {
         let cursor = pending.cursor();
         let operations = TerminalOps::from_diff(&pending.diff(previous, current)?);
-        self.ansi.encode(&operations)?;
-        self.ansi.encode_operations(&[TerminalOp::MoveTo(cursor)])?;
-        self.ansi
+        self.frame_bytes.clear();
+        self.frame_bytes.extend_from_slice(BEGIN_UPDATE);
+        let mut encoder = AnsiEncoder::new(&mut self.frame_bytes);
+        encoder.encode(&operations)?;
+        encoder.encode_operations(&[TerminalOp::MoveTo(cursor)])?;
+        self.frame_bytes.extend_from_slice(END_UPDATE);
+        // Batch writes alone do not prevent the terminal from displaying a
+        // partially updated word. Include the diff and final cursor in one
+        // synchronized update; unsupported terminals may ignore the mode.
+        let result = self
+            .ansi
             .writer_mut()
-            .flush()
-            .map_err(FullscreenRenderError::Flush)?;
+            .write_all(&self.frame_bytes)
+            .map_err(|error| FullscreenRenderError::Ansi(AnsiEncodeError::Io(error)))
+            .and_then(|()| {
+                self.ansi
+                    .writer_mut()
+                    .flush()
+                    .map_err(FullscreenRenderError::Flush)
+            });
+        if let Err(error) = result {
+            // A partial write can leave update mode enabled. Best-effort release
+            // must not commit the frame or replace the original output error.
+            let _ = self.ansi.writer_mut().write_all(END_UPDATE);
+            let _ = self.ansi.writer_mut().flush();
+            return Err(error);
+        }
         pending.commit();
         Ok(())
     }

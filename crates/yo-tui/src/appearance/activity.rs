@@ -73,6 +73,7 @@ struct ActivityMarkerFrame {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ActivityMotionFrame<'frame> {
     marker: &'frame str,
+    marker_interval: Option<Duration>,
     marker_width: u16,
     reserved_marker_width: u16,
     repaint_interval: Duration,
@@ -139,6 +140,12 @@ impl ActivityMotionProfile {
         }
     }
 
+    pub(super) fn with_marker_interval(mut self, interval: Duration) -> Self {
+        self.marker_interval = interval;
+        self.validate().expect("built-in cadence must be valid");
+        self
+    }
+
     pub(super) fn validate(&self) -> Result<(), AppearanceCandidateError> {
         if self.repaint_interval < MINIMUM_REPAINT_INTERVAL {
             return Err(AppearanceCandidateError::ActivityRepaintIntervalTooFast {
@@ -170,6 +177,8 @@ impl ActivityMotionProfile {
         let marker = &self.marker_frames[index];
         ActivityMotionFrame {
             marker: &marker.text,
+            marker_interval: (!self.reduced_motion && self.marker_frames.len() > 1)
+                .then_some(self.marker_interval),
             marker_width: marker.width,
             reserved_marker_width: self.reserved_marker_width,
             repaint_interval: self.repaint_interval,
@@ -209,6 +218,7 @@ impl<'frame> ActivityMotionFrame<'frame> {
     pub(crate) const fn still(marker: &'frame str) -> Self {
         Self {
             marker,
+            marker_interval: None,
             marker_width: 1,
             reserved_marker_width: 1,
             repaint_interval: BUILT_IN_REPAINT_INTERVAL,
@@ -223,6 +233,10 @@ impl<'frame> ActivityMotionFrame<'frame> {
 
     pub(crate) const fn marker(self) -> &'frame str {
         self.marker
+    }
+
+    pub(crate) const fn marker_interval(self) -> Option<Duration> {
+        self.marker_interval
     }
 
     pub(crate) const fn marker_width(self) -> u16 {
@@ -255,15 +269,30 @@ impl<'frame> ActivityMotionFrame<'frame> {
     }
 
     pub(crate) fn marker_style(self, styles: ActivityStyles) -> Style {
-        let intensity = self.sheen(1).map_or(0.0, |sheen| sheen.intensity_at(0));
-        resolve_style(
-            styles,
-            styles.marker,
-            self.color_capability,
-            self.base_rgb,
-            self.highlight_rgb,
-            intensity,
+        self.static_style(styles)
+    }
+
+    pub(crate) fn label_style(self, styles: ActivityStyles) -> Style {
+        // Pulse the entire word without moving a highlight or changing font weight.
+        if self.reduced_motion || self.color_capability != ColorCapability::TrueColor {
+            return styles.marker;
+        }
+        let phase = (self.elapsed.as_nanos() % self.sweep_period.as_nanos()) as f64
+            / self.sweep_period.as_nanos() as f64;
+        let intensity = 0.5 * (1.0 - (2.0 * PI * phase).cos());
+        Style::new(
+            self.base_rgb.blend(self.highlight_rgb, intensity),
+            styles.marker.background,
+            styles.marker.attributes,
         )
+    }
+
+    pub(crate) const fn label_period(self) -> Option<Duration> {
+        if !self.reduced_motion && matches!(self.color_capability, ColorCapability::TrueColor) {
+            Some(self.repaint_interval)
+        } else {
+            None
+        }
     }
 
     pub(crate) fn static_style(self, styles: ActivityStyles) -> Style {

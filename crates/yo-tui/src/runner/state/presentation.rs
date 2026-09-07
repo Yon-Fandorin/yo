@@ -49,6 +49,7 @@ pub(in crate::runner) struct PreparedFrame {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::runner) struct MotionDemand {
     period: Duration,
+    marker_period: Option<Duration>,
 }
 
 impl TuiState {
@@ -115,6 +116,16 @@ impl TuiState {
         after_measure: impl FnOnce(),
     ) -> Result<PreparedFrame, FrameError> {
         let snapshot = appearance.snapshot();
+        if let Some(preview) = self.preview.as_ref() {
+            return preview.state.prepare_frame_at_with_measure_hook(
+                size,
+                appearance,
+                elapsed,
+                geometry_epoch,
+                false,
+                after_measure,
+            );
+        }
         let publication_eligible = publication_enabled
             && self.presentation_mode == PresentationMode::Inline
             && self.views.inline_publication_eligible();
@@ -189,7 +200,10 @@ impl TuiState {
             publication,
             cursor: frame.cursor,
             appearance_revision: appearance.revision(),
-            motion_demand: frame.motion_period.map(|period| MotionDemand { period }),
+            motion_demand: frame.motion_period.map(|period| MotionDemand {
+                period,
+                marker_period: snapshot.activity_motion_frame(elapsed).marker_interval(),
+            }),
             view_state: frame.state,
             overlay_presented: frame.overlay_presented,
             overlay_presentation,
@@ -211,6 +225,10 @@ impl TuiState {
 }
 
 impl MotionDemand {
+    pub(in crate::runner) const fn marker_period(self) -> Option<Duration> {
+        self.marker_period
+    }
+
     pub(in crate::runner) const fn period(self) -> Duration {
         self.period
     }

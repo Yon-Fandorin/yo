@@ -64,6 +64,45 @@ fn rendered_row(surface: &Surface, y: u16) -> String {
         .to_owned()
 }
 
+// 질문 띠는 줄바꿈된 요청의 빈 끝 칸까지 채우되 구분 행과 답변에는 번지지 않는다.
+// 작은 viewport에서도 보이는 요청 행만 칠해 스크롤 경계를 보존한다.
+#[test]
+fn user_band_covers_wrapped_rows_without_bleeding_into_response() {
+    let mut transcript = TranscriptState::new();
+    transcript.push_user(id(1), "123456789".to_owned()).unwrap();
+    transcript.start_assistant(id(2)).unwrap();
+    transcript.append_text(id(2), "done").unwrap();
+    let mut palette = styles();
+    palette.user_body.background = Color::Indexed(236);
+    palette.user_marker.background = Color::Indexed(236);
+    for height in [3, 5] {
+        let size = Size::new(8, height);
+        let mut surface = Surface::new(size).unwrap();
+        let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
+        let frame = render(
+            &transcript,
+            &mut view,
+            &TranscriptLayoutConfig::default(),
+            palette,
+            &mut TranscriptViewState::default(),
+            None,
+        )
+        .unwrap();
+        for y in 0..height {
+            let source_row = frame.first_visible_row + y;
+            let expected = if source_row < 2 {
+                Color::Indexed(236)
+            } else {
+                Color::Default
+            };
+            assert_eq!(
+                surface.cell(Point::new(7, y)).unwrap().style().background,
+                expected
+            );
+        }
+    }
+}
+
 // 기본 설정은 rib의 마커와 2열 본문 시작점을 쓰되 본문 폭을 임의로 제한하지 않는다.
 #[test]
 fn defaults_to_rich_markers_without_a_body_width_cap() {

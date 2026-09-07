@@ -132,7 +132,7 @@ fn projects_fake_backend_coding_activities_through_core_into_tui() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(rows.contains("Running tool…"));
+    assert!(rows.contains("Tool completed"));
     assert!(rows.contains("$ cargo test"));
     assert!(rows.contains("File change observed"));
     assert!(rows.contains("update: src/lib.rs"));

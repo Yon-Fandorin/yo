@@ -2,12 +2,13 @@
 
 use std::{collections::HashSet, sync::OnceLock};
 
-use super::{CommandDefinition, compact, exit, help, model};
+use super::{CommandDefinition, compact, exit, help, model, preview};
 
 const ORDERED_DEFINITIONS: &[&CommandDefinition] = &[
     &help::DEFINITION,
     &model::DEFINITION,
     &compact::DEFINITION,
+    &preview::DEFINITION,
     &exit::DEFINITION,
 ];
 

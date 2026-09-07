@@ -97,6 +97,7 @@ pub(super) enum LoopError {
 impl LoopError {
     pub(super) fn detail(&self) -> String {
         match self {
+            Self::State(StateError::PreviewAgent) => "offline preview agent failed".to_owned(),
             Self::Input(error) => format!("reading terminal input failed: {error}"),
             Self::Agent(error) => format!("communicating with the agent failed: {error}"),
             Self::State(StateError::Transcript(error)) => {
@@ -330,6 +331,9 @@ where
     frames.request(FrameRequest::Immediate);
 
     loop {
+        if state.tick_preview().map_err(LoopError::State)? {
+            frames.request(FrameRequest::Coalesced);
+        }
         request_due_motion(
             &mut frames,
             presentation.frame_visible,
@@ -380,9 +384,13 @@ where
         }
         let backpressured = pending_control.is_some() || pending_dispatch.is_some();
         let base = backpressured.then_some(WORKER_RETRY_INTERVAL);
+        let motion_or_preview_deadline = [presentation.motion_deadline, state.preview_deadline()]
+            .into_iter()
+            .flatten()
+            .min();
         let timeout = wait_timeout(
             base,
-            presentation.motion_deadline,
+            motion_or_preview_deadline,
             frames.deadline(Instant::now()),
         );
         let observation = match poll_ordinary(

@@ -16,6 +16,31 @@ mod help;
 
 const WORKING_LABEL: &str = "Working";
 
+pub(super) fn paint_welcome(
+    view: &mut SurfaceView<'_>,
+    styles: ShellChromeStyles,
+) -> Result<(), ShellChromeError> {
+    for (row, text, style) in [
+        (0, "yo  /  Let's build something.", styles.key_hint),
+        (2, "Ask a question. Describe a change.", styles.metrics),
+    ] {
+        let mut line = view
+            .subview(Rect::new(
+                Point::new(0, row),
+                Size::new(view.size().width, 1),
+            ))
+            .expect("welcome is shown only when three rows are available");
+        let width = NonZeroU16::new(line.size().width).expect("welcome has a readable width");
+        paint_flow(
+            &mut line,
+            flow_text(text, width).map_err(ShellChromeError::Text)?,
+            0,
+            style,
+        )?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ShellChromeSnapshot<'value> {
     pub(crate) turn_active: bool,
@@ -258,7 +283,6 @@ fn paint_fitting_activity_row(
         return Ok(None);
     };
     let candidate = &candidates[index];
-    let sheen = candidate.working.and_then(|(_, count)| motion.sheen(count));
     let base = motion.static_style(styles.activity);
     if view.clear(base) == WriteOutcome::Clipped {
         return Err(ShellChromeError::SurfaceConflict);
@@ -277,13 +301,10 @@ fn paint_fitting_activity_row(
             .is_some_and(|marker| marker.contains(&grapheme_index))
         {
             motion.marker_style(styles.activity)
-        } else if let (Some((start, count)), Some(sheen)) = (candidate.working, sheen) {
-            let end = start.saturating_add(count);
-            if (start..end).contains(&grapheme_index) {
-                sheen.style_at(grapheme_index - start, styles.activity)
-            } else {
-                base
-            }
+        } else if candidate.working.is_some_and(|(start, count)| {
+            (start..start.saturating_add(count)).contains(&grapheme_index)
+        }) {
+            motion.label_style(styles.activity)
         } else {
             base
         };
@@ -291,9 +312,13 @@ fn paint_fitting_activity_row(
             return Err(ShellChromeError::SurfaceConflict);
         }
     }
-    Ok((candidate.marker.is_some() || sheen.is_some())
-        .then(|| motion.period())
-        .flatten())
+    Ok(if candidate.marker.is_some() {
+        motion.period()
+    } else if candidate.working.is_some() {
+        motion.label_period()
+    } else {
+        None
+    })
 }
 
 struct ActivityRowCandidate {

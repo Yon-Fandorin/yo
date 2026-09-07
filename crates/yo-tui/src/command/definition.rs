@@ -5,6 +5,7 @@ pub(crate) enum CommandId {
     Help,
     Model,
     Compact,
+    Preview,
     Exit,
 }
 
@@ -13,6 +14,7 @@ pub(crate) enum CommandEffect {
     ShowHelp,
     SelectModel,
     CompactContext,
+    OpenPreview,
     ExitProcess,
 }
 

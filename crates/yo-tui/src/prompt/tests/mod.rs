@@ -80,6 +80,26 @@ fn rendered_text(surface: &Surface, y: u16) -> String {
         .collect()
 }
 
+// 빈 입력 안내는 편집 버퍼와 cursor를 바꾸지 않고, 입력 후 같은 Surface에서 사라진다.
+#[test]
+fn placeholder_is_paint_only_and_clears_when_typing() {
+    let size = Size::new(40, 3);
+    let mut surface = Surface::new(size).unwrap();
+    let mut state = PromptViewState::default();
+    let empty = PromptEditor::new();
+    let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
+    let frame = render(&empty, &mut view, prompt_styles(), &mut state).unwrap();
+    assert_eq!(frame.cursor, Point::new(2, 1));
+    assert!(empty.text().is_empty());
+    assert!(rendered_text(&surface, 1).contains("Ask anything"));
+
+    let editor = editor_with("hello");
+    let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
+    let frame = render(&editor, &mut view, prompt_styles(), &mut state).unwrap();
+    assert_eq!(frame.cursor, Point::new(7, 1));
+    assert_eq!(rendered_text(&surface, 1), "›hello");
+}
+
 // Rich 입력 chrome은 위·아래 rule 사이 첫 행에 `› ` 2칸 prefix를 두고,
 // 검증된 본문 grapheme과 cursor를 그 안쪽 좌표로 옮겨 입력창의 시각 계약을 보호한다.
 #[test]

@@ -73,6 +73,126 @@ prerequisites fail the command rather than skip its assertions; record the
 host/platform, prerequisite versions, and pass/unverified result for each
 validation run.
 
+## Chat visual previews
+
+### Interactive test agent
+
+Inside the actual `yo` chat, enter `/preview`. This opens an isolated, ephemeral
+child TUI state with an offline test agent; no Python launcher or separate app
+is involved. Type any text for streamed replies, or send `tools`, `error`, or
+`long` for simulated tool output, failure/recovery, and scrolling. These scenario
+names are ordinary messages inside the sandbox. `Esc` interrupts. `/preview`,
+`/exit`, or the empty-prompt exit gesture returns to the original conversation.
+Entry is rejected while a real turn, submission, or request is pending.
+
+The parent continues to own real observations and session output. Preview
+commands and synthetic records stay on the child; frame preparation pins the
+same appearance and disables preview scrollback publication. Preview draft,
+transcript, and navigation are discarded on return. The original conversation
+is preserved; the command text itself is consumed. Editing, paste, resize,
+view navigation, and rendering use the production TUI. Busy submissions are
+explicitly rejected with the sandbox draft retained; steering, approvals,
+provider behavior, persistence, and real tool execution are not simulated.
+An idle preview does not arm a periodic poll. Pending synthetic output supplies
+its own deadline, combined with motion and real-agent backpressure deadlines.
+
+Implementation: `command/preview.rs` registers the command;
+`runner/state/preview.rs` owns isolation and lifecycle;
+`runner/preview_agent.rs` owns synthetic event generation. Check with
+`cargo test --locked -p yo-tui` and the neighboring `yo-cli` PTY tests.
+
+### Static comparison fixtures
+
+For activity regressions, `runner::tests::activity_projection` checks that
+completion, failure, and interruption clear the `Working` row and motion demand,
+and that terminal tool headings replace progress labels without changing payload.
+`terminal::mode::fullscreen` tests frame-batched ANSI output and recovery after
+partial writes or failed flushes. Fullscreen frames wrap both the diff and final
+cursor in synchronized-output begin/end sequences (CSI ?2026h/l), then write the
+batch. This keeps intermediate label updates hidden on supporting terminals;
+batching alone is not a guarantee of atomic display. A write/flush failure attempts
+to release synchronization without replacing the original error or committing the
+frame. Unsupported terminals and persistent I/O failures remain host limitations.
+The inline renderer is unchanged by this fullscreen-specific refinement.
+
+The user-requested Rich spinner refinement uses `⠋ ⠙ ⠸ ⠴ ⠦ ⠇`, keeping
+three dots and rotating one perimeter position per frame, including wraparound.
+Each step is 133,333,333 ns (approximately 800 ms per revolution); ASCII keeps
+80 ms. `appearance::tests` verifies dot masks, cadence boundaries, and cell width.
+
+Marker transitions have their own deadlines, independent of the 16 ms sheen
+tick. The scheduler reserves the next marker slot using the FPS interval and
+last observed render cost, merging nearby ordinary redraws into that slot.
+`runner::unix::timing::output_timing` checks real ANSI writes against a virtual
+clock at 60/120fps, with 7 ms input requests and fixed 0/2 ms write costs.
+Variable host or terminal latency can still introduce visible jitter.
+
+The shell `Working` label pulses uniformly as a whole in TrueColor; its position
+and font weight remain fixed. Limited/Unknown color modes use static label ink.
+The marker rotates at constant brightness. `shell::chrome::tests` checks uniform
+label color and stable geometry/weight over two cycles, including narrow rows.
+The runner starts a new visible turn at its first marker and keeps that epoch
+across redraws within the terminal generation. `timing::motion_tests` checks
+identity transitions; `runner::tests::reentry` checks the first presented glyph
+with an old generation timestamp. Input timing retains the generation clock.
+These local refinements differ from the accepted motion contract below;
+selection-panel title sheen remains unchanged.
+
+For comparison, pi's [default Loader](https://github.com/badlogic/pi-mono/blob/main/packages/tui/src/components/loader.ts)
+uses ten frames at 80 ms and increments the index on each timer callback.
+Yo intentionally keeps six frames and elapsed-time selection, so late wakes can
+skip phases rather than replay them. Both pi's [main-screen renderer](https://github.com/badlogic/pi-mono/blob/main/packages/tui/src/tui-main-screen.ts)
+and yo's fullscreen renderer use synchronized output; this does not establish
+identical visual motion or prove that host-level glyph jitter is resolved.
+
+This worktree change supersedes the old ten-frame choice for this request;
+the accepted Methexis checkpoint still describes the old profile and has not
+been reactivated. Authority reconciliation remains required before integration.
+
+For a terminal feedback loop, run `python3 tools/chat_preview.py` from the
+checkout. It builds on first use and opens an alternate-screen viewer without
+calling a model. Keys: `1` welcome, `2` conversation, `3` working, `w` width,
+`c` color/ASCII, `b` rebuild, `r` reload, `s` snapshot, `q` exit. The viewer
+requires at least the selected width and 28 rows; it reports smaller geometry
+instead of painting a clipped fixture. It restores terminal settings on normal
+exit or a Python exception.
+
+Keep that viewer open while changing code. From another pane or an agent, run
+`python3 tools/chat_preview.py --build-only`: after a successful renderer test,
+the viewer automatically reloads the published generation while preserving its
+selected scenario, width, and palette. Failed or incomplete builds never replace
+the last successful generation. Logs, immutable generations, and snapshots live
+under ignored `target/chat-preview/`; `--directory` selects another local output
+directory. A snapshot contains `frame.ansi`, `frame.html`, and `frame.json` with
+the exact generation and selected fixture, so feedback can identify one screen.
+Artifacts are retained until manually cleaned; this tool never controls tmux,
+sends keystrokes to another process, or accepts live chat input.
+
+Validate the feedback tool itself with
+`python3 -m unittest discover -s tools -p test_chat_preview.py` (Unix PTY required).
+
+Run `YO_TUI_PREVIEW_DIR=/tmp/yo-chat-preview cargo test --locked -p yo-tui chat_preview`
+and open `/tmp/yo-chat-preview/chat.html`. The test exports real Session-to-Surface
+frames for empty, conversation, and working states at 20, 40, and 88 columns,
+with true color and ASCII/unknown-color fallbacks. Individual HTML files make
+focused screenshots easier. The surrounding browser card is fixture chrome,
+not terminal UI; its default background models one host theme.
+Matching `.ansi` files use the production `FrameDiff` → `TerminalOps` →
+`AnsiEncoder` path and can be replayed in a cleared terminal at least as large
+as the fixture. They contain absolute cursor positions: use an alternate-screen
+viewer that restores terminal state on exit. This is static frame playback,
+not a live agent or a public `yo preview` command.
+
+Inspect request-band contrast, quiet answer text, prompt rules, and key hints.
+Visual references are the official [Claude Code terminal refresh](https://www.anthropic.com/news/enabling-claude-code-to-work-more-autonomously)
+and [Cursor CLI Ask mode](https://cursor.com/changelog/cli-jan-16-2026)
+screenshots: borrow restrained emphasis, clear input boundaries, and nearby
+action hints, not unsupported controls or their branding. Wide idle frames
+expose `@ files`; narrower frames fall back to essential keyboard help.
+The test also checks that welcome and placeholder copy never enter conversation
+output. These previews do not establish real-terminal lifecycle or compatibility
+with every host palette; use the terminal evidence layers above for those claims.
+
 ## Reading a result
 
 - **Passed** means the named command ran its assertions successfully in the

@@ -70,6 +70,115 @@ serve하기 위해 외부 `python3`와 `openssl` 명령을 요구한다. 필수 
 없으면 assertion을 skip하지 않고 명령이 실패한다. 각 validation 실행마다
 host/platform, prerequisite version, passed/unverified 결과를 기록한다.
 
+## 채팅 시각 preview
+
+### 대화형 테스트 에이전트
+
+실제 `yo` 채팅에서 `/preview`를 입력한다. 별도 Python launcher나 앱 없이
+격리된 임시 child TUI state와 오프라인 테스트 에이전트가 열린다. 임의의 텍스트로
+스트리밍 응답을 받거나 `tools`, `error`, `long`으로 모의 도구 출력·실패 복구·스크롤을
+확인한다. 시나리오 이름은 sandbox 안의 일반 메시지다. `Esc`는 중단이며,
+`/preview`, `/exit`, 빈 입력창 종료 동작은 원래 대화로 돌아간다.
+실제 Turn·submission·request가 대기 중이면 진입을 거절한다.
+
+parent가 실제 observation과 session output을 계속 소유한다. 프리뷰 command와
+합성 record는 child에만 머물고, frame은 같은 appearance를 pin하되 프리뷰 scrollback
+publication은 비활성화한다. 복귀 시 프리뷰 draft·transcript·navigation은 버린다.
+원래 대화는 보존하고 command 텍스트 자체는 소비한다. 편집·paste·resize·view navigation과
+렌더링은 production TUI를 사용한다. 작업 중 제출은 명시적으로 거절하고 sandbox draft를
+보존한다. steering·approval·provider 동작·영속 저장·실제 도구 실행은 모의하지 않는다.
+idle preview는 주기적 poll을 예약하지 않는다. 대기 중인 합성 출력이 자체 deadline을
+제공하며, motion과 실제 agent backpressure deadline을 함께 고려한다.
+
+구현은 `command/preview.rs`가 command 등록, `runner/state/preview.rs`가 격리와
+lifecycle, `runner/preview_agent.rs`가 합성 event 생성을 담당한다.
+`cargo test --locked -p yo-tui`와 인접 `yo-cli` PTY test로 검증한다.
+
+### 정적 비교 fixture
+
+activity 회귀는 `runner::tests::activity_projection`에서 완료·실패·중단 시 `Working`
+행과 motion demand가 사라지고, 도구의 종료 heading이 payload를 바꾸지 않고 진행 문구를
+대체하는지 검사한다. `terminal::mode::fullscreen`은 frame 단위 ANSI 출력과 부분 쓰기·
+flush 실패 후 복구를 검사한다. fullscreen frame은 diff와 마지막 cursor를 동기화 출력
+시작·종료 시퀀스(CSI ?2026h/l)로 감싸서 한 batch로 쓴다. 지원하는 terminal에서는
+label 갱신의 중간 상태를 숨긴다. batching만으로 원자적 화면 표시를 보장하지는 않는다.
+쓰기·flush 실패 시 원래 오류를 바꾸거나 frame을 commit하지 않고 동기화 해제를 시도한다.
+미지원 terminal과 지속적인 I/O 실패는 host 제약으로 남는다. 이번 fullscreen 전용 개선은
+inline renderer를 바꾸지 않는다.
+
+사용자가 요청한 Rich spinner 개선은 `⠋ ⠙ ⠸ ⠴ ⠦ ⠇` 순서다. 항상 점 3개를 유지하고
+마지막→첫 frame을 포함해 테두리에서 한 칸씩 이동한다. 간격은 133,333,333 ns이며
+한 바퀴 약 800 ms를 유지한다. ASCII는 80 ms를 유지한다. `appearance::tests`가
+점 mask, 시간 경계, cell 폭을 검증한다.
+
+marker 전환에는 16 ms sheen tick과 독립적인 deadline이 있다. scheduler는 FPS 간격과
+직전에 관측한 render 비용을 이용해 다음 marker slot을 예약하고, 가까운 일반 redraw를
+그 slot으로 합친다. `runner::unix::timing::output_timing`은 가상 시계로 실제 ANSI
+쓰기를 검사한다. 60/120fps, 7 ms 간격 입력 요청, 고정 0/2 ms 쓰기 비용을 조합한다.
+가변적인 host나 terminal 지연은 여전히 눈에 보이는 흔들림을 유발할 수 있다.
+
+shell의 `Working` label은 TrueColor에서 단어 전체가 함께 밝아지며 위치와 굵기는
+고정한다. Limited/Unknown에서는 label ink를 정적으로 유지한다. marker는 일정한
+밝기로 회전한다. `shell::chrome::tests`는 좁은 행을 포함해 두 주기 동안 label 색의
+균일함과 geometry·굵기의 고정을 검사한다. runner는 새로 표시되는 turn을 첫 marker에서
+시작하며 terminal generation 내 redraw에서는 epoch를 유지한다. `timing::motion_tests`는
+identity 전환을, `runner::tests::reentry`는 오래된 generation 시각을 주어도 처음 출력한
+glyph가 첫 marker인지 검사한다. 입력 시간은 generation clock을 그대로 사용한다.
+이 local 개선들은 아래 accepted motion 계약과 다르며, selection-panel title sheen은
+그대로 유지한다.
+
+비교 대상인 pi의 [기본 Loader](https://github.com/badlogic/pi-mono/blob/main/packages/tui/src/components/loader.ts)는
+10-frame·80 ms이며 timer callback마다 index를 증가시킨다. Yo는 의도적으로 6-frame과
+경과 시간 기반 선택을 유지하므로 늦은 wake에서 지난 phase를 재생하지 않고 건너뛸 수 있다.
+pi의 [main-screen renderer](https://github.com/badlogic/pi-mono/blob/main/packages/tui/src/tui-main-screen.ts)와
+yo의 fullscreen renderer 모두 동기화 출력을 사용하지만, 시각적인 움직임이 같거나
+host 수준의 글자 흔들림이 해결됐다는 증거는 아니다.
+
+이번 요청의 worktree 변경은 기존 10-frame
+선택을 대체하지만, accepted Methexis checkpoint는 아직 이전 profile을 기술하며
+재활성화하지 않았다. integration 전에 authority 정합성 조정이 필요하다.
+
+terminal feedback loop는 checkout에서 `python3 tools/chat_preview.py`로 연다.
+첫 실행 시 build하고 모델 호출 없이 alternate-screen viewer를 표시한다.
+키는 `1` 빈 화면, `2` 대화, `3` 작업 중, `w` 폭, `c` color/ASCII,
+`b` rebuild, `r` reload, `s` snapshot, `q` 종료다. 선택한 폭과 28행 이상이
+필요하며 작은 terminal에서는 fixture를 잘라 그리지 않고 크기 안내를 표시한다.
+정상 종료나 Python 예외 시 terminal 설정을 복원한다.
+
+viewer를 열어둔 채 코드를 수정한다. 다른 pane이나 agent에서
+`python3 tools/chat_preview.py --build-only`를 실행하면 renderer test 성공 후
+새 generation을 자동으로 불러오며 선택한 시나리오·폭·palette는 유지한다.
+실패하거나 불완전한 build는 마지막 성공 generation을 교체하지 않는다.
+log, immutable generation, snapshot은 ignored `target/chat-preview/`에 쌓이며
+`--directory`로 다른 local 출력 경로를 선택할 수 있다. snapshot에는 정확한 generation과
+fixture를 기록한 `frame.json`, `frame.ansi`, `frame.html`이 있어 특정 화면을 기준으로
+피드백할 수 있다. artifact는 수동 정리 전까지 보존한다. 이 도구 자체는 tmux를 제어하거나
+다른 process에 키를 보내거나 live chat 입력을 받지 않는다.
+
+feedback 도구 검증은 `python3 -m unittest discover -s tools -p test_chat_preview.py`로
+실행한다(Unix PTY 필요).
+
+`YO_TUI_PREVIEW_DIR=/tmp/yo-chat-preview cargo test --locked -p yo-tui chat_preview`를
+실행하고 `/tmp/yo-chat-preview/chat.html`을 연다. test는 빈 화면, 대화, 작업 중 상태를
+20, 40, 88열의 실제 Session-to-Surface frame으로 내보낸다. true color와
+ASCII/unknown-color fallback을 포함하며 개별 HTML로 원하는 화면만 캡처할 수 있다.
+바깥쪽 browser card는 fixture 장식이지 terminal UI가 아니며, 기본 배경은 하나의
+host theme을 가정한다.
+짝을 이루는 `.ansi` 파일은 production `FrameDiff` → `TerminalOps` → `AnsiEncoder`
+경로를 사용한다. fixture 이상의 크기로 비운 terminal에서 재생할 수 있다. 절대 cursor
+위치가 포함되므로 종료 시 terminal 상태를 복원하는 alternate-screen viewer로 연다.
+이는 정적 frame 재생이지 live agent나 공개 `yo preview` command가 아니다.
+
+요청 띠의 대비, 차분한 답변 본문, 입력창 rule, key hint를 확인한다.
+시각 reference는 공식 [Claude Code terminal refresh](https://www.anthropic.com/news/enabling-claude-code-to-work-more-autonomously)와
+[Cursor CLI Ask mode](https://cursor.com/changelog/cli-jan-16-2026) screenshot이다.
+절제된 강조, 분명한 입력 경계, 입력창 가까운 조작 안내를 차용하되 미지원 control이나
+브랜드는 복제하지 않는다. 넓은 idle frame은 `@ files`를 표시하고, 좁은 frame은 핵심
+keyboard help로 줄인다. test는 welcome과
+placeholder 문구가 대화 출력에 들어가지 않는지도 검사한다. 이 preview가 실제 terminal
+lifecycle이나 모든 host palette 호환성을 입증하지는 않는다. 그런 주장은 위 terminal
+evidence layer로 확인한다.
+
 ## 결과 읽기
 
 - **Passed**: 적어둔 명령이 해당 환경에서 assertion을 성공적으로 실행했다.

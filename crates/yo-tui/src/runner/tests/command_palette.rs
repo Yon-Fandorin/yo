@@ -297,7 +297,7 @@ fn selected_exit_uses_the_existing_runner_exit_boundary() {
         .unwrap();
     present_palette(&mut state, Size::new(80, 16));
 
-    for _ in 0..3 {
+    for _ in 0..4 {
         assert_eq!(
             state
                 .handle(key(KeyCode::Down, KeyModifiers::NONE), Duration::ZERO)

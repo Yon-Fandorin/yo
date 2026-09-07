@@ -63,6 +63,14 @@ pub(super) fn paint(
         candidates
     } else {
         let mut candidates = Vec::new();
+        let mut primary = vec![("Enter", "send"), (newline.as_str(), "newline")];
+        if exit_available {
+            primary.push((&exit, "exit"));
+        }
+        let mut discoverable = primary.clone();
+        discoverable.insert(2, ("@", "files"));
+        candidates.push(action_spans(&discoverable, styles.key_hint, styles.mode));
+        candidates.push(action_spans(&primary, styles.key_hint, styles.mode));
         if exit_available {
             candidates.push(action_spans(
                 &[(&newline, "newline"), (&exit, "exit")],

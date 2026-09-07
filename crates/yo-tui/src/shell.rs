@@ -200,6 +200,11 @@ pub(crate) fn render_with_measure_hook(
         return Err(AgentShellRenderError::SurfaceConflict);
     }
 
+    let show_welcome = transcript.items().is_empty()
+        && !transcript.has_visible_predecessor()
+        && !chrome.turn_active
+        && overlay.is_none();
+
     let transcript_frame = if let Some(prepared) = prepared_transcript {
         let mut transcript_view = view
             .subview(transcript_area)
@@ -217,6 +222,14 @@ pub(crate) fn render_with_measure_hook(
     } else {
         None
     };
+
+    if show_welcome && transcript_area.size.height >= 3 && size.width >= 36 {
+        let mut welcome = view
+            .subview(transcript_area)
+            .expect("welcome uses the transcript area");
+        chrome::paint_welcome(&mut welcome, styles.chrome)
+            .map_err(AgentShellRenderError::Chrome)?;
+    }
 
     let mut motion_period = prepared_overlay
         .as_ref()

@@ -35,6 +35,7 @@ use crate::{
 };
 
 mod presentation;
+mod preview;
 
 pub(super) use presentation::{FrameError, MotionDemand, PreparedFrame};
 
@@ -57,10 +58,13 @@ pub(super) enum StateError {
     ItemIdOverflow,
     SubmissionIdentityUnavailable,
     StalePublication,
+    PreviewAgent,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct TuiState {
+    preview: Option<Box<preview::Preview>>,
+    preview_mode: bool,
     chat: ChatProjection,
     editor: PromptEditor,
     views: ObservabilityViews,
@@ -109,6 +113,9 @@ impl TuiState {
         input: InputEvent,
         now: Duration,
     ) -> Result<StateEffect, StateError> {
+        if self.preview.is_some() {
+            return self.handle_preview(input, now);
+        }
         if let InputEvent::Resize(size) = input {
             return Ok(StateEffect::Resize(size));
         }
@@ -638,6 +645,7 @@ impl TuiState {
                 self.clear_editor();
                 Ok(StateEffect::Redraw)
             },
+            CommandEffect::OpenPreview => self.open_preview(),
             CommandEffect::SelectModel => self.handle_model_command(invocation, draft),
             CommandEffect::CompactContext => self.handle_compact_command(invocation, draft),
             CommandEffect::ExitProcess => {
@@ -749,6 +757,10 @@ impl TuiState {
     }
 
     pub(super) fn commit_frame(&mut self, frame: &PreparedFrame) {
+        if let Some(preview) = self.preview.as_mut() {
+            preview.state.commit_frame(frame);
+            return;
+        }
         self.views.commit(frame.view_state);
         if let Some(presentation) = frame.overlay_presentation {
             self.overlay
@@ -849,5 +861,14 @@ impl TuiState {
 
     pub(super) fn views(&self) -> &ObservabilityViews {
         &self.views
+    }
+}
+
+impl TuiState {
+    pub(in crate::runner) fn visible_motion_turn(&self) -> Option<(bool, TurnRef)> {
+        if let Some(preview) = &self.preview {
+            return preview.state.active_turn.map(|turn| (true, turn));
+        }
+        self.active_turn.map(|turn| (false, turn))
     }
 }
