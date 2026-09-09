@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:99e90bd799d103a41cac35932d10a610d552316c547c76d5ec0cf787ce01a75b
+    revision: sha256:3d509274f709c445859702e26f1e7d23e01ad2ff8832bf8df105cef67e51e73b
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -92,7 +92,7 @@ separately orders physical Session-record appends.
 encoded as a canonical UUIDv4 string and an `input` object. A correlated
 Activity user-input response uses the same `input` object without another
 SubmissionId because its request identity already owns correlation. The closed
-input object contains:
+v1 input object contains:
 
 - `profile`: the exact value `yo.structured-input/v1`;
 - `text`: the exact submitted UTF-8 string; and
@@ -138,6 +138,60 @@ one skill occurrence. Unknown input or occurrence fields, occurrence tags,
 kinds, scopes, zero skill generations, invalid metadata, and invalid profile
 values MUST fail closed. These rules define persisted `/v1`; later live-domain
 rule changes MUST NOT silently change its decoder.
+
+### Resolved skill input extension
+
+`StartTurn` and `SteerTurn` MAY additionally persist the closed nested input
+profile `yo.structured-input/v2`. Its fields are exactly `profile`, `text`,
+`references`, and `resolved_skill`. Text and references obey every frozen v1
+validation rule above, and exactly one skill occurrence is required.
+`resolved_skill` is a closed object whose only field is `instructions`: an exact
+UTF-8 string of at most 262144 bytes containing the execution-host-assembled
+required instructions, including required supporting material. Optional assets
+remain lazy. Empty or whitespace-only instructions are invalid. For this frozen
+profile whitespace is exactly U+0009..U+000D, U+0020, U+0085, U+00A0, U+1680,
+U+2000..U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. A body exceeding the
+limit MUST be rejected whole, never truncated.
+
+A v1 input MUST omit `resolved_skill`; even a null field is invalid. A v2 input
+MUST contain a non-null valid snapshot. Unknown fields or profiles, malformed
+references, zero or multiple selected skills, and absent or invalid instructions
+MUST fail closed. Activity user-input responses retain v1 only: v2 at that
+command position MUST be rejected by both live admission and persistence codecs.
+This extension does not authorize typed skill execution in question responses.
+
+The execution host MUST validate the whole input under the explicit-reference
+contracts before attaching one immutable instruction snapshot from the same
+validated skill entry. Live callers MUST NOT provide pre-resolved snapshots.
+Missing resolution, identity or eligibility mismatch, and required-asset failure
+reject the entire submission before command commit or backend dispatch. An
+unchanged selected entry survives an unrelated catalog-generation refresh; its
+original selected reference remains the recorded identity. Remote locators MUST
+be resolved by their execution host rather than treated as local filesystem paths.
+
+Visible text and reference spans MUST remain unchanged. Model input is the exact
+visible text followed by two LF bytes, the literal heading
+`Explicit skill instructions (yo.skill-instructions/v1):`, one LF byte, and one
+compact JSON object. Its three fields are ordered `instructions`, `name`, `source`;
+the latter two are the selected skill's exact name and locator. No spaces or
+trailing newline are added. JSON strings escape quotation mark and backslash as
+`\"` and `\\`; backspace, tab, LF, form feed, and CR use `\b`, `\t`, `\n`,
+`\f`, and `\r`; all remaining U+0000..U+001F characters use lowercase
+`\u00xx` escapes. Every other UTF-8 character, including slash and non-ASCII
+characters, is unchanged. This framing and escaping recipe is frozen for v2.
+Instructions are user-role context, never elevated to system authority.
+
+Provider requests, model-context accounting, and exact native replay MUST use
+that same assembled model input. Chat and visible Transcript use the original
+text. Recovery reconstructs model input only from the persisted snapshot and
+selected reference, without reopening any skill file or catalog. Snapshot
+recovery must survive asset deletion, edits, permission changes, and host absence.
+Historical v1 inputs retain their exact original model text with no synthesized
+instructions. The physical and semantic v1 envelopes and all existing v1 input
+bytes remain unchanged. Older readers reject nested v2; there is no migration,
+automatic downgrade, silent snapshot loss, or Session reset fallback. The current
+accepted-format set includes this nested v2 extension only after its exact
+canonical revision has been approved and activated.
 
 This third explicitly reviewed pre-release semantic `/v1` replaces the
 immediately preceding replay-delta development shape. Logs written in the
@@ -509,7 +563,7 @@ reinterpreted, skipped as valid history, or exposed as readable Session data.
 Recovery MUST read only formats explicitly supported by an accepted
 compatibility contract; at this baseline that set contains only the current
 closed semantic and physical `/v1` shapes, including the additive replay-item
-extension defined here. No legacy parser, dual reader, compatibility shim, or
+extension and the nested resolved-skill input extension defined here. No legacy parser, dual reader, compatibility shim, or
 old wire model is retained. A minimal rejection fixture MAY remain only to
 prove that a displaced shape fails closed.
 
