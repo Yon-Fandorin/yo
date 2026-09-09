@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.session-002
-revision: sha256:a37c12fed231112b5fa0bbf8b6b63daf6882be501d1a570cbdcd6818f1077bee
+revision: sha256:d1e8177f7e5d9bbf4500f9f40c3774d6c788462e0b0a390c608bd72e05b502ed
 payload:
   kind: decision
   content: |-
@@ -28,12 +28,14 @@ payload:
 
     Executable direct resume validates the complete initial child seed and binding
     when no newer completed child Anchor or checkpoint supersedes it. A valid
-    checkpoint-only root remains supported under the same continuation contract.
-    No ancestor repository, skill catalog or backend request audit is fetched to
+    checkpoint-only root remains supported under the same continuation contract. No
+    ancestor repository, skill catalog or backend request audit is fetched to
     reconstruct an inline exact seed. Failure or an uncertain accepted suffix opens
-    history read-only and never resends source or child work. `--continue` may select
-    an eligible supported initial-seed hint using the same deterministic ordering as
-    an Anchor hint; it must still pass executable validation before publication or
-    backend work. Neither inspection nor a positive hint independently grants
-    executable continuation. Full tree projection and arbitrary historical branch
-    selection are separate remaining capabilities.
+    history read-only and never resends source or child work. `--continue` may
+    select an eligible supported initial-seed hint using the same deterministic
+    ordering as an Anchor hint; it must still pass executable validation before
+    publication or backend work. Neither inspection nor a positive hint
+    independently grants executable continuation. Tree projection remains bounded
+    read-only discovery. Historical fork selection is governed separately by the
+    continuation-lineage contract and does not extend this owner's closed archived
+    CLI grammar or grant executable eligibility.

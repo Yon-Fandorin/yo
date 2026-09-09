@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.session-001
-revision: sha256:ce818345a293de40bea12f21427ff38f7ab0204c90c8190471df262d1a2e1f08
+revision: sha256:c3825e3d688adaa63ff0a60e8baa51216ba365cf0965ee5f75fe68665dddd174
 payload:
   kind: decision
   content: |-
@@ -8,42 +8,81 @@ payload:
 
     ## Intentional child fork
 
-    The first executable fork milestone selects the newest complete durable
-    reconstruction of an idle parent. A non-empty fork MUST reject an active Turn,
-    pending input admission, outstanding activity request, or uncertain accepted
-    suffix. This restriction does not remove the separately confirmed empty-child
-    recovery path for a read-only or uncertain parent: that path inherits no model
-    context or history and never resends the uncertain suffix. This milestone does not claim arbitrary historical branch selection;
-    selection of an older complete boundary remains a separate required extension.
-    Ordinary `/new` creation remains independent and has no inferred parent.
+    An unqualified fork selects the newest complete durable reconstruction of an
+    idle parent. An explicitly selected historical fork MAY instead use an older
+    complete Anchor, checkpoint-only reconstruction, or initial-fork reconstruction
+    from one validated durable parent snapshot. The parent MUST still satisfy the
+    newest-state executable and idle requirements: an active Turn, pending input
+    admission, outstanding activity request, compaction, or uncertain accepted suffix
+    rejects a non-empty fork, including a historical fork. This extension does not
+    authorize branching directly from an unavailable archived parent. The separately
+    confirmed empty-child recovery path remains independent: it inherits no model
+    context or history and never resends an uncertain suffix. Ordinary `/new` remains
+    independent and has no inferred parent.
 
-    A child MUST have a fresh UUIDv7, its own writer lease, its own JournalSequences,
-    and initial binding epoch 1. It MUST persist one immutable `initial_fork_seed`
-    under `yo.session-fork-seed/v1`, identifying its parent UUID and either an exact
-    source Anchor, an exact checkpoint-only reconstruction, a valid initial-fork
-    reconstruction without later accepted child work, or explicit empty origin. A parent coordinate MUST always be qualified by the parent SessionId.
-    It MUST NOT be interpreted as a child JournalSequence, a previous child binding,
-    or a child accepted request. The child's initial fork binding is not a binding
+    A child MUST have a fresh UUIDv7, its own writer lease, its own
+    JournalSequences, and initial binding epoch 1. It MUST persist one immutable
+    `initial_fork_seed` under `yo.session-fork-seed/v1`, identifying its parent
+    UUID and either an exact source Anchor, an exact checkpoint-only
+    reconstruction, a valid initial-fork reconstruction without later accepted
+    child work within the selected point, or explicit empty origin. A parent
+    coordinate MUST always be qualified by the parent SessionId. It MUST NOT be
+    interpreted as a child JournalSequence, a previous child binding, or a child
+    accepted request. The child's initial fork binding is not a binding
     replacement: it has no previous epoch to close.
 
     An Anchor source MUST include its binding/context epochs, exact source record
-    sequence and fully committed journal boundary. Its seed MUST use the newest
-    complete reconstruction, including a checkpoint root and all required later
-    deltas when present. A checkpoint-only source MUST name the checkpoint itself,
-    not its older provenance Anchor, and is valid only when no later accepted
-    request lacks a completed matching Anchor. The parent is captured as one
-    validated durable point-in-time snapshot; later parent activity does not change
-    the child's selected source. An explicitly confirmed empty child records source
-    `empty`, inherits no model input, and MUST NOT copy or resend an uncertain suffix.
+    sequence and fully committed journal boundary. Its seed MUST use the complete
+    reconstruction at the explicitly selected point, or the newest complete point
+    when no historical selection was made, including the checkpoint root and all
+    required deltas effective there. A checkpoint-only source MUST name that
+    checkpoint itself, not its older provenance Anchor. Each selected reconstruction
+    MUST be quiescent and contain no accepted request lacking matching completion.
+    Later committed parent work MUST NOT enter its model seed or inherited history.
+    Physical envelopes and every discovery summary through the captured parent
+    cutoff MUST be validated before selection; presentation rows and discovery hints
+    are not boundary proof. The selected source is immutable once captured. Missing
+    historical replay or private evidence MUST reject selection; a later summary or
+    archival transcript MUST NOT reconstruct lost model state. An explicitly
+    confirmed empty child records source `empty` and inherits no model input.
 
-    A seed-only child with no later accepted request is itself a valid non-empty
-    fork source. Its complete initial fork seed and current effective binding must
-    be validated, including any exact replacement/import ownership chain. A new
-    child copies that current reconstructed context and flattened inherited history;
-    it does not fall back to the grandparent Anchor, fetch an ancestor repository,
-    or silently create an empty fork. Its immediate parent is the seed-only child,
-    while ultimate item origins remain unchanged. Any later accepted request without
-    a complete reconstruction makes this path uncertain and rejects non-empty fork.
+    A complete initial-fork reconstruction is a valid non-empty source only before
+    the first later accepted request within that reconstruction. Historical selection
+    MAY select that earlier point after the parent has completed later work, subject
+    to the newest-parent eligibility requirement. Validate the complete initial seed
+    and effective binding at the selected point, including any exact replacement and
+    import ownership chain. A new child copies that reconstructed context and
+    flattened inherited history. It MUST NOT fall back to a grandparent Anchor, fetch
+    an ancestor repository, or silently create an empty fork. Its immediate parent
+    is the selected Session; ultimate item origins remain unchanged.
+
+    The interactive historical selection form is exactly `/fork at`; `/fork` retains
+    newest-point behavior. `/fork at` opens a bounded read-only boundary picker for
+    the currently selected Session. Other arguments MUST fail locally without input
+    admission. Choosing a validated boundary explicitly requests child preparation;
+    dismissal preserves the parent and draft. A stale selection MUST fail rather
+    than retarget. Session-tree selection retains its existing resume behavior and
+    does not implicitly fork. No archived CLI or print command is added by this
+    extension.
+
+    The selection handle MUST bind the frozen validated capture, selected logical
+    cutoff, and effective binding/context ownership, either explicitly or through an
+    opaque reference to that exact recovered object. A source kind and record number
+    alone are insufficient. Selection MUST NOT resolve a raw sequence again against
+    newer recovery state or substitute the newest binding/profile. Historical target
+    configuration and every required private replay item MUST remain exactly
+    available; failure rejects preparation before backend work.
+
+    Catalog IO MUST enforce finite physical-byte and physical-record limits while
+    reading the pinned snapshot, before unbounded allocation. If either limit prevents
+    validation through the full captured cutoff, the entire catalog is unavailable
+    and no boundary is selectable. Only after full capture validation may a separate
+    returned-boundary limit produce an explicitly truncated catalog whose verified
+    entries remain selectable. Catalog viewing creates no backend, Session or writer
+    lease. The host MUST revalidate the live idle parent and captured cutoff before
+    preparing the selected child; stale evidence requires a new explicit selection.
+    All existing whole-seed, replay-item and inherited-history limits still apply;
+    capacity failure never silently drops required context or history.
 
     An exact-replay child MUST contain the complete validated model-context seed
     inline, including the exact system/tool contract, ordered semantic replay items,
@@ -101,7 +140,7 @@ payload:
     never matching names, timestamps, backend locator similarity, or model-rebind
     epochs. Missing parents are shown as unavailable ancestors. Older histories
     without fork provenance have unknown ancestry rather than an invented root.
-    Tree viewing MUST remain bounded, non-creating and read-only, and must not start
-    a backend or acquire a Session writer lease. The complete tree and arbitrary
-    historical branch selection remain product work beyond the initial latest-boundary
-    fork milestone.
+    Tree viewing MUST remain bounded, non-creating and read-only, and must not
+    start a backend or acquire a Session writer lease. Historical selection follows
+    the explicit bounded selector above. Tree browsing itself grants neither
+    executable continuation nor permission to infer or repair a source boundary.

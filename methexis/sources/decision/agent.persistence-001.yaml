@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:fb8617eb5c695aaaa660def9b8edfa3fd99fbc202d29590f2d3f120fcdc15a9a
+revision: sha256:50bedcced583c86d6d2641ae556d35d783277172c0ff36d666f6105c6e68dfe6
 payload:
   kind: decision
   content: |-
@@ -43,33 +43,41 @@ payload:
     record. Its presence with no valid first binding, or a first fork binding with
     no valid seed, is non-executable corruption rather than a normal empty Session.
 
-    `source` is a closed tagged union. `empty` contains only `kind: empty` and proves
-    only that an explicitly confirmed empty fork was requested. `anchor`,
-    `checkpoint` and `initial_fork` contain `kind`, `binding_epoch`, `context_epoch`, `record_sequence`,
-    `journal_boundary`, and `binding`. All epochs/sequences are positive integers qualified by `parent_session_id`.
-    For an anchor, `journal_boundary` equals that Anchor's existing resumable-outcome
+    `source` is a closed tagged union. `empty` contains only `kind: empty` and
+    proves only that an explicitly confirmed empty fork was requested. `anchor`,
+    `checkpoint` and `initial_fork` contain `kind`, `binding_epoch`,
+    `context_epoch`, `record_sequence`, `journal_boundary`, and `binding`. All
+    epochs/sequences are positive integers qualified by `parent_session_id`. For an
+    anchor, `journal_boundary` equals that Anchor's existing resumable-outcome
     boundary, which precedes its own `record_sequence`. For a checkpoint-only
     source, `journal_boundary` equals the checkpoint record sequence and
     `context_epoch` is its successor context epoch. The captured durable cutoff
     MUST cover the source record itself in every case. For `initial_fork`,
     `record_sequence` names the immediate parent's complete initial seed,
-    `journal_boundary` is the captured current complete durable cutoff, and the
-    binding/context epochs name its current effective owner. Recovery validates
-    the initial bootstrap and any subsequent exact ownership-mapping transitions;
-    a parent epoch is never equated with the new child epoch.
-    `binding` freezes the source backend kind/version, binding identity, model
-    identity, continuation strategy, replay profile, and locator using their existing
-    validated bounded wire encodings. An anchor names the exact valid parent Anchor;
-    a checkpoint names the newest valid checkpoint with no uncertain later accepted
-    request. An `initial_fork` source names a valid non-empty parent initial seed
-    with no later accepted request, including a verified current binding derived
-    from that seed. It is not an empty source or the grandparent provenance Anchor. Construction validates these values against one captured parent
-    reconstruction. Recovery consumes child-owned inline bytes and MUST NOT fetch
-    or revalidate the parent by path or by bare sequence.
+    `journal_boundary` is the complete durable cutoff of the selected
+    reconstruction, and the binding/context epochs name its effective owner at that
+    point. Recovery validates the initial bootstrap and any subsequent exact
+    ownership-mapping transitions; a parent epoch is never equated with the new
+    child epoch. `binding` freezes the source backend kind/version, binding
+    identity, model identity, continuation strategy, replay profile, and locator
+    using their existing validated bounded wire encodings. An anchor names the
+    exact valid parent Anchor; a checkpoint names the valid checkpoint effective at
+    the selected complete point, with no uncertain accepted request within that
+    reconstruction. An `initial_fork` source names a valid non-empty parent initial
+    seed with no later accepted request within the selected reconstruction,
+    including its verified effective binding derived from that seed. It is not an
+    empty source or the grandparent provenance Anchor. Construction validates these
+    values against one captured parent reconstruction. An older selected
+    reconstruction is admitted only by the explicit historical selection rules in
+    the continuation-lineage contract; selecting it does not make the parent's
+    later uncertain state executable. The selected logical cutoff and effective
+    ownership MUST remain bound to that frozen validated capture; a raw source
+    sequence is not an immutable selection. Recovery consumes child-owned inline
+    bytes and MUST NOT fetch or revalidate the parent by path or by bare sequence.
 
     A non-empty `initial_fork` source may seed either an exact-replay child or a
     native child with verified exact-boundary evidence. The child must persist the
-    complete current reconstruction; unchanged private payloads and ultimate origin
+    complete selected reconstruction; unchanged private payloads and ultimate origin
     coordinates follow the same lossless import rules. Repeated seed-only forks
     are validated and flattened without ancestor reads. A child initialized by an
     empty fork has no inherited context to reproduce; forking it is an explicitly

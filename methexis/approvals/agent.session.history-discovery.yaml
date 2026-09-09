@@ -1,7 +1,7 @@
 schema: methexis.approval/v1alpha2
 knowledge_id: agent.session.history-discovery
-revision: sha256:ac1e1be33ade16fcab61d02641a282bd2849a79f004352106ba4157e57848ffc
+revision: sha256:fe0c63c1bf27c3dd803c983d3509b890b128c2459f8b928da9ab1ae56f3c1b33
 reviewer: agent-runtime
-reviewed_at: 2026-09-09T05:30:08Z
+reviewed_at: 2026-09-09T13:24:47Z
 review_basis: canonical
-request_hash: sha256:0ad910c7182d575cb8455db7e90fc59e9962fb1b54d2e28879f843a544384b4d
+request_hash: sha256:f928e1f373650aa5a828401bf031aa7eeb392b1c6e0477da531adf3ed57f12e2
