@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-002
-    revision: sha256:6fdab82cf5b838017ce0f85b17a99430da97b42ed9bc5d310a80bf5f69fd9352
+    revision: sha256:a37c12fed231112b5fa0bbf8b6b63daf6882be501d1a570cbdcd6818f1077bee
 relations:
   depends_on:
     - agent.observability.session-journal
@@ -33,10 +33,12 @@ the current compatibility baseline are not readable Sessions.
 Every supported physical Session record MUST carry a bounded discovery summary
 in the same physical commit. The summary MUST contain the complete Session
 descriptor, a writer-assigned `updated_unix_millis`, an optional binding epoch,
-and an optional latest valid Continuation Anchor `JournalSequence`. The writer
+an optional latest valid Continuation Anchor `JournalSequence`, and, in the
+explicit fork extension, an optional executable initial-fork seed sequence. The writer
 MUST assign the timestamp immediately before append; it becomes durable only
 with the checksummed envelope and is not inferred from filesystem metadata.
-The descriptor, binding epoch, and anchor reference MUST be recomputable from
+The descriptor, binding epoch, anchor reference and supported initial-seed hint
+MUST be recomputable from
 the committed Journal prefix. The summary MUST NOT be written through a second
 append or mutable side index and MUST NOT replace the Journal as authority. A
 reader obtains current discovery metadata by locating and validating the last
@@ -44,7 +46,7 @@ complete envelope through a bounded tail read; it never scans a complete log
 merely to list Sessions. “Bounded” limits discovery to the tail envelope rather
 than promising that a single valid envelope has a fixed byte size.
 The summary is a discovery hint, not semantic proof. Executable continuation
-MUST validate the referenced Anchor from the Journal. Any detected disagreement
+MUST validate the hinted reconstruction root from the Journal. Any detected disagreement
 between summary and Journal MUST treat the Journal as authoritative, report the
 discrepancy explicitly, and classify continuation eligibility as `unavailable`
 until writer-owned recovery publishes a consistent envelope.
@@ -64,19 +66,16 @@ then recorded start time and stable Session identity, for deterministic
 ordering; unavailable legacy values remain visibly unknown.
 
 Continuation eligibility is durable evidence, not a promise that a backend is
-currently reachable. Quarantine or a detected summary disagreement takes
-precedence over every summary value. Otherwise it is `eligible` only when the
-bounded summary identifies a valid Continuation Anchor by `JournalSequence` in
-a supported record schema, `unavailable` when a supported record proves that no
-valid anchor exists or the committed prefix is quarantined, and `unknown` when
-an older or unsupported format cannot provide bounded evidence. Actual native
-resume, replay support, transport reachability,
-and lossy-handoff availability are evaluated only by executable continuation.
-The picker MUST dim and prevent selection of `unavailable` entries; `unknown`
-entries remain inspectable and require continuation-time evaluation rather than
-being presented as resumable. Direct `yo --resume SESSION_ID` of an unavailable
-Session MUST open its durable history read-only and MAY offer only the explicitly
-confirmed fork permitted by the Continuation Anchor contract.
+currently reachable. Quarantine and detected summary disagreement take
+precedence. A supported positive Anchor or initial-fork seed hint may establish
+`eligible`; absence of a hint in a frozen legacy summary is `unknown`, since it
+does not prove the absence of a checkpoint or initial seed. `unavailable` is
+reserved for validated absence of executable reconstruction, quarantine or
+corruption. The picker MUST dim and prevent selection of unavailable entries;
+unknown entries remain inspectable and require continuation-time evaluation.
+Direct resume validates an eligible or unknown reconstruction and opens saved
+history read-only when validation fails. Only the separately confirmed empty
+fork may be offered when no executable source is available.
 
 The full UUID is the public Session identifier accepted by `yo session
 SESSION_ID`, `yo usage SESSION_ID`, and `yo --resume SESSION_ID`. `yo` without
@@ -127,6 +126,38 @@ shared local-and-remote reader interface. Executable resume, backend binding
 persistence, native backend reconnection, semantic replay, lossy handoff, and
 deliberate fork creation remain outside this capability and continue to require
 the Continuation Anchor contract.
+
+## Initial fork continuation hints
+
+A supported discovery summary MAY additionally contain positive
+`initial_fork_seed_journal_sequence`, naming a complete child bootstrap seed.
+It is eligible evidence only when the same durable prefix has a valid initial
+fork binding and no child accepted request after the seed. The sole writer
+MUST omit this hint as soon as a later accepted child request appears; a complete
+child Anchor then supplies ordinary continuation evidence. An uncertain later
+accepted suffix MUST NOT regain seed eligibility after a failed Turn or restart.
+The hint is part of the same checksummed physical envelope, not a second index.
+
+A bounded tail read may classify a supported positive Anchor or valid initial
+seed hint as `eligible`, subject to quarantine and summary-consistency precedence.
+A frozen legacy summary with neither hint cannot distinguish checkpoint-only,
+initial-seed, empty or uncertain histories and is `unknown`, not proof of
+unavailability. `unavailable` requires quarantine, established corruption, or
+validated evidence that no executable reconstruction exists. Unknown entries
+remain inspectable and receive continuation-time evaluation. Listing MUST NOT
+scan the full Journal or start a backend merely to upgrade an unknown entry.
+
+Executable direct resume validates the complete initial child seed and binding
+when no newer completed child Anchor or checkpoint supersedes it. A valid
+checkpoint-only root remains supported under the same continuation contract.
+No ancestor repository, skill catalog or backend request audit is fetched to
+reconstruct an inline exact seed. Failure or an uncertain accepted suffix opens
+history read-only and never resends source or child work. `--continue` may select
+an eligible supported initial-seed hint using the same deterministic ordering as
+an Anchor hint; it must still pass executable validation before publication or
+backend work. Neither inspection nor a positive hint independently grants
+executable continuation. Full tree projection and arbitrary historical branch
+selection are separate remaining capabilities.
 
 ## Rationale
 

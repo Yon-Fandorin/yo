@@ -1,6 +1,107 @@
 schema: methexis.source/v1alpha1
 id: agent.session-001
-revision: sha256:8985664b1165caef5e74547c343bf114a9036682a6c2872cb7b26906d685bc51
+revision: sha256:ce818345a293de40bea12f21427ff38f7ab0204c90c8190471df262d1a2e1f08
 payload:
   kind: decision
-  content: A backend_native_model_rebind/v1alpha1 may preserve same-host same-account conversational state only through a distinct state-preserving native-fork locator. Model mutation and exact confirmation occur solely on the candidate; the source locator is never mutated or reused. Yo publishes the prepared candidate as a new binding epoch atomically, while any fork, mutation, identity, confirmation, or publication failure preserves the executable source and leaves the unbound candidate without continuation authority. Other Host-to-Managed, Managed-to-Host, cross-Host, and non-native same-Host replacement uses transformed-semantic-handoff/v1alpha1 with one explicit loss confirmation.
+  content: |-
+    A backend_native_model_rebind/v1alpha1 may preserve same-host same-account conversational state only through a distinct state-preserving native-fork locator. Model mutation and exact confirmation occur solely on the candidate; the source locator is never mutated or reused. Yo publishes the prepared candidate as a new binding epoch atomically, while any fork, mutation, identity, confirmation, or publication failure preserves the executable source and leaves the unbound candidate without continuation authority. Other Host-to-Managed, Managed-to-Host, cross-Host, and non-native same-Host replacement uses transformed-semantic-handoff/v1alpha1 with one explicit loss confirmation.
+
+    ## Intentional child fork
+
+    The first executable fork milestone selects the newest complete durable
+    reconstruction of an idle parent. A non-empty fork MUST reject an active Turn,
+    pending input admission, outstanding activity request, or uncertain accepted
+    suffix. This restriction does not remove the separately confirmed empty-child
+    recovery path for a read-only or uncertain parent: that path inherits no model
+    context or history and never resends the uncertain suffix. This milestone does not claim arbitrary historical branch selection;
+    selection of an older complete boundary remains a separate required extension.
+    Ordinary `/new` creation remains independent and has no inferred parent.
+
+    A child MUST have a fresh UUIDv7, its own writer lease, its own JournalSequences,
+    and initial binding epoch 1. It MUST persist one immutable `initial_fork_seed`
+    under `yo.session-fork-seed/v1`, identifying its parent UUID and either an exact
+    source Anchor, an exact checkpoint-only reconstruction, a valid initial-fork
+    reconstruction without later accepted child work, or explicit empty origin. A parent coordinate MUST always be qualified by the parent SessionId.
+    It MUST NOT be interpreted as a child JournalSequence, a previous child binding,
+    or a child accepted request. The child's initial fork binding is not a binding
+    replacement: it has no previous epoch to close.
+
+    An Anchor source MUST include its binding/context epochs, exact source record
+    sequence and fully committed journal boundary. Its seed MUST use the newest
+    complete reconstruction, including a checkpoint root and all required later
+    deltas when present. A checkpoint-only source MUST name the checkpoint itself,
+    not its older provenance Anchor, and is valid only when no later accepted
+    request lacks a completed matching Anchor. The parent is captured as one
+    validated durable point-in-time snapshot; later parent activity does not change
+    the child's selected source. An explicitly confirmed empty child records source
+    `empty`, inherits no model input, and MUST NOT copy or resend an uncertain suffix.
+
+    A seed-only child with no later accepted request is itself a valid non-empty
+    fork source. Its complete initial fork seed and current effective binding must
+    be validated, including any exact replacement/import ownership chain. A new
+    child copies that current reconstructed context and flattened inherited history;
+    it does not fall back to the grandparent Anchor, fetch an ancestor repository,
+    or silently create an empty fork. Its immediate parent is the seed-only child,
+    while ultimate item origins remain unchanged. Any later accepted request without
+    a complete reconstruction makes this path uncertain and rejects non-empty fork.
+
+    An exact-replay child MUST contain the complete validated model-context seed
+    inline, including the exact system/tool contract, ordered semantic replay items,
+    and every required eligible provider-private item. It MUST NOT require the
+    parent's files, repository reader, input-admission service, skill catalog, or
+    optional supporting assets during recovery. Parent deletion or loss therefore
+    does not invalidate the child's exact replay. Private item payloads and ultimate source qualifications remain immutable,
+    while the explicit fork-import mapping assigns them to the child's independent
+    epoch-1 baseline for runtime validation. Checkpoints, retained groups, exact
+    binding replacement and repeated forks MUST preserve that mapping and original
+    bytes according to the persistence profile. Source epochs are provenance, not
+    values substituted into child epoch-equality checks. The target must preserve
+    the exact effective binding identity and private replay profile; incompatibility
+    rejects exact fork rather than silently losing state. The initial fork profile
+    does not authorize lossy handoff or cross-account/model conversion.
+
+    A backend-native child MUST be prepared through a separately advertised fork
+    capability and obtain a distinct locator owned by the child. Same-host and
+    verified same-account evidence, the exact target model/binding identity, and
+    proof that the candidate contains exactly the selected durable boundary are
+    required. A host's current locator or successful `thread/fork` response alone
+    is not boundary proof: it can contain later or uncommitted state. The adapter
+    MUST establish a protocol-supported exact boundary or reject the operation.
+    It MUST NOT mutate the source locator or advertise model-rebind support as
+    proof of genuine child-fork support. A native seed records verified native
+    continuation evidence without inventing Yo semantic replay or cache restoration.
+
+    Inherited transcript content MUST be stored as bounded source-qualified history
+    inside the child seed and displayed with its source Session/boundary. It is
+    archival presentation evidence only. It MUST NOT be replayed as child commands,
+    re-admitted as new user input, counted as child model/tool usage, or used to
+    manufacture child Turns, requests, activity IDs, Anchors or side effects. Forking
+    a child preserves the original source qualifiers of inherited records rather
+    than recursively relabeling them as that child's own events. The inline model
+    seed alone owns inherited model context; presentation history never substitutes
+    for exact replay. Capacity failure rejects the fork rather than silently
+    truncating required model input or inherited visible history.
+
+    The host MUST prepare the backend candidate and complete child bootstrap while
+    the parent remains selected with its prior availability unchanged. For a
+    non-empty fork the parent remains executable; an explicitly confirmed empty
+    recovery fork preserves the parent's read-only or uncertain state without
+    claiming it executable. One atomic child publication MUST
+    contain its descriptor, complete initial fork seed and first binding evidence
+    before selection can switch. Preparation or publication failure leaves the
+    parent unchanged; any unbound native candidate and incomplete child are cleaned
+    up or quarantined and never offered as executable descendants. Recovery MUST
+    reject a missing, duplicated, late, mismatched or partial seed. Before the
+    child's first accepted request, its complete initial seed is a valid continuation
+    root. Afterward, ordinary complete child Anchors and checkpoints supersede it
+    according to their reconstruction rules; an accepted child request without a
+    matching completed Anchor remains uncertain and MUST NOT be resent.
+
+    A Session tree MUST derive ancestry from validated durable fork provenance,
+    never matching names, timestamps, backend locator similarity, or model-rebind
+    epochs. Missing parents are shown as unavailable ancestors. Older histories
+    without fork provenance have unknown ancestry rather than an invented root.
+    Tree viewing MUST remain bounded, non-creating and read-only, and must not start
+    a backend or acquire a Session writer lease. The complete tree and arbitrary
+    historical branch selection remain product work beyond the initial latest-boundary
+    fork milestone.

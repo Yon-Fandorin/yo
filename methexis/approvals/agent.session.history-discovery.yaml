@@ -1,9 +1,7 @@
-schema: methexis.approval/v1alpha1
+schema: methexis.approval/v1alpha2
 knowledge_id: agent.session.history-discovery
-revision: sha256:8cec5ec20eb225af2f5b222d13421024d03cc16bce814df26211bd9704fcdbd5
+revision: sha256:ac1e1be33ade16fcab61d02641a282bd2849a79f004352106ba4157e57848ffc
 reviewer: agent-runtime
-reviewed_at: 2026-08-24T09:44:38Z
-projection_profile: ko-review/v1alpha1
-projection_compiler: methexis/0.0.0
-projection_hash: sha256:3aaf1f9a6b988c32d3bcdb356163797b226cf0158d6bc7d0332e1fc3b0e056b8
-request_hash: sha256:76cbf500189769ffe8b8653b7cefcfaf4dc8b9bafacc2ad941159959276fd276
+reviewed_at: 2026-09-09T05:30:08Z
+review_basis: canonical
+request_hash: sha256:0ad910c7182d575cb8455db7e90fc59e9962fb1b54d2e28879f843a544384b4d

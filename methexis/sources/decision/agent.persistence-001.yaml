@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:3d509274f709c445859702e26f1e7d23e01ad2ff8832bf8df105cef67e51e73b
+revision: sha256:fb8617eb5c695aaaa660def9b8edfa3fd99fbc202d29590f2d3f120fcdc15a9a
 payload:
   kind: decision
   content: |-
@@ -25,3 +25,262 @@ payload:
     Before public release, the same anchored-session semantic Journal /v1 is additively extended with exact transition mode backend_native_model_rebind. It may seed a successor backend-managed-state epoch only from the same delegated Host and verified authenticated account after the adapter creates a distinct state-preserving native-fork locator, applies the selected exact Host model solely through a live advertised mutation capability on that candidate, and confirms the candidate's exact binding, model, and locator identities. The source epoch remains open and executable throughout preparation. Atomic publication alone closes it and opens the successor; unsupported capability, stale inventory, account drift, a reused locator, missing or mismatched confirmation, or publication failure leaves the source epoch and locator unchanged while the unbound candidate is discarded or quarantined. The transition records cache unknown and never claims semantic replay, cache restoration, cross-account portability, or applicability to a different Host. It names the newest source Anchor when the source epoch has accepted work; omission is valid only for a live source epoch with no accepted backend request, and a source checkpoint is forbidden. Existing records remain byte-identical and readable, while preceding readers reject the new transition value; there is no migration, dual write, downgrade shim, or private host mutation fallback.
 
     The existing semantic and physical v1 envelopes are additively extended with nested yo.structured-input/v2 for host-resolved StartTurn and SteerTurn only. Frozen v1 inputs and their model text remain unchanged. The closed v2 object adds one exact required instruction snapshot of at most 262144 UTF-8 bytes tied to its sole selected skill. The canonical Knowledge freezes body validation and model framing, separates visible text from user-role model input, and requires identical request, token-accounting and native-replay content without asset reads during recovery. Activity responses remain v1. Live callers cannot supply pre-resolved snapshots; the execution host validates all references before resolving the same selected entry atomically. Old readers reject v2 without migration, downgrade or data reset.
+
+    ## Initial child-fork seed profile
+
+    Before public release, the existing semantic Journal envelope is additively
+    extended by the closed sequenced record `initial_fork_seed` with profile
+    `yo.session-fork-seed/v1`. Existing non-fork record and envelope bytes remain unchanged. Fork continuation
+    hints use the explicit checksummed discovery extension specified below. A preceding reader MUST reject this unknown record or
+    initial-binding mode; there is no migration, dual write, downgrade, implicit
+    empty-child fallback or deletion of existing data.
+
+    The record has exactly `type`, `journal_sequence`, `profile`,
+    `parent_session_id`, `source`, `seed`, and `history`. The child SessionId is the
+    containing descriptor's UUIDv7 and MUST differ from `parent_session_id`. There
+    is exactly one fork seed, in the child's initial atomic bootstrap, before its
+    first binding and before any accepted child request. Root Sessions omit this
+    record. Its presence with no valid first binding, or a first fork binding with
+    no valid seed, is non-executable corruption rather than a normal empty Session.
+
+    `source` is a closed tagged union. `empty` contains only `kind: empty` and proves
+    only that an explicitly confirmed empty fork was requested. `anchor`,
+    `checkpoint` and `initial_fork` contain `kind`, `binding_epoch`, `context_epoch`, `record_sequence`,
+    `journal_boundary`, and `binding`. All epochs/sequences are positive integers qualified by `parent_session_id`.
+    For an anchor, `journal_boundary` equals that Anchor's existing resumable-outcome
+    boundary, which precedes its own `record_sequence`. For a checkpoint-only
+    source, `journal_boundary` equals the checkpoint record sequence and
+    `context_epoch` is its successor context epoch. The captured durable cutoff
+    MUST cover the source record itself in every case. For `initial_fork`,
+    `record_sequence` names the immediate parent's complete initial seed,
+    `journal_boundary` is the captured current complete durable cutoff, and the
+    binding/context epochs name its current effective owner. Recovery validates
+    the initial bootstrap and any subsequent exact ownership-mapping transitions;
+    a parent epoch is never equated with the new child epoch.
+    `binding` freezes the source backend kind/version, binding identity, model
+    identity, continuation strategy, replay profile, and locator using their existing
+    validated bounded wire encodings. An anchor names the exact valid parent Anchor;
+    a checkpoint names the newest valid checkpoint with no uncertain later accepted
+    request. An `initial_fork` source names a valid non-empty parent initial seed
+    with no later accepted request, including a verified current binding derived
+    from that seed. It is not an empty source or the grandparent provenance Anchor. Construction validates these values against one captured parent
+    reconstruction. Recovery consumes child-owned inline bytes and MUST NOT fetch
+    or revalidate the parent by path or by bare sequence.
+
+    A non-empty `initial_fork` source may seed either an exact-replay child or a
+    native child with verified exact-boundary evidence. The child must persist the
+    complete current reconstruction; unchanged private payloads and ultimate origin
+    coordinates follow the same lossless import rules. Repeated seed-only forks
+    are validated and flattened without ancestor reads. A child initialized by an
+    empty fork has no inherited context to reproduce; forking it is an explicitly
+    confirmed empty fork, not fabricated non-empty reconstruction. Tests must fork
+    an exact seed-only child again before any accepted request, delete both ancestors,
+    and recover byte-identical model input from the newest child.
+
+    `seed` is a closed tagged union:
+
+    - `empty` contains only `kind: empty`; source and history MUST also be empty.
+    - `exact_replay` contains `kind`, `contract`, ordered `items`, `item_origins`,
+      and `groups`, using the
+      existing lossless model-replay encodings. It freezes the complete reconstructed
+      context, not merely the most recent delta. The existing 4096-item, per-item,
+      1MiB contract and 64MiB complete-prefix bounds apply. Required provider-private items retain exact payload
+      bytes. Their source qualification and validated child ownership are carried
+      separately by the lossless import mapping below.
+    - `backend_native` contains `kind`, `source_boundary_evidence`, and
+      `candidate_binding`. The boundary evidence is a bounded versioned identity
+      whose supported schema asserts the exact source coordinate named above; an
+      unknown schema cannot confer continuation authority. Candidate binding uses
+      the existing validated binding fields and MUST match the first child binding,
+      same verified account and host, exact target model and distinct locator.
+      No semantic replay items, cache-restoration claim, or source-locator reuse is
+      permitted in this variant.
+
+    `history` is an ordered array of at most 4096 source-qualified entries and at
+    most 16MiB of encoded JSON. An entry contains exactly `source_session_id`,
+    `source_coordinate`, and `record`. `source_coordinate` is a closed union:
+    `{kind: journal, sequence}` for a sequenced semantic record, or
+    `{kind: message, activity_id, part, ordinal}` for a snapshot-normalized message
+    record without its own JournalSequence. `activity_id` uses the existing bounded
+    ActivityRef encoding qualified by the source Session; `part` is `reset`,
+    `segment`, or `ended`; `ordinal` is the zero-based occurrence index of that part
+    in the captured normalized source message. This coordinate is archival only,
+    not a new source JournalSequence or a child admission identity.
+
+    The exact allowed record tags are `command_committed`, `event_committed`,
+    `message_reset`, `message_segment`, and `message_ended`. Allowed commands are
+    `start_turn`, `steer_turn`, `interrupt_turn`, and `respond_to_activity`, preserving
+    their existing closed input/response wire variants. Allowed events are
+    `session_created`, `turn_started`, `activity_started`, `activity_updated`,
+    `activity_finished`, and `turn_finished`. Message records preserve their existing
+    closed reset, segment and ended encodings, including final-segment presence.
+    All other record/command/event tags are forbidden here, in particular descriptor,
+    backend exchange/request/outcome/correlation, binding, replay delta, context
+    policy/checkpoint, fork seed, Request Audit, usage receipt, usage aggregate, and
+    compaction command records. Visible activity text may contain an inert usage
+    notice; it never contributes to child usage accounting.
+
+    Construction first takes the parent's already validated inherited-history array
+    verbatim, then appends only the parent's own allowed archival records in the
+    normalizer's stable source order through the selected reconstruction boundary.
+    For an Anchor this includes eligible message normalization through its committed
+    outcome boundary; for a checkpoint-only source it includes only committed
+    archival material at or before the checkpoint record. No later complete record,
+    uncommitted segment, pending submission, or accepted uncertain suffix is copied.
+    At repeated forks ultimate source qualifiers remain unchanged; only new parent
+    records are appended. There is no merge by timestamp, filename, activity number
+    alone, or child sequence. Duplicate composite source coordinates are rejected,
+    not silently deduplicated. Sequenced coordinates increase strictly within each
+    source; normalized message parts retain their source order and message terminal
+    invariants. Embedded Session/activity identities and sequenced record numbers
+    MUST agree with their qualifiers. Bounds apply after this complete flattening.
+
+    History records are interpreted only by an isolated archived transcript
+    projection and never enter child command/event recovery, request, usage,
+    replay, input admission, or Anchor correlation. Input v2 snapshots remain exact
+    archival bytes and trigger no asset reads. The first excess unit rejects the
+    fork; no inherited visible history or required model context is silently dropped.
+    The complete seed is additionally subject to existing commit/envelope bounds.
+
+    ### Lossless import ownership and retained groups
+
+    `exact_replay` additionally requires `item_origins` and `groups`.
+    `item_origins` has exactly one entry per ordered item. An origin entry contains
+    exactly `original`, `imported_from`, and `source_binding`. `original` contains
+    `session_id`, `binding_epoch`, `context_epoch`, `record_sequence`, and
+    `item_index`; it identifies the record that first produced that exact item.
+    `imported_from` has the same fields and identifies the immediate parent's
+    validated delta, checkpoint retained group, or initial seed location used for
+    this fork. Both source records are qualified by SessionId; `item_index` is a
+    zero-based index into that record's ordered reconstructed items. `source_binding`
+    freezes the original item's exact binding identity, model identity, and replay
+    profile. Every field is bounded by the existing identity/value domains; origin
+    arrays are subject to the same 4096-item and whole-record bounds as `items`.
+    Origins are correlation metadata only and never become model-visible input.
+
+    Each group has exactly `first_item` and `end_item`, defining a nonempty half-open
+    range in `items`. Groups form an ordered gap-free nonoverlapping partition and
+    retain the existing complete semantic-group rules, including tool-call/result
+    and required private-item association. Source policy or system/tool contract
+    is not manufactured as a new source user command. An item synthesized by a
+    source checkpoint uses that checkpoint's Session/epoch/sequence as its original
+    coordinate. Creation checks origins, group boundaries and exact bytes against
+    the captured source reconstruction before publishing the child.
+
+    The import is an explicit, validated lossless ownership mapping: item payload
+    bytes and ultimate `original` qualification never change, while the child
+    owns the imported baseline under its initial binding epoch 1 and context epoch
+    1. Source epochs are not fed into the child's existing equality checks. During
+    recovery, fork import validation first establishes the source/target exact
+    binding and replay-profile match, then registers the imported groups as the
+    child binding's initial baseline. Only that registered baseline may enter the
+    child replay accumulator. Ordinary child deltas retain their existing epoch
+    and accepted-request checks and contain only newly accepted child items, never
+    copies of the inherited baseline. No synthetic child request or Anchor is
+    created to satisfy an epoch validator.
+
+    A checkpoint's `retained_groups` remains an ordered array admitting either its
+    unchanged local group shape `{first_sequence,last_sequence,items}` or the new
+    closed import group shape `{profile,fork_seed_sequence,group_index,items}`.
+    The latter profile is exactly `yo.fork-retained-group/v1`; its seed sequence is
+    a real earlier child JournalSequence and its zero-based group index selects one
+    complete immutable group from that child's seed. `items` MUST equal that entire
+    seed group byte-for-byte, with origins resolved from the same seed. Missing
+    seeds, split groups, duplicate group indexes, changed payloads or wrong-profile
+    references fail closed. Imported groups precede locally produced groups;
+    import indexes increase strictly, and local ranges retain their existing
+    strict range ordering. `first_retained_sequence`, when present, is the child
+    seed sequence if the first retained group is imported, otherwise the first
+    local sequence. Comparing two imported groups uses seed sequence plus group
+    index rather than rejecting their shared seed sequence as a duplicate range.
+    These changes do not relax ordinary local-group correlation or epoch checks.
+
+    Checkpoint construction and recovery validate import groups against their
+    current effective child owner epoch and exact binding/profile. That owner is
+    derived from the child initial-fork record and any subsequently verified exact
+    binding-transition seed, never from a parent epoch or an unchecked metadata
+    number. Context-epoch advancement preserves the registered import and original
+    bytes for retained groups. Imported groups summarized out of context follow the
+    existing explicitly disclosed summary/private-loss rules; they are not later
+    restored from archival history. Retained private groups remain exact and
+    indivisible. A subsequent exact binding replacement must carry the registered
+    origins and import references with the reconstructed context and verify the
+    same effective identity/profile before assigning its new owner epoch. An
+    incompatible target still requires the separately authorized lossy-handoff
+    path; it cannot suppress, relabel or silently drop imported private items.
+
+    Forking a child flattens its current reconstructed context. Existing ultimate
+    `original` coordinates and all item bytes are retained; `imported_from` is
+    rebound to the immediate parent's authoritative source location, and the new
+    child receives its own validated epoch-1 import. Old fork records are not
+    recursively nested, nor are original qualifications replaced by the immediate
+    parent's UUID. New child-local items acquire their own original coordinates.
+    A complete child snapshot retains the seed and any import metadata required by
+    its current checkpoint/transition graph. Parent and grandparent repositories
+    are never recovery dependencies. Tests MUST cover source epoch 3 into child
+    epoch 1, a second-generation fork, retained-private checkpoint recovery, an
+    exact-compatible replacement, incompatible model/private-profile rejection,
+    and deletion of every ancestor while the child reconstructs identical input.
+
+    An `exact_replay` replacement may instead use the positive
+    `source_initial_fork_sequence`, mutually exclusive with
+    `source_anchor_sequence` and `source_checkpoint_sequence`. This coordinate
+    names the complete initial exact seed in the same child Session, and is valid
+    only while that seed remains the current reconstruction root with no intervening
+    accepted child request or checkpoint. Recovery MUST verify the complete chain
+    from the initial child binding through every exact replacement to the immediately
+    preceding closed source epoch; the seed's epoch-1 origin does not substitute for
+    that current source owner. The replacement preserves the exact replay contract,
+    compatible effective binding identity and private profile, ordered item bytes,
+    registered origins, and import references. Its transition seed transfers those
+    same validated imports to the newly opened owner epoch without changing their
+    original coordinates or payloads. Missing chain links, stale source owners,
+    wrong-Session or wrong-kind seeds, changed imports, incompatible private profiles,
+    and any intervening accepted request or checkpoint reject this source path.
+    `initial`, `initial_fork`, `lossy_handoff`, and `backend_native_model_rebind`
+    forbid `source_initial_fork_sequence`; this adds no lossy source eligibility.
+    Tests MUST cover two consecutive seed-only exact replacements followed by
+    restart and another child fork, preserving exact items and origins after deleting
+    all ancestor repositories, and reject each invalid source condition above.
+
+    The first `backend_binding_opened` uses a new closed `initial_fork` transition
+    with exactly `mode` and `fork_seed_sequence`. It requires epoch 1 and an earlier
+    seed in the same initial child commit. Existing prior-epoch close requirements
+    remain unchanged for replacement transitions, and no parent epoch is counted
+    as a prior child epoch. Initial child context epoch is 1; inherited source
+    context epochs are provenance. A complete initial exact seed is a reconstruction
+    root before the first child accepted request, just as a complete checkpoint may
+    be a root without a later Anchor. Child replay appends only newly accepted child
+    deltas to that seed and respects subsequent child checkpoints. An uncertain
+    accepted suffix remains read-only and is never resent.
+
+    The first publication stores the descriptor, seed, first binding and any
+    required initial context policy together. A complete snapshot preserves their
+    exact child JournalSequences and bytes. Duplicates, late seeds, wrong-source
+    kinds, reused native locators, candidate/initial-binding disagreement,
+    source-private incompatibility, malformed inline replay or incomplete bootstrap
+    fail closed. Parent disappearance after complete publication does not prevent
+    managed replay or archival inherited-history display; a missing native backend
+    locator retains the existing explicit continuation-failure behavior.
+
+    ### Bounded discovery checksum extension
+
+    The existing closed discovery object MAY contain
+    `initial_fork_seed_journal_sequence` as a positive integer; explicit null, zero,
+    unknown fields and noncanonical values are rejected. Omission retains exactly
+    the frozen legacy fields and checksum preimage. Presence appends two fields to
+    the end of the existing discovery checksum preimage: the UTF-8 bytes
+    `yo.initial-fork-discovery/v1`, then the sequence as eight-byte big-endian u64.
+    Both use the existing length-prefixed `append_field` encoding. The envelope and
+    checksum schema labels remain their existing v1 values before public release;
+    preceding closed readers reject the additional field. No omitted-field marker
+    is appended for a legacy record, preserving its exact checksum bytes.
+
+    The hint is emitted only for a fully published executable initial child seed
+    with no later accepted child request; later appends recompute and omit it when
+    that condition ceases to hold. It is not parent lineage or a synthetic Anchor.
+    Readers recompute it against semantic state during executable recovery and fail
+    closed on disagreement. The history-discovery contract defines eligibility and
+    legacy unknown classification; no full-log scan is added to listing. Tree
+    viewing still needs a separately bounded parent-provenance projection and is
+    not completed merely by this continuation hint.

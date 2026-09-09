@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-001
-    revision: sha256:8985664b1165caef5e74547c343bf114a9036682a6c2872cb7b26906d685bc51
+    revision: sha256:ce818345a293de40bea12f21427ff38f7ab0204c90c8190471df262d1a2e1f08
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -21,7 +21,7 @@ A Yo Session is the stable, durable identity of one user task. It MUST use a
 UUIDv7 and MUST remain the same when its Agent Backend, backend Session locator,
 transport, or model changes. Those replaceable execution details belong to
 ordered, versioned backend binding epochs recorded inside the Yo Session. Every
-binding transition MUST close the previous epoch before opening the next, and
+replacement binding transition MUST close the previous epoch before opening the next, and
 every Continuation Anchor MUST identify its epoch. Journal consumers MUST
 preserve epoch boundaries and MUST NOT replay, summarize, or attribute backend
 state as though one binding spanned a transition.
@@ -30,7 +30,7 @@ Only an intentional user fork creates a new Yo Session. A fork MUST record its
 parent and either its source anchor or the explicit absence of one. An empty
 child offered when no durable anchor exists is such a fork, not a backend
 reconnection. A non-empty fork MUST seed its first binding from the source
-anchor through a verified backend-native fork or through the same exact-replay
+anchor, checkpoint-only or initial-fork reconstruction through a verified backend-native fork or through the same exact-replay
 and explicitly approved lossy-handoff rules used for replacement bindings.
 
 History viewing and executable continuation MUST remain separate capabilities.
@@ -38,7 +38,7 @@ A Continuation Anchor MUST identify an accepted backend request, its correlated
 stable resumable outcome, the fully committed semantic Journal boundary, and
 the versioned backend binding and locator needed to continue. Those identities
 and the locator are bounded Session Journal correlation data, not optional
-Request Audit detail. Without a context checkpoint, resume MUST select the
+Request Audit detail. Without a context checkpoint or complete initial fork seed, resume MUST select the
 newest durable Continuation Anchor and MUST NOT fall back to an older binding
 locator. With a valid checkpoint, resume MUST select that checkpoint as the
 model-context reconstruction root, then apply only successor-epoch replay
@@ -50,8 +50,8 @@ evidence and MUST NOT become automatic continuation input.
 Request payloads, headers, revision or attempt evidence, and other Request Audit
 detail MUST NOT be required to construct or validate an Anchor.
 
-When neither a durable Continuation Anchor nor a valid context checkpoint
-exists, yo MUST open the saved Session read-only. A checkpoint with no later
+When no durable Continuation Anchor, valid context checkpoint or complete
+initial fork seed exists, yo MUST open the saved Session read-only. A checkpoint with no later
 accepted request may reconstruct its successor context without a
 successor-epoch Anchor. A later accepted request without a completed matching
 Anchor remains uncertain and MUST open read-only rather than be resent. Yo MAY
@@ -134,6 +134,106 @@ the target can preserve it.
 Context history MUST use a positive monotonic Session-global `context_epoch` independent of the backend binding epoch. The initial binding starts context epoch 1, and each later binding inherits the Session's current context epoch unchanged. Only a durable same-binding `yo.context-checkpoint/v1alpha1` advances it by exactly one; a context-policy replacement or binding transition does not. Every accepted model request MUST identify both the binding epoch and context epoch current at dispatch. An active Turn may cross a checkpoint only between complete correlated semantic groups and before its next ordinary Turn request; its terminal replay delta, resumable outcome, and Continuation Anchor use the newest epoch and latest accepted request, while earlier requests remain historical evidence in their original epochs. Recovery MUST apply replay deltas only to their exact current context epoch, apply a checkpoint with its exact replay contract and inline retained replay items as the sole atomic replacement that opens its named successor, and reject gaps, duplicates, regressions, direct cross-binding checkpoint application, or records appended after a checkpoint that name its superseded epoch. Historical records at or before the checkpoint source boundary remain valid evidence. A retained provider-private item remains valid across this same-binding context-epoch increment because its `binding_epoch` is unchanged; only a binding-epoch mismatch is cross-binding-epoch private state. The reconstructed replay bound measures the checkpoint's synthetic user-role body, inline retained groups, and non-duplicating later successor-epoch delta suffixes rather than the replaced prefix. Changing context epoch alone MUST NOT close or open a backend binding, claim Provider-native resume, alter binding-transition cache evidence, or infer Provider cache preservation or loss. Only cache-read tokens reported by a later actual ModelWork usage receipt are evidence of a cache read.
 
 Persisting enabled `portable-summary/v1alpha1` in `yo.context-policy/v1alpha1` selects the standing automatic policy for the backend's exact bounded compaction pipeline and does not ask again at each pressure event. Explicit idle `/compact` is the matching manual authorization for that same pipeline. Yo MUST show the resulting lossy boundary, measurements, retained raw budget, receipt count, and loss classes. This is the sole exception to the preceding per-handoff approval rule and covers only the exact source Anchor and semantic boundary, fixed-structure visible summary, retained semantic suffix, Session-scoped artifact receipts, dropped-private disclosure, and successor context epoch atomically committed by the backend compaction contract. Disabled compaction and `exact-replay-only/v1alpha1` permit no automatic or manual loss. Provider, Model, connector, endpoint, replay-profile, schema, or any other replacement-driven lossy handoff MUST still open read-only, describe the loss, and obtain one explicit confirmation; it MUST NOT reuse context-compaction policy or advance only the context epoch.
+
+## Intentional child fork
+
+The first executable fork milestone selects the newest complete durable
+reconstruction of an idle parent. A non-empty fork MUST reject an active Turn,
+pending input admission, outstanding activity request, or uncertain accepted
+suffix. This restriction does not remove the separately confirmed empty-child
+recovery path for a read-only or uncertain parent: that path inherits no model
+context or history and never resends the uncertain suffix. This milestone does not claim arbitrary historical branch selection;
+selection of an older complete boundary remains a separate required extension.
+Ordinary `/new` creation remains independent and has no inferred parent.
+
+A child MUST have a fresh UUIDv7, its own writer lease, its own JournalSequences,
+and initial binding epoch 1. It MUST persist one immutable `initial_fork_seed`
+under `yo.session-fork-seed/v1`, identifying its parent UUID and either an exact
+source Anchor, an exact checkpoint-only reconstruction, a valid initial-fork
+reconstruction without later accepted child work, or explicit empty origin. A parent coordinate MUST always be qualified by the parent SessionId.
+It MUST NOT be interpreted as a child JournalSequence, a previous child binding,
+or a child accepted request. The child's initial fork binding is not a binding
+replacement: it has no previous epoch to close.
+
+An Anchor source MUST include its binding/context epochs, exact source record
+sequence and fully committed journal boundary. Its seed MUST use the newest
+complete reconstruction, including a checkpoint root and all required later
+deltas when present. A checkpoint-only source MUST name the checkpoint itself,
+not its older provenance Anchor, and is valid only when no later accepted
+request lacks a completed matching Anchor. The parent is captured as one
+validated durable point-in-time snapshot; later parent activity does not change
+the child's selected source. An explicitly confirmed empty child records source
+`empty`, inherits no model input, and MUST NOT copy or resend an uncertain suffix.
+
+A seed-only child with no later accepted request is itself a valid non-empty
+fork source. Its complete initial fork seed and current effective binding must
+be validated, including any exact replacement/import ownership chain. A new
+child copies that current reconstructed context and flattened inherited history;
+it does not fall back to the grandparent Anchor, fetch an ancestor repository,
+or silently create an empty fork. Its immediate parent is the seed-only child,
+while ultimate item origins remain unchanged. Any later accepted request without
+a complete reconstruction makes this path uncertain and rejects non-empty fork.
+
+An exact-replay child MUST contain the complete validated model-context seed
+inline, including the exact system/tool contract, ordered semantic replay items,
+and every required eligible provider-private item. It MUST NOT require the
+parent's files, repository reader, input-admission service, skill catalog, or
+optional supporting assets during recovery. Parent deletion or loss therefore
+does not invalidate the child's exact replay. Private item payloads and ultimate source qualifications remain immutable,
+while the explicit fork-import mapping assigns them to the child's independent
+epoch-1 baseline for runtime validation. Checkpoints, retained groups, exact
+binding replacement and repeated forks MUST preserve that mapping and original
+bytes according to the persistence profile. Source epochs are provenance, not
+values substituted into child epoch-equality checks. The target must preserve
+the exact effective binding identity and private replay profile; incompatibility
+rejects exact fork rather than silently losing state. The initial fork profile
+does not authorize lossy handoff or cross-account/model conversion.
+
+A backend-native child MUST be prepared through a separately advertised fork
+capability and obtain a distinct locator owned by the child. Same-host and
+verified same-account evidence, the exact target model/binding identity, and
+proof that the candidate contains exactly the selected durable boundary are
+required. A host's current locator or successful `thread/fork` response alone
+is not boundary proof: it can contain later or uncommitted state. The adapter
+MUST establish a protocol-supported exact boundary or reject the operation.
+It MUST NOT mutate the source locator or advertise model-rebind support as
+proof of genuine child-fork support. A native seed records verified native
+continuation evidence without inventing Yo semantic replay or cache restoration.
+
+Inherited transcript content MUST be stored as bounded source-qualified history
+inside the child seed and displayed with its source Session/boundary. It is
+archival presentation evidence only. It MUST NOT be replayed as child commands,
+re-admitted as new user input, counted as child model/tool usage, or used to
+manufacture child Turns, requests, activity IDs, Anchors or side effects. Forking
+a child preserves the original source qualifiers of inherited records rather
+than recursively relabeling them as that child's own events. The inline model
+seed alone owns inherited model context; presentation history never substitutes
+for exact replay. Capacity failure rejects the fork rather than silently
+truncating required model input or inherited visible history.
+
+The host MUST prepare the backend candidate and complete child bootstrap while
+the parent remains selected with its prior availability unchanged. For a
+non-empty fork the parent remains executable; an explicitly confirmed empty
+recovery fork preserves the parent's read-only or uncertain state without
+claiming it executable. One atomic child publication MUST
+contain its descriptor, complete initial fork seed and first binding evidence
+before selection can switch. Preparation or publication failure leaves the
+parent unchanged; any unbound native candidate and incomplete child are cleaned
+up or quarantined and never offered as executable descendants. Recovery MUST
+reject a missing, duplicated, late, mismatched or partial seed. Before the
+child's first accepted request, its complete initial seed is a valid continuation
+root. Afterward, ordinary complete child Anchors and checkpoints supersede it
+according to their reconstruction rules; an accepted child request without a
+matching completed Anchor remains uncertain and MUST NOT be resent.
+
+A Session tree MUST derive ancestry from validated durable fork provenance,
+never matching names, timestamps, backend locator similarity, or model-rebind
+epochs. Missing parents are shown as unavailable ancestors. Older histories
+without fork provenance have unknown ancestry rather than an invented root.
+Tree viewing MUST remain bounded, non-creating and read-only, and must not start
+a backend or acquire a Session writer lease. The complete tree and arbitrary
+historical branch selection remain product work beyond the initial latest-boundary
+fork milestone.
 
 ## Rationale
 
