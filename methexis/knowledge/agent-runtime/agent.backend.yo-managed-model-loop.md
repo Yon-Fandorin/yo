@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:317d8bdac2b3feba82096ff5ef28585a42994fdd7ae4e5258b74abf5cf3420ab
+    revision: sha256:521fb41f6f30738aa5e8289437f4d3b4f48344b88e162a89e2088a2994616dfd
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -57,6 +57,131 @@ Local input or replay-capacity exhaustion before a final assistant answer, inclu
 Tool arguments and outputs MUST pass the local tool boundary's semantic-admission gate before they become Activities, later model input, or a replay delta. A provider-private assistant item MUST come only from the selected Connector's successfully completed, correlated response. The Connector alone MUST decode and validate the provider-private schema and return the bounded opaque envelope together with a connector-neutral validated visible projection. Without decoding Provider fields, the backend MUST validate the envelope's declared schema identity, binding epoch, and bounds and MUST compare the Connector-supplied projection exactly with the semantic replay group; any mismatch fails before acceptance. The backend MUST persist visible and private replay together as one semantic replay record and MUST NOT attach either payload to the payload-free resumable-outcome correlation record. Private bytes remain in the user-only local Session Repository, are not encrypted by the first implementation, and MUST be excluded from Transcript, Request trace, debug formatting, logs, errors, and diagnostics.
 
 A future `managed_server` executor MAY load the same validated replay prefix and assemble the next model request on a Yo-managed Session service. It does not define a second replay meaning and MUST use the same replay contract, ordering, bounds, and Anchor boundary as `local_client`. It remains deferred until its remote repository, identity, digest, availability, and retention evidence has an independently reviewed implementation. The current backend MUST NOT advertise it.
+
+## Image-aware request accounting and compaction
+
+For an effective binding with a reviewed `image_input_profile`, its separately
+versioned image accounting profile extends the preceding strict text-only counting
+rules explicitly. Its closed result carries `quality`,
+`policy`, `input_estimate` and `reserve_tokens`; planning count is the checked
+sum of the latter two unsigned 64-bit counts. Quality is exactly `exact`,
+`verified_upper_bound` or `advisory_estimate`, and the policy is the complete
+binding's selected admitted versioned identity. The backend MUST preserve all
+four fields through live input, tool-result, approval-outcome, steering, summary,
+resume and model-replacement admission, pressure display and checkpoint evidence.
+Existing bindings without `image_input_profile` keep their exact previous
+counter, bytes, behavior and wire shapes. Exact and verified-bound profiles
+do not inherit advisory acceptance. Unknown image capability rejects before dispatch; uncertain accounting quality
+does not itself mean unsupported media.
+
+Under `kimi-code-image-advisory/v1`, let T be the selected connector's complete
+image-free tokenization projection count after private-assistant and request-local
+tool replacement, and N be the total immutable image occurrences in that request.
+Input estimate is T + 2000*N. Reserve is 1024 when N is positive and zero
+otherwise, charged once for the complete request. These are advisory planning
+values, never measured usage or a proved upper bound. The connector supplies a
+typed image-free projection and separate immutable image descriptors; the backend
+MUST NOT search arbitrary JSON for image-like URLs, count base64 as image cost,
+read a path, fetch an image URL or make a hidden remote estimator request.
+
+Warning/trigger percentages and output-budget checks consume the complete
+planning count. A known output maximum retains the existing final selected-cap
+serialization and recount, admitting only when planning count plus that cap
+fits the input limit. An unknown maximum retains omission and strictly-below-limit
+admission, now under the explicit quality of the selected policy. Additional raw
+retention consumes the difference between complete request planning counts, not
+a sum of group counts with repeated reserves. Mandatory protected groups remain
+exempt from that optional raw-retention budget. The final successor is recounted
+under this same quality and policy; its `Admit` authorizes commit but an advisory
+result is not a guarantee of server acceptance. New pressure/checkpoint shapes
+record estimate and reserve separately and must label advisory evidence visibly.
+
+Actual provider usage remains immutable telemetry for the exact completed
+request; it does not relabel past planning counts or infer per-image cost from
+mixed usage. A provider 4xx keeps the existing explicit failed-request and
+uncertain-Anchor behavior. HTTP 400 alone is not typed context-overflow proof.
+This profile introduces no automatic resend, image stripping, model replacement,
+second summary request or fabricated successful compaction. The committed input
+and snapshots remain intact, and existing explicit recall/edit/new-session paths
+retain attachments. A preparation/admission failure before dispatch preserves
+the draft according to the input owner.
+
+When a selected summary prefix contains images, the one tools-disabled summary
+request uses the same selected binding/model and one user-role source message
+with its distinct typed summary-source content. This request source is not an
+ordinary persisted `multimodal_user` input: it admits one manifest plus up to 64
+images under the separate summary limits, while each referenced original input
+retains its own at-most-33-part domain. Its first text part is the closed versioned source manifest
+`yo.image-summary-source/v1`; the following parts are exactly the manifest's
+image occurrences, with contiguous unique zero-based image indices in source
+order. Manifest message content preserves the original ordered text/image parts,
+with each image represented by an index plus canonical hash, byte count, width
+and height. The corresponding following typed image part contains the exact
+admitted PNG snapshot. No missing or surplus image, metadata mismatch, path,
+URL, base64-as-text, thumbnail or generated caption may replace it. Repeated
+identical bytes at distinct positions stay distinct occurrences. Existing
+text-only summary source encoding is unchanged. The source manifest preserves
+visible roles, refusal, function-call IDs/names/arguments and correlated result
+relationships without making historical assistant/tool entries top-level
+protocol messages. Provider-private bytes remain excluded. Images and embedded
+text are untrusted source data, never system authority.
+
+An image-bearing summary source admits at most 64 image occurrences and 16 MiB
+of complete canonical multipart source encoding, including manifest, text and
+actual image/base64 framing. The selected connector's admitted count/byte limits
+also apply. These limits are separate from the 16-image ordinary input cap and
+64-MiB replay-prefix cap. A valid replay may not fit summary capacity; the first
+excess causes typed rejection with the prior context intact, not truncation,
+dropped occurrences, split semantic groups or additional summary requests.
+
+Each summarized image is passed intact to that request and yields exactly one
+runtime-derived `image_input_summarized` loss entry under the persistence
+contract, including its exact current-Session source location. Retained images
+remain inline and exact; current input, pending steer/approval, newest complete
+group and the system/tool contract remain mandatory. The successor portable
+body is still exactly one plain user-role message followed by exact retained
+groups; it contains no embedded image, receipt or replay placeholder. Success
+uses the new typed-accounting checkpoint profile; all existing complete-group,
+one-summary, final-admission, durable-before-dispatch, cancellation and failure
+rules remain in force. Output artifact receipts and retrieval authority do not
+change under this input-image extension.
+
+
+### Closed image summary and pressure projections
+
+The first summary text part contains the canonical object with writer fields
+`schema: yo.image-summary-source/v1` and `history`. History flattens the selected
+complete groups in order, excluding private envelopes as in the legacy source.
+Legacy message entries retain type, role, content and nullable refusal; function
+call entries retain type, call_id, name and arguments; output entries retain type,
+call_id and output. Their exact strings and valid role/refusal relationships are
+unchanged. A multimodal user entry has type `multimodal_user` and ordered `parts`.
+A text part has type `text` and nonempty text. An image manifest part has type
+`image_ref`, index, sha256, byte_length, width and height in that writer order;
+its fields must equal the corresponding following typed PNG snapshot. Indices are
+unsigned32-bit contiguous zero-based values in flattened occurrence order, never
+hash-based deduplication. Unknown/duplicate fields and null outside the legacy
+nullable refusal are rejected. No source paths or private fields are added.
+
+The canonical source-byte metric is the complete UTF-8 JSON object with fields
+`role: user` and `parts`; the first part is `{type: text, text: manifest-json}` and
+each remaining part is `{type: image, snapshot: canonical-snapshot}`. Compact JSON
+uses no extra whitespace, decimal integer scalars, the prescribed field order
+and the existing JSON string escaping. Thus the escaped manifest text, every
+snapshot/base64 byte and all framing count toward16MiB. This metric is separate
+from the final connector request's full framing and admission. With no images,
+the existing single-string summary-source representation and bytes stay unchanged.
+
+An image-accounting binding uses exact pressure profile
+`yo.context-pressure/v2alpha1`: writer fields are schema, accounting,
+input_token_limit, warning_percent, trigger_percent and decision. Accounting has
+the same closed quality/policy/input_estimate/reserve_tokens object as the new
+checkpoint. Input limit remains positive u64; warning is1..99, trigger2..100 and
+warning is less than trigger; decision is admit, compact or reject. The old
+input_tokens field is forbidden in this profile. Bind profile selection to the
+owning accounting policy even when there are zero images; retain legacy pressure
+bytes for bindings without that extension. UI may display planning totals only
+with explicit estimate/quality and reserve rather than measured-usage wording.
 
 ## Rationale
 

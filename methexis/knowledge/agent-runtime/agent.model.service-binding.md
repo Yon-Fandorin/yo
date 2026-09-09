@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.model-001
-    revision: sha256:fddf03a6e0f441124a634f2004e304601dd82bb24e501a2e4c4a3cf50d7eb9a0
+    revision: sha256:9ef63962457a150a5ae31e73f8c1814479c00b5e03a4100fc14fd1a0992024e0
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -17,9 +17,9 @@ relations:
 
 Routing uses typed stable ProviderId, AccountId, and ModelId. Provider names the service group, Account the credential scope, and Model the wire model name. A new stored ProviderId `host` is forbidden; a pre-existing durable `host` coordinate remains a qualified ModelTarget with stable credential, attribution, and continuation identity. External keys are `provider`, `account`, and `model`. An exact Responses, Chat Completions, or Kimi Chat Completions dialect resolves through the closed registry to one Connector; probing and fallback are forbidden.
 
-Model connection and profile values remain explicit typed data; this unit does not assign them a canonical byte encoding or durable profile digest. One Provider-and-Account definition declares exactly one normalized endpoint outside its profile and model entries cannot replace it. The definition may declare one base profile above its model entries. Each model entry may omit inherited fields or replace only the closed fields `api_dialect`, `tokenizer_profile`, `input_token_limit`, `max_output_tokens`, `reasoning_parameters`, `optional_request_parameters`, `tool_capability_policy`, and `replay_profile`. Resolution copies the base profile and then replaces each explicitly present model field as a whole rather than recursively merging it. Unknown or duplicate fields fail, as does a missing endpoint or any missing required profile field after resolution. Omitting a model profile field inherits the base value, except that `max_output_tokens` remains absent when neither base nor model supplies it. An explicitly authored empty mapping replaces a structured field with that empty mapping. An explicitly authored whole-field YAML null fails at both the `--from` import and durable-state decode boundaries; null remains part of the recursive structured-value algebra only below a present structured field. No implicit default supplies the endpoint or the required profile fields. A mixed definition that contains models with known and unknown output maxima MUST omit `max_output_tokens` from its base and put a positive number only on each model whose maximum is known; omission cannot clear an inherited base value. The exact replay-profile omission rule below is the sole semantic default.
+Model connection and profile values remain explicit typed data; this unit does not assign them a canonical byte encoding or durable profile digest. One Provider-and-Account definition declares exactly one normalized endpoint outside its profile and model entries cannot replace it. The definition may declare one base profile above its model entries. Each model entry may omit inherited fields or replace only the closed fields `api_dialect`, `tokenizer_profile`, `input_token_limit`, `max_output_tokens`, `reasoning_parameters`, `optional_request_parameters`, `tool_capability_policy`, `replay_profile`, and `image_input_profile`. Resolution copies the base profile and then replaces each explicitly present model field as a whole rather than recursively merging it. Unknown or duplicate fields fail, as does a missing endpoint or any missing required profile field after resolution. Omitting a model profile field inherits the base value, except that `max_output_tokens` and `image_input_profile` remain absent when neither base nor model supplies them. An explicitly authored empty mapping replaces a structured field with that empty mapping. An explicitly authored whole-field YAML null fails at both the `--from` import and durable-state decode boundaries; null remains part of the recursive structured-value algebra only below a present structured field. No implicit default supplies the endpoint or the required profile fields. A mixed definition that contains models with known and unknown output maxima MUST omit `max_output_tokens` from its base and put a positive number only on each model whose maximum is known; omission cannot clear an inherited base value. The exact replay-profile omission rule below is the sole semantic default; absent `image_input_profile` preserves the existing text-only contract and supplies no image policy.
 
-The resolved effective profile contains the model's API dialect, tokenizer profile, input-token capability, optional known maximum-output capability, reasoning parameters, optional request parameters, tool-capability policy, and replay profile. A present `max_output_tokens` MUST be a positive integer less than `input_token_limit` and records the known hard maximum; an actual lower per-request cap remains request context. An absent `max_output_tokens` records only that Yo does not know a trustworthy numeric maximum, permits no local guess, and is routable only through a Connector whose contract allows the corresponding output field to be omitted. A present string, zero, negative value, boolean, mapping, sequence, or null fails. Changing between absence and presence or changing the known number changes complete-binding equality and opens a new epoch. Each profile identifier uses the exact `yo.versioned-profile-id/v1` grammar: 1 to 128 ASCII octets, a non-empty name matching `[a-z0-9][a-z0-9._-]*`, then `/v`, then `[1-9][0-9]*`. Runtime use separately requires implementation support. Connection-time semantic verification is not a profile field and no `verification_profile` is stored or imported.
+The resolved effective profile contains the model's API dialect, tokenizer profile, input-token capability, optional known maximum-output capability, reasoning parameters, optional request parameters, tool-capability policy, replay profile, and optional image-input profile. A present `max_output_tokens` MUST be a positive integer less than `input_token_limit` and records the known hard maximum; an actual lower per-request cap remains request context. An absent `max_output_tokens` records only that Yo does not know a trustworthy numeric maximum, permits no local guess, and is routable only through a Connector whose contract allows the corresponding output field to be omitted. A present string, zero, negative value, boolean, mapping, sequence, or null fails. Changing between absence and presence or changing the known number changes complete-binding equality and opens a new epoch. Each profile identifier uses the exact `yo.versioned-profile-id/v1` grammar: 1 to 128 ASCII octets, a non-empty name matching `[a-z0-9][a-z0-9._-]*`, then `/v`, then `[1-9][0-9]*`. Runtime use separately requires implementation support. Connection-time semantic verification is not a profile field and no `verification_profile` is stored or imported.
 
 `replay_profile` is explicit complete-binding and epoch identity. The first closed values are `semantic-only/v1` and `kimi-private-local-plaintext/v1`. `semantic-only/v1` declares exact provider-neutral replay and no provider-private schema. `kimi-private-local-plaintext/v1` declares exact replay schema `kimi.assistant-message/v1alpha1`, local-client execution, and unencrypted retention in the current-user-only Session Repository. An omitted replay profile resolves only to `semantic-only/v1`; no ModelId, Connector, release overlay, runtime default, or old local byte shape may reinterpret that omission as private replay consent. Every K3 or K2.7 Code definition is eligible only when its import or reviewed catalog plan explicitly carries `kimi-private-local-plaintext/v1` after the plaintext-retention disclosure. The dynamic overlay may prepare such a candidate but MUST NOT itself turn an unconfirmed stored binding into durable authorization.
 
@@ -126,6 +126,53 @@ Non-interactive external connect is explicit. A stored exact ModelTarget credent
 Interactive disconnect prompts or infers exactly one stored target. Non-interactive disconnect requires exact Provider and `--account` plus `--yes`; `--yes` authorizes only the captured plan and revisions. From the prospective ConnectionRepository snapshot it derives the post-public binding set for the target Provider-and-Account pair. If any stored external binding still requires that pair, credential action is `preserve`; only an empty post-public dependent set permits prepared `remove`. Preview includes affected bindings, preference transition, resume risk, and the derived credential action. Public removal and preference transition commit before any credential removal, and the public-first recovery table resumes or recognizes every exact crash state. Durable history remains.
 
 One operation lock serializes connect, disconnect, first-commit Local Codex preference publication, explicit default set or clear, and brief post-request observation writes. Every command operation resolves a pending operation journal before planning new work. CredentialRevision remains private to the credential store and permission-restricted operation journal. User-visible typed conflicts and partial outcomes name the operation kind, phase, derived preserve-or-remove action, and only expected or committed ConnectionRevision plus safe retry guidance; they never expose CredentialRevision or secrets. Retries are idempotent and never restore or delete unrelated data. Tenant selection, tenant UI, rotation policy, and failover are deferred, while injected boundaries preserve future caller-owned tenant scope without adding TenantId now.
+
+The optional `image_input_profile` is explicit complete-binding and epoch identity.
+Absence MUST retain the prior profile's bytes and text-only input interpretation;
+a producer MUST omit the field when absent. A present value uses the existing
+`yo.versioned-profile-id/v1` grammar. Whole-field null, an unknown value, a value
+unsupported by the selected Connector, or an incompatible endpoint/model/profile
+MUST fail before publication or model transport. Presence, absence, and the exact
+value participate in complete-binding equality. Its base/model inheritance and
+whole-field override follow the existing rules; absence in a model entry cannot
+clear an inherited value. Neither a catalog refresh nor a new binary may add it
+to an existing stored or historical binding implicitly.
+
+The first closed managed image profile is `kimi-code-png-advisory/v1`, valid only
+for the already admitted ProviderId `kimi`, normalized endpoint
+`https://api.kimi.com/coding/v1/`, dialect `kimi-chat-completions`, and exact Code
+ModelIds `k3`, `k3-256k`, `kimi-for-coding`, or `kimi-for-coding-highspeed` with their
+unchanged complete envelope of limits, thinking and replay fields. It admits the
+canonical PNG snapshot from `agent.input.image-attachment` and exact request
+accounting policy `kimi-code-image-advisory/v1`, with quality
+`advisory_estimate`; it MUST NOT reinterpret `utf8-bytes/v1` as an image tokenizer.
+A new binding plan may carry this profile only as an explicit disclosed candidate;
+old Code bindings remain text-only until an explicit complete-binding transition.
+All present profile fields MUST be serialized explicitly by the durable producer.
+The service's closed envelope check and the Connector's defensive check MUST both
+accept the same new optional field under this exact condition.
+
+Media availability is request-specific typed evidence, distinct from text model
+availability and accounting quality. Exact reviewed image capability for the
+selected model, a supported ordered Connector wire mapping and applicable media
+limits MUST all hold before an image dispatch. Missing capability is unknown,
+explicitly absent support is unsupported, and explicit contradictory remote
+metadata conflicts with a stronger release-owned exact-model fact. None may be
+silently replaced by another model, account or endpoint. Existing eligible text
+requests remain available when image input is unavailable. Remote catalog flags
+cannot supply an executable image profile or broaden an operator's profile.
+Other managed services require separately reviewed image/accounting profiles;
+Responses or Chat dialect compatibility alone grants none. Delegated hosts use
+their own exact protocol and model capability contracts rather than this managed
+connection profile.
+
+This image-profile extension MUST activate only with the exact compatible input,
+Kimi Connector, managed-loop accounting, persistence, checkpoint and continuation
+revisions. The old scalar pressure/checkpoint meanings remain unchanged, while the
+new accounting result retains quality, policy, input estimate and request reserve
+under the persistence owner's closed shape. A binding with this profile MUST NOT
+be dispatched by a runtime that understands PNG serialization but lacks its
+complete request accounting, persistence or replay contract.
 
 ## Rationale
 

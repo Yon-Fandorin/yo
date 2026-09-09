@@ -1,7 +1,7 @@
 schema: methexis.approval/v1alpha2
 knowledge_id: agent.connector.kimi-chat-completions
-revision: sha256:98541cf4cce8fe11719a793ff3bc74997a280c5027ef8a597334e96061832c4b
+revision: sha256:cf820e9fa8407438753e12c4c82799112933564985f70fc3e60d45a991f2a583
 reviewer: agent-runtime
-reviewed_at: 2026-08-27T05:13:24Z
+reviewed_at: 2026-09-09T14:33:17Z
 review_basis: canonical
-request_hash: sha256:59ff1e2829ab9c4b8eeb08702b2e9fdbc441bf1d8e491316de184db928b5677a
+request_hash: sha256:0d7058c9ce3fc4c3f9ea6dcb95067a42154bb6ef28d98c21d53d6f852f585880

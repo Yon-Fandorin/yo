@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:50bedcced583c86d6d2641ae556d35d783277172c0ff36d666f6105c6e68dfe6
+    revision: sha256:f4ca4b7609b98d56467507322bfdbb2127cdeac104429b84c44e4d75a10d43cb
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -246,7 +246,7 @@ semantic Journal data rather than Request Audit detail:
   `yo.context-policy/v1alpha1`, positive `policy_revision`, boolean `enabled`,
   exact `strategy`, integer `warning_percent`, integer `trigger_percent`, and
   the optional retained-raw fields defined below; and
-- `context_checkpoint` contains `profile` with exact value
+- The legacy `context_checkpoint` profile contains `profile` with exact value
   `yo.context-checkpoint/v1alpha1`, the positive binding `epoch`, positive
   `previous_context_epoch`, positive `successor_context_epoch`, positive
   `source_anchor_sequence`, positive `source_journal_boundary`, positive
@@ -632,7 +632,7 @@ credentials, complete environment values, execution-host diagnostics, and
 configured prohibited literals MUST NOT enter the semantic record. The admitted
 exact value, including an explicit bounded replacement, is the sole replay value.
 
-A bounded `context_checkpoint` record has no fields beyond the closed list in
+A bounded legacy `yo.context-checkpoint/v1alpha1` record has no fields beyond the closed list in
 the record grammar above, including its required replay contract, plus
 `portable_body`, `retained_groups`, optional
 `first_retained_sequence`, `artifact_receipts`, `losses`, and `summary_usage`.
@@ -662,7 +662,7 @@ boundary. The receipt is operator disclosure only in this revision and MUST NOT
 appear in `portable_body`, retained-group items, or reconstructed Connector
 input; raw bytes, a replay placeholder, expiry, a path, another Session, or
 retrieval authority are not fields. `losses` is an ordered bounded list of
-exactly either `visible_prefix_summarized` with positive inclusive source
+for the legacy profile, exactly either `visible_prefix_summarized` with positive inclusive source
 sequence bounds, or `provider_private_dropped` with non-empty bounded ASCII
 `schema`, exact `present: true`, positive `byte_count`, and positive
 `source_journal_sequence`. Unknown variants or fields fail closed.
@@ -679,7 +679,8 @@ preceding semantic sequence. Every retained, receipt, and loss coordinate MUST
 be inside that exact boundary. `policy_revision` and `strategy` MUST equal the
 policy current immediately before the checkpoint. Provider-private state,
 private reasoning, credentials, uncommitted effects, arbitrary filesystem
-paths, and raw artifact bytes MUST NOT enter the checkpoint. A retained group
+paths, and raw artifact bytes MUST NOT enter the checkpoint except for the
+new profile's narrow typed input-image retained-group exception defined below. A retained group
 that originally contains a required provider-private assistant item remains
 indivisible and reconstructs that exact Journal-backed item; a private item in
 the summarized prefix is intentionally absent from successor replay and is
@@ -810,7 +811,7 @@ MUST agree with their qualifiers. Bounds apply after this complete flattening.
 
 History records are interpreted only by an isolated archived transcript
 projection and never enter child command/event recovery, request, usage,
-replay, input admission, or Anchor correlation. Input v2 snapshots remain exact
+replay, input admission, or Anchor correlation. Input v2 snapshots and the new admitted input-image snapshots remain exact
 archival bytes and trigger no asset reads. The first excess unit rejects the
 fork; no inherited visible history or required model context is silently dropped.
 The complete seed is additionally subject to existing commit/envelope bounds.
@@ -957,6 +958,170 @@ closed on disagreement. The history-discovery contract defines eligibility and
 legacy unknown classification; no full-log scan is added to listing. Tree
 viewing still needs a separately bounded parent-provenance projection and is
 not completed merely by this continuation hint.
+
+## Immutable input-image persistence extension
+
+The image-input extension is additive inside the existing semantic and physical
+Journal envelopes. Existing `yo.structured-input/v1` and `/v2`, string-content
+replay messages and `yo.context-checkpoint/v1alpha1` retain their exact closed
+shapes, bytes and meanings. A preceding reader rejects the new input, replay
+variant or checkpoint profile rather than omitting image data. No migration,
+dual write, automatic downgrade, re-normalization or empty-input fallback is
+provided. This extension changes no global physical journal-line limit.
+
+An image-bearing StartTurn or SteerTurn uses `yo.structured-input/v3` under
+the input owner's closed occurrence grammar. Its model replay is the new closed
+item `{kind: multimodal_user, parts}`, preserving legacy `message.content` as a
+string. Ordered parts are exactly `{type: text, text}` or
+`{type: image, snapshot}`. The snapshot has exactly `profile` with value
+`yo.input-image-rgba8-triangle/v1`, `mime_type` with value `image/png`, `width`,
+`height`, `byte_length`, `sha256`, and `data_base64`, using the coordinated
+input wire profile's closed encoding. It binds the same admitted immutable PNG
+bytes across the structured input and model replay; source display metadata
+is not part of this snapshot. Input images are user message parts only in this
+extension; assistant refusals, function calls,
+function results and provider-private items keep their existing closed shapes.
+At most 16 image occurrences and 33 ordered text/image parts are permitted per
+source input and its replay message. Empty text spans are omitted. Duplicate
+image bytes at distinct positions remain distinct occurrences. Exact skill
+framing is appended to the final text part, or becomes one new final text part
+when the input ends with an image; it never crosses a later image to modify an
+earlier span. Old text-only input framing is unchanged.
+
+Every snapshot is at most 9 MiB of canonical PNG; their sum per input is also
+at most 9 MiB, charged per occurrence. Transmitted dimensions are positive, at
+most 2048 per side and at most 2,097,152 pixels together. These are admitted
+snapshot bounds, not the distinct compressed-source/decode bounds. New structured
+input remains bounded by 16 MiB of complete canonical JSON. A complete replay
+delta remains bounded by 16 MiB, and the reconstructed replay prefix remains
+bounded by 64 MiB and 4096 items. JSON escaping, base64 expansion, skill text,
+framing and all other items count toward the applicable complete encoded bound;
+per-image validity never bypasses whole-container admission. The writer checks
+the first excess occurrence or encoded byte before retaining it. A malformed,
+unknown-profile, hash/length/dimension-inconsistent or over-budget snapshot
+rejects the whole container before its semantic commit, never just one part.
+
+Queue/dequeue, snapshots, journal recovery, retained checkpoint groups, exact
+binding replacement and initial child seeds preserve the admitted bytes and
+ordered roles/parts. No path, source EXIF, original file, skill catalog, provider
+response, thumbnail or new normalization result can substitute for those bytes.
+Original filename, format, dimensions and source digest may exist only as
+non-model-visible input display metadata under the input owner's closed bounds;
+filesystem paths and source EXIF are excluded from retained image snapshots.
+A display thumbnail is derived presentation, not model or replay authority.
+
+Structured-input v3 and inherited archived UserInput occurrences additionally
+require the input owner's positive bounded `source_byte_length`. Queue, recall,
+editing and inherited input history preserve that host-observed count for the
+per-occurrence original-source aggregate. It is not a field of the neutral PNG
+snapshot, model replay or retained checkpoint image, and is not inferred from PNG
+length. Missing/null/over-bound source-byte evidence rejects the v3 input rather
+than silently erasing its original-source charge.
+
+### Image-aware checkpoint and loss profile
+
+Checkpoint profile selection follows the owning effective binding's accounting
+profile, not its current image count. A binding carrying the admitted image-input
+profile MUST write `yo.context-checkpoint/v2alpha1` even when N is zero or a summary
+has removed all images; its advisory policy remains explicit and reserve becomes
+zero. Recovery MUST validate each checkpoint against the binding epoch that owns
+that record and reject a legacy scalar checkpoint under an image-accounting
+binding or an unsupported/mismatched v2 policy. A compatible later binding change
+MUST preserve old checkpoints under their original epochs and recount the rebuilt
+request under the new binding; it does not relabel historical accounting evidence.
+
+The new exact `yo.context-checkpoint/v2alpha1` profile retains the existing
+checkpoint field, group, graph, epoch, source, policy, usage and commit rules,
+except for the explicitly replaced accounting fields and added loss variant
+below. It MUST omit `input_tokens_before` and `input_tokens_after` and instead
+require `accounting_before` and `accounting_after`. Each is a closed object
+containing exactly `quality`, `policy`, `input_estimate`, and `reserve_tokens`.
+Quality is exactly `exact`, `verified_upper_bound`, or `advisory_estimate`;
+policy is the selected model-service's admitted versioned accounting identity;
+the two counts are unsigned 64-bit JSON integers and their sum must not overflow.
+Unknown policy, incompatible quality or unavailable policy evidence rejects the
+checkpoint. Both objects describe the complete requests on their respective
+sides under the same selected binding and accounting policy, including the final
+selected output cap in their tokenization projections. Counts and reserve remain
+separate; policy planning uses their checked sum. Legacy scalar fields never
+acquire advisory meaning. The summary's measured usage remains solely in the
+unchanged `summary_usage` receipt, not in either planning count.
+
+Only this new profile additionally admits the closed loss object with exactly
+`kind: image_input_summarized`, `content_hash`, `byte_count`, `width`, `height`,
+`source_context_epoch`, and `source`. Content hash is exactly `sha256:` followed
+by 64 lowercase hexadecimal digits and names the admitted PNG bytes; byte count
+is positive and at most 9 MiB, and dimensions obey the normalized snapshot
+bounds above. Source epoch is a positive unsigned 64-bit integer. `source` is
+one of these closed objects, with no optional or unknown fields:
+
+- `{kind: replay_delta, sequence, item_index, part_index}`;
+- `{kind: retained_checkpoint, sequence, group_index, item_index, part_index}`;
+- `{kind: initial_fork_seed, sequence, group_index, item_index, part_index}`.
+
+Every sequence is a positive unsigned 64-bit JournalSequence naming a validated
+authoritative record in the current Session. For `replay_delta`, `item_index`
+indexes that record's inline replay items. For `retained_checkpoint`, group and
+item index select its retained group and that group's inline items. For
+`initial_fork_seed`, group index selects the seed's immutable group partition
+and item index is local to that group's half-open item range. Indices are
+unsigned 32-bit integers inside their actual bounded arrays, whose item/group
+counts cannot exceed 4096. Part index is zero-based across all ordered text and
+image parts of the selected source message, within its at-most-33-part domain;
+it MUST identify an image. Source context epoch is the effective epoch
+established by the named local record, not automatically this checkpoint's
+previous epoch. A retained old occurrence does not acquire a later epoch merely
+because it is summarized. Ultimate ancestor qualifications remain separate fork
+provenance and MUST NOT replace this local source coordinate.
+
+The image losses, considered in their order in `losses`, MUST equal the exact
+ordered image occurrence set of the summarized source: exactly one per
+occurrence, with no missing, extra, duplicate or retained occurrence. The source
+coordinate and hash/length/dimensions MUST match that occurrence in the validated
+source reconstruction. Equal image bytes at distinct coordinates require
+separate entries. The runtime derives this evidence before dispatch/commit; the
+model never authors source coordinates or loss receipts. The complete canonical
+JSON array of image-loss entries is at most 64 KiB and contains at most 64
+entries; check the first excess entry and encoded byte. Existing other loss
+variants and their bounds remain unchanged. Image bytes, filenames, paths and
+unbounded diagnostics are not loss fields.
+
+The checkpoint's raw-artifact prohibition gains only the narrow exception for
+validated admitted input-image snapshots inside exact inline retained groups.
+This exception admits neither raw output artifacts nor image bytes in portable
+prose, receipt/loss objects, arbitrary files or new retrieval authority. Mandatory
+protected semantic groups keep all their image occurrences intact. Summarized
+images leave successor replay only with their whole summarized groups and the
+validated image-loss entries, while original journal bytes remain unchanged.
+The 64-MiB bound applies to the reconstructed portable body plus retained replay
+and successor deltas; it is not a complete checkpoint or physical-line cap.
+
+Recovery validates both legacy and new profiles without changing an existing
+record's shape or accounting meaning. Missing accounting quality/policy, malformed
+image mapping, inconsistent hash or budget excess rejects according to the
+existing pipeline stage before dispatch or checkpoint commit. Checkpoint failure
+preserves the prior authoritative context and epoch; no silent image removal,
+new Anchor or partial checkpoint is permitted.
+
+
+The v3 occurrence grammar is the exact closed input-owner grammar including the
+required source_byte_length. The `multimodal_user` replay writer emits kind then
+parts, with only `{type: text, text}` or `{type: image, snapshot}` parts; ordinary
+input has at least one image, no empty or adjacent text parts, up to16 images and
+33 parts. Canonical snapshot writer order is profile, mime_type, width, height,
+byte_length, sha256 and data_base64. It uses compact JSON, existing JSON string
+escaping, canonical padded RFC4648 base64 without whitespace, and unsigned integer
+scalars in their bounded domains. Unknown/duplicate/null fields are rejected.
+The complete encoded budgets include this exact representation. New image losses
+are appended after existing loss entries without reordering those legacy entries;
+the appended image subsequence follows the summarized source occurrence order.
+Its complete compact canonical array includes square brackets, commas and every
+field byte under the64KiB limit. Each loss writer emits kind, content_hash,
+byte_count, width, height, source_context_epoch and source. Source emits kind,
+sequence, optional required group_index for group-local variants, item_index and
+part_index. The new pressure schema is `yo.context-pressure/v2alpha1` under the
+managed-loop owner; it carries the same closed accounting object and does not
+reinterpret legacy scalar snapshots.
 
 ## Rationale
 

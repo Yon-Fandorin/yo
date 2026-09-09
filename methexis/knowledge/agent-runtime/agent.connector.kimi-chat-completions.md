@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.connector-003
-    revision: sha256:65d9bf211d68415e76e6104bbe2d08f469058e0255a2ff7b9171befc185d361e
+    revision: sha256:89d9397f5563706bc2d6fb28369cc6c5434df3e1ef9632569ab664335b6e084e
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -44,6 +44,74 @@ An optional agent-owned absolute request deadline defaults absent, begins once f
 The first Kimi resource policy retains at most 65,536 error-body bytes, permits at most 1,048,576 bytes in one SSE event and 100,000 SSE events, accumulates at most 1,024 tool calls, 16,777,216 visible-content bytes, 16,777,216 Kimi private-assistant bytes, and 4,194,304 function-argument bytes across all calls, and queues at most 256 ready observations. The complete semantic plus private replay delta still fits the existing 16,777,216-byte delta ceiling and the cumulative replay prefix still fits 67,108,864 bytes; the private allowance is not extra capacity beyond those ceilings. Each bound and checked-add overflow is enforced incrementally before retaining an excess byte, item, event, or observation. K2.6 reasoning and every undeclared refusal field have no retention allowance. No diagnostic exposes the credential, response body, model-visible content, tool schema, argument, result, or provider-private reasoning bytes.
 
 The HTTP client MUST disable automatic redirects and retries. The Connector may follow only status 307 or 308 with a valid location on the exact normalized HTTPS origin, at most three times, yielding at most four dispatched attempts under the same absolute request deadline and new per-attempt response-header clocks. Every other 3xx, every non-success status after bounded error-body consumption, and every transport failure terminates without automatic retry. Request-transmission ambiguity and every failure after admitted output likewise terminate; a later caller invocation is a new logical request and authorization rather than a hidden retry.
+
+The optional effective `image_input_profile: kimi-code-png-advisory/v1` MUST be
+accepted only for the exact four Code endpoint-and-ModelId envelopes above,
+without weakening any existing thinking, tools, private replay, input limit,
+output capability or request-local cap rule. Its absence retains the existing
+text-only user-content contract. Platform profiles remain unchanged. An unknown,
+null or incompatible image profile, or absent/contradictory selected-model image
+capability evidence, MUST fail before image transport.
+
+With that image profile, an image-bearing user message MUST encode `content` as
+an ordered array. A text part has exactly `type: "text"` and string `text`; an
+image part has exactly `type: "image_url"` and `image_url` with exactly `url`.
+That URL MUST be `data:image/png;base64,` followed by canonical padded RFC 4648
+base64 of the admitted immutable canonical PNG bytes. Empty text spans are
+omitted, occurrence order is exact, and the input owner's final skill-trailer
+rule applies before Connector projection. The Connector MUST NOT send an image
+`detail` field, a path, remote URL, upload identifier, filename, source EXIF, or
+undeclared option. Text-only user messages retain their existing string wire
+form. Image-bearing summary source uses the model-loop owner's manifest text and
+its exact ordered image parts through this same typed mapping. User image parts
+MUST NOT change the existing assistant private-message or tool-result grammar.
+
+Ordinary requests MUST retain the common per-input, delta and complete effective
+replay bounds, including the existing 67,108,864-byte/4096-item effective replay
+ceiling, and the actual reviewed transport bounds. This extension MUST NOT add a
+separate total-image-history count or encoded image-part-array ceiling. The
+single input's 16-occurrence and 9,437,184-byte raw PNG aggregate limits apply at
+its owner; they are not a whole-conversation limit. Only the distinct ephemeral
+summary source is limited to 64 images and 16,777,216 complete canonical encoded
+source bytes under the model-loop owner. A future provider-specific narrower
+limit requires explicit reviewed evidence rather than silently reducing valid
+ordinary image history.
+
+The Connector MUST supply a typed image-free tokenization projection of the
+complete actual request after private-assistant replacement and tool projection,
+plus a separate ordered immutable image descriptor per occurrence. Each
+descriptor MUST bind snapshot digest, MIME, byte length, dimensions and
+normalization profile to the exact serialized image part. For this counter-only projection, construct each known image part with exact
+`image_url.url: ""` while retaining its type, object keys and ordered position.
+Preserve every other request field and all message/part framing; this empty-URL
+projection MUST NOT be transported. The tokenizer MUST NOT search arbitrary JSON
+for image-looking URLs,
+fetch a path or URL, or count base64 characters as image token cost.
+
+Exact policy `kimi-code-image-advisory/v1` MUST return quality
+`advisory_estimate`, `input_estimate = T + 2000*N`, and a separate
+`reserve_tokens = 1024` when N is positive, otherwise zero. T is the selected
+`utf8-bytes/v1` count of that complete image-free projection; N counts all image
+occurrences in the request, including retained context. Additions and
+multiplication MUST be checked. Warning, trigger, retention differences and
+output-cap selection MUST use the checked planning sum of estimate and reserve,
+then serialize and recount the final selected cap as the model-loop contract
+requires. The reserve is charged once per request, never per image or group.
+The typed result MUST retain its versioned policy and quality through every
+consumer and its new persistence projection. A request with no images under
+this profile uses N=0 and reserve=0; existing bindings without it retain their
+old counter and wire behavior.
+
+The 2000-per-image value and 1024-token reserve are explicit heuristics based on
+a documented official CLI estimate and safety margin; neither is measured usage,
+a verified upper bound, an exact model tokenizer formula or a server acceptance
+guarantee. No estimate API request, extra credential use or Platform endpoint
+fallback is admitted. Provider-reported input/output usage MUST remain telemetry
+for its exact completed request, without adding this planning reserve or
+relabeling a prior estimate. A provider 4xx follows the existing failed-request,
+cleanup and uncertain-continuation rules; HTTP 400 alone establishes neither
+context overflow nor permission for automatic resend, image removal, compaction,
+model replacement or a manufactured Continuation Anchor.
 
 ## Rationale
 

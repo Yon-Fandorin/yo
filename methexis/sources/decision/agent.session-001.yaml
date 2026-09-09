@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.session-001
-revision: sha256:c3825e3d688adaa63ff0a60e8baa51216ba365cf0965ee5f75fe68665dddd174
+revision: sha256:a48404355f43edd4508b79a881fd01776ab02ef482ea8384f31385c424be92ad
 payload:
   kind: decision
   content: |-
@@ -144,3 +144,38 @@ payload:
     start a backend or acquire a Session writer lease. Historical selection follows
     the explicit bounded selector above. Tree browsing itself grants neither
     executable continuation nor permission to infer or repair a source boundary.
+
+    ## Image-bearing exact continuation
+
+    Exact continuation, exact binding replacement and exact child fork preserve each
+    admitted input image's immutable canonical PNG bytes, metadata and ordered
+    text/image occurrence position. The selected target MUST admit the complete
+    image grammar and accounting policy required by that reconstruction before a
+    request is dispatched. Unknown image capability rejects image continuation;
+    an advisory accounting quality is a separate condition and cannot be silently
+    upgraded to exact evidence. A different target that cannot preserve the complete
+    input MUST NOT claim exact replay or silently replace images with captions,
+    paths, thumbnails or omitted parts. Existing separately authorized lossy-handoff
+    rules remain the only applicable replacement exception.
+
+    An exact child seed carries image snapshots inline under the same complete-seed
+    and replay bounds, including images within retained checkpoint groups. The
+    existing import mapping keeps ultimate origins unchanged and assigns the child
+    its independent local ownership; no parent file, repository, image-preparation
+    service or ancestor access is required after publication. A second-generation
+    fork must preserve those same bytes after both ancestors and original input
+    files have been deleted. Source-qualified archived image input remains inert
+    history, never a new child command or a substitute for the inline model seed.
+
+    After compaction, image-loss source coordinates identify the current Session's
+    actual authoritative replay delta, retained checkpoint group or initial seed
+    group under the persistence contract. The epoch comes from that named record;
+    ultimate imported origins are separate provenance. Retained images stay exact
+    and indivisible. Summarized image occurrences have the new closed image loss
+    entries and MUST NOT be resurrected from archival history when resuming,
+    replacing or forking that checkpoint-rooted reconstruction. An explicitly
+    selected older complete historical point may still contain the original image
+    if its own exact validated replay retains it; a later summary cannot manufacture
+    missing earlier input. Existing source-boundary,
+    latest-parent eligibility, failure-atomic publication and uncertain-request
+    rules remain unchanged.

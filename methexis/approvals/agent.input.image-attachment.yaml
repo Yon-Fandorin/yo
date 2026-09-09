@@ -1,0 +1,7 @@
+schema: methexis.approval/v1alpha2
+knowledge_id: agent.input.image-attachment
+revision: sha256:ff28fbfc4d0c8486238eaa1141e58cafa511e34a0c59efbc27226f5ac5e36191
+reviewer: agent-runtime
+reviewed_at: 2026-09-09T14:33:19Z
+review_basis: canonical
+request_hash: sha256:053cbaf498ed77b1c5b7c409744d0e0b576cdcdfc10d59381e1f8f05757c2f9f
