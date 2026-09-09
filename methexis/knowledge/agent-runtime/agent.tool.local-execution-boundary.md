@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.tool-001
-    revision: sha256:a22fc52fbe8d214879796ea19c477c53390d011aa0669940a3a891a21d8528ef
+    revision: sha256:710808ea7a3dcd933eb94280348e5a83a7fe4f5a717e52753e3c7ca5882a40db
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -97,7 +97,7 @@ the distinct registry revision `yo.local-tool-registry/basic-files/v1`. It MUST
 expose exact wire names `list_files`, `read_files`, `edit_file`, `write_file`,
 and `run_command` in that order. Their exact ToolIds in the same order are
 `list-files`, `read-files`, `edit-file`, `write-file`, and `run-command`. A
-newly created Session uses this revision.
+newly created Session without admitted configured command tools uses this revision.
 The immediately preceding three-tool registry is named
 `yo.local-tool-registry/legacy-read-file/v1` and continues to expose only
 `read_file`, `list_files`, and `run_command`. Its trusted manifest is the exact
@@ -117,9 +117,9 @@ compares parameter-schema JSON recursively: object-member order is not
 semantic, while array order, member names, JSON value kinds, and scalar values
 are exact. ToolId, effect, and approval are reconstructed from the selected
 trusted manifest; the durable `ModelReplayContract` does not authenticate or
-override them. No separately persisted registry digest is used. A running
-backend keeps its frozen registry for its lifetime. After restart, resume MUST
-select and reconstruct
+override them. These existing fixed registries use no separately persisted registry
+digest. A running backend keeps its frozen registry for its lifetime. For these fixed
+registries, after restart resume MUST select and reconstruct
 the one exact known registry whose complete ordered tool names, descriptions,
 schema versions, and parameter schemas equal the Session's durable
 `ModelReplayContract`; it MUST NOT replace or merge that contract. A legacy
@@ -485,6 +485,161 @@ explicit content, metadata, target-entry, and scratch-entry external-publisher
 boundary is the same on supported Unix targets and is not a hostile-same-UID
 security boundary. A future platform-specific descriptor-anchored publication
 revision may close it.
+
+## User-configured command tools
+
+The optional `tools.commands` configuration MUST define an explicit ordered list of
+zero to sixteen command tools. Missing `tools` or `commands` means empty. Whole-field
+null, duplicate or unknown configuration fields fail structural admission. Null inside
+a parameter-schema enum retains the existing schema grammar. Each command has
+required `id`, `name`, `description`, `executable`, `parameters` and optional `script`,
+`executable_args`, `argv`; both argument arrays default to empty and absent script is
+None. The existing ToolId, wire-name, safe-description and `yo.tool-schema/v1` limits
+apply. Duplicate IDs/names, including collisions with any BasicFiles built-in, fail.
+There is no directory scanning, PATH lookup, skill-triggered registration, implicit
+shell, model interpolation, environment map, cwd override or configuration-defined
+effect/approval. Every configured command is Process and approval-required.
+
+Executable MUST be an absolute UTF-8 path. An explicit absolute script MAY select a
+host artifact outside the workspace; a relative script MUST remain beneath the saved
+Session workspace. Configured and resolved locators are each at most 4096 UTF-8 bytes,
+nonempty and Unicode-control-free. An installed executable symlink is permitted only
+when its configured mapping is resolved to and verified against one regular-file target;
+resolution MUST terminate within forty followed links. Script paths MUST have no symlink
+components. Opened descriptors pin the traversal and require regular files, bounded
+actual bytes and stable pre/post-read metadata. The selected credential device/inode is
+forbidden even through a hard link. FIFO, device, directory, missing, over-bound and
+observably changed artifacts fail admission without launch. OS metadata is a read-pass
+consistency check, not persisted execution identity.
+
+The launch is exactly configured executable, then `executable_args`, then the resolved
+script path when present, then `argv`. Both arrays share at most 32 entries and 16384
+UTF-8 bytes; each entry is at most 4096 bytes and contains no NUL. Fixed arguments are
+literal data. Scripts use explicit interpreters, including Python, Node or a shell;
+Yo MUST NOT infer a shebang, relocate artifacts, rewrite argv[0] or substitute the model's
+argument text into command-line positions. Native tools omit script. Original interpreter,
+script and native executable path semantics MUST be retained.
+
+The selected Session workspace is cwd. The initial sanitized environment is exactly
+`PATH=/usr/local/bin:/usr/bin:/bin` after clearing the inherited environment. Its values
+are not copied from the caller or persisted. Descriptions and parameter schemas pass the
+existing semantic-admission policy before model exposure. Launch arguments, artifact
+paths/bytes and raw host diagnostics MUST NOT leak through validation or execution
+failures. Stdout/stderr use the existing semantic output admission before Activity,
+retained presentation, model replay or Journal publication.
+
+Startup MUST capture and hash the admitted execution definition in cancellable preparation
+before backend publication. Approval binds its digest through execution-host identity
+and the existing exact Turn, call, ToolId, normalized argument digest and effect scope.
+A running backend retains its frozen manifest. Config edits cannot add, replace or remove
+its tools. Observed artifact changes fail the attempted call, never update expected hashes.
+No execution-definition snapshot, artifact bytes, environment values or launch argv are
+persisted separately. Model-visible definitions remain in ModelReplayContract and the
+manifest digest is carried by the managed Session identity defined by
+`agent.model.session-selection`. Exact resume/fork requires both that digest and the
+recorded model projection; historical calls/results remain replay-only data.
+
+Identity covers the complete execution definition and observed primary executable/script
+bytes, not transitive imports, shared libraries, subprocesses, mutable workspace data,
+network services or deterministic effects. Installed artifacts and their publishers are
+user-controlled host software. The final-check-to-path-execution race against an
+uncoordinated publisher remains outside the guarantee; no atomic execute-from-hashed-bytes
+claim is permitted.
+
+### Execution-definition digest
+
+The manifest is a closed JSON-domain object with exactly `profile`, `registry`, `tools`,
+and `protocols`. Profile is `yo.execution-definition-manifest/v1`; registry is
+`yo.local-tool-registry/command-tools/v1`. `tools` is the ordered five built-ins followed
+by 1–16 configured commands. Each item has exactly `id`, `name`, `description`,
+`schema_version`, `parameters`, `effect`, `approval`, and `launch`. Schema version is
+`yo.tool-schema/v1`; effects are the exact strings `ReadOnly`, `WorkspaceWrite`, `Process`;
+approval is `Automatic` or `Required`. Built-in launch is null and the other fields equal
+the current trusted BasicFiles manifest. Command effect/approval are Process/Required.
+
+Command launch has exactly `executable`, `script`, `executable_args`, `argv`.
+Executable and a present script each have exactly `configured`, `resolved`, `sha256`;
+Configured/resolved locators follow the path admission above; sha256 is `sha256:` plus
+64 lowercase hex digits of the primary file bytes.
+Absent script is null. No environment values, file bytes or OS metadata are stored in
+this definition. OS identity/metadata is retained only by the current admission pass
+for consistency checks; inode numbers must not make a recreated identical installation
+incompatible. Configured locator, resolved locator, primary bytes and fixed arguments
+remain definition identity and do change its digest.
+
+Protocols is exactly `{stdin:"yo.command-json-stdin/v1",output:"yo.command-text-output/v1",
+environment:"yo.command-safe-environment/v1",runner:"yo.command-execution/v1"}`.
+These names freeze the stdin bounds/LF, existing run_command output framing and semantic
+admission, existing explicit sanitized environment policy, and verification/inactivity/
+absolute-deadline/cancel/reap/drain behavior defined by this command-tool contract. A semantic
+change to those policies requires a new protocol revision and manifest digest.
+The manifest's encoded digest input is limited to 2 MiB including its domain prefix.
+The existing 1 MiB config-file cap, per-schema 64 KiB cap, and complete model replay
+contract/request budgets also apply; none is widened to accommodate a manifest.
+
+Digest input starts with exact ASCII `yo.execution-definition-manifest/v1` followed by
+one zero byte, then one recursively framed manifest value. Framing is independent of
+JSON object insertion order and textual whitespace:
+
+- Null: one byte 0x00. False: 0x01. True: 0x02.
+- Integer: 0x03, unsigned 64-bit big-endian byte length, then minimal ASCII decimal
+  spelling (zero is `0`, negatives have one `-`, no `+` or leading zero). The admitted
+  integer domain is the existing serde_json signed-i64/unsigned-u64 domain.
+- Floating JSON number representation: 0x04 followed by its finite IEEE-754 binary64 bits in
+  big-endian order. Both floating zeros encode positive-zero bits. Integer and floating
+  representations remain distinct, including integer 1 versus floating 1.0.
+- String: 0x05, unsigned 64-bit big-endian UTF-8 byte length, then those exact UTF-8 bytes.
+- Array: 0x06, unsigned 64-bit big-endian item count, then framed items in order.
+- Object: 0x07, unsigned 64-bit big-endian member count, then each framed string key and
+  framed value, ordered by raw UTF-8 key bytes. Duplicate keys are invalid before framing.
+
+The digest is SHA-256 over those exact bytes. This is a manifest-specific identity
+encoding, not a replacement wire format or a generic JSON canonicalization service.
+Golden fixtures must distinguish argv order, tool order, scalar kind and artifact bytes;
+object-key permutations and floating negative zero must normalize identically. The
+same decoded schema values are used for this encoding and the model replay projection.
+Execution-host approval identity includes this digest, while existing Turn/call identity
+continues to scope the receipt to the selected Session and exact argument digest.
+
+### Per-call verification and terminal behavior
+
+Pre-admission parses/normalizes custom arguments under both 4 MiB bounds (raw and
+normalized including LF) before approval or worker creation. The frozen registry owns
+this per-definition admission limit and intersects it with the caller's request bound;
+custom definitions cannot inherit the BasicFiles ceiling or widen a smaller host bound.
+Absent per-definition limits retain existing behavior. The existing built-in bounds stay
+unchanged. Startup has one 256 MiB aggregate unique-primary-artifact budget. Both startup
+and call verification cap each executable at 128 MiB and each script at 16 MiB; a call
+verifies only that tool's primary pair, at most 144 MiB combined. Reads are streaming, count actual bytes and one first-excess probe,
+and share the same pass budget rather than resetting for every reference. Every
+verification pass has one non-resetting 30-second budget checked with cancellation
+between at-most-64-KiB reads. Limit, mismatch, cancellation or read failure prevents spawn.
+The default absence of an absolute agent deadline does not remove this verification cap.
+
+Approval presents the frozen manifest identity. Final artifact verification runs after a
+matching approval in the existing execution worker; the model-loop availability method
+remains a cheap frozen-registry lookup. Verification does not mutate expected hashes,
+refresh the manifest, start a second attempt, or publish raw host paths/file contents.
+When the optional absolute execution deadline is supplied it starts once when that
+approved attempt enters the worker and is not restarted at spawn or stdin completion.
+Cancellation and the absolute deadline are checked again immediately before the single spawn. Five-minute stdout/
+stderr inactivity applies after spawn; stdin writes never reset output inactivity.
+
+After spawn, stdin writing, stdout/stderr reading, process exit, cancellation and timeouts
+are serviced concurrently through the existing process owner. The normalized argument
+bytes plus one LF are written once, then stdin is closed. Early EPIPE is one failed
+attempt, even if the process reports zero exit. Exit-code, stdout/stderr framing,
+truncation, retained presentation and semantic admission reuse run_command rules.
+All terminal paths close stdin and apply the existing finite process-group termination,
+reap and drain limits; cleanup failure is explicit and never triggers a retry.
+
+The initial platform implementation must retain original interpreter/script/native path
+semantics. It verifies configured executable symlink resolution and rejects observed
+mapping/content changes, but expressly does not claim atomic execute-from-hashed-bytes
+against uncoordinated publishers after final verification. A stalled kernel filesystem
+operation is likewise not made preemptible by a user-space elapsed-time check. These are
+explicit host-environment limits, not hidden safety guarantees or permission to skip
+cancellation between reads and before spawn.
 
 ## Rationale
 

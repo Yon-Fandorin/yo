@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.model-002
-    revision: sha256:74ee39c4a99818796ae861e9314841768e9f4a8480c7f2e3e24bdd1ffce78f4b
+    revision: sha256:30ea6e1a8b1020b3d55052a82ee6c9056a07298c9fcf8da68693fc43bc561652
 relations:
   depends_on:
     - agent.model.service-binding
@@ -95,6 +95,50 @@ An explicit override naming a different binding is not a startup substitution. R
 When eligible, the replacement-binding transition owned by the Session continuation-lineage contract binds the source epoch and Anchor, fully committed semantic boundary, target complete binding identity, replay executor, replay-content and contract digests, known cache-loss boundary, and new epoch identity. Replay preparation must complete while the old epoch and Anchor remain unchanged. One atomic durable Journal transition then closes the source epoch, opens the replacement epoch, and publishes its Continuation lineage. Failure leaves the original Anchor and epoch executable when its recorded strategy still works, otherwise it opens the saved Session read-only; it never publishes a partial replacement.
 
 A backend-managed-state binding reconnects only through its recorded locator and verified backend identity. A different binding cannot reuse or mutate that locator. A same-Host model change uses the continuation-lineage contract's backend-native model-rebind transition only when the live host protocol creates a distinct state-preserving candidate locator, applies model selection solely to that candidate, and confirms the exact applied HostModelId; otherwise it follows the transformed handoff below on a fresh locator. Managed-to-managed replacement continues to use admissible exact replay when available. Every Host-to-Managed, Managed-to-Host, cross-Host, and non-native same-Host replacement is a transformed `lossy_handoff`: Yo opens the Session read-only, discloses that committed visible semantic messages and tool relationships will be projected while provider-private reasoning, encrypted state, caches, and backend-only context will be dropped, and asks once before opening the replacement epoch. Rejection or any preparation failure preserves the old binding and locator. Approval keeps the same Yo Session, records the source Anchor, exact transformed boundary and loss classes, closes the old epoch, and opens the new binding only after its seed is accepted. No transition is described as native resume or exact replay.
+
+## Managed command-tool Session selection
+
+A nonempty admitted command list extends the exact BasicFiles manifest in declaration
+order under `yo.local-tool-registry/command-tools/v1`. The five built-ins remain first
+and unchanged. Empty command lists keep the existing BasicFiles identity bytes.
+`--no-tools` or durable `no-tools/v1` selects the existing empty registry and does not
+resolve/read executable artifacts. Structural config validation still runs; runtime
+artifact availability is not required for tools that are not exposed. A read-only
+execution policy rejects an otherwise enabled custom-command registry before backend
+publication; it never silently lowers Process to ReadOnly. Delegated selections emit
+one capability warning, load no command artifacts and expose no Yo command definitions.
+
+The new BackendIdentity schema is exactly `yo.managed-command-binding/v1`. Its UTF-8
+JSON value is a closed object with exactly `model_binding` and
+`execution_manifest_digest`. `model_binding` is a closed object with exactly `schema`
+and `value`: schema is either `yo.model-binding/v1` or `yo.complete-model-binding/v1`,
+and value is the corresponding existing JSON object, not a JSON-encoded string.
+Existing scalar domains, defaults and semantic equality remain unchanged. The existing
+top-level legacy decoder currently ignores additional fields; this revision does not
+change that old schema's behavior. The new wrapper first enforces strict nested shape:
+legacy value has exactly provider, account, model, connector, api_dialect, base_url;
+complete value has exactly the fields already admitted by the current closed complete
+binding decoder. Then it reuses the original semantic decoder. No other nested schema
+or second wrapper is accepted. Wrapper/model_binding envelope fields are non-null;
+nested values retain the base decoder's field nullability and recursive structured-value
+grammar. Duplicate object members fail throughout the new wrapper, and unknown fields
+fail at its closed envelope/base-shape levels; admitted parameter-object keys remain
+governed by the existing base profile.
+The digest is exactly `sha256:` plus 64 lowercase hexadecimal characters. The outer
+BackendIdentity's existing 4096 UTF-8 byte value limit applies to its complete encoded
+JSON, including nested binding and digest, before it can become a Journal record.
+
+Wrapper equality requires both existing semantic base-binding equality and identical
+manifest digest. It never compares only the model projection. This wrapper belongs to
+the managed Session identity owner; it adds no field to CompleteModelBinding service
+configuration, connection imports or connections.yaml. Old schemas retain their existing
+parsers and never gain configured tools. New profile absence is not an empty digest.
+A v1 Session resumed while command config exists reconstructs its original known
+manifest; the unused custom configuration is not resolved or merged. A wrapped Session
+requires matching current explicit config, artifacts, model projection and digest before
+executable resume, exact replacement or child selection. A model change may replace only
+the nested model identity; its execution manifest remains frozen and independently
+validated. History inspection/compaction never executes historical commands.
 
 ## Rationale
 
