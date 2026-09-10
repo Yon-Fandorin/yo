@@ -29,6 +29,10 @@ pub(crate) enum ConfigError {
         path: PathBuf,
         detail: &'static str,
     },
+    InvalidClipboard {
+        path: PathBuf,
+        detail: &'static str,
+    },
     InvalidPrompts {
         path: PathBuf,
         detail: String,
@@ -79,6 +83,9 @@ impl fmt::Display for ConfigError {
             },
             Self::InvalidTools { path, detail } => {
                 write!(formatter, "{}: tools.commands: {detail}", path.display())
+            },
+            Self::InvalidClipboard { path, detail } => {
+                write!(formatter, "{}: clipboard: {detail}", path.display())
             },
             Self::InvalidPrompts { path, detail } => {
                 write!(formatter, "{}: prompts: {detail}", path.display())

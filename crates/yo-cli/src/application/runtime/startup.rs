@@ -529,6 +529,7 @@ fn prepare_agent_with_target(
         &session_cwd,
         restored_records,
         inherited_history.as_ref(),
+        config.clipboard_source(),
     );
     let agent = match launch {
         Launch::New(descriptor) => agent::TuiAgentConnection::start_persistent(

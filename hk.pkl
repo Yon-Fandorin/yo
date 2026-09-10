@@ -12,6 +12,15 @@ local checks = new Mapping<String, Step> {
         glob = List("tools/context.py", "tools/test_context.py")
         check = "python3 -m unittest discover -s tools -p test_context.py"
     }
+    ["clipboard-readers"] = new Step {
+        glob = List(
+            "tools/clipboard_bridge.py",
+            "tools/test_clipboard_bridge.py",
+            "crates/yo-cli/src/execution/image/clipboard/ssh_capture.py",
+            "tools/test_ssh_clipboard_capture.py",
+        )
+        check = "python3 -m unittest discover -s tools -p 'test_*clipboard*.py'"
+    }
     ["workflow-context-budget"] = new Step {
         glob = List("AGENTS.md", "CONTRIBUTING.md", "CONTRIBUTING/**/*.md")
         check = "cargo test --quiet --locked -p xtask default_workflow_has_an_absolute_context_budget"

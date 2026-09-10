@@ -575,13 +575,48 @@ input/replay에 들어가지 않는다. 키 반복·해제, Chat 외 화면, 요
 이미지를 읽지 않는다. 터미널의 일반 텍스트 붙여넣기는 텍스트로 유지한다.
 
 `execution/image/clipboard.rs`는 고정된 native reader (`wl-paste`, `xclip`, `pngpaste`)
-또는 명시적으로 설정한 `YO_CLIPBOARD_IMAGE_SOCKET`을 통해 PNG를 읽는다.
+또는 명시한 SSH 원본·비공개 Unix 소켓을 통해 PNG를 읽는다.
 획득은 취소할 수 있고 3초와 4 MiB를 넘는 첫 바이트까지로 제한하며, 기존 이미지 decode
 한도도 적용한다. 소켓은 신뢰 가능한 상위 경로 아래 현재 사용자 소유의 비공개 디렉터리에
 있어야 한다. 임의 명령 설정이나 자동 모델 요청은 없다.
 
-Mac 클립보드와 Linux yo를 연결하려면 먼저 Mac의 그래픽 세션에서 전달 도구가 있는
-checkout으로 이동해 실행한다. `pngpaste`가 없으면 먼저 설치한다:
+Mac 클립보드와 Linux yo를 연결하려면 yo 실행 호스트의 `config.yaml`에
+원본을 설정한 뒤 평소처럼 yo를 실행한다:
+
+```yaml
+clipboard:
+  source: ssh
+  host: my-mac
+  reader: macos
+  # Optional absolute paths when not supplied by your SSH configuration:
+  # identity_file: /home/me/.ssh/id_ed25519
+  # known_hosts_file: /home/me/.ssh/known_hosts
+  # port: 22
+```
+
+원본 컴퓨터에는 Python 3과 고정된 reader가 필요하다. `macos`는 `pngpaste`,
+`wayland`는 `wl-paste`, `x11`은 `xclip`을 사용한다. Mac은 그래픽 클립보드에
+접근할 수 있어야 한다. `host`는 명시한 SSH 별칭이나 `user@host`이며, 먼저 키 인증과
+확인된 호스트 키를 설정한다. 알 수 없거나 변경된 키는 대화형 질문 없이 실패한다.
+identity와 known-hosts 경로에는 `%`·`$` 확장을 넣을 수 없으며, known-hosts 파일명의
+공백은 하나의 파일명 안에 보존한다.
+
+Ctrl+V마다 이미지 worker가 새로운 SSH 요청을 한 번 실행한다. 시작 시 연결하거나
+상시 helper·터널을 남기지 않는다. 실패한 뒤 다시 붙여넣으면 재연결하며 자동 재시도나
+제출은 없다. yo는 비대화형 SSH 설정을 고정하고 forwarding·multiplexing·backgrounding·
+local command를 끈다. 프록시를 포함한 클라이언트 process group도 소유한다. 내장된
+고정 원격 supervisor는 캡처를 2초와 4 MiB 초과 첫 바이트까지로 제한하고 부분 실패
+출력을 전달하지 않으며 reader process group을 정리한다. Python은 원본 컴퓨터에서만
+실행하며 yo 화면과 로컬 worker는 Rust다.
+
+`clipboard`를 생략하면 현재 native desktop을 선택하며 `source: native`로 명시할 수도
+있다. `source: socket`과 절대 `path`는 기존 비공개 소켓을 선택한다.
+`YO_CLIPBOARD_IMAGE_SOCKET`이 있으면 해당 프로세스의 파일 설정보다 우선한다.
+저장한 원본을 바꾸려면 yo를 다시 시작한다. 획득은 프로바이더의 이미지 허용과 분리돼 있고
+저장 입력이나 replay를 바꾸지 않는다.
+
+기존 SSH Unix 소켓 전달 설정은 선택적인 bridge를 계속 사용할 수 있다.
+Mac에서 helper가 있는 checkout으로 이동해 실행한다:
 
 ```sh
 PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" python3 tools/clipboard_bridge.py --socket "$HOME/.yo-clipboard/source.sock"

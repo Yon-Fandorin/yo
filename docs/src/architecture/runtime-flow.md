@@ -643,14 +643,50 @@ libraries enter input/replay. Key repeats/releases, non-Chat views and active re
 prompts cannot capture an image. Ordinary terminal text paste stays text.
 
 `execution/image/clipboard.rs` reads PNG through fixed native readers (`wl-paste`,
-`xclip`, `pngpaste`) or an explicitly configured `YO_CLIPBOARD_IMAGE_SOCKET`.
+`xclip`, `pngpaste`), an explicit configured SSH source, or a private Unix socket.
 Acquisition is cancellable and limited to three seconds and the first byte beyond
 4 MiB; normal image decoding limits still apply. The socket must be in a private
 owned directory with trusted ancestry. There is no arbitrary command configuration
 or automatic model request.
 
-For a Mac clipboard and Linux yo, first run this in the Mac graphical session
-from a checkout containing the helper (install `pngpaste` first if absent):
+For a Mac clipboard and Linux yo, configure the source in the yo host's
+`config.yaml`, then start yo normally:
+
+```yaml
+clipboard:
+  source: ssh
+  host: my-mac
+  reader: macos
+  # Optional absolute paths when not supplied by your SSH configuration:
+  # identity_file: /home/me/.ssh/id_ed25519
+  # known_hosts_file: /home/me/.ssh/known_hosts
+  # port: 22
+```
+
+The source computer needs Python 3 and the fixed reader: `macos` uses `pngpaste`,
+`wayland` uses `wl-paste`, and `x11` uses `xclip`. The Mac must have access to its
+graphical clipboard. `host` is an explicit SSH alias or `user@host`; configure key
+authentication and a verified host key first. Unknown or changed keys fail without
+an interactive prompt. Identity and known-hosts paths cannot contain `%` or `$`
+expansions; spaces in a known-hosts filename remain part of that one filename.
+
+Every Ctrl+V makes one fresh SSH request from the image worker. It does not connect
+at startup, run a persistent helper, or leave a tunnel open. The next paste reconnects
+after a failure; there is no automatic retry or submission. Yo pins noninteractive
+SSH settings, disables forwarding, multiplexing, backgrounding and local commands,
+and owns the client process group, including proxies. A fixed embedded remote
+supervisor bounds capture to two seconds, buffers at most the first byte beyond
+4 MiB, suppresses partial failures and cleans its reader process group. Python runs
+only on the source computer; the yo interface and local worker are Rust.
+
+Omitting `clipboard` selects the current native desktop; `source: native` makes that
+choice explicit. `source: socket` with an absolute `path` selects an existing private
+socket. `YO_CLIPBOARD_IMAGE_SOCKET`, when present, overrides the file setting for
+that process. Restart yo to change a saved source. Acquisition remains separate from
+provider image admission and does not change stored input or replay.
+
+An existing SSH Unix-socket forwarding setup can continue to use the optional bridge.
+On the Mac, from a checkout containing the helper:
 
 ```sh
 PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" python3 tools/clipboard_bridge.py --socket "$HOME/.yo-clipboard/source.sock"

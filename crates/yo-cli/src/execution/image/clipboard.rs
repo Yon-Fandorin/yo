@@ -4,11 +4,13 @@ use std::{
     env, fs,
     io::{self, Read},
     net::Shutdown,
+    num::NonZeroU16,
     os::{
         fd::{AsFd, AsRawFd},
         unix::{
             fs::{FileTypeExt, MetadataExt},
             net::UnixStream,
+            process::CommandExt as _,
         },
     },
     path::{Component, Path, PathBuf},
@@ -20,23 +22,136 @@ use std::{
 use nix::{
     errno::Errno,
     fcntl::{FcntlArg, FdFlag, OFlag, fcntl},
-    sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, connect, socket},
-    unistd::geteuid,
+    sys::{
+        signal::{Signal, killpg},
+        socket::{AddressFamily, SockFlag, SockType, UnixAddr, connect, socket},
+    },
+    unistd::{Pid, geteuid},
 };
 
 use super::{AppError, MAX_SOURCE_BYTES, PreparedInputImage, check_cancelled, prepare_source};
+use crate::state::config::{ClipboardReader, ClipboardSource};
 
 const ACQUISITION_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-pub(super) fn prepare(cancelled: &mut dyn FnMut() -> bool) -> Result<PreparedInputImage, AppError> {
+pub(super) fn prepare(
+    source: Option<&ClipboardSource>,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<PreparedInputImage, AppError> {
     check_cancelled(cancelled)?;
     let deadline = Instant::now() + ACQUISITION_TIMEOUT;
     let bytes = match env::var_os("YO_CLIPBOARD_IMAGE_SOCKET") {
         Some(path) => read_socket(Path::new(&path), deadline, cancelled)?,
-        None => read_native(deadline, cancelled)?,
+        None => read_selected(source, deadline, cancelled)?,
     };
     prepare_png(&bytes, cancelled)
+}
+
+fn read_selected(
+    source: Option<&ClipboardSource>,
+    deadline: Instant,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<Vec<u8>, AppError> {
+    match source {
+        None | Some(ClipboardSource::Native) => read_native(deadline, cancelled),
+        Some(ClipboardSource::Socket { path }) => read_socket(path, deadline, cancelled),
+        Some(ClipboardSource::Ssh {
+            host,
+            reader,
+            identity_file,
+            known_hosts_file,
+            port,
+        }) => {
+            let mut command = ssh_command(
+                host,
+                *reader,
+                identity_file.as_deref(),
+                known_hosts_file.as_deref(),
+                *port,
+            );
+            match read_command(&mut command, deadline, cancelled) {
+                Ok(bytes) => Ok(bytes),
+                Err(CommandError::Missing) => Err(AppError::message(
+                    "SSH clipboard needs the ssh client installed on the yo host.",
+                )),
+                Err(CommandError::Failed(error)) => Err(AppError::message(format!(
+                    "SSH clipboard: {error} Check key authentication, the trusted host key, and Python 3 plus the selected clipboard reader on the source computer."
+                ))),
+            }
+        },
+    }
+}
+
+fn ssh_command(
+    host: &str,
+    reader: ClipboardReader,
+    identity_file: Option<&Path>,
+    known_hosts_file: Option<&Path>,
+    port: Option<NonZeroU16>,
+) -> Command {
+    let mut command = Command::new("ssh");
+    command.args([
+        "-T",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "ClearAllForwardings=yes",
+        "-o",
+        "ForwardAgent=no",
+        "-o",
+        "ForwardX11=no",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
+        "-o",
+        "ForkAfterAuthentication=no",
+        "-o",
+        "SessionType=default",
+        "-o",
+        "RemoteCommand=none",
+        "-o",
+        "PermitLocalCommand=no",
+        "-o",
+        "ConnectionAttempts=1",
+        "-o",
+        "ConnectTimeout=2",
+    ]);
+    if let Some(identity) = identity_file {
+        command
+            .args(["-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-i"])
+            .arg(identity);
+    }
+    if let Some(path) = known_hosts_file {
+        // OpenSSH parses this option as a filename list even inside one argv.
+        let quoted = path
+            .as_os_str()
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        command
+            .arg("-o")
+            .arg(format!("UserKnownHostsFile=\"{quoted}\""));
+        command.args(["-o", "GlobalKnownHostsFile=/dev/null"]);
+    }
+    if let Some(port) = port {
+        command.arg("-p").arg(port.to_string());
+    }
+    let reader = match reader {
+        ClipboardReader::Macos => "macos",
+        ClipboardReader::Wayland => "wayland",
+        ClipboardReader::X11 => "x11",
+    };
+    let supervisor = include_str!("clipboard/ssh_capture.py").replace('\'', "'\\''");
+    // Only fixed program text and a closed reader tag enter the remote shell.
+    // Each explicit paste makes a fresh connection; no helper or tunnel persists.
+    command.arg("--").arg(host).arg(format!(
+        "exec env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin python3 -c '{supervisor}' {reader} {MAX_SOURCE_BYTES}"
+    ));
+    command
 }
 
 fn prepare_png(
@@ -108,6 +223,8 @@ struct ReaderChild(Child);
 
 impl Drop for ReaderChild {
     fn drop(&mut self) {
+        // SSH proxy commands and other descendants share this owned group.
+        let _ = killpg(Pid::from_raw(self.0.id() as i32), Signal::SIGKILL);
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -120,6 +237,7 @@ fn read_command(
 ) -> Result<Vec<u8>, CommandError> {
     check_deadline(deadline, cancelled)?;
     let child = command
+        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

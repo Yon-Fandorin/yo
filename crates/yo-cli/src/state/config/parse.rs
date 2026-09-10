@@ -7,6 +7,7 @@ use yo_yaml::Error as YamlError;
 
 use super::{
     Config, ConfigError, ConfigSnapshot, SkillRootConfig,
+    clipboard::{ClipboardConfig, deserialize_clipboard},
     commands::{ToolsConfig, deserialize_tools, is_tools_decode_error},
     snapshot::MAX_CONFIG_BYTES,
 };
@@ -14,6 +15,8 @@ use super::{
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileConfig {
+    #[serde(default, deserialize_with = "deserialize_clipboard")]
+    clipboard: Option<ClipboardConfig>,
     #[serde(default, deserialize_with = "deserialize_tools")]
     tools: ToolsConfig,
     #[serde(default)]
@@ -194,6 +197,10 @@ pub(super) fn parse_snapshot(
     let config = Config {
         skill_roots,
         command_tools: decoded.tools.into_commands(path)?,
+        clipboard_source: decoded
+            .clipboard
+            .map(|source| source.admit(path))
+            .transpose()?,
         prompts,
         theme_overrides,
         output_preferences: OutputPreferences::default()

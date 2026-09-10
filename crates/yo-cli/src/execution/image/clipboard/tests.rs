@@ -140,7 +140,7 @@ fn deadline_kills_and_reaps_child_after_stdout_eof() {
     let pid: i32 = fs::read_to_string(pid_path).unwrap().parse().unwrap();
     assert_eq!(
         nix::sys::wait::waitpid(
-            nix::unistd::Pid::from_raw(pid),
+            Pid::from_raw(pid),
             Some(nix::sys::wait::WaitPidFlag::WNOHANG)
         ),
         Err(Errno::ECHILD)
@@ -277,4 +277,95 @@ fn socket_reads_obey_deadline_and_cancellation() {
     assert!(started.elapsed() < Duration::from_secs(1));
     let error = read_bounded(&mut reader, deadline(), &mut || true).unwrap_err();
     assert!(error.to_string().contains("cancelled"));
+}
+
+// SSH 설정을 상속하더라도 전달·백그라운드·로컬 명령을 허용하지 않고 키 경로를 한 값으로 전달한다.
+#[test]
+fn ssh_capture_arguments_preserve_target_and_trust_boundary() {
+    let command = ssh_command(
+        "user@desktop-alias",
+        ClipboardReader::Macos,
+        Some(Path::new("/private/key with spaces")),
+        Some(Path::new("/private/known hosts")),
+        NonZeroU16::new(2222),
+    );
+    assert_eq!(command.get_program(), "ssh");
+    let args = command
+        .get_args()
+        .map(|value| value.to_str().unwrap())
+        .collect::<Vec<_>>();
+    for option in [
+        "BatchMode=yes",
+        "StrictHostKeyChecking=yes",
+        "ClearAllForwardings=yes",
+        "ForwardAgent=no",
+        "ForwardX11=no",
+        "ControlMaster=no",
+        "ControlPath=none",
+        "ForkAfterAuthentication=no",
+        "SessionType=default",
+        "RemoteCommand=none",
+        "PermitLocalCommand=no",
+        "IdentitiesOnly=yes",
+        "IdentityAgent=none",
+        "GlobalKnownHostsFile=/dev/null",
+        "UserKnownHostsFile=\"/private/known hosts\"",
+    ] {
+        assert!(
+            args.windows(2).any(|pair| pair == ["-o", option]),
+            "{option}"
+        );
+    }
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["-i", "/private/key with spaces"])
+    );
+    assert!(args.windows(2).any(|pair| pair == ["-p", "2222"]));
+    assert_eq!(
+        &args[args.len() - 3..args.len() - 1],
+        &["--", "user@desktop-alias"]
+    );
+    assert!(args.last().unwrap().ends_with(" macos 4194304"));
+}
+
+// 원격 reader 선택은 고정 태그로만 전달되고 host는 원격 셸 명령에 섞이지 않는다.
+#[test]
+fn ssh_reader_choices_never_interpolate_the_host_into_remote_code() {
+    for (reader, tag) in [
+        (ClipboardReader::Macos, "macos"),
+        (ClipboardReader::Wayland, "wayland"),
+        (ClipboardReader::X11, "x11"),
+    ] {
+        let command = ssh_command("isolated-desktop", reader, None, None, None);
+        let remote = command.get_args().last().unwrap().to_str().unwrap();
+        assert!(!remote.contains("isolated-desktop"));
+        assert!(remote.ends_with(&format!(" {tag} {MAX_SOURCE_BYTES}")));
+        assert!(remote.starts_with("exec env PATH="));
+    }
+}
+
+// 프록시처럼 부모가 종료된 뒤 파이프를 잡고 있는 자식도 획득 제한 시간에 함께 종료한다.
+#[test]
+fn process_group_cleanup_closes_proxy_descendant_pipe() {
+    let directory = Directory::new();
+    let socket_path = directory.0.join("descendant.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let script = "import os,socket,sys,time\npid=os.fork()\nif pid: os._exit(0)\ns=socket.socket(socket.AF_UNIX);s.connect(sys.argv[1]);s.sendall(b'R');time.sleep(30)";
+    let mut command = Command::new("python3");
+    command.args(["-c", script]).arg(&socket_path);
+    let started = Instant::now();
+    let error = command_error(read_command(
+        &mut command,
+        started + Duration::from_millis(500),
+        &mut || false,
+    ));
+    assert!(error.contains("timed out"));
+    let (mut peer, _) = listener.accept().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    let mut marker = [0; 1];
+    peer.read_exact(&mut marker).unwrap();
+    assert_eq!(marker, [b'R']);
+    assert_eq!(peer.read(&mut marker).unwrap(), 0);
+    assert!(started.elapsed() < Duration::from_secs(2));
 }

@@ -53,7 +53,13 @@ fn worker_evidence_is_required_before_skill_preparation() {
     let png = super::super::encode(&image::RgbaImage::new(1, 1), 1024).unwrap();
     fs::write(directory.0.join("source.png"), &png).unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
-    let (admission, mut host) = bind(Box::new(SkillSpy(calls.clone())), &directory.0, &[], None);
+    let (admission, mut host) = bind(
+        Box::new(SkillSpy(calls.clone())),
+        &directory.0,
+        &[],
+        None,
+        None,
+    );
     let snapshot = yo_core::InputImageSnapshot::new(1, 1, png).unwrap();
     let invented = UserInput::from("[image]")
         .with_images(vec![InputImage::new(0..7, 1, snapshot).unwrap()])
@@ -99,7 +105,7 @@ fn worker_evidence_is_required_before_skill_preparation() {
 fn cancellation_releases_the_single_preparation_lane() {
     let directory = Directory::new();
     let calls = Arc::new(AtomicUsize::new(0));
-    let (_, mut host) = bind(Box::new(SkillSpy(calls)), &directory.0, &[], None);
+    let (_, mut host) = bind(Box::new(SkillSpy(calls)), &directory.0, &[], None, None);
     host.start(ImagePreparationRequest {
         id: 1,
         revision: 2,

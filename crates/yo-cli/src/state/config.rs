@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use yo_core::{ModelCatalog, SkillReferenceScope};
 use yo_tui::{FrameRateLimit, OutputPreferences, PromptTemplates, Theme, ThemeOverrides};
 
+mod clipboard;
 mod commands;
 mod date;
 mod error;
@@ -10,6 +11,7 @@ mod parse;
 mod path;
 mod snapshot;
 
+pub(crate) use clipboard::{ClipboardReader, ClipboardSource};
 pub(crate) use commands::CommandToolConfig;
 pub(crate) use date::DateFormatter;
 pub(crate) use error::ConfigError;
@@ -30,6 +32,7 @@ pub(crate) struct SkillRootConfig {
 pub(crate) struct Config {
     skill_roots: Vec<SkillRootConfig>,
     command_tools: Vec<CommandToolConfig>,
+    clipboard_source: Option<ClipboardSource>,
     prompts: PromptTemplates,
     date_format: String,
     frame_rate_limit: FrameRateLimit,
@@ -48,6 +51,7 @@ impl Default for Config {
         Self {
             skill_roots: Vec::new(),
             command_tools: Vec::new(),
+            clipboard_source: None,
             prompts: PromptTemplates::default(),
             date_format: date::DEFAULT_DATE_FORMAT.to_owned(),
             frame_rate_limit: FrameRateLimit::Fps120,
@@ -62,6 +66,11 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Explicit clipboard acquisition source, without opening files or connections.
+    pub(crate) fn clipboard_source(&self) -> Option<&ClipboardSource> {
+        self.clipboard_source.as_ref()
+    }
+
     /// Structurally admitted commands, without artifact resolution or file reads.
     pub(crate) fn command_tools(&self) -> &[CommandToolConfig] {
         &self.command_tools

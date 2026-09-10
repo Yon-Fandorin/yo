@@ -135,6 +135,17 @@ restored. These observations establish native acquisition, transport and Rust in
 routing; they do not verify a physical Mac keyboard shortcut or a terminal's pixel
 image protocol. A clipboard source still requires explicit per-process selection.
 
+The native configured SSH path subsequently passed the same Mac fixture, attachment
+widths, failed-paste preservation and clean-exit checks without a Python launcher,
+bridge service or forwarded socket. That Rust binary had SHA256
+`f124a62a87ab04c06a163fa9c6752859eb4171cd0debaeaf5fbde07f3b8739cc`.
+A test-local SSH shim selected the guarded native reader; the production worker,
+SSH authentication and embedded remote supervisor performed the acquisition.
+The previous clipboard was restored, the temporary fixture was removed and no
+model request was sent. The Python supervisor's separate synthetic suite covers
+reader/descendant cleanup on timeout and disconnect signals, and rejects partial
+output from failed captures.
+
 ## Platform coverage
 
 The executable environment matrix currently covers:

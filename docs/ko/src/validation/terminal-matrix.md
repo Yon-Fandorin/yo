@@ -132,6 +132,16 @@ Mac의 기존 pasteboard 항목을 읽어 Mac 메모리에만 보관하고 일�
 이미지 프로토콜 검증은 포함하지 않는다. 클립보드 원본은 여전히 프로세스마다 명시적으로
 선택해야 한다.
 
+이후 정식 SSH 설정 경로도 같은 Mac fixture, 첨부 폭, 붙여넣기 실패 시 보존과
+정상 종료 검사를 Python 실행기·bridge 서비스·전달 소켓 없이 통과했다.
+해당 Rust 바이너리의 SHA256은
+`f124a62a87ab04c06a163fa9c6752859eb4171cd0debaeaf5fbde07f3b8739cc`였다.
+테스트 전용 SSH shim이 guard가 있는 native reader를 선택했으며 실제 제품 worker,
+SSH 인증과 내장 원격 supervisor가 획득을 수행했다. 기존 클립보드를 복원하고 임시
+fixture를 제거했으며 모델 요청은 없었다. Python supervisor의 별도 합성 검사는
+시간 초과·연결 종료 신호에서 reader와 자식 정리를 확인하고 실패한 캡처의 부분 출력을
+거절한다.
+
 ## 플랫폼 검사 범위
 
 현재 실행 가능한 환경 매트릭스의 범위는 다음과 같다.

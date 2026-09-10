@@ -19,6 +19,8 @@ use yo_core::{
     TranscriptRecord, UserInput, session_repository::InheritedSessionHistory,
 };
 
+use crate::state::config::ClipboardSource;
+
 type Evidence = (String, u64, String);
 type Registry = Arc<Mutex<HashSet<Evidence>>>;
 
@@ -27,6 +29,7 @@ pub(crate) fn bind(
     workspace: &Path,
     records: &[TranscriptRecord],
     inherited: Option<&InheritedSessionHistory>,
+    clipboard_source: Option<&ClipboardSource>,
 ) -> (Box<dyn InputAdmissionHost>, Box<dyn ImagePreparationHost>) {
     let mut evidence = HashSet::new();
     let inherited_records = inherited
@@ -51,6 +54,7 @@ pub(crate) fn bind(
         }),
         Box::new(Preparation {
             workspace: workspace.to_owned(),
+            clipboard_source: clipboard_source.cloned(),
             registry,
             job: None,
         }),
@@ -97,6 +101,7 @@ impl InputAdmissionHost for Admission {
 
 struct Preparation {
     workspace: PathBuf,
+    clipboard_source: Option<ClipboardSource>,
     registry: Registry,
     job: Option<Job>,
 }
@@ -129,21 +134,23 @@ impl ImagePreparationHost for Preparation {
         let worker_cancel = cancel.clone();
         let worker_wake = wake.clone();
         let registry = self.registry.clone();
+        let clipboard_source = self.clipboard_source.clone();
         let id = request.id;
         let revision = request.revision;
         let thread = thread::Builder::new()
             .name("yo-image-preparation".to_owned())
             .spawn(move || {
-                let result = prepare_attachment(&source, &worker_cancel).and_then(|prepared| {
-                    if worker_cancel.load(Ordering::Acquire) {
-                        return Err(cancelled());
-                    }
-                    registry
-                        .lock()
-                        .map_err(|_| unavailable())?
-                        .insert(identity(prepared.image()));
-                    Ok(prepared)
-                });
+                let result = prepare_attachment(&source, clipboard_source.as_ref(), &worker_cancel)
+                    .and_then(|prepared| {
+                        if worker_cancel.load(Ordering::Acquire) {
+                            return Err(cancelled());
+                        }
+                        registry
+                            .lock()
+                            .map_err(|_| unavailable())?
+                            .insert(identity(prepared.image()));
+                        Ok(prepared)
+                    });
                 let _ = sender.send(ImagePreparationUpdate {
                     id,
                     revision,
@@ -205,6 +212,7 @@ impl Drop for Preparation {
 
 fn prepare_attachment(
     source: &ImagePreparationSource,
+    clipboard_source: Option<&ClipboardSource>,
     cancel: &AtomicBool,
 ) -> Result<PreparedImageAttachment, SubmissionRejection> {
     let mut is_cancelled = || cancel.load(Ordering::Acquire);
@@ -213,7 +221,7 @@ fn prepare_attachment(
         ImagePreparationSource::Clipboard => {
             #[cfg(unix)]
             {
-                super::clipboard::prepare(&mut is_cancelled)
+                super::clipboard::prepare(clipboard_source, &mut is_cancelled)
             }
             #[cfg(not(unix))]
             {

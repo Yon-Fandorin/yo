@@ -707,3 +707,169 @@ fn skill_roots_reject_invalid_shapes_and_enforce_sixteen_root_limit() {
         Err(ConfigError::InvalidSkills { .. })
     ));
 }
+
+// 클립보드 설정은 생략할 수 있으며 명시한 각 source의 값은 호스트 I/O 없이 보존한다.
+#[test]
+fn clipboard_sources_parse_without_opening_target_paths() {
+    let path = Path::new("config.yaml");
+    assert_eq!(parse(path, "{}").unwrap().clipboard_source(), None);
+    assert_eq!(
+        parse(path, "clipboard: {source: native}")
+            .unwrap()
+            .clipboard_source(),
+        Some(&ClipboardSource::Native)
+    );
+    assert_eq!(
+        parse(
+            path,
+            "clipboard: {source: socket, path: /missing/private/clipboard.sock}"
+        )
+        .unwrap()
+        .clipboard_source(),
+        Some(&ClipboardSource::Socket {
+            path: PathBuf::from("/missing/private/clipboard.sock")
+        })
+    );
+    let config = parse(path, "clipboard:\n  source: ssh\n  host: user@[2001:db8::1]\n  reader: macos\n  identity_file: /missing/key\n  known_hosts_file: /missing/known_hosts\n  port: 2222\n").unwrap();
+    assert_eq!(
+        config.clipboard_source(),
+        Some(&ClipboardSource::Ssh {
+            host: "user@[2001:db8::1]".to_owned(),
+            reader: ClipboardReader::Macos,
+            identity_file: Some(PathBuf::from("/missing/key")),
+            known_hosts_file: Some(PathBuf::from("/missing/known_hosts")),
+            port: std::num::NonZeroU16::new(2222),
+        })
+    );
+    for (reader, expected) in [
+        ("wayland", ClipboardReader::Wayland),
+        ("x11", ClipboardReader::X11),
+    ] {
+        let config = parse(
+            path,
+            &format!("clipboard: {{source: ssh, host: desktop-alias, reader: {reader}}}"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.clipboard_source(),
+            Some(&ClipboardSource::Ssh {
+                host: "desktop-alias".to_owned(),
+                reader: expected,
+                identity_file: None,
+                known_hosts_file: None,
+                port: None,
+            })
+        );
+    }
+}
+
+// source별 미등록 필드·필수 값 누락·임의 reader·잘못된 port를 구조 단계에서 거부한다.
+#[test]
+fn clipboard_config_rejects_unknown_or_ambiguous_shapes() {
+    for yaml in [
+        "clipboard: null",
+        "clipboard: {}",
+        "clipboard: {source: native, host: desktop}",
+        "clipboard: {source: socket}",
+        "clipboard: {source: socket, path: /private/c.sock, reader: macos}",
+        "clipboard: {source: ssh, host: desktop}",
+        "clipboard: {source: ssh, host: desktop, reader: shell}",
+        "clipboard: {source: ssh, host: desktop, reader: macos, command: arbitrary}",
+        "clipboard: {source: ssh, host: desktop, reader: macos, port: 0}",
+        "clipboard: {source: ssh, host: desktop, reader: macos, port: 65536}",
+        "clipboard: {source: native, source: ssh}",
+    ] {
+        assert!(parse(Path::new("config.yaml"), yaml).is_err(), "{yaml}");
+    }
+}
+
+// SSH 옵션·셸 구문·공백·제어 문자와 상대 경로는 실행 단계에 전달하지 않는다.
+#[test]
+fn clipboard_config_rejects_unsafe_hosts_and_paths() {
+    for host in [
+        "",
+        "-option",
+        "two hosts",
+        "host;command",
+        "$(command)",
+        "host`command`",
+        "host\nother",
+        "host/path",
+        "host\\path",
+    ] {
+        let yaml = format!(
+            "clipboard: {{source: ssh, host: {}, reader: macos}}",
+            serde_json::to_string(host).unwrap()
+        );
+        assert!(
+            matches!(
+                parse(Path::new("config.yaml"), &yaml),
+                Err(ConfigError::InvalidClipboard { .. })
+            ),
+            "{host:?}"
+        );
+    }
+    for yaml in [
+        "clipboard: {source: socket, path: relative.sock}",
+        "clipboard: {source: socket, path: /private/../clipboard.sock}",
+        "clipboard: {source: ssh, host: desktop, reader: macos, identity_file: key}",
+        "clipboard: {source: ssh, host: desktop, reader: macos, known_hosts_file: known_hosts}",
+        "clipboard: {source: ssh, host: desktop, reader: macos, identity_file: \"/key\\nfile\"}",
+    ] {
+        assert!(
+            matches!(
+                parse(Path::new("config.yaml"), yaml),
+                Err(ConfigError::InvalidClipboard { .. })
+            ),
+            "{yaml}"
+        );
+    }
+}
+
+// host와 경로의 정확한 상한을 수용하고 첫 초과 바이트를 거부한다.
+#[test]
+fn clipboard_config_bounds_host_and_path_bytes() {
+    let path = Path::new("config.yaml");
+    for (size, accepted) in [(255, true), (256, false)] {
+        let yaml = format!(
+            "clipboard: {{source: ssh, host: {}, reader: macos}}",
+            "a".repeat(size)
+        );
+        assert_eq!(parse(path, &yaml).is_ok(), accepted);
+    }
+    for (size, accepted) in [(4096, true), (4097, false)] {
+        let absolute = format!("/{}", "a".repeat(size - 1));
+        for field in ["identity_file", "known_hosts_file"] {
+            let yaml = format!(
+                "clipboard: {{source: ssh, host: desktop, reader: macos, {field}: {absolute}}}"
+            );
+            assert_eq!(parse(path, &yaml).is_ok(), accepted);
+        }
+        let yaml = format!("clipboard: {{source: socket, path: {absolute}}}");
+        assert_eq!(parse(path, &yaml).is_ok(), accepted);
+    }
+}
+
+// SSH의 token·환경 변수 확장으로 신뢰 파일이 바뀌지 않으며 일반 소켓 경로는 문자 그대로다.
+#[test]
+fn clipboard_ssh_paths_reject_openssh_expansion_tokens() {
+    let path = Path::new("config.yaml");
+    for field in ["identity_file", "known_hosts_file"] {
+        for value in ["/private/%h/key", "/private/${USER}/key"] {
+            let yaml = format!(
+                "clipboard: {{source: ssh, host: desktop, reader: macos, {field}: {value:?}}}"
+            );
+            assert!(matches!(
+                parse(path, &yaml),
+                Err(ConfigError::InvalidClipboard { .. })
+            ));
+        }
+    }
+    assert!(
+        parse(
+            path,
+            "clipboard: {source: socket, path: '/private/%h/${USER}.sock'}"
+        )
+        .is_ok()
+    );
+}

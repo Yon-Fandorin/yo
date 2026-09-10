@@ -111,7 +111,8 @@ iTerm2·Sixel 전송은 지원하지 않는다.
 설명을 작성하고 Enter를 눌러야 모델에 전송된다. 준비 실패나 취소는 기존 초안을 보존한다.
 터미널의 일반 텍스트 붙여넣기는 그대로 텍스트 입력으로 처리한다.
 직접 실행하는 Linux 데스크톱은 `wl-clipboard` 또는 `xclip`, Mac은 `pngpaste`를 사용한다.
-SSH·tmux에서 Mac 이미지를 받으려면 로컬 전달 도구와 SSH 소켓 전달을 연결한다.
+SSH·tmux에서 Mac 이미지를 받으려면 `config.yaml`에 클립보드 SSH 원본을 지정한다.
+yo가 Ctrl+V 때 직접 연결하고 종료하므로 별도 실행기나 상시 터널은 필요하지 않다.
 설정 방법은 [클립보드와 SSH 전달](docs/ko/src/architecture/runtime-flow.md#클립보드-획득과-ssh-전달)에 있다.
 
 `/attach /절대/경로.png`는 yo 실행 호스트에 저장된 PNG/JPEG를 고르는 보조 명령이다.
