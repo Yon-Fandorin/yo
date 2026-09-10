@@ -244,7 +244,7 @@ fn fullscreen_recipe_owns_the_alternate_screen() {
 
     assert_eq!(
         backend.output.bytes,
-        b"\x1b[?2004h\x1b[?1049h\x1b[?1049l\x1b[?2004l"
+        b"\x1b[?2004h\x1b[?1049h\x1b[?1006h\x1b[?1000h\x1b[?1000l\x1b[?1006l\x1b[?1049l\x1b[?2004l"
     );
 }
 
@@ -274,5 +274,25 @@ fn inline_renderer_writes_through_the_active_session_backend() {
           \x1b[?25l\r\n\x1b[1A\x1b[1G\x1b[1G\x1b[0;39;49m  \
           \x1b[1G\x1b[?25h\
           \x1b[?25h\x1b[?2004l"
+    );
+}
+
+// 마우스 모드 진입 바이트가 중간에 실패해도 두 모드를 끄고 원래 TTY를 복원한다.
+#[test]
+fn partial_mouse_acquisition_restores_tracking_and_encoding() {
+    let mut backend = backend(RecordingWriter {
+        fail_write_after: Some(24),
+        ..RecordingWriter::default()
+    });
+    assert!(enter_screen(&mut backend, ScreenMode::Fullscreen).is_err());
+    assert!(
+        backend
+            .output
+            .bytes
+            .ends_with(b"\x1b[?1000l\x1b[?1006l\x1b[?1049l\x1b[?2004l")
+    );
+    assert_eq!(
+        backend.tty.driver.applied,
+        [TtyState { raw: true }, TtyState { raw: false }]
     );
 }

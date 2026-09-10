@@ -2,7 +2,7 @@ use std::{f64::consts::PI, time::Duration};
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::AppearanceCandidateError;
+use super::{AppearanceCandidateError, Theme};
 use crate::surface::{Attributes, Color, Grapheme, Style};
 
 pub(super) const BUILT_IN_REPAINT_INTERVAL: Duration = Duration::from_millis(16);
@@ -62,6 +62,7 @@ pub(super) struct ActivityMotionProfile {
     base_rgb: ActivityRgb,
     highlight_rgb: ActivityRgb,
     reduced_motion: bool,
+    monochrome: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,7 +138,16 @@ impl ActivityMotionProfile {
             base_rgb: ActivityRgb::new(128, 128, 128),
             highlight_rgb: ActivityRgb::new(255, 255, 255),
             reduced_motion: motion_preference == MotionPreference::Reduced,
+            monochrome: false,
         }
+    }
+
+    pub(super) fn with_theme(mut self, theme: Theme) -> Self {
+        let (base, highlight) = theme.activity_colors();
+        self.base_rgb = ActivityRgb::new(base.0, base.1, base.2);
+        self.highlight_rgb = ActivityRgb::new(highlight.0, highlight.1, highlight.2);
+        self.monochrome = theme == Theme::Mono;
+        self
     }
 
     pub(super) fn with_marker_interval(mut self, interval: Duration) -> Self {
@@ -183,7 +193,11 @@ impl ActivityMotionProfile {
             reserved_marker_width: self.reserved_marker_width,
             repaint_interval: self.repaint_interval,
             sweep_period: self.sweep_period,
-            color_capability: self.color_capability,
+            color_capability: if self.monochrome {
+                ColorCapability::Unknown
+            } else {
+                self.color_capability
+            },
             base_rgb: self.base_rgb,
             highlight_rgb: self.highlight_rgb,
             reduced_motion: self.reduced_motion,

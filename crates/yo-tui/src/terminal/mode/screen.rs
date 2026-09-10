@@ -43,7 +43,11 @@ where
         ),
         ScreenMode::Fullscreen => TerminalSession::enter(
             backend,
-            [B::bracketed_paste_mode(), B::alternate_screen_mode()],
+            [
+                B::bracketed_paste_mode(),
+                B::alternate_screen_mode(),
+                B::mouse_capture_mode(),
+            ],
         ),
     }
 }

@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use yo_backend_managed::NativeModelBackend;
 use yo_core::{
     AccountId, ApiDialect, BackendResumeTarget, CompleteModelBinding, ConnectorId, HostId, ModelId,
     ModelSelection, ModelSelectionController, NormalizedEndpoint, ProviderId, StartupPolicy,
@@ -6,7 +7,13 @@ use yo_core::{
 };
 
 use super::{DelegatedExecutionProfile, StartupBackend};
-use crate::{AppError, state::config::Config};
+use crate::{
+    AppError,
+    execution::tools::{
+        LocalToolRegistryRevision, PreparedCommandTools, revision_for_replay_contract,
+    },
+    state::config::Config,
+};
 
 const SESSION_TOOL_EXPOSURE_PROFILE: &str = "yo.session-tool-exposure/v1alpha1";
 
@@ -18,7 +25,8 @@ enum DurableBackendKind {
 
 pub(super) fn replacement(
     selection: &ModelSelection,
-    registry_revision: crate::execution::tools::LocalToolRegistryRevision,
+    registry_revision: LocalToolRegistryRevision,
+    execution_manifest_digest: Option<&str>,
 ) -> StartupBackend {
     StartupBackend::Native {
         provider: selection.provider().clone(),
@@ -26,6 +34,7 @@ pub(super) fn replacement(
         model: selection.model().clone(),
         replace_binding: true,
         registry_revision,
+        execution_manifest_digest: execution_manifest_digest.map(str::to_owned),
     }
 }
 
@@ -38,16 +47,38 @@ pub(super) fn resolve(
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
     if let Some(target) = resume {
-        return resolve_resume(config, override_model, target);
+        let selection = resolve_resume(config, override_model, target)?;
+        if read_only_review
+            && selection.registry_revision() == Some(LocalToolRegistryRevision::CommandTools)
+        {
+            return Err(AppError::message(
+                "read-only execution cannot expose configured command tools",
+            ));
+        }
+        return Ok(selection);
     }
-    resolve_new_session_with_tool_restriction(
+    let mut selection = resolve_new_session_with_tool_restriction(
         config.model_catalog(),
         stored_preference,
         None,
         override_model,
         no_tools,
         read_only_review,
-    )
+    )?;
+    if let StartupBackend::Native {
+        registry_revision, ..
+    } = &mut selection
+        && *registry_revision == LocalToolRegistryRevision::BasicFiles
+        && !config.command_tools().is_empty()
+    {
+        if read_only_review {
+            return Err(AppError::message(
+                "read-only execution cannot expose configured command tools",
+            ));
+        }
+        *registry_revision = LocalToolRegistryRevision::CommandTools;
+    }
+    Ok(selection)
 }
 
 #[cfg(test)]
@@ -119,9 +150,9 @@ fn resolve_new_session_with_tool_restriction(
                 || entry.explicit_profile().is_some_and(|profile| {
                     profile.tool_capability_policy().as_str() == "no-tools/v1"
                 }) {
-                crate::execution::tools::LocalToolRegistryRevision::NoTools
+                LocalToolRegistryRevision::NoTools
             } else {
-                crate::execution::tools::LocalToolRegistryRevision::BasicFiles
+                LocalToolRegistryRevision::BasicFiles
             };
             Ok(native_selection(selection, false, registry_revision))
         },
@@ -140,17 +171,35 @@ fn resolve_resume(
         DurableBackendKind::Native => {},
     }
     let binding_identity = target.binding().binding_identity();
-    let durable_binding =
-        parse_durable_binding(binding_identity.schema(), binding_identity.value())?;
-    let registry_revision =
-        crate::execution::tools::revision_for_replay_contract(target.model_replay().contract())
-            .map_err(|error| AppError::single("selecting the saved local tool registry", error))?;
-    resolve_native_resume(
+    let (model_identity, execution_manifest_digest) =
+        NativeModelBackend::decode_binding_identity(binding_identity)
+            .map_err(|error| AppError::single("decoding the saved managed binding", error))?;
+    let durable_binding = parse_durable_binding(model_identity.schema(), model_identity.value())?;
+    let registry_revision = if execution_manifest_digest.is_some() {
+        PreparedCommandTools::validate_replay_contract(
+            config.command_tools(),
+            target.model_replay().contract(),
+        )
+        .map_err(|error| AppError::single("selecting the saved command tool registry", error))?;
+        LocalToolRegistryRevision::CommandTools
+    } else {
+        revision_for_replay_contract(target.model_replay().contract())
+            .map_err(|error| AppError::single("selecting the saved local tool registry", error))?
+    };
+    let mut selection = resolve_native_resume(
         config.model_catalog(),
         durable_binding,
         override_model,
         registry_revision,
-    )
+    )?;
+    if let StartupBackend::Native {
+        execution_manifest_digest: expected,
+        ..
+    } = &mut selection
+    {
+        *expected = execution_manifest_digest;
+    }
+    Ok(selection)
 }
 
 fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> {
@@ -216,7 +265,7 @@ fn resolve_native_resume(
     catalog: &yo_core::ModelCatalog,
     durable_binding: DurableNativeBinding,
     reference: Option<&str>,
-    registry_revision: crate::execution::tools::LocalToolRegistryRevision,
+    registry_revision: LocalToolRegistryRevision,
 ) -> Result<StartupBackend, AppError> {
     let binding = durable_binding.binding();
     let durable_selection = ModelSelection::new(
@@ -260,7 +309,7 @@ fn resolve_native_resume(
 fn native_selection(
     selection: ModelSelection,
     replace_binding: bool,
-    registry_revision: crate::execution::tools::LocalToolRegistryRevision,
+    registry_revision: LocalToolRegistryRevision,
 ) -> StartupBackend {
     StartupBackend::Native {
         provider: selection.provider().clone(),
@@ -268,6 +317,7 @@ fn native_selection(
         model: selection.model().clone(),
         replace_binding,
         registry_revision,
+        execution_manifest_digest: None,
     }
 }
 
@@ -791,7 +841,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Legacy(durable.clone()),
             Some("same"),
-            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap();
         assert!(!same.replaces_binding());
@@ -804,7 +854,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Legacy(durable.clone()),
             Some("host:codex"),
-            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap_err()
         .to_string();
@@ -815,7 +865,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Legacy(durable),
             Some("openrouter::same"),
-            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap();
         assert!(replacement.replaces_binding());
@@ -920,7 +970,7 @@ mod tests {
                 &exact_catalog,
                 durable.clone(),
                 None,
-                crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+                LocalToolRegistryRevision::BasicFiles,
             )
             .unwrap()
             .replaces_binding()
@@ -952,7 +1002,7 @@ mod tests {
                 &changed_catalog,
                 durable,
                 None,
-                crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+                LocalToolRegistryRevision::BasicFiles,
             )
             .unwrap()
             .replaces_binding()
@@ -969,7 +1019,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Complete(exact.clone()),
             None,
-            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap();
         assert!(!resumed.replaces_binding());
@@ -978,7 +1028,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Complete(exact),
             Some("model"),
-            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap_err();
         assert!(explicit.to_string().contains("disabled by operator"));
@@ -987,7 +1037,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Complete(complete_binding("high")),
             None,
-            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap_err();
         assert!(changed.to_string().contains("disabled by operator"));
@@ -1029,7 +1079,65 @@ mod tests {
 
         assert_eq!(
             startup.registry_revision(),
-            Some(crate::execution::tools::LocalToolRegistryRevision::NoTools)
+            Some(LocalToolRegistryRevision::NoTools)
+        );
+    }
+
+    // 구조적으로 유효하지만 없는 artifact는 delegated/no-tools 선택에서 열지 않으며,
+    // 일반 native 선택만 command registry 준비를 요구한다.
+    #[test]
+    fn configured_commands_only_select_the_supported_native_registry() {
+        let directory = TestDirectory::new("command-tool-selection");
+        let path = directory.0.join("config.yaml");
+        fs::write(&path, serde_json::json!({"tools":{"commands":[{
+            "id":"configured", "name":"configured", "description":"Run an explicit command.",
+            "executable":directory.0.join("missing-executable"),
+            "script":"missing-script", "parameters":{"type":"object","properties":{},"additionalProperties":false}
+        }]}}).to_string()).unwrap();
+        let mut config = crate::state::config::load_from(&path).unwrap();
+        config.replace_model_catalog(selection_catalog(&[("qwencloud", "default", "model")]));
+        assert!(matches!(
+            resolve(&config, None, Some("host:codex"), false, false, None).unwrap(),
+            StartupBackend::Host(_)
+        ));
+        assert!(matches!(
+            resolve(&config, None, Some("host:codex"), false, true, None).unwrap(),
+            StartupBackend::ReadOnlyHost(_)
+        ));
+        assert_eq!(
+            resolve(&config, None, Some("model"), true, false, None)
+                .unwrap()
+                .registry_revision(),
+            Some(LocalToolRegistryRevision::NoTools)
+        );
+        assert_eq!(
+            resolve(&config, None, Some("model"), false, false, None)
+                .unwrap()
+                .registry_revision(),
+            Some(LocalToolRegistryRevision::CommandTools)
+        );
+        assert!(resolve(&config, None, Some("model"), false, true, None).is_err());
+        let complete = CompleteModelBinding::from_durable_json(
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"no-tools/v1"}"#
+        ).unwrap();
+        config.replace_model_catalog(
+            yo_core::ModelCatalog::new(vec![
+                yo_core::ModelCatalogEntry::with_explicit_profile(
+                    complete.binding().clone(),
+                    None,
+                    None,
+                    None,
+                    complete.profile().clone(),
+                )
+                .unwrap(),
+            ])
+            .unwrap(),
+        );
+        assert_eq!(
+            resolve(&config, None, Some("model"), false, false, None)
+                .unwrap()
+                .registry_revision(),
+            Some(LocalToolRegistryRevision::NoTools)
         );
     }
 
@@ -1049,7 +1157,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             startup.registry_revision(),
-            Some(crate::execution::tools::LocalToolRegistryRevision::NoTools)
+            Some(LocalToolRegistryRevision::NoTools)
         );
         assert_eq!(startup.model_selection().unwrap().model().as_str(), "model");
 

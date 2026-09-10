@@ -8,18 +8,23 @@ pub(crate) use yo_backend::{
     ProviderPrivateReplayPayload, validate_provider_private_replay_sequence,
 };
 
+use crate::{ContextPolicyChanged, JournalSequence, SessionId};
+
 /// Durable Yo coordinates required to reconnect one existing backend binding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackendResumeSource {
-    ContinuationAnchor(crate::JournalSequence),
-    ContextCheckpoint(crate::JournalSequence),
+    ContinuationAnchor(JournalSequence),
+    ContextCheckpoint(JournalSequence),
+    InitialFork(JournalSequence),
 }
 
 impl BackendResumeSource {
     #[must_use]
-    pub const fn sequence(self) -> crate::JournalSequence {
+    pub const fn sequence(self) -> JournalSequence {
         match self {
-            Self::ContinuationAnchor(sequence) | Self::ContextCheckpoint(sequence) => sequence,
+            Self::ContinuationAnchor(sequence)
+            | Self::ContextCheckpoint(sequence)
+            | Self::InitialFork(sequence) => sequence,
         }
     }
 }
@@ -27,12 +32,12 @@ impl BackendResumeSource {
 /// Durable Yo coordinates required to reconnect one existing backend binding.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackendResumeTarget {
-    session_id: crate::SessionId,
+    session_id: SessionId,
     epoch: u64,
     binding: BackendBindingEvidence,
     model_replay: ModelReplay,
     model_replay_groups: Vec<Vec<ModelReplayItem>>,
-    context_policy: Option<crate::ContextPolicyChanged>,
+    context_policy: Option<ContextPolicyChanged>,
     context_epoch: Option<u64>,
     replay_contract_rebind_required: bool,
     binding_has_accepted_request: bool,
@@ -41,10 +46,10 @@ pub struct BackendResumeTarget {
 
 impl BackendResumeTarget {
     pub(crate) fn new(
-        session_id: crate::SessionId,
+        session_id: SessionId,
         epoch: u64,
         binding: BackendBindingEvidence,
-        source_anchor_sequence: crate::JournalSequence,
+        source_anchor_sequence: JournalSequence,
     ) -> Self {
         Self {
             session_id,
@@ -63,10 +68,10 @@ impl BackendResumeTarget {
     }
 
     pub(crate) fn from_checkpoint(
-        session_id: crate::SessionId,
+        session_id: SessionId,
         epoch: u64,
         binding: BackendBindingEvidence,
-        source_checkpoint_sequence: crate::JournalSequence,
+        source_checkpoint_sequence: JournalSequence,
     ) -> Self {
         Self {
             session_id,
@@ -84,11 +89,33 @@ impl BackendResumeTarget {
         }
     }
 
-    pub(crate) fn for_model_rebind(
-        session_id: crate::SessionId,
+    pub(crate) fn from_initial_fork(
+        session_id: SessionId,
         epoch: u64,
         binding: BackendBindingEvidence,
-        source_anchor_sequence: Option<crate::JournalSequence>,
+        source_initial_fork_sequence: JournalSequence,
+    ) -> Self {
+        Self {
+            session_id,
+            epoch,
+            binding,
+            model_replay: ModelReplay::default(),
+            model_replay_groups: Vec::new(),
+            context_policy: None,
+            context_epoch: None,
+            replay_contract_rebind_required: false,
+            binding_has_accepted_request: false,
+            source: Some(BackendResumeSource::InitialFork(
+                source_initial_fork_sequence,
+            )),
+        }
+    }
+
+    pub(crate) fn for_model_rebind(
+        session_id: SessionId,
+        epoch: u64,
+        binding: BackendBindingEvidence,
+        source_anchor_sequence: Option<JournalSequence>,
     ) -> Self {
         Self {
             session_id,
@@ -105,7 +132,7 @@ impl BackendResumeTarget {
     }
 
     #[must_use]
-    pub const fn session_id(&self) -> crate::SessionId {
+    pub const fn session_id(&self) -> SessionId {
         self.session_id
     }
 
@@ -130,7 +157,7 @@ impl BackendResumeTarget {
     }
 
     #[must_use]
-    pub const fn context_policy(&self) -> Option<&crate::ContextPolicyChanged> {
+    pub const fn context_policy(&self) -> Option<&ContextPolicyChanged> {
         self.context_policy.as_ref()
     }
 
@@ -153,18 +180,36 @@ impl BackendResumeTarget {
     }
 
     #[must_use]
-    pub const fn source_anchor_sequence(&self) -> Option<crate::JournalSequence> {
+    pub const fn source_anchor_sequence(&self) -> Option<JournalSequence> {
         match self.source {
             Some(BackendResumeSource::ContinuationAnchor(sequence)) => Some(sequence),
-            Some(BackendResumeSource::ContextCheckpoint(_)) | None => None,
+            Some(
+                BackendResumeSource::ContextCheckpoint(_) | BackendResumeSource::InitialFork(_),
+            )
+            | None => None,
         }
     }
 
     #[must_use]
-    pub const fn source_checkpoint_sequence(&self) -> Option<crate::JournalSequence> {
+    pub const fn source_checkpoint_sequence(&self) -> Option<JournalSequence> {
         match self.source {
             Some(BackendResumeSource::ContextCheckpoint(sequence)) => Some(sequence),
-            Some(BackendResumeSource::ContinuationAnchor(_)) | None => None,
+            Some(
+                BackendResumeSource::ContinuationAnchor(_) | BackendResumeSource::InitialFork(_),
+            )
+            | None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn source_initial_fork_sequence(&self) -> Option<JournalSequence> {
+        match self.source {
+            Some(BackendResumeSource::InitialFork(sequence)) => Some(sequence),
+            Some(
+                BackendResumeSource::ContinuationAnchor(_)
+                | BackendResumeSource::ContextCheckpoint(_),
+            )
+            | None => None,
         }
     }
 
@@ -175,7 +220,7 @@ impl BackendResumeTarget {
 
     pub(crate) fn with_context_state(
         mut self,
-        policy: Option<crate::ContextPolicyChanged>,
+        policy: Option<ContextPolicyChanged>,
         context_epoch: Option<u64>,
         replay_groups: Vec<Vec<ModelReplayItem>>,
     ) -> Self {

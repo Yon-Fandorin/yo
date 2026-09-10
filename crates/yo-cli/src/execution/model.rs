@@ -4,7 +4,7 @@ use std::path::Path;
 
 use yo_core::{
     AccountId, AgentBackend, BackendResumeTarget, CredentialSnapshot, HostId, ModelId,
-    ModelSelection, ProviderId,
+    ModelSelection, ProviderId, SessionDescriptor, session_repository::StoredSessionContinuation,
 };
 
 use crate::{AppError, state::config::Config};
@@ -21,6 +21,13 @@ pub(crate) use host_catalog::{
     read_builtin_host_catalogs_with_codex_warning_observer, resolve_active_host_model,
 };
 
+/// Candidate backend, unpublished fork continuation, and captured command manifest digest.
+pub(crate) type PreparedNativeFork = (
+    Box<dyn AgentBackend + Send>,
+    StoredSessionContinuation,
+    Option<String>,
+);
+
 #[derive(Clone, Debug)]
 pub(crate) enum StartupBackend {
     Host(HostId),
@@ -31,6 +38,7 @@ pub(crate) enum StartupBackend {
         model: ModelId,
         replace_binding: bool,
         registry_revision: crate::execution::tools::LocalToolRegistryRevision,
+        execution_manifest_digest: Option<String>,
     },
 }
 
@@ -48,10 +56,17 @@ impl DelegatedExecutionProfile {
 }
 
 impl StartupBackend {
-    pub(crate) fn label(&self) -> &str {
+    pub(crate) fn label(&self, active_model: Option<&ActiveHostModel>) -> String {
         match self {
-            Self::Host(host) | Self::ReadOnlyHost(host) => host.as_str(),
-            Self::Native { model, .. } => model.as_str(),
+            Self::Host(host) | Self::ReadOnlyHost(host) => {
+                let model = active_model
+                    .filter(|active| active.host() == host)
+                    .map_or("model unreported", |active| active.model().as_str());
+                format!("host:{} · {model}", host.as_str())
+            },
+            Self::Native {
+                provider, model, ..
+            } => format!("{provider} · {model}"),
         }
     }
 
@@ -104,8 +119,9 @@ impl StartupBackend {
 pub(crate) fn replacement(
     selection: &ModelSelection,
     registry_revision: crate::execution::tools::LocalToolRegistryRevision,
+    execution_manifest_digest: Option<&str>,
 ) -> StartupBackend {
-    startup::replacement(selection, registry_revision)
+    startup::replacement(selection, registry_revision, execution_manifest_digest)
 }
 
 pub(crate) fn resolve(
@@ -131,8 +147,29 @@ pub(crate) fn start_native(
     credentials: &CredentialSnapshot,
     selection: &StartupBackend,
     workspace: &Path,
-) -> Result<Box<dyn AgentBackend + Send>, AppError> {
-    native::start_native(config, credentials, selection, workspace)
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<(Box<dyn AgentBackend + Send>, Option<String>), AppError> {
+    native::start_native(config, credentials, selection, workspace, cancelled)
+}
+
+pub(crate) fn start_native_for_fork(
+    config: &Config,
+    credentials: &CredentialSnapshot,
+    selection: &StartupBackend,
+    workspace: &Path,
+    parent: &StoredSessionContinuation,
+    child: SessionDescriptor,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<PreparedNativeFork, AppError> {
+    native::start_native_for_fork(
+        config,
+        credentials,
+        selection,
+        workspace,
+        parent,
+        child,
+        cancelled,
+    )
 }
 
 pub(crate) fn open_credentials(path: &Path) -> Result<CredentialSnapshot, AppError> {
@@ -173,7 +210,7 @@ mod tests {
         );
 
         let codex = StartupBackend::Host(HostId::codex());
-        assert_eq!(codex.label(), "codex");
+        assert_eq!(codex.label(None), "host:codex · model unreported");
         assert!(!codex.replaces_binding());
         assert!(codex.model_selection().is_none());
 
@@ -183,18 +220,64 @@ mod tests {
             model: selection.model().clone(),
             replace_binding: false,
             registry_revision: crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            execution_manifest_digest: None,
         };
-        assert_eq!(native.label(), "qwen3.8max");
+        assert_eq!(native.label(None), "qwencloud · qwen3.8max");
         assert!(!native.replaces_binding());
         assert_eq!(native.model_selection(), Some(selection.clone()));
 
         let replacement = replacement(
             &selection,
             crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            None,
         );
-        assert_eq!(replacement.label(), "qwen3.8max");
+        assert_eq!(replacement.label(None), "qwencloud · qwen3.8max");
         assert!(replacement.replaces_binding());
         assert_eq!(replacement.model_selection(), Some(selection));
+    }
+
+    // model replacement는 이미 실행 중인 command manifest digest를 새 좌표와 함께 보존한다.
+    #[test]
+    fn replacement_retains_the_running_command_manifest_digest() {
+        let selection = ModelSelection::new(
+            ProviderId::new("provider").unwrap(),
+            AccountId::new("account").unwrap(),
+            ModelId::new("replacement").unwrap(),
+        );
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let replacement = replacement(
+            &selection,
+            crate::execution::tools::LocalToolRegistryRevision::CommandTools,
+            Some(&digest),
+        );
+        assert!(replacement.replaces_binding());
+        assert_eq!(replacement.model_selection(), Some(selection));
+        assert!(
+            matches!(replacement, StartupBackend::Native { execution_manifest_digest: Some(actual), .. } if actual == digest)
+        );
+    }
+
+    // 다른 호스트의 모델이나 계정은 시작 라벨로 혼입하지 않고 실행 주체와 보고된 모델만 보인다.
+    #[test]
+    fn startup_label_uses_only_the_matching_host_model() {
+        let active = ActiveHostModel::new(
+            HostId::codex(),
+            AccountId::new("private-account").unwrap(),
+            ModelId::new("reported-model").unwrap(),
+            true,
+        );
+        for backend in [
+            StartupBackend::Host(HostId::codex()),
+            StartupBackend::ReadOnlyHost(HostId::codex()),
+        ] {
+            assert_eq!(backend.label(Some(&active)), "host:codex · reported-model");
+        }
+        let other = StartupBackend::Host(HostId::new("other-host").unwrap());
+        assert_eq!(
+            other.label(Some(&active)),
+            "host:other-host · model unreported"
+        );
+        assert_eq!(other.label(None), other.label(Some(&active)));
     }
 
     // Local Codex 선택은 옆의 credentials.yaml이 잘못되어도 그 파일을 required source로
@@ -233,6 +316,7 @@ mod tests {
             model: ModelId::new("model").unwrap(),
             replace_binding: false,
             registry_revision: crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            execution_manifest_digest: None,
         };
         let error = credentials_for_startup(&config, &mut retained, &native).unwrap_err();
 

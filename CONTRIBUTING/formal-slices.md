@@ -52,6 +52,15 @@ When Methexis advertises `canonical-approval-on-demand-projection/v1`:
 6. Integrate, activate through a separate Slice, verify trusted active authority,
    then implement against it.
 
+Step 5 records the user's actual approval; it does not require asking again when
+the conversation already authorizes the exact prepared basis. Follow the approval
+retention rule in [Contributing](../CONTRIBUTING.md#decisions-and-memory). Carry
+that authorization through the included integration and activation steps without
+another permission question. Approval-record generation and mechanical metadata
+changes do not themselves create a new semantic candidate requiring human review.
+Do not claim that a general goal approves unseen semantic changes, or that a brief
+approval supplies a separate review lens the user did not perform.
+
 Without the capability, preserve the legacy Source/Knowledge/Korean Projection
 candidate sequence. Existing approved revisions are not regenerated in bulk.
 Approval-only review carry is allowed only when the existing CLI mechanically

@@ -82,6 +82,7 @@ pub struct RecordDiscovery {
     descriptor: SessionDescriptor,
     binding_epoch: Option<u64>,
     continuation_anchor: Option<JournalSequence>,
+    initial_fork_seed: Option<JournalSequence>,
 }
 
 impl RecordDiscovery {
@@ -90,6 +91,7 @@ impl RecordDiscovery {
             descriptor,
             binding_epoch: None,
             continuation_anchor: None,
+            initial_fork_seed: None,
         }
     }
 
@@ -114,6 +116,17 @@ impl RecordDiscovery {
         self.continuation_anchor = Some(continuation_anchor);
         self
     }
+
+    /// Fully published initial fork root with no later accepted child request.
+    pub const fn initial_fork_seed(&self) -> Option<JournalSequence> {
+        self.initial_fork_seed
+    }
+
+    /// Records the semantic writer's validated seed-only continuation hint.
+    pub const fn with_initial_fork_seed(mut self, sequence: JournalSequence) -> Self {
+        self.initial_fork_seed = Some(sequence);
+        self
+    }
 }
 
 /// Storage-neutral metadata obtained from one validated physical envelope.
@@ -123,6 +136,7 @@ pub struct SessionDiscovery {
     updated_unix_millis: u64,
     binding_epoch: Option<u64>,
     continuation_anchor: Option<JournalSequence>,
+    initial_fork_seed: Option<JournalSequence>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -183,12 +197,13 @@ impl StoredSession {
     pub const fn continuation_eligibility(&self) -> ContinuationEligibility {
         match self {
             Self::Available(summary) => {
-                if summary.discovery().continuation_anchor().is_some() {
+                if summary.discovery().continuation_anchor().is_some()
+                    || summary.discovery().initial_fork_seed().is_some()
+                {
                     ContinuationEligibility::Eligible
                 } else {
-                    // The physical v1 discovery shape intentionally remains unchanged and cannot
-                    // distinguish an incomplete legacy history from a checkpoint-only replay
-                    // root. Full semantic recovery owns that decision.
+                    // Without a positive hint, an incomplete legacy history and a
+                    // checkpoint-only root still require full semantic recovery.
                     ContinuationEligibility::Unknown
                 }
             },
@@ -260,6 +275,7 @@ impl SessionDiscovery {
             updated_unix_millis,
             binding_epoch,
             continuation_anchor,
+            initial_fork_seed: None,
         }
     }
 
@@ -277,6 +293,17 @@ impl SessionDiscovery {
 
     pub const fn continuation_anchor(&self) -> Option<JournalSequence> {
         self.continuation_anchor
+    }
+
+    /// Checksummed candidate hint; executable recovery must verify its seed.
+    pub const fn initial_fork_seed(&self) -> Option<JournalSequence> {
+        self.initial_fork_seed
+    }
+
+    /// Attaches a validated physical seed-only continuation hint.
+    pub const fn with_initial_fork_seed(mut self, sequence: JournalSequence) -> Self {
+        self.initial_fork_seed = Some(sequence);
+        self
     }
 }
 

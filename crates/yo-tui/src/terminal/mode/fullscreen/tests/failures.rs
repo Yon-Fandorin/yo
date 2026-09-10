@@ -9,6 +9,7 @@ struct RecoveringWriter {
     writes: usize,
     flushes: usize,
     fail_write: bool,
+    first_write_limit: Option<usize>,
 }
 
 impl std::io::Write for RecoveringWriter {
@@ -18,7 +19,7 @@ impl std::io::Write for RecoveringWriter {
             return Err(std::io::Error::other("write failure"));
         }
         let count = if self.fail_write && self.writes == 1 {
-            9.min(bytes.len())
+            self.first_write_limit.unwrap_or(9).min(bytes.len())
         } else {
             bytes.len()
         };
@@ -148,4 +149,79 @@ fn missing_previous_frame_fails_before_output() {
         recovery.plan(),
         FullscreenFramePlan::Complete { .. }
     ));
+}
+
+// fullscreen에서도 OSC 중간 실패를 닫고 다음 일반 frame이 링크를 물려받지 않게 복구한다.
+#[test]
+fn interrupted_fullscreen_hyperlink_is_closed_before_recovery() {
+    use crate::{
+        surface::{Grapheme, Hyperlink, Rect, Style},
+        terminal::RESET_HYPERLINK,
+    };
+    let size = Size::new(2, 1);
+    let mut linked = Surface::new(size).unwrap();
+    linked
+        .view(Rect::new(Point::new(0, 0), size))
+        .unwrap()
+        .write_linked(
+            Point::new(0, 0),
+            Grapheme::try_from("한").unwrap(),
+            Style::default(),
+            Hyperlink::new("https://example.com/fullscreen"),
+        );
+    let mut viewport = FullscreenViewport::default();
+    let mut probe = FullscreenRenderer::new(Vec::new());
+    probe
+        .render(
+            viewport.begin_frame(size, Point::new(0, 0)).unwrap(),
+            None,
+            &linked,
+        )
+        .unwrap();
+    let bytes = probe.into_inner();
+    let start = bytes
+        .windows(5)
+        .position(|bytes| bytes == b"\x1b]8;;")
+        .unwrap();
+    let mut viewport = FullscreenViewport::default();
+    let mut renderer = FullscreenRenderer::new(RecoveringWriter {
+        fail_write: true,
+        first_write_limit: Some(start + 7),
+        ..Default::default()
+    });
+    assert!(
+        renderer
+            .render(
+                viewport.begin_frame(size, Point::new(0, 0)).unwrap(),
+                None,
+                &linked
+            )
+            .is_err()
+    );
+    let plain = Surface::new(size).unwrap();
+    renderer
+        .render(
+            viewport.begin_frame(size, Point::new(0, 0)).unwrap(),
+            None,
+            &plain,
+        )
+        .unwrap();
+    let bytes = renderer.into_inner().bytes;
+    assert!(
+        bytes
+            .windows(RESET_HYPERLINK.len())
+            .filter(|bytes| *bytes == RESET_HYPERLINK)
+            .count()
+            >= 2
+    );
+    assert!(
+        bytes
+            .windows(RESET_HYPERLINK.len() + 8)
+            .any(|bytes| bytes == [RESET_HYPERLINK, b"\x1b[?2026l"].concat())
+    );
+    let last_reset = bytes
+        .windows(RESET_HYPERLINK.len())
+        .rposition(|bytes| bytes == RESET_HYPERLINK)
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&bytes[last_reset..]).contains("https://"));
 }

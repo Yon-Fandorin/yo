@@ -1,5 +1,6 @@
 //! Managed binding state, host services, and backend construction.
 
+mod accounting;
 mod adapter;
 mod compaction;
 mod context;
@@ -26,11 +27,12 @@ use yo_core::{
     EffectiveModelProfile, Failure, FrozenToolRegistry, ModelBindingAdmission, ModelCatalogEntry,
     ModelConnector, ModelConnectorCancellation, ModelConnectorStreamPort, ModelContextProfile,
     ModelReplay, ModelReplayContract, ModelReplayItem, ModelTokenCounter, ReasoningEffort,
-    ReplayExecutor, ReplayProfile, RequestId, SessionId, ToolApprovalBinding, ToolExecution,
-    ToolExecutionHost, ToolSemanticAdmission, TurnRef, ValidatedToolCall,
+    ReplayExecutor, ReplayProfile, RequestId, SessionDescriptor, SessionId, ToolApprovalBinding,
+    ToolExecution, ToolExecutionHost, ToolOutput, ToolSemanticAdmission, TurnRef,
+    ValidatedToolCall, session_repository::StoredSessionContinuation,
 };
 
-use self::identity::native_binding_identity;
+use self::{accounting::InputCount, identity::native_binding_identity};
 
 const BACKEND_KIND: &str = "yo-managed-model";
 const BACKEND_VERSION: &str = "1";
@@ -44,8 +46,12 @@ pub struct NativeModelBackendConfig {
     pub maximum_model_rounds: usize,
     pub maximum_tool_argument_bytes: usize,
     pub maximum_tool_output_bytes: usize,
+    /// Optional transcript retention budget, independent of model replay output.
+    pub maximum_retained_tool_output_bytes: Option<usize>,
     pub absolute_tool_execution_timeout: Option<Duration>,
     pub context_policy: ContextPolicyChanged,
+    /// Frozen command execution manifest; absent for existing registries and no-tools.
+    pub execution_manifest_digest: Option<String>,
 }
 
 impl Default for NativeModelBackendConfig {
@@ -56,6 +62,7 @@ impl Default for NativeModelBackendConfig {
             maximum_model_rounds: 32,
             maximum_tool_argument_bytes: 4 * 1024 * 1024,
             maximum_tool_output_bytes: 4 * 1024 * 1024,
+            maximum_retained_tool_output_bytes: Some(8 * 1024 * 1024),
             absolute_tool_execution_timeout: None,
             context_policy: ContextPolicyChanged::try_new(
                 1,
@@ -67,6 +74,7 @@ impl Default for NativeModelBackendConfig {
                 Some(65_536),
             )
             .expect("the built-in context policy is valid"),
+            execution_manifest_digest: None,
         }
     }
 }
@@ -146,7 +154,7 @@ struct CallActivity {
 
 enum CompactionState {
     Summarizing {
-        input_tokens_before: u64,
+        input_tokens_before: InputCount,
         summarized_groups: Vec<Vec<ModelReplayItem>>,
         retained_groups: Vec<Vec<ModelReplayItem>>,
         body: String,
@@ -160,7 +168,7 @@ enum CompactionState {
 
 enum IdleCompactionState {
     Summarizing {
-        input_tokens_before: u64,
+        input_tokens_before: InputCount,
         summarized_groups: Vec<Vec<ModelReplayItem>>,
         retained_groups: Vec<Vec<ModelReplayItem>>,
         body: String,
@@ -207,6 +215,7 @@ pub struct NativeModelBackend {
     tool_host: Box<dyn ToolExecutionHost>,
     config: NativeModelBackendConfig,
     model_context: ModelContextProfile,
+    image_accounting: bool,
     token_counter: Box<dyn ModelTokenCounter>,
     request_observer: Option<Box<dyn ModelRequestObserver>>,
     contract: ModelReplayContract,
@@ -314,6 +323,9 @@ impl NativeModelBackend {
             || config.maximum_tool_argument_bytes == 0
             || config.maximum_tool_output_bytes < TOOL_TRUNCATION_MARKER.len()
             || config
+                .maximum_retained_tool_output_bytes
+                .is_some_and(|limit| limit == 0 || limit > ToolOutput::MAX_SNAPSHOT_BYTES)
+            || config
                 .absolute_tool_execution_timeout
                 .is_some_and(|timeout| timeout.is_zero())
         {
@@ -336,7 +348,13 @@ impl NativeModelBackend {
                 "native model replay contract is invalid or exceeds its bounds",
             ));
         }
-        let binding_identity = native_binding_identity(&binding, explicit_profile.as_ref())?;
+        let binding_identity = native_binding_identity(
+            &binding,
+            explicit_profile.as_ref(),
+            tool_exposure_enabled
+                .then_some(config.execution_manifest_digest.as_deref())
+                .flatten(),
+        )?;
         Ok(Self {
             connector,
             binding,
@@ -347,6 +365,9 @@ impl NativeModelBackend {
             tool_host: services.tool_host,
             config,
             model_context,
+            image_accounting: explicit_profile
+                .as_ref()
+                .is_some_and(|profile| profile.image_input_profile().is_some()),
             token_counter: services.token_counter,
             request_observer: services.request_observer,
             contract,
@@ -366,6 +387,64 @@ impl NativeModelBackend {
             context_exhausted: false,
             shutdown_result: None,
         })
+    }
+
+    /// Decodes a durable managed binding and its optional frozen command manifest digest.
+    ///
+    /// Existing schemas retain their original bytes. Command wrappers are strictly validated
+    /// before their nested model identity is returned for host-side model resolution.
+    pub fn decode_binding_identity(
+        identity: &BackendIdentity,
+    ) -> Result<(BackendIdentity, Option<String>), BackendFailure> {
+        identity::decode_binding_identity(identity)
+    }
+
+    /// Prepares an independent exact-replay child without starting a Session or model request.
+    pub fn prepare_exact_fork(
+        &self,
+        parent: &StoredSessionContinuation,
+        child: SessionDescriptor,
+    ) -> Result<StoredSessionContinuation, BackendFailure> {
+        if self.closed
+            || self.session.is_some()
+            || self.turn.is_some()
+            || self.idle_compaction.is_some()
+        {
+            return Err(failure(
+                BackendFailureKind::Session,
+                "native backend is not available for fork preparation",
+            ));
+        }
+        if parent.target().model_replay().contract() != Some(&self.contract) {
+            return Err(failure(
+                BackendFailureKind::Session,
+                "fork replay contract does not match current configuration",
+            ));
+        }
+        let candidate = self.binding_evidence(child.session_id());
+        let source_identity = parent.target().binding().binding_identity();
+        if !identity::semantically_equal_native_binding_identity(
+            candidate.binding_identity(),
+            source_identity,
+        ) {
+            return Err(failure(
+                BackendFailureKind::Session,
+                "fork model binding or command execution manifest does not match current configuration",
+            ));
+        }
+        // Semantic admission permits alternate JSON spellings; the child retains exact source
+        // bytes.
+        let binding = BackendBindingEvidence::new(
+            candidate.backend_kind(),
+            candidate.backend_version(),
+            source_identity.clone(),
+            candidate.model_identity().clone(),
+            candidate.session_locator().clone(),
+            candidate.continuation_strategy(),
+        );
+        parent
+            .prepare_exact_fork(child, binding)
+            .map_err(|error| failure(BackendFailureKind::Session, error.to_string()))
     }
 
     fn binding_evidence(&self, session_id: SessionId) -> BackendBindingEvidence {

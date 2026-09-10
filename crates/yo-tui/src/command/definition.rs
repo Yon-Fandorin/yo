@@ -3,18 +3,34 @@
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CommandId {
     Help,
+    New,
+    Fork,
+    Tree,
+    Resume,
+    Prompt,
     Model,
     Compact,
+    Changes,
+    Output,
     Preview,
+    Attach,
     Exit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandEffect {
     ShowHelp,
+    NewSession,
+    ForkSession,
+    ShowSessionTree,
+    ResumeSession,
+    InsertPrompt,
     SelectModel,
     CompactContext,
+    ReviewChanges,
+    ReviewOutput,
     OpenPreview,
+    AttachImage,
     ExitProcess,
 }
 

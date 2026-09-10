@@ -93,6 +93,9 @@ where
         if let Some(anchor) = candidate_recovery.continuation_anchor() {
             discovery = discovery.with_continuation_anchor(anchor);
         }
+        if let Some(seed) = candidate_recovery.initial_fork_seed() {
+            discovery = discovery.with_initial_fork_seed(seed);
+        }
         let record = match commit.kind() {
             JournalCommitKind::Incremental => DurableRecord::incremental(payload),
             JournalCommitKind::Snapshot => DurableRecord::snapshot(payload),

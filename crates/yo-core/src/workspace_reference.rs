@@ -9,7 +9,7 @@ use unicode_normalization::UnicodeNormalization;
 
 mod local;
 
-pub use local::LocalWorkspaceReferenceProvider;
+pub use local::{LocalWorkspaceInputAdmission, LocalWorkspaceReferenceProvider};
 
 /// The filesystem kind observed by the execution environment during discovery.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

@@ -87,6 +87,7 @@ impl Ledger {
             },
             TerminalOp::FrameSizeChanged { .. }
             | TerminalOp::SetStyle(_)
+            | TerminalOp::SetHyperlink(_)
             | TerminalOp::WriteGrapheme { .. }
             | TerminalOp::WriteBlank { .. }
             | TerminalOp::SetCursorVisible(_)

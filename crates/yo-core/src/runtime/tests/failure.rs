@@ -159,38 +159,43 @@ fn backend_stream_failure_closes_the_active_semantic_state() {
     runtime.shutdown().unwrap();
 }
 
-// provider가 Turn 실행 실패를 보고하면 ProcessExit와 구분되는 Turn failure를 유지하면서
-// 활성 Turn을 Failed로 닫는지 확인한다.
+// 활성 Turn의 실행 실패는 원래 kind를 유지하며 Turn을 Failed로 닫는다. CommandRejected도
+// idle 압축 거절이 아니므로 정상적인 control 결과로 바뀌어서는 안 된다.
 #[test]
 fn turn_failure_kind_remains_distinguishable() {
-    let active_turn = super::turn(session(1), 1);
-    let failure = BackendFailure::new(BackendFailureKind::Turn, "model execution failed");
-    let steps = [
-        BackendScriptStep::Fail(failure.clone()),
-        BackendScriptStep::Shutdown(Ok(())),
-    ];
-    let (mut runtime, _) = runtime_with_active_turn(steps);
+    for kind in [
+        BackendFailureKind::Turn,
+        BackendFailureKind::CommandRejected,
+    ] {
+        let active_turn = super::turn(session(1), 1);
+        let failure = BackendFailure::new(kind, "model execution failed");
+        let steps = [
+            BackendScriptStep::Fail(failure.clone()),
+            BackendScriptStep::Shutdown(Ok(())),
+        ];
+        let (mut runtime, _) = runtime_with_active_turn(steps);
 
-    let error = runtime.poll_event().unwrap_err();
+        let error = runtime.poll_event().unwrap_err();
 
-    let RuntimeError::Backend {
-        failure: observed,
-        terminal_events,
-    } = error
-    else {
-        panic!("expected a backend runtime failure");
-    };
-    assert_eq!(observed.kind(), BackendFailureKind::Turn);
-    assert_eq!(observed, failure);
-    assert!(matches!(
-        terminal_events.as_slice(),
-        [AgentEvent::TurnFinished {
-            turn,
-            outcome: TurnOutcome::Failed(_),
-        }] if *turn == active_turn
-    ));
-    assert_eq!(runtime.active_turn(), None);
-    runtime.shutdown().unwrap();
+        let RuntimeError::Backend {
+            failure: observed,
+            terminal_events,
+        } = error
+        else {
+            panic!("expected a backend runtime failure");
+        };
+        assert_eq!(observed.kind(), kind);
+        assert_eq!(observed, failure);
+        assert!(matches!(
+            terminal_events.as_slice(),
+            [AgentEvent::TurnFinished {
+                turn,
+                outcome: TurnOutcome::Failed(_),
+            }] if *turn == active_turn
+        ));
+        assert_eq!(runtime.active_turn(), None);
+        runtime.shutdown().unwrap();
+    }
 }
 
 // explicit shutdown의 cleanup 실패는 Cleanup failure를 보존하고 남아 있던 활성 Turn을

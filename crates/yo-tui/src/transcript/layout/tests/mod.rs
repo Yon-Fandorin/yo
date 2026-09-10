@@ -3,9 +3,9 @@ use std::num::NonZeroU16;
 use crate::{
     surface::{CellContent, Color, Point, Rect, Size, Style, Surface},
     transcript::{
-        TranscriptItemId, TranscriptLayoutConfig, TranscriptRenderError, TranscriptRenderFrame,
-        TranscriptScrollCommand, TranscriptState, TranscriptStyles, TranscriptViewMode,
-        TranscriptViewState, render,
+        MarkdownStyles, TranscriptActivityStyles, TranscriptItemId, TranscriptLayoutConfig,
+        TranscriptRenderError, TranscriptRenderFrame, TranscriptScrollCommand, TranscriptState,
+        TranscriptStyles, TranscriptViewMode, TranscriptViewState, render,
     },
 };
 
@@ -26,6 +26,8 @@ fn styles() -> TranscriptStyles {
         user_body: style(2),
         assistant_marker: style(3),
         assistant_body: style(4),
+        activity: TranscriptActivityStyles::plain(Style::default()),
+        markdown: MarkdownStyles::plain(Style::default()),
     }
 }
 
@@ -89,7 +91,7 @@ fn user_band_covers_wrapped_rows_without_bleeding_into_response() {
         )
         .unwrap();
         for y in 0..height {
-            let source_row = frame.first_visible_row + y;
+            let source_row = frame.first_visible_row + usize::from(y);
             let expected = if source_row < 2 {
                 Color::Indexed(236)
             } else {
@@ -221,4 +223,145 @@ fn finalized_empty_messages_keep_their_role_markers() {
     assert_eq!(rendered_row(&surface, 0), "❯");
     assert_eq!(rendered_row(&surface, 1), "");
     assert_eq!(rendered_row(&surface, 2), "•");
+}
+
+// 코드 배경은 빈 코드 행까지 채우되 최대 본문 폭과 스크롤 경계를 넘어 번지지 않는다.
+#[test]
+fn code_band_tracks_visible_rows_and_configured_body_width() {
+    let mut transcript = TranscriptState::new();
+    transcript.start_markdown_assistant(id(1)).unwrap();
+    transcript
+        .append_text(id(1), "```text\nabc\n\nxyz\n```\n\nafter")
+        .unwrap();
+    let config = TranscriptLayoutConfig::default().with_max_body_width(NonZeroU16::new(6));
+    let mut palette = styles();
+    palette.markdown.code.background = Color::Indexed(236);
+    palette.markdown.code_label.background = Color::Indexed(236);
+    for height in [3, 8] {
+        let size = Size::new(12, height);
+        let mut surface = Surface::new(size).unwrap();
+        let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
+        let frame = render(
+            &transcript,
+            &mut view,
+            &config,
+            palette,
+            &mut TranscriptViewState::default(),
+            None,
+        )
+        .unwrap();
+        for y in 0..height {
+            let source_row = frame.first_visible_row + usize::from(y);
+            let expected = if (0..4).contains(&source_row) {
+                Color::Indexed(236)
+            } else {
+                Color::Default
+            };
+            assert_eq!(
+                surface.cell(Point::new(7, y)).unwrap().style().background,
+                expected
+            );
+            assert_eq!(
+                surface.cell(Point::new(8, y)).unwrap().style().background,
+                Color::Default
+            );
+        }
+    }
+}
+
+// 스크롤 중에도 코드 여백을 유지하고 극소 폭의 원문 문자를 덮지 않는다.
+#[test]
+fn clipped_code_panels_preserve_padding_and_literal_source() {
+    let mut transcript = TranscriptState::new();
+    transcript.start_markdown_assistant(id(1)).unwrap();
+    transcript
+        .append_text(id(1), "```text\nabc\ndef\nghi\njkl\n``` ")
+        .unwrap();
+    let config = TranscriptLayoutConfig::default();
+    let mut state = TranscriptViewState::default();
+    let (surface, _) = render_into(
+        &transcript,
+        Size::new(12, 3),
+        &config,
+        &mut state,
+        Some(TranscriptScrollCommand::JumpToStart),
+    );
+    assert!(rendered_row(&surface, 0).contains("abc"));
+    assert!(rendered_row(&surface, 2).starts_with("   ghi"));
+    let (surface, _) = render_into(
+        &transcript,
+        Size::new(12, 3),
+        &config,
+        &mut state,
+        Some(TranscriptScrollCommand::LineDown),
+    );
+    assert!(rendered_row(&surface, 0).starts_with("   def"));
+    let (surface, _) = render_into(
+        &transcript,
+        Size::new(4, 3),
+        &config,
+        &mut state,
+        Some(TranscriptScrollCommand::JumpToTail),
+    );
+    assert!(rendered_row(&surface, 0).contains("jk"));
+    assert!(rendered_row(&surface, 1).contains('l'));
+    let mut literal = TranscriptState::new();
+    literal.start_markdown_assistant(id(2)).unwrap();
+    literal.append_text(id(2), "```text\n│a\n``` ").unwrap();
+    let (surface, _) = render_into(
+        &literal,
+        Size::new(4, 2),
+        &config,
+        &mut state,
+        Some(TranscriptScrollCommand::JumpToTail),
+    );
+    assert!(
+        rendered_row(&surface, 0).contains("│a"),
+        "source rail glyphs are not decoration"
+    );
+}
+
+// diff 배경은 자동 줄바꿈과 빈 오른쪽 셀·gutter까지 이어지며 인접 문장에는 번지지 않는다.
+#[test]
+fn diff_row_backgrounds_cover_padding_and_wrapped_continuations() {
+    let mut transcript = TranscriptState::new();
+    transcript.start_markdown_assistant(id(1)).unwrap();
+    transcript
+        .append_text(id(1), "```diff\n-old\n+abcdefghijk\n ctx\n```\n\nafter")
+        .unwrap();
+    let mut palette = styles();
+    palette.markdown.code.background = Color::Indexed(235);
+    palette.markdown.code_label.background = Color::Indexed(238);
+    palette.markdown.diff_removed.background = Color::Indexed(52);
+    palette.markdown.diff_added.background = Color::Indexed(22);
+    let size = Size::new(14, 9);
+    let mut surface = Surface::new(size).unwrap();
+    let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
+    render(
+        &transcript,
+        &mut view,
+        &TranscriptLayoutConfig::default(),
+        palette,
+        &mut TranscriptViewState::default(),
+        Some(TranscriptScrollCommand::JumpToStart),
+    )
+    .unwrap();
+    for (row, background) in [(0, 238), (1, 52), (2, 22), (3, 22), (4, 235), (5, 235)] {
+        for x in 2..14 {
+            assert_eq!(
+                surface.cell(Point::new(x, row)).unwrap().style().background,
+                Color::Indexed(background),
+                "row {row}, column {x}"
+            );
+        }
+        assert_eq!(
+            surface.cell(Point::new(1, row)).unwrap().style().background,
+            Color::Default
+        );
+    }
+    assert_eq!(
+        surface.cell(Point::new(13, 6)).unwrap().style().background,
+        Color::Default
+    );
+    assert!(rendered_row(&surface, 7).contains("after"));
 }

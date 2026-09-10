@@ -349,3 +349,511 @@ fn empty_replacement_is_durable_before_a_later_non_text_event() {
         )
     }));
 }
+
+// 명시적 도구 출력 profile은 기존 message segment·seal로 저장되고 복구 후 원본 JSON과 바이트를
+// 보존한다.
+#[test]
+fn structured_tool_output_survives_durable_message_recovery() {
+    use serde_json::json;
+
+    use crate::{ToolOutput, journal::codec::JournalRecord};
+
+    let output = ToolOutput {
+        tool: "capture".to_owned(),
+        server: Some("browser".to_owned()),
+        arguments: Some(json!({"target":"한글"})),
+        result: Some(
+            json!({"content":[{"type":"image","mimeType":"image/png","data":"abcd".repeat(20000)}],"_meta":{"original":true}}),
+        ),
+        content_items: None,
+        error: None,
+        plain_text: "Captured image".to_owned(),
+    };
+    let retained = ToolOutput {
+        tool: "run_command".to_owned(),
+        server: None,
+        arguments: None,
+        result: Some(
+            json!({"content":[{"type":"text","text":"small model result"}],"truncated":true,"retainedOutput":{"truncated":false}}),
+        ),
+        content_items: None,
+        error: None,
+        plain_text: format!(
+            "{}retained final row",
+            "retained middle row\n".repeat(20000)
+        ),
+    };
+    for output in [output, retained] {
+        let wire = output.to_snapshot().unwrap();
+        let message = ActivityRef::new(
+            turn(session(1), 1),
+            ActivityId::new(NonZeroU64::new(1).unwrap()),
+        );
+        let repository = SharedRepository::default();
+        let observed = Arc::clone(&repository.state);
+        let mut journal = SessionJournal::with_repository(Box::new(repository));
+        journal.append_events(&[AgentEvent::ActivityStarted {
+            activity: message,
+            kind: ActivityKind::ToolCall,
+        }]);
+        journal.append_events(&[AgentEvent::ActivityUpdated {
+            activity: message,
+            update: ActivityUpdate::TextSnapshot(wire.clone()),
+        }]);
+        journal.append_events(&[AgentEvent::ActivityFinished {
+            activity: message,
+            outcome: ActivityOutcome::Completed,
+        }]);
+        let commits = observed
+            .lock()
+            .unwrap()
+            .entries
+            .iter()
+            .map(|entry| decode(entry.record().payload()).unwrap())
+            .collect::<Vec<_>>();
+        let recovered = recover(&commits).unwrap();
+        assert!(recovered.recovery_commit().is_none());
+        let text = recovered
+            .records()
+            .iter()
+            .filter_map(|entry| match entry.record() {
+                JournalRecord::MessageSegment(segment) => Some(segment.text()),
+                JournalRecord::MessageEnded(terminal) => {
+                    terminal.final_segment().map(|segment| segment.text())
+                },
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(text.len(), wire.len());
+        assert!(text == wire, "recovered profile bytes changed");
+        assert_eq!(ToolOutput::from_snapshot(&text), Some(output));
+    }
+}
+
+// 미지 profile·필드·빈 도구 이름과 첫 초과 바이트는 일반 텍스트로 남고 타입으로 오인하지 않는다.
+#[test]
+fn structured_tool_output_profile_admission_is_exact_and_bounded() {
+    use crate::ToolOutput;
+
+    let mut output = ToolOutput {
+        tool: "read".to_owned(),
+        server: None,
+        arguments: None,
+        result: None,
+        content_items: None,
+        error: None,
+        plain_text: String::new(),
+    };
+    let wire = output.to_snapshot().unwrap();
+    assert!(
+        ToolOutput::from_snapshot(&wire.replace(ToolOutput::SCHEMA, "yo.tool-output/v2")).is_none()
+    );
+    assert!(ToolOutput::from_snapshot(&wire.replacen("{", "{\"unknown\":true,", 1)).is_none());
+    assert!(
+        ToolOutput::from_snapshot(&wire.replace("\"tool\":\"read\"", "\"tool\":\"\"")).is_none()
+    );
+    output.plain_text = "x".repeat(ToolOutput::MAX_SNAPSHOT_BYTES - wire.len());
+    let boundary = output.to_snapshot().unwrap();
+    assert_eq!(boundary.len(), ToolOutput::MAX_SNAPSHOT_BYTES);
+    assert_eq!(ToolOutput::from_snapshot(&boundary), Some(output.clone()));
+    output.plain_text.push('x');
+    assert!(output.to_snapshot().is_none());
+    assert!(ToolOutput::from_snapshot(&(boundary + " ")).is_none());
+}
+
+// 안내 profile의 severity와 원문은 roundtrip되며 잘못된 schema·수준·추가 필드는 거절한다.
+#[test]
+fn activity_notice_profile_is_explicit_and_roundtrips() {
+    use crate::{ActivityNotice, NoticeLevel};
+
+    let notice = ActivityNotice {
+        title: "Retry announced".to_owned(),
+        message: "원문\nmessage".to_owned(),
+        level: NoticeLevel::Warning,
+    };
+    let wire = notice.to_snapshot().unwrap();
+    assert_eq!(ActivityNotice::from_snapshot(&wire), Some(notice));
+    for invalid in [
+        wire.replace(ActivityNotice::SCHEMA, "yo.activity-notice/v2"),
+        wire.replace("\"warning\"", "\"fatal\""),
+        wire.replacen("{", "{\"extra\":true,", 1),
+        wire.replace("Retry announced", ""),
+    ] {
+        assert!(ActivityNotice::from_snapshot(&invalid).is_none());
+    }
+}
+
+// 요약 profile은 종류·수치·필드를 검증하고 원문과 정확한 크기 상한을 보존한다.
+#[test]
+fn activity_summary_profile_rejects_unknown_fields_and_excess_bytes() {
+    use crate::{ActivitySummary, SummaryKind, ToolOutput};
+
+    let mut summary = ActivitySummary {
+        kind: SummaryKind::Compaction,
+        summary: "원문 **summary**".to_owned(),
+        tokens_before: Some(12345),
+    };
+    let wire = summary.to_snapshot().unwrap();
+    assert_eq!(ActivitySummary::from_snapshot(&wire), Some(summary.clone()));
+    for invalid in [
+        wire.replace(ActivitySummary::SCHEMA, "yo.activity-summary/v2"),
+        wire.replace("compaction", "unknown"),
+        wire.replace("compaction", "branch"),
+        wire.replace("compaction", "reasoning"),
+        wire.replace("12345", "-1"),
+        wire.replacen("{", "{\"extra\":true,", 1),
+    ] {
+        assert!(ActivitySummary::from_snapshot(&invalid).is_none());
+    }
+    summary.kind = SummaryKind::Branch;
+    assert!(summary.to_snapshot().is_none());
+    summary.tokens_before = None;
+    summary.kind = SummaryKind::Reasoning;
+    assert_eq!(
+        ActivitySummary::from_snapshot(&summary.to_snapshot().unwrap()),
+        Some(summary.clone())
+    );
+    summary.kind = SummaryKind::Branch;
+    summary.summary.clear();
+    assert_eq!(
+        ActivitySummary::from_snapshot(&summary.to_snapshot().unwrap()),
+        Some(summary.clone())
+    );
+    let overhead = summary.to_snapshot().unwrap().len();
+    summary.summary = "x".repeat(ToolOutput::MAX_SNAPSHOT_BYTES - overhead);
+    let boundary = summary.to_snapshot().unwrap();
+    assert_eq!(boundary.len(), ToolOutput::MAX_SNAPSHOT_BYTES);
+    assert_eq!(
+        ActivitySummary::from_snapshot(&boundary),
+        Some(summary.clone())
+    );
+    summary.summary.push('x');
+    assert!(summary.to_snapshot().is_none());
+    assert!(ActivitySummary::from_snapshot(&(boundary + " ")).is_none());
+}
+
+// 계획 profile은 원문·빈 계획을 보존하고 미지 상태·필드·과도한 snapshot을 타입으로 오인하지 않는다.
+#[test]
+fn activity_plan_profile_preserves_status_and_rejects_invalid_payloads() {
+    use crate::{ActivityPlan, PlanStep, PlanStepStatus, ToolOutput};
+    let plan = ActivityPlan {
+        explanation: Some("변경 이유\n**literal**".to_owned()),
+        steps: vec![PlanStep {
+            text: "검증".to_owned(),
+            status: PlanStepStatus::InProgress,
+        }],
+    };
+    let wire = plan.to_snapshot().unwrap();
+    assert_eq!(ActivityPlan::from_snapshot(&wire), Some(plan));
+    for invalid in [
+        wire.replace(ActivityPlan::SCHEMA, "yo.activity-plan/v2"),
+        wire.replace("in_progress", "unknown"),
+        wire.replacen("{", "{\"extra\":true,", 1),
+    ] {
+        assert!(ActivityPlan::from_snapshot(&invalid).is_none());
+    }
+    let empty = ActivityPlan {
+        explanation: None,
+        steps: Vec::new(),
+    };
+    assert_eq!(
+        ActivityPlan::from_snapshot(&empty.to_snapshot().unwrap()),
+        Some(empty)
+    );
+    assert!(ActivityPlan::from_snapshot(&" ".repeat(ToolOutput::MAX_SNAPSHOT_BYTES + 1)).is_none());
+}
+
+// 문서 profile은 제목과 Markdown을 보존하고 빈 제목·미지 필드·다른 schema를 거절한다.
+#[test]
+fn activity_document_profile_preserves_source_and_exact_identity() {
+    use crate::ActivityDocument;
+    let document = ActivityDocument {
+        title: "Proposed plan".to_owned(),
+        markdown: "## 계획\n\n```rust\nuse std::fmt;\n```".to_owned(),
+    };
+    let wire = document.to_snapshot().unwrap();
+    assert_eq!(ActivityDocument::from_snapshot(&wire), Some(document));
+    for invalid in [
+        wire.replace(ActivityDocument::SCHEMA, "yo.activity-document/v2"),
+        wire.replace("Proposed plan", ""),
+        wire.replacen("{", "{\"extra\":true,", 1),
+    ] {
+        assert!(ActivityDocument::from_snapshot(&invalid).is_none());
+    }
+    assert!(
+        ActivityDocument {
+            title: String::new(),
+            markdown: String::new()
+        }
+        .to_snapshot()
+        .is_none()
+    );
+}
+
+// 질문 프로필은 선택지 64개와 정확한 스냅샷 바이트 한도까지만 허용하고 다른 스키마를 거부한다.
+#[test]
+fn question_presentation_profile_preserves_choices_and_exact_bounds() {
+    use serde_json::json;
+
+    use crate::{ActivityQuestion, QuestionChoice, ToolOutput};
+    let choice = QuestionChoice {
+        label: "Runtime".into(),
+        description: "Events".into(),
+    };
+    for count in [64, 65] {
+        let question = ActivityQuestion {
+            allow_notes: false,
+            previous_question: false,
+            draft: None,
+            draft_choice: None,
+            plain_text: "Question".into(),
+            choices: vec![choice.clone(); count],
+        };
+        assert_eq!(question.to_snapshot().is_some(), count == 64);
+        let unchecked = json!({"schema": ActivityQuestion::SCHEMA, "output": question}).to_string();
+        assert_eq!(
+            ActivityQuestion::from_snapshot(&unchecked).is_some(),
+            count == 64
+        );
+    }
+    let mut question = ActivityQuestion {
+        allow_notes: false,
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+        plain_text: "q".into(),
+        choices: vec![choice],
+    };
+    let wire = question.to_snapshot().unwrap();
+    assert_eq!(
+        ActivityQuestion::from_snapshot(&wire),
+        Some(question.clone())
+    );
+    assert!(
+        ActivityQuestion::from_snapshot(
+            &wire.replace(ActivityQuestion::SCHEMA, "yo.activity-question/v2")
+        )
+        .is_none()
+    );
+    let mut legacy = json!({"schema": ActivityQuestion::SCHEMA, "output": question});
+    legacy["output"]
+        .as_object_mut()
+        .unwrap()
+        .remove("allow_notes");
+    assert!(
+        !ActivityQuestion::from_snapshot(&legacy.to_string())
+            .unwrap()
+            .allow_notes
+    );
+    legacy["output"]["allow_notes"] = json!(true);
+    assert!(
+        ActivityQuestion::from_snapshot(&legacy.to_string())
+            .unwrap()
+            .allow_notes
+    );
+    legacy["output"]["allow_notes"] = json!("true");
+    assert!(ActivityQuestion::from_snapshot(&legacy.to_string()).is_none());
+    let overhead = wire.len() - 1;
+    question.plain_text = "x".repeat(ToolOutput::MAX_SNAPSHOT_BYTES - overhead);
+    let wire = question.to_snapshot().unwrap();
+    assert_eq!(wire.len(), ToolOutput::MAX_SNAPSHOT_BYTES);
+    assert_eq!(
+        ActivityQuestion::from_snapshot(&wire),
+        Some(question.clone())
+    );
+    question.plain_text.push('x');
+    assert!(question.to_snapshot().is_none());
+    assert!(ActivityQuestion::from_snapshot(&format!("{wire} ")).is_none());
+}
+
+// 이전 질문 기능은 이전 프로필에서 기본 비활성이며 복원 선택은 실제 선택지·메모 지원과 일치해야
+// 한다.
+#[test]
+fn question_navigation_profile_validates_restored_choice_and_legacy_defaults() {
+    use serde_json::json;
+
+    use crate::ActivityQuestion;
+    let legacy = json!({"schema":ActivityQuestion::SCHEMA,"output":{
+        "plain_text":"Question", "choices":[{"label":"A","description":"a"}]
+    }});
+    let original = ActivityQuestion::from_snapshot(&legacy.to_string()).unwrap();
+    assert!(!original.previous_question);
+    assert!(original.draft.is_none());
+    assert!(original.draft_choice.is_none());
+    for (choice, notes, draft, valid) in [
+        (None, false, None, true),
+        (None, false, Some("/exit\n한글"), true),
+        (Some(1), true, Some(""), true),
+        (Some(0), true, Some(""), false),
+        (Some(2), true, Some(""), false),
+        (Some(1), false, Some(""), false),
+        (Some(1), true, None, false),
+    ] {
+        let mut profile = original.clone();
+        profile.previous_question = true;
+        profile.draft_choice = choice;
+        profile.allow_notes = notes;
+        profile.draft = draft.map(str::to_owned);
+        assert_eq!(profile.to_snapshot().is_some(), valid);
+        let unchecked = json!({"schema":ActivityQuestion::SCHEMA,"output":profile}).to_string();
+        assert_eq!(ActivityQuestion::from_snapshot(&unchecked).is_some(), valid);
+        if valid {
+            assert_eq!(ActivityQuestion::from_snapshot(&unchecked), Some(profile));
+        }
+    }
+}
+
+// 추론 원문 profile은 공개 요약과 구분되고 임의 content 및 정확한 크기 경계를 보존한다.
+#[test]
+fn reasoning_profile_preserves_content_and_enforces_boundary() {
+    use crate::{ActivityReasoning, ToolOutput};
+    for content in [
+        serde_json::json!("한글\nreasoning"),
+        serde_json::json!({"type":"future", "data":[1,null]}),
+    ] {
+        let reasoning = ActivityReasoning { content };
+        let wire = reasoning.to_snapshot().unwrap();
+        assert_eq!(ActivityReasoning::from_snapshot(&wire), Some(reasoning));
+        assert!(
+            ActivityReasoning::from_snapshot(
+                &wire.replace(ActivityReasoning::SCHEMA, "yo.activity-summary/v1")
+            )
+            .is_none()
+        );
+        assert!(
+            ActivityReasoning::from_snapshot(
+                &wire.replace("\"content\":", "\"extra\":0,\"content\":")
+            )
+            .is_none()
+        );
+    }
+    let mut reasoning = ActivityReasoning {
+        content: serde_json::json!(""),
+    };
+    let overhead = reasoning.to_snapshot().unwrap().len();
+    reasoning.content = serde_json::json!("x".repeat(ToolOutput::MAX_SNAPSHOT_BYTES - overhead));
+    let wire = reasoning.to_snapshot().unwrap();
+    assert_eq!(wire.len(), ToolOutput::MAX_SNAPSHOT_BYTES);
+    assert_eq!(
+        ActivityReasoning::from_snapshot(&wire),
+        Some(reasoning.clone())
+    );
+    reasoning.content = serde_json::json!(format!("{}x", reasoning.content.as_str().unwrap()));
+    assert!(reasoning.to_snapshot().is_none());
+    assert!(ActivityReasoning::from_snapshot(&(wire + " ")).is_none());
+}
+
+// 실제 저장 경계에서 승인 뒤 연속 질문의 선택·빈 notes·한글 응답을 처리해도
+// Integrity gap 없이 마지막 턴까지 보존하고, 재복구 시 추가 seal이 필요 없어야 합니다.
+#[test]
+fn approval_then_interview_responses_remain_durable_through_completion() {
+    use crate::{
+        ActivityQuestion, ActivityRequestRef, ActivityResponse, ApprovalDecision, QuestionChoice,
+        RequestId, journal::codec::JournalRecord,
+    };
+
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let repository = SharedRepository::default();
+    let observed = Arc::clone(&repository.state);
+    let mut journal = SessionJournal::with_repository(Box::new(repository));
+    journal.append_committed_command(
+        AgentCommand::CreateSession { session_id },
+        &[AgentEvent::SessionCreated { session_id }],
+    );
+    let question = ActivityQuestion {
+        plain_text: "Question 1 of 2\nWhich area?".into(),
+        choices: vec![
+            QuestionChoice {
+                label: "UI".into(),
+                description: "Layout".into(),
+            },
+            QuestionChoice {
+                label: "Runtime".into(),
+                description: "Events".into(),
+            },
+        ],
+        allow_notes: true,
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+    }
+    .to_snapshot()
+    .unwrap();
+    let responses = [
+        ActivityResponse::Approval(ApprovalDecision::Approved),
+        ActivityResponse::QuestionAnswer {
+            choice: 2,
+            notes: UserInput::from(""),
+        },
+        ActivityResponse::UserInput(UserInput::from("Keep 한글 intact")),
+    ];
+    for (index, response) in responses.iter().enumerate() {
+        let number = NonZeroU64::new(index as u64 + 1).unwrap();
+        let activity = ActivityRef::new(active_turn, ActivityId::new(number));
+        let request_id = RequestId::new(number);
+        journal.append_events(&[AgentEvent::ActivityStarted {
+            activity,
+            kind: if index == 0 {
+                ActivityKind::ApprovalRequest { request_id }
+            } else {
+                ActivityKind::UserInputRequest { request_id }
+            },
+        }]);
+        journal.append_events(&[AgentEvent::ActivityUpdated {
+            activity,
+            update: ActivityUpdate::TextSnapshot(match index {
+                0 => "Command approval: offline-noop".into(),
+                1 => question.clone(),
+                _ => "Question 2 of 2\nWhat must remain intact?".into(),
+            }),
+        }]);
+        journal.append_committed_command(
+            AgentCommand::RespondToActivity {
+                request: ActivityRequestRef::new(activity, request_id),
+                response: response.clone(),
+            },
+            &[],
+        );
+        assert!(
+            matches!(
+                journal.transcript_reader().durability(),
+                JournalDurability::Durable { .. }
+            ),
+            "response {index} lost durability"
+        );
+        journal.append_events(&[AgentEvent::ActivityFinished {
+            activity,
+            outcome: ActivityOutcome::Completed,
+        }]);
+    }
+    let finished = AgentEvent::TurnFinished {
+        turn: active_turn,
+        outcome: TurnOutcome::Completed,
+    };
+    journal.append_events(std::slice::from_ref(&finished));
+    let commits = observed
+        .lock()
+        .unwrap()
+        .entries
+        .iter()
+        .map(|entry| decode(entry.record().payload()).unwrap())
+        .collect::<Vec<_>>();
+    let recovered = recover(&commits).unwrap();
+    assert!(recovered.recovery_commit().is_none());
+    let persisted = recovered
+        .records()
+        .iter()
+        .filter_map(|entry| match entry.record() {
+            JournalRecord::CommandCommitted(command) => match command.command() {
+                AgentCommand::RespondToActivity { response, .. } => Some(response.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(persisted, responses);
+    assert!(recovered.records().iter().any(
+        |entry| matches!(entry.record(), JournalRecord::EventCommitted(event) if event == &finished)
+    ));
+}

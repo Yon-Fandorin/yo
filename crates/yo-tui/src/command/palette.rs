@@ -15,6 +15,7 @@ struct ActivePalette {
 pub(crate) struct CommandPalette {
     active: Option<ActivePalette>,
     escaped_draft: Option<String>,
+    literal_draft: Option<String>,
 }
 
 impl CommandPalette {
@@ -26,13 +27,22 @@ impl CommandPalette {
         eligible: bool,
     ) {
         if self
+            .literal_draft
+            .as_deref()
+            .is_some_and(|literal| literal != text)
+        {
+            self.literal_draft = None;
+        }
+        if self
             .escaped_draft
             .as_deref()
             .is_some_and(|escaped| escaped != text)
         {
             self.escaped_draft = None;
         }
-        if self.escaped_draft.as_deref() == Some(text) {
+        if self.escaped_draft.as_deref() == Some(text)
+            || self.literal_draft.as_deref() == Some(text)
+        {
             self.close(overlay);
             return;
         }
@@ -100,7 +110,19 @@ impl CommandPalette {
         true
     }
 
+    pub(crate) fn preserve_literal(&mut self, text: &str, overlay: &mut PromptOverlaySlot) {
+        self.close(overlay);
+        self.literal_draft = Some(text.to_owned());
+    }
+
+    pub(crate) fn clear_literal(&mut self) {
+        self.literal_draft = None;
+    }
+
     pub(crate) fn take_escape(&mut self, text: &str) -> bool {
+        if self.literal_draft.as_deref() == Some(text) {
+            return true;
+        }
         if self.escaped_draft.as_deref() != Some(text) {
             return false;
         }
@@ -109,7 +131,9 @@ impl CommandPalette {
     }
 
     pub(crate) fn owns_submission(&self, text: &str, cursor: usize) -> bool {
-        self.escaped_draft.as_deref() != Some(text) && command_query(text, cursor).is_some()
+        self.escaped_draft.as_deref() != Some(text)
+            && self.literal_draft.as_deref() != Some(text)
+            && command_query(text, cursor).is_some()
     }
 
     pub(crate) fn exact_submission(
@@ -117,7 +141,9 @@ impl CommandPalette {
         text: &str,
         cursor: usize,
     ) -> Option<&'static CommandDefinition> {
-        if self.escaped_draft.as_deref() == Some(text) {
+        if self.escaped_draft.as_deref() == Some(text)
+            || self.literal_draft.as_deref() == Some(text)
+        {
             return None;
         }
         let query = command_query(text, cursor)?;

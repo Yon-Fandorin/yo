@@ -2,11 +2,12 @@
 
 mod contract;
 mod evidence;
+mod image;
 pub mod transport;
 
 pub use contract::{
     BackendAdapter, BackendCapabilities, BackendFailure, BackendFailureKind, BackendPoll,
-    BackendStopHandle,
+    BackendStopHandle, ImageInputCapability,
 };
 pub use evidence::{
     BackendBindingEvidence, BackendCommandEvidence, BackendIdentity, BackendOutcomeEvidence,
@@ -16,3 +17,4 @@ pub use evidence::{
 };
 #[doc(hidden)]
 pub use evidence::{ProviderPrivateReplayPayload, validate_provider_private_replay_sequence};
+pub use image::{InputImageSnapshot, InputImageSnapshotError, ModelInputPart};

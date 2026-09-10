@@ -8,6 +8,7 @@ use serde::{
 use serde_json::{Value, json};
 
 use super::{valid_schema, valid_value};
+use crate::ModelInputPart;
 
 const MAX_REPLAY_ITEMS: usize = 4_096;
 pub(super) const MAX_REPLAY_TEXT_BYTES: usize = 16 * 1024 * 1024;
@@ -137,6 +138,10 @@ impl ModelReplayContract {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelReplayItem {
+    /// Ordered image-bearing user content with immutable admitted PNG snapshots.
+    MultimodalUser {
+        parts: Vec<ModelInputPart>,
+    },
     Message {
         role: ModelReplayRole,
         content: String,
@@ -351,6 +356,7 @@ fn valid_versioned_schema(value: &str) -> bool {
 impl ModelReplayItem {
     fn is_valid(&self) -> bool {
         match self {
+            Self::MultimodalUser { parts } => ModelInputPart::validate_user_parts(parts).is_ok(),
             Self::Message {
                 role,
                 content,
@@ -616,7 +622,7 @@ fn validate_replay_items(
                     return Err("model replay contains a duplicate function call output");
                 }
             },
-            ModelReplayItem::Message { .. } => {},
+            ModelReplayItem::Message { .. } | ModelReplayItem::MultimodalUser { .. } => {},
             ModelReplayItem::ProviderPrivateAssistant { .. } => {
                 validate_provider_private_adjacency(items, index)?;
             },
@@ -700,7 +706,9 @@ pub fn validate_provider_private_replay_sequence(
             ModelReplayItem::ProviderPrivateAssistant { .. } => {
                 return Err("provider-private replay item has no preceding assistant group");
             },
-            ModelReplayItem::Message { .. } | ModelReplayItem::FunctionCallOutput { .. } => {
+            ModelReplayItem::Message { .. }
+            | ModelReplayItem::MultimodalUser { .. }
+            | ModelReplayItem::FunctionCallOutput { .. } => {
                 index += 1;
             },
         }
@@ -730,6 +738,43 @@ fn encoded_prefix_len<'a>(
 }
 
 fn encoded_item_len(item: &ModelReplayItem) -> usize {
+    if let ModelReplayItem::MultimodalUser { parts } = item {
+        #[derive(Serialize)]
+        struct MultimodalUser<'a> {
+            kind: &'static str,
+            parts: &'a [ModelInputPart],
+        }
+        struct EncodedBudget(usize);
+        impl std::io::Write for EncodedBudget {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 = self
+                    .0
+                    .checked_add(bytes.len())
+                    .filter(|length| *length <= MAX_REPLAY_PREFIX_BYTES)
+                    .ok_or_else(|| {
+                        std::io::Error::other("multimodal replay exceeds the prefix byte budget")
+                    })?;
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut budget = EncodedBudget(0);
+        return if serde_json::to_writer(
+            &mut budget,
+            &MultimodalUser {
+                kind: "multimodal_user",
+                parts,
+            },
+        )
+        .is_ok()
+        {
+            budget.0
+        } else {
+            MAX_REPLAY_PREFIX_BYTES + 1
+        };
+    }
     if let ModelReplayItem::ProviderPrivateAssistant { envelope } = item {
         let empty = ProviderPrivateReplayEnvelope::new(envelope.schema(), b"{}".to_vec())
             .expect("a validated provider-private schema accepts an empty object");
@@ -760,6 +805,9 @@ fn contract_value(contract: &ModelReplayContract) -> Value {
 
 fn item_value(item: &ModelReplayItem) -> Value {
     match item {
+        ModelReplayItem::MultimodalUser { parts } => {
+            json!({"kind": "multimodal_user", "parts": parts})
+        },
         ModelReplayItem::Message {
             role,
             content,

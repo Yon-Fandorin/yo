@@ -40,3 +40,59 @@ fn publication_bytes_are_derived_from_retained_terminal_operations() {
         [TerminalOp::SetCursorVisible(false)]
     )));
 }
+
+// scrollback에 발행하는 링크는 행 이동 전에 닫혀 이후 live prompt에 전파되지 않는다.
+#[test]
+fn publication_rows_preserve_and_close_hyperlinks() {
+    use crate::surface::{Grapheme, Hyperlink, Rect, Style};
+    let size = Size::new(8, 1);
+    let mut publication = Surface::new(size).unwrap();
+    let link = Hyperlink::new("https://example.com/source").unwrap();
+    publication
+        .view(Rect::new(Point::new(0, 0), size))
+        .unwrap()
+        .write_linked(
+            Point::new(0, 0),
+            Grapheme::try_from("한").unwrap(),
+            Style::default(),
+            Some(link.clone()),
+        );
+    let live = Surface::new(Size::new(8, 2)).unwrap();
+    let ops = TerminalOps::from_diff(&FrameDiff::complete(live.size(), &live));
+    let transaction = PublicationTransaction::compile(
+        InlineFramePlan::Update {
+            current: live.size(),
+            previous_cursor: Point::new(0, 1),
+            cursor: Point::new(0, 1),
+        },
+        Size::new(8, 24),
+        &publication,
+        &ops,
+    );
+    let row = transaction
+        .operations
+        .iter()
+        .find(|operation| matches!(operation.effect, PhysicalEffect::PublicationRow { row: 0 }))
+        .unwrap();
+    let start = row
+        .terminal_ops
+        .iter()
+        .position(|op| *op == TerminalOp::SetHyperlink(Some(&link)))
+        .unwrap();
+    let close = row
+        .terminal_ops
+        .iter()
+        .position(|op| *op == TerminalOp::SetHyperlink(None))
+        .unwrap();
+    let newline = row
+        .terminal_ops
+        .iter()
+        .position(|op| *op == TerminalOp::LineFeed)
+        .unwrap();
+    assert!(start < close && close < newline);
+    assert!(
+        String::from_utf8(row.bytes.clone())
+            .unwrap()
+            .contains("한\u{1b}]8;;\u{1b}\\")
+    );
+}

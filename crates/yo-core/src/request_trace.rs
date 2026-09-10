@@ -110,6 +110,8 @@ pub struct StoredBindingTransition {
     cache: StoredBindingCacheState,
     source_anchor_sequence: Option<JournalSequence>,
     source_checkpoint_sequence: Option<JournalSequence>,
+    source_initial_fork_sequence: Option<JournalSequence>,
+    fork_seed_sequence: Option<JournalSequence>,
 }
 
 impl StoredBindingTransition {
@@ -123,6 +125,8 @@ impl StoredBindingTransition {
             cache,
             source_anchor_sequence,
             source_checkpoint_sequence: None,
+            source_initial_fork_sequence: None,
+            fork_seed_sequence: None,
         }
     }
 
@@ -131,6 +135,16 @@ impl StoredBindingTransition {
         source_checkpoint_sequence: JournalSequence,
     ) -> Self {
         self.source_checkpoint_sequence = Some(source_checkpoint_sequence);
+        self
+    }
+
+    pub(crate) const fn with_fork_coordinates(
+        mut self,
+        source_initial_fork_sequence: Option<JournalSequence>,
+        fork_seed_sequence: Option<JournalSequence>,
+    ) -> Self {
+        self.source_initial_fork_sequence = source_initial_fork_sequence;
+        self.fork_seed_sequence = fork_seed_sequence;
         self
     }
 
@@ -153,11 +167,25 @@ impl StoredBindingTransition {
     pub const fn source_checkpoint_sequence(&self) -> Option<JournalSequence> {
         self.source_checkpoint_sequence
     }
+
+    /// Same-child seed used by an exact binding replacement.
+    #[must_use]
+    pub const fn source_initial_fork_sequence(&self) -> Option<JournalSequence> {
+        self.source_initial_fork_sequence
+    }
+
+    /// Initial child seed referenced by the first fork binding.
+    #[must_use]
+    pub const fn fork_seed_sequence(&self) -> Option<JournalSequence> {
+        self.fork_seed_sequence
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoredBindingTransitionMode {
     Initial,
+    /// First binding of an independently published child Session.
+    InitialFork,
     ExactReplay,
     BackendNativeModelRebind,
     LossyHandoff,

@@ -1,6 +1,8 @@
 use std::{collections::BTreeSet, num::NonZeroU16};
 
-use super::{Cell, CellContent, GeometryError, Grapheme, Point, Rect, Style, Surface};
+use super::{
+    Cell, CellContent, GeometryError, Grapheme, Hyperlink, Point, RasterImage, Rect, Style, Surface,
+};
 
 /// Result of a bounded, atomic surface mutation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,6 +31,15 @@ impl<'surface> SurfaceView<'surface> {
     pub fn cell(&self, point: Point) -> Option<&Cell> {
         self.absolute(point)
             .and_then(|absolute| self.surface.cell(absolute))
+    }
+
+    pub(crate) fn place_raster(&mut self, mut image: RasterImage) {
+        if image.area.fits_within(self.rect.size) != Ok(true) {
+            return;
+        }
+        image.area.origin.x += self.rect.origin.x;
+        image.area.origin.y += self.rect.origin.y;
+        self.surface.rasters.push(image);
     }
 
     pub fn clear(&mut self, style: Style) -> WriteOutcome {
@@ -62,6 +73,18 @@ impl<'surface> SurfaceView<'surface> {
     }
 
     pub fn write(&mut self, point: Point, grapheme: Grapheme, style: Style) -> WriteOutcome {
+        self.write_linked(point, grapheme, style, None)
+    }
+
+    /// Writes a complete grapheme with an optional validated destination atomically.
+    /// Overwriting or clearing any part removes the previous footprint's link.
+    pub fn write_linked(
+        &mut self,
+        point: Point,
+        grapheme: Grapheme,
+        style: Style,
+        hyperlink: Option<Hyperlink>,
+    ) -> WriteOutcome {
         let width = grapheme.width().get();
         let Some(end_x) = point.x.checked_add(width) else {
             return WriteOutcome::Clipped;
@@ -86,15 +109,19 @@ impl<'surface> SurfaceView<'surface> {
         let leader = *proposed
             .first()
             .expect("a validated grapheme has a nonzero footprint");
-        self.surface
-            .replace_by_index(leader, Cell::grapheme(text, width, style));
+        self.surface.replace_by_index(
+            leader,
+            Cell::grapheme(text, width, style).with_hyperlink(hyperlink.clone()),
+        );
         for (back, index) in proposed.iter().copied().skip(1).enumerate() {
             let back = u16::try_from(back + 1)
                 .ok()
                 .and_then(NonZeroU16::new)
                 .expect("grapheme width is bounded by u16");
-            self.surface
-                .replace_by_index(index, Cell::continuation(back, style));
+            self.surface.replace_by_index(
+                index,
+                Cell::continuation(back, style).with_hyperlink(hyperlink.clone()),
+            );
         }
         WriteOutcome::Written
     }

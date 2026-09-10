@@ -616,3 +616,212 @@ fn archived_request_labels_every_closed_diagnostic_value() {
         ["replaced", "revoked", "exhausted"]
     );
 }
+
+fn inherited_fork_history() -> StoredSessionHistory {
+    use yo_core::{
+        ContextPolicyChanged, ContextStrategy, ContinuationStrategy, ModelReplayContract,
+        ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReplayExecutor, ReplayProfile,
+        session_repository::read_stored_session_continuation,
+    };
+    let (descriptor, _) = history();
+    let session_id = descriptor.session_id();
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
+    let activity = ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(1).unwrap()));
+    let binding = |id: SessionId| {
+        BackendBindingEvidence::new(
+            "native-model",
+            "test/v1",
+            BackendIdentity::new("test.binding/v1", "archive"),
+            BackendIdentity::new("test.model/v1", "archive-model"),
+            BackendIdentity::new("test.session/v1", id.to_string()),
+            ContinuationStrategy::ExactReplay {
+                executor: ReplayExecutor::LocalClient,
+                replay_profile: ReplayProfile::SemanticOnly,
+            },
+        )
+    };
+    let answer = format!("inherited-answer {} HIDDEN-ANSWER-END", "a".repeat(320));
+    let input = format!("inherited-input {} HIDDEN-INPUT-END", "u".repeat(320));
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: AgentCommand::CreateSession { session_id },
+            evidence: BackendCommandEvidence::BindingOpened(binding(session_id)),
+        },
+        BackendScriptStep::Emit(BackendEvent::ContextPolicyChanged {
+            policy: ContextPolicyChanged::try_new(
+                1,
+                true,
+                ContextStrategy::PortableSummaryV1Alpha1,
+                85,
+                90,
+                Some(10),
+                Some(65_536),
+            )
+            .unwrap(),
+        }),
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: AgentCommand::StartTurn {
+                turn,
+                input: UserInput::new(&input),
+            },
+            evidence: BackendCommandEvidence::RequestAccepted(BackendRequestEvidence::new(
+                "test.payload/v1",
+                BackendIdentity::new("test.exchange/v1", "parent-exchange-secret"),
+                BackendIdentity::new("test.request/v1", "parent-request-secret"),
+            )),
+        },
+        BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::AgentMessage,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityUpdated {
+            activity,
+            update: ActivityUpdate::TextSnapshot(answer.clone()),
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+            activity,
+            outcome: ActivityOutcome::Completed,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn,
+            evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
+                "test.outcome/v1",
+                "parent-outcome",
+            ))
+            .with_replay(ModelReplayDelta::new(
+                Some(ModelReplayContract::new("system", Vec::new())),
+                vec![
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::User,
+                        content: input.clone(),
+                        refusal: None,
+                    },
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::Assistant,
+                        content: answer,
+                        refusal: None,
+                    },
+                ],
+            )),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let repository = MemoryRepository::default();
+    let startup_deadline = Instant::now() + Duration::from_secs(2);
+    let mut session = AgentSession::start_cancellable_with_repository(
+        backend,
+        descriptor.clone(),
+        repository.clone(),
+        || Instant::now() >= startup_deadline,
+    )
+    .unwrap()
+    .unwrap();
+    let mut admission = session
+        .dispatch(AgentIntent::Submit(InputSubmission::new(
+            SubmissionId::new().unwrap(),
+            UserInput::new(input),
+        )))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while let CommandAdmission::Backpressured(pending) = admission {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(1));
+        admission = session.retry(pending).unwrap();
+    }
+    loop {
+        if session.transcript_reader().read_after(None).entries().iter().any(|entry| matches!(entry.record(), TranscriptRecord::EventCommitted(AgentEvent::TurnFinished { turn: seen, outcome: TurnOutcome::Completed }) if *seen == turn)) { break; }
+        assert!(
+            Instant::now() < deadline,
+            "parent archive fixture did not complete"
+        );
+        session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    session.shutdown().unwrap();
+    drop(session);
+    let parent = read_stored_session_continuation(&repository, session_id).unwrap();
+    let child_id = SessionId::new().unwrap();
+    let child_descriptor = SessionDescriptor::for_session(
+        child_id,
+        descriptor.workspace_host_id(),
+        descriptor.workspace_path().clone(),
+    );
+    let child = parent
+        .prepare_exact_fork(child_descriptor, binding(child_id))
+        .unwrap();
+    let target = child.target().clone();
+    let child_repository = MemoryRepository::default();
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::Resume {
+            target: Box::new(target),
+            evidence: binding(child_id),
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let child_startup_deadline = Instant::now() + Duration::from_secs(2);
+    let mut child_session = AgentSession::start_cancellable_with_continuation(
+        backend,
+        child,
+        child_repository.clone(),
+        || Instant::now() >= child_startup_deadline,
+    )
+    .unwrap()
+    .unwrap();
+    child_session.shutdown().unwrap();
+    drop(child_session);
+    read_stored_session(&child_repository, child_id).unwrap()
+}
+
+// 공개 fork 준비·저장·복구 경로에서 얻은 상속 원문에도 진단 content/limit 정책이 적용됩니다.
+#[test]
+fn inherited_archive_obeys_content_limits_and_keeps_execution_diagnostics_child_only() {
+    let history = inherited_fork_history();
+    let inherited = history.inherited_history().unwrap();
+    let chat =
+        project_archived_session(&history, ArchivedSessionView::Chat, GlyphProfile::Rich).unwrap();
+    assert!(chat.contains("Inherited history · read-only"));
+    assert!(chat.contains(&inherited.parent_session_id().to_string()));
+    assert!(chat.contains("last visible Journal"));
+    assert!(chat.contains("HIDDEN-INPUT-END"));
+    assert!(chat.contains("HIDDEN-ANSWER-END"));
+    let project = |content, limit| {
+        project_archived_session_with_options(
+            &history,
+            ArchivedSessionView::Transcript,
+            GlyphProfile::Ascii,
+            ArchivedProjectionOptions::new(limit, content),
+        )
+        .unwrap()
+    };
+    let hidden = project(ArchivedContentPolicy::None, None);
+    for secret in [
+        "inherited-input",
+        "inherited-answer",
+        "HIDDEN-INPUT-END",
+        "HIDDEN-ANSWER-END",
+    ] {
+        assert!(!hidden.contains(secret));
+    }
+    let preview = project(ArchivedContentPolicy::Preview, None);
+    assert!(preview.contains("inherited-input"));
+    assert!(preview.contains("inherited-answer"));
+    assert!(preview.contains("content.preview_truncated=true"));
+    assert!(!preview.contains("HIDDEN-INPUT-END"));
+    assert!(!preview.contains("HIDDEN-ANSWER-END"));
+    let tail = project(ArchivedContentPolicy::Full, NonZeroUsize::new(1));
+    assert!(!tail.contains("inherited-input"));
+    assert!(!tail.contains("inherited-answer"));
+    let request =
+        project_archived_session(&history, ArchivedSessionView::Request, GlyphProfile::Ascii)
+            .unwrap();
+    assert!(!request.contains("parent-request-secret"));
+    assert!(!request.contains("parent-exchange-secret"));
+    assert!(!request.contains("inherited-input"));
+    assert!(history.request_trace().iter().all(|record| !matches!(
+        record.record(),
+        StoredRequestTraceRecord::RequestAccepted { .. }
+    )));
+    let usage = project_archived_usage(&history, GlyphProfile::Ascii).unwrap();
+    assert!(usage.contains("completed_receipts=0"));
+    assert!(!usage.contains("inherited-answer"));
+}

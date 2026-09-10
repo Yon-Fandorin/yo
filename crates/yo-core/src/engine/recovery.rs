@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 
 use super::AgentEngine;
 use crate::{
-    AgentEvent,
-    journal::{JournalEntry, SemanticRecord},
+    AgentCommand, AgentEvent, SessionId,
+    journal::{JournalEntry, SemanticRecord, codec::TransitionMode},
 };
 
 impl AgentEngine {
@@ -13,6 +13,14 @@ impl AgentEngine {
     ) -> Result<Self, String> {
         let mut engine = Self::new();
         let mut expected = VecDeque::new();
+        if let Some(session_id) = initial_fork_session(entries) {
+            // The codec validates the atomic bootstrap; only local engine state is restored here.
+            expected.extend(
+                engine
+                    .commit_command(AgentCommand::CreateSession { session_id }, supports_steer)
+                    .map_err(|error| format!("fork Session cannot be restored: {error}"))?,
+            );
+        }
         for entry in entries {
             match entry.record().clone() {
                 SemanticRecord::CommandCommitted(committed) => {
@@ -75,7 +83,8 @@ impl AgentEngine {
                 | SemanticRecord::BackendResumableOutcome(_)
                 | SemanticRecord::ContinuationAnchor(_)
                 | SemanticRecord::ContextPolicyChanged(_)
-                | SemanticRecord::ContextCheckpoint(_) => {},
+                | SemanticRecord::ContextCheckpoint(_)
+                | SemanticRecord::InitialForkSeed(_) => {},
             }
         }
         if !expected.is_empty() {
@@ -86,4 +95,25 @@ impl AgentEngine {
         }
         Ok(engine)
     }
+}
+
+fn initial_fork_session(entries: &[JournalEntry]) -> Option<SessionId> {
+    let [created, seed, binding, ..] = entries else {
+        return None;
+    };
+    let (
+        SemanticRecord::EventCommitted(AgentEvent::SessionCreated { session_id }),
+        SemanticRecord::InitialForkSeed(fork),
+        SemanticRecord::BackendBindingOpened(opened),
+    ) = (created.record(), seed.record(), binding.record())
+    else {
+        return None;
+    };
+    (created.sequence() < seed.sequence()
+        && seed.sequence() < binding.sequence()
+        && opened.epoch() == 1
+        && opened.transition().mode() == TransitionMode::InitialFork
+        && opened.transition().fork_seed_sequence() == Some(seed.sequence())
+        && fork.validate_child(*session_id).is_ok())
+    .then_some(*session_id)
 }

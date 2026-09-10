@@ -21,6 +21,7 @@ mod job_control;
 mod model_selection;
 mod overlay;
 mod preview;
+mod prompt_templates;
 mod publication;
 mod reentry;
 mod request_responses;

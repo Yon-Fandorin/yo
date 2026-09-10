@@ -17,9 +17,9 @@ pub use config::CodexBackendConfig;
 pub use observation::{
     CodexRead, read_account_capacity, read_model_catalog, read_model_catalog_with_warning_observer,
 };
-pub use protocol::CodexCompatibilityWarning;
+pub use protocol::{CodexCompatibilityWarning, CodexWarning};
 pub use runtime::{CodexBackend, CodexWarningObserver};
-pub use skill_catalog::CodexSkillReferenceProvider;
+pub use skill_catalog::{CodexSkillInputAdmission, CodexSkillReferenceProvider};
 
 pub const HOST_ID: &str = "codex";
 pub const BACKEND_KIND: &str = "codex-app-server";

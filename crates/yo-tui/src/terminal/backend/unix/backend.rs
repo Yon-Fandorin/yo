@@ -1,8 +1,11 @@
 use std::io::{self, Write};
 
 use super::{TermiosDriver, TtyStateAdapter};
-use crate::terminal::backend::{
-    ScreenModeBackend, TerminalBackend, TerminalOutputBackend, UnbufferedTerminalOutput,
+use crate::terminal::{
+    backend::{
+        ScreenModeBackend, TerminalBackend, TerminalOutputBackend, UnbufferedTerminalOutput,
+    },
+    graphics::Graphics,
 };
 
 const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
@@ -16,6 +19,7 @@ pub(crate) enum UnixMode {
     BracketedPaste,
     AlternateScreen,
     CursorVisibility,
+    MouseCapture,
 }
 
 #[derive(Debug)]
@@ -65,6 +69,7 @@ where
 
     fn acquire_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
+            UnixMode::MouseCapture => self.write_mode(b"\x1b[?1006h\x1b[?1000h"),
             UnixMode::BracketedPaste => self.write_mode(ENABLE_BRACKETED_PASTE),
             UnixMode::AlternateScreen => self.write_mode(ENTER_ALTERNATE_SCREEN),
             UnixMode::CursorVisibility => self.write_mode(SHOW_CURSOR),
@@ -73,8 +78,14 @@ where
 
     fn release_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
+            UnixMode::MouseCapture => self.write_mode(b"\x1b[?1000l\x1b[?1006l"),
             UnixMode::BracketedPaste => self.write_mode(DISABLE_BRACKETED_PASTE),
-            UnixMode::AlternateScreen => self.write_mode(LEAVE_ALTERNATE_SCREEN),
+            UnixMode::AlternateScreen => {
+                let mut bytes = Vec::new();
+                Graphics::from_env().clear(&mut bytes);
+                bytes.extend_from_slice(LEAVE_ALTERNATE_SCREEN);
+                self.write_mode(&bytes)
+            },
             UnixMode::CursorVisibility => self.write_mode(SHOW_CURSOR),
         }
     }
@@ -95,6 +106,10 @@ where
 
     fn alternate_screen_mode() -> Self::Mode {
         UnixMode::AlternateScreen
+    }
+
+    fn mouse_capture_mode() -> Self::Mode {
+        UnixMode::MouseCapture
     }
 
     fn cursor_visibility_mode() -> Self::Mode {

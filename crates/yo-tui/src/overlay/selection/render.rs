@@ -10,6 +10,7 @@ use crate::{
     appearance::ActivityMotionFrame,
     overlay::binding::{BindingHint, OverlayBindings},
     surface::{Grapheme, Point, Size, Style, SurfaceView, WriteOutcome},
+    text::flow::{TextFlow, flow_prose},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,6 +63,9 @@ impl SelectionPanel {
         turn_active: bool,
         motion: ActivityMotionFrame<'_>,
     ) -> Option<PreparedSelectionPanel> {
+        if self.snapshot.wrapped_entries {
+            return self.prepare_wrapped(available, appearance, bindings, turn_active, motion);
+        }
         let width = NonZeroU16::new(available.width)?;
         if width.get() < 3 || available.height < 3 {
             return None;
@@ -77,7 +81,17 @@ impl SelectionPanel {
         }
         let hints = fitting_hints(
             width,
-            bindings.hints(turn_active, appearance.glyphs.rich_keys),
+            bindings
+                .hints(turn_active, appearance.glyphs.rich_keys)
+                .into_iter()
+                .filter_map(|hint| match self.snapshot.request_is_approval {
+                    Some(approval) => hint.for_request(
+                        approval,
+                        self.snapshot.entries.iter().any(|entry| entry.is_enabled()),
+                    ),
+                    None => Some(hint),
+                })
+                .collect(),
             &self.snapshot.title,
         )?;
         if hints.is_empty() {
@@ -88,7 +102,13 @@ impl SelectionPanel {
         if visible_rows == 0 || visible_rows > row_capacity {
             return None;
         }
-        let height = u16::try_from(visible_rows + 2).expect("visible cap fits u16");
+        let detail_rows = (usize::from(available.height) - visible_rows - 2).min(6);
+        let detail = self.request_detail(width, detail_rows);
+        let detail_height = detail
+            .as_ref()
+            .map_or(0, |flow| usize::from(flow.height).min(detail_rows));
+        let height = u16::try_from(visible_rows + detail_height + 2)
+            .expect("panel remains within available height");
         let size = Size::new(width.get(), height);
         let mut prepared = PreparedSelectionPanel {
             size,
@@ -134,7 +154,179 @@ impl SelectionPanel {
             );
             row += 1;
         }
+        if let Some(detail) = detail {
+            let clipped = usize::from(detail.height) > detail_rows;
+            let body_rows = detail_height.saturating_sub(usize::from(clipped));
+            for glyph in detail.glyphs {
+                if usize::from(glyph.point.y) >= body_rows {
+                    continue;
+                }
+                prepared.writes.push(PreparedWrite {
+                    point: Point::new(3 + glyph.point.x, row + glyph.point.y),
+                    grapheme: glyph.grapheme,
+                    style: appearance.styles.detail,
+                });
+            }
+            if clipped {
+                prepared.push_truncated_text(
+                    Point::new(3, row + body_rows as u16),
+                    "… PgUp: full details",
+                    width.get() - 1,
+                    appearance.styles.hint,
+                );
+            }
+        }
         Some(prepared)
+    }
+
+    fn prepare_wrapped(
+        &self,
+        available: Size,
+        appearance: SelectionPanelAppearance,
+        bindings: &OverlayBindings,
+        turn_active: bool,
+        motion: ActivityMotionFrame<'_>,
+    ) -> Option<PreparedSelectionPanel> {
+        let width = NonZeroU16::new(available.width)?;
+        let body_width = NonZeroU16::new(available.width.checked_sub(4)?)?;
+        let capacity = usize::from(available.height.checked_sub(2)?);
+        if capacity == 0 {
+            return None;
+        }
+        let flow = |index: usize| {
+            let entry = &self.snapshot.entries[index];
+            let mut text = entry.label.clone();
+            if let Some(detail) = &entry.detail {
+                text.push('\n');
+                text.push_str(detail);
+            }
+            flow_prose(&text, body_width).ok()
+        };
+        let selected = self.wrapped_focus;
+        let selected_flow = flow(selected)?;
+        let total_lines = usize::from(selected_flow.height);
+        let max_scroll = total_lines.saturating_sub(capacity);
+        self.wrapped_scroll_max.set(max_scroll);
+        self.wrapped_page_size
+            .set(capacity.saturating_sub(1).max(1));
+        let offset = self.wrapped_scroll.get().min(max_scroll);
+        self.wrapped_scroll.set(offset);
+        let mut height = usize::from(selected_flow.height).min(capacity);
+        let mut rows = vec![(selected, selected_flow)];
+        let mut start = selected;
+        let mut end = selected + 1;
+        while start > 0 && rows.len() < VISIBLE_ENTRY_CAP {
+            let candidate = flow(start - 1)?;
+            if height + usize::from(candidate.height) > capacity {
+                break;
+            }
+            height += usize::from(candidate.height);
+            start -= 1;
+            rows.insert(0, (start, candidate));
+        }
+        while end < self.snapshot.entries.len() && rows.len() < VISIBLE_ENTRY_CAP {
+            let candidate = flow(end)?;
+            if height + usize::from(candidate.height) > capacity {
+                break;
+            }
+            height += usize::from(candidate.height);
+            rows.push((end, candidate));
+            end += 1;
+        }
+        let hints = fitting_hints(
+            width,
+            bindings.hints(turn_active, appearance.glyphs.rich_keys),
+            &self.snapshot.title,
+        )?;
+        let mut prepared = PreparedSelectionPanel {
+            size: Size::new(width.get(), u16::try_from(height + 2).ok()?),
+            background: appearance.styles.background,
+            writes: Vec::new(),
+            motion_period: None,
+        };
+        prepared.prepare_frame(
+            appearance,
+            FrameContent {
+                title: &self.snapshot.title,
+                title_status: self.snapshot.title_status.as_ref(),
+                motion,
+                hints: &hints,
+                hidden: (start, self.snapshot.entries.len() - end),
+                filter_bar: None,
+            },
+        );
+        let mut y = 1_u16;
+        for (index, flow) in rows {
+            let entry = &self.snapshot.entries[index];
+            let selected = self.wrapped_focus == index;
+            let style = if !entry.is_enabled() {
+                appearance.styles.disabled
+            } else {
+                appearance.styles.label
+            };
+            if selected {
+                prepared.push_text(
+                    Point::new(1, y),
+                    ">",
+                    width.get() - 1,
+                    appearance.styles.key_hint,
+                );
+            }
+            for glyph in flow.glyphs {
+                let skip = if index == self.wrapped_focus {
+                    offset
+                } else {
+                    0
+                };
+                let Some(line) = usize::from(glyph.point.y).checked_sub(skip) else {
+                    continue;
+                };
+                let line = u16::try_from(line).ok()?;
+                if usize::from(y + line) > height {
+                    continue;
+                }
+                prepared.writes.push(PreparedWrite {
+                    point: Point::new(3 + glyph.point.x, y + line),
+                    grapheme: glyph.grapheme,
+                    style,
+                });
+            }
+            y = y.saturating_add(flow.height);
+        }
+        if max_scroll > 0 {
+            let footer = prepared.size.height - 1;
+            prepared.writes.retain(|write| write.point.y != footer);
+            prepared.push_truncated_text(
+                Point::new(1, footer),
+                &format!("PgUp/Dn {}/{}", offset + 1, total_lines),
+                width.get() - 1,
+                appearance.styles.hint,
+            );
+        }
+        Some(prepared)
+    }
+
+    fn request_detail(&self, width: NonZeroU16, rows: usize) -> Option<TextFlow> {
+        self.snapshot.request_is_approval?;
+        if rows == 0 {
+            return None;
+        }
+        let entry = self.snapshot.entries.get(self.selected_index?)?;
+        let detail = entry.detail.as_deref().filter(|text| !text.is_empty())?;
+        let body_width = NonZeroU16::new(width.get().saturating_sub(4))?;
+        // 화면에 들어갈 수 있는 접두부만 배치하되 잘림을 판별할 한 줄은 더 유지한다.
+        let limit = usize::from(body_width.get()) * (rows + 1);
+        let mut clusters = entry
+            .label
+            .graphemes(true)
+            .chain(std::iter::once("\n"))
+            .chain(detail.graphemes(true));
+        let text: String = clusters.by_ref().take(limit + 1).collect();
+        let mut flow = flow_prose(&text, body_width).ok()?;
+        if clusters.next().is_some() {
+            flow.height = flow.height.max((rows + 1) as u16);
+        }
+        Some(flow)
     }
 }
 

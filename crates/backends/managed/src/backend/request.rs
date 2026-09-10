@@ -7,7 +7,9 @@ use yo_core::{
     SessionId, TurnRef,
 };
 
-use super::{NativeModelBackend, TurnState, failure, map_connector_turn, replay::replay_input};
+use super::{
+    InputCount, NativeModelBackend, TurnState, failure, map_connector_turn, replay::replay_input,
+};
 
 impl NativeModelBackend {
     pub(super) fn request_evidence(&self, turn: TurnRef) -> BackendRequestEvidence {
@@ -90,32 +92,15 @@ impl NativeModelBackend {
             }
             .with_replay_budget(replay_budget)
             .with_cache_affinity_hint(ModelCacheAffinityHint::for_session(state.turn.session_id()));
-            let tokenization_payload = match self.connector.tokenization_payload(&request) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    self.observe_connector_failure(state.turn, &error);
-                    return Err(map_connector_turn(error));
-                },
-            };
-            let input_tokens = self
-                .token_counter
-                .count_input_tokens(
-                    self.model_context.tokenizer_profile(),
-                    &tokenization_payload,
-                )
-                .map_err(|_| {
-                    failure(
-                        BackendFailureKind::Turn,
-                        "model token counting failed before remote request dispatch",
-                    )
-                })?;
+            let input_count = self.count_request_input(&request)?;
+            let input_tokens = input_count.planning_tokens();
             match request_cap {
                 Some(cap)
                     if input_tokens
                         .checked_add(cap)
                         .is_some_and(|sum| sum <= input_limit) =>
                 {
-                    if self.admit_or_start_compaction(state, input_tokens)? {
+                    if self.admit_or_start_compaction(state, input_count.clone())? {
                         return Ok(());
                     }
                     break request;
@@ -129,7 +114,7 @@ impl NativeModelBackend {
                         _ => 0,
                     };
                     if next_cap == 0 {
-                        if self.admit_or_start_compaction(state, input_tokens)? {
+                        if self.admit_or_start_compaction(state, input_count.clone())? {
                             return Ok(());
                         }
                         return Err(failure(
@@ -143,13 +128,13 @@ impl NativeModelBackend {
                     cap_adjustments += 1;
                 },
                 None if input_tokens < input_limit => {
-                    if self.admit_or_start_compaction(state, input_tokens)? {
+                    if self.admit_or_start_compaction(state, input_count.clone())? {
                         return Ok(());
                     }
                     break request;
                 },
                 None => {
-                    if self.admit_or_start_compaction(state, input_tokens)? {
+                    if self.admit_or_start_compaction(state, input_count.clone())? {
                         return Ok(());
                     }
                     return Err(failure(
@@ -196,7 +181,7 @@ impl NativeModelBackend {
         items: Vec<ModelConnectorInputItem>,
         tools: RequestToolExposure,
         session_id: SessionId,
-    ) -> Result<(ModelConnectorRequest, u64), BackendFailure> {
+    ) -> Result<(ModelConnectorRequest, InputCount), BackendFailure> {
         let input_limit = self.model_context.input_token_limit();
         let mut request_cap = self.model_context.max_output_tokens();
         let mut cap_adjustments = 0_u8;
@@ -209,26 +194,15 @@ impl NativeModelBackend {
             )
             .map_err(map_connector_turn)?
             .with_cache_affinity_hint(ModelCacheAffinityHint::for_session(session_id));
-            let payload = self
-                .connector
-                .tokenization_payload(&request)
-                .map_err(map_connector_turn)?;
-            let input_tokens = self
-                .token_counter
-                .count_input_tokens(self.model_context.tokenizer_profile(), &payload)
-                .map_err(|_| {
-                    failure(
-                        BackendFailureKind::Turn,
-                        "model token counting failed before remote request dispatch",
-                    )
-                })?;
+            let input_count = self.count_request_input(&request)?;
+            let input_tokens = input_count.planning_tokens();
             match request_cap {
                 Some(cap)
                     if input_tokens
                         .checked_add(cap)
                         .is_some_and(|sum| sum <= input_limit) =>
                 {
-                    return Ok((request, input_tokens));
+                    return Ok((request, input_count));
                 },
                 Some(cap) => {
                     let next_cap = match cap_adjustments {
@@ -247,7 +221,7 @@ impl NativeModelBackend {
                     request_cap = Some(next_cap);
                     cap_adjustments += 1;
                 },
-                None if input_tokens < input_limit => return Ok((request, input_tokens)),
+                None if input_tokens < input_limit => return Ok((request, input_count)),
                 None => {
                     return Err(failure(
                         BackendFailureKind::ContextExhausted,
@@ -263,7 +237,7 @@ impl NativeModelBackend {
         items: Vec<ModelConnectorInputItem>,
         tools: RequestToolExposure,
         session_id: SessionId,
-    ) -> Result<u64, BackendFailure> {
+    ) -> Result<InputCount, BackendFailure> {
         let request = ModelConnectorRequest::new(
             items,
             tools,
@@ -272,17 +246,6 @@ impl NativeModelBackend {
         )
         .map_err(map_connector_turn)?
         .with_cache_affinity_hint(ModelCacheAffinityHint::for_session(session_id));
-        let payload = self
-            .connector
-            .tokenization_payload(&request)
-            .map_err(map_connector_turn)?;
-        self.token_counter
-            .count_input_tokens(self.model_context.tokenizer_profile(), &payload)
-            .map_err(|_| {
-                failure(
-                    BackendFailureKind::Turn,
-                    "model token counting failed before context compaction",
-                )
-            })
+        self.count_request_input(&request)
     }
 }

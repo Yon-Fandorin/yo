@@ -56,7 +56,7 @@ impl OverlayBindings {
             })
     }
 
-    pub(super) fn hints(&self, turn_active: bool, rich_keys: bool) -> Vec<BindingHint> {
+    pub(crate) fn hints(&self, turn_active: bool, rich_keys: bool) -> Vec<BindingHint> {
         let mut hints = Vec::new();
         let previous = self.binding(OverlayAction::Previous);
         let next = self.binding(OverlayAction::Next);
@@ -82,7 +82,7 @@ impl OverlayBindings {
         if let Some(accept) = self.binding(OverlayAction::Accept) {
             hints.push(BindingHint {
                 physical: binding_notation(accept, rich_keys),
-                caption: "insert",
+                caption: "select",
                 optional: true,
             });
         }
@@ -108,11 +108,34 @@ impl OverlayBindings {
 }
 
 impl BindingHint {
-    pub(super) fn physical(&self) -> &str {
+    pub(super) fn for_request(mut self, approval: bool, choices: bool) -> Option<Self> {
+        self.caption = match self.caption {
+            "interrupt" => return None,
+            "move" if !approval && !choices => return None,
+            "select" => {
+                if approval {
+                    "confirm"
+                } else {
+                    "answer"
+                }
+            },
+            "close" => {
+                if approval {
+                    "decline"
+                } else {
+                    "cancel"
+                }
+            },
+            _ => self.caption,
+        };
+        Some(self)
+    }
+
+    pub(crate) fn physical(&self) -> &str {
         &self.physical
     }
 
-    pub(super) const fn caption(&self) -> &'static str {
+    pub(crate) const fn caption(&self) -> &'static str {
         self.caption
     }
 
@@ -221,7 +244,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 ("↑↓", "move"),
-                ("Enter", "insert"),
+                ("Enter", "select"),
                 ("Esc", "close"),
                 ("^C", "interrupt"),
             ]
@@ -232,7 +255,7 @@ mod tests {
                 .iter()
                 .map(|hint| (hint.physical(), hint.caption()))
                 .collect::<Vec<_>>(),
-            vec![("Up/Down", "move"), ("Enter", "insert"), ("Esc", "close"),]
+            vec![("Up/Down", "move"), ("Enter", "select"), ("Esc", "close"),]
         );
         assert_eq!(
             bindings

@@ -53,6 +53,7 @@ enum Mode {
     BracketedPaste,
     AlternateScreen,
     CursorVisibility,
+    MouseCapture,
 }
 
 #[derive(Default)]
@@ -93,6 +94,10 @@ impl ScreenModeBackend for Backend {
 
     fn alternate_screen_mode() -> Self::Mode {
         Mode::AlternateScreen
+    }
+
+    fn mouse_capture_mode() -> Self::Mode {
+        Mode::MouseCapture
     }
 
     fn cursor_visibility_mode() -> Self::Mode {
@@ -1142,6 +1147,64 @@ fn resize_frame_is_immediate_and_invalidates_the_previous_viewport() {
     assert_eq!(presenter.previous_on_render, [false, true]);
 }
 
+// resize event와 producer wake가 없어도 실제 폭을 다시 확인해 축소·확대를 복구한다.
+// 크기가 같은 확인은 frame을 추가하지 않으며 watchdog은 무기한 대기 회귀를 막는다.
+#[test]
+fn idle_geometry_checks_recover_missing_resize_events_without_repainting_stable_size() {
+    for mode in [ScreenMode::Inline, ScreenMode::Fullscreen] {
+        let mut retained = TuiSession::new(ColorCapability::Unknown, MotionPreference::Reduced);
+        let mut agent = SimpleAgent::default();
+        let mut backend = Backend::default();
+        let mut terminal = enter_screen(&mut backend, mode).unwrap();
+        let mut presenter = Presenter::default();
+        let samples = Rc::new(Cell::new(0));
+        let reads = Rc::new(Cell::new(0));
+        let watchdog_fired = Rc::new(Cell::new(false));
+        let mut reader = UnixEventReader::new(
+            Events::new([], Rc::new(Cell::new(0)), Rc::clone(&reads)),
+            StopAfterOrWatchdog {
+                counter: Rc::clone(&samples),
+                threshold: 4,
+                deadline: Instant::now() + Duration::from_secs(3),
+                armed: false,
+                watchdog_fired: Rc::clone(&watchdog_fired),
+            },
+        );
+        let mut sample_geometry = || {
+            let index = samples.get();
+            samples.set(index + 1);
+            Ok::<Size, Infallible>(Size::new(if index == 1 { 24 } else { 100 }, 50))
+        };
+        assert!(matches!(
+            drive(
+                &mut terminal,
+                &mut presenter,
+                &mut reader,
+                &mut retained,
+                &mut agent,
+                GenerationStart::new(Size::new(100, 50), Instant::now()),
+                &mut sample_geometry,
+            )
+            .unwrap(),
+            LoopExit::Termination
+        ));
+        terminal.close().unwrap();
+
+        assert!(!watchdog_fired.get());
+        assert_eq!(samples.get(), 4);
+        assert_eq!(reads.get(), 0);
+        assert_eq!(presenter.invalidations, 2);
+        assert_eq!(
+            presenter
+                .frames
+                .iter()
+                .map(|frame| frame.size().width)
+                .collect::<Vec<_>>(),
+            [100, 24, 100]
+        );
+    }
+}
+
 // 전송 재시도 중 10ms backpressure poll이 motion 마감을 지나더라도 이를 놓치지 않고
 // 실제 marker frame을 다시 그린다. OS sleep 오차에 따른 더 짧은 timeout은 요구하지 않는다.
 #[test]
@@ -1394,4 +1457,131 @@ fn motion_history_helper_retries_unrepresentable_instants_with_a_bound() {
     let error = retry_representable_past::<Instant>(Duration::from_millis(2), || None).unwrap_err();
     assert!(started.elapsed() < Duration::from_secs(1));
     assert!(error.contains("monotonic clock"));
+}
+
+// 실제 drive loop가 예약 두 개를 사용자 Enter 추가 입력 없이 별도 Turn으로 전달한다.
+// 첫 요청의 Accepted, TurnStarted, TurnFinished를 모두 소비해야 다음 요청을 전송한다.
+#[test]
+fn main_loop_drains_follow_ups_as_separate_completed_turns() {
+    use std::num::NonZeroU64;
+
+    use yo_core::{SubmissionOutcome, TurnId};
+    struct QueuedAgent {
+        sent: Vec<String>,
+        observations: VecDeque<AgentPoll>,
+        completed: Rc<Cell<usize>>,
+    }
+    impl AgentConnection for QueuedAgent {
+        type Error = Infallible;
+        fn dispatch(&mut self, action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
+            let AgentAction::Submit(submission) = action else {
+                panic!("follow-up must start a new Turn");
+            };
+            assert_eq!(
+                self.completed.get(),
+                self.sent.len(),
+                "previous Turn must finish"
+            );
+            self.sent.push(submission.input().as_str().to_owned());
+            let next = TurnRef::new(
+                turn().session_id(),
+                TurnId::new(NonZeroU64::new(self.sent.len() as u64).unwrap()),
+            );
+            self.observations.extend([
+                AgentPoll::Submission(SubmissionOutcome::Accepted {
+                    id: submission.id(),
+                }),
+                AgentPoll::Record(TranscriptRecord::CommandCommitted(
+                    AgentCommand::StartTurn {
+                        turn: next,
+                        input: submission.into_input(),
+                    },
+                )),
+                AgentPoll::Record(TranscriptRecord::EventCommitted(AgentEvent::TurnStarted {
+                    turn: next,
+                })),
+                AgentPoll::Record(TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+                    turn: next,
+                    outcome: TurnOutcome::Completed,
+                })),
+            ]);
+            Ok(DispatchOutcome::Queued)
+        }
+        fn retry(&mut self, _: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
+            panic!("fixture does not backpressure");
+        }
+        fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
+            let observation = self.observations.pop_front().unwrap_or(AgentPoll::Pending);
+            if matches!(
+                &observation,
+                AgentPoll::Record(TranscriptRecord::EventCommitted(
+                    AgentEvent::TurnFinished { .. }
+                ))
+            ) {
+                self.completed.set(self.completed.get() + 1);
+            }
+            Ok(observation)
+        }
+        fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<()> {
+            if self.observations.is_empty() {
+                Poll::Pending
+            } else {
+                Poll::Ready(())
+            }
+        }
+    }
+    let mut retained = TuiSession::with_glyph_profile(
+        GlyphProfile::Ascii,
+        ColorCapability::Unknown,
+        MotionPreference::Reduced,
+    );
+    for text in ["first", "second"] {
+        let state = retained.parts_mut().state;
+        state
+            .handle(InputEvent::Paste(text.to_owned()), Duration::ZERO)
+            .unwrap();
+        state
+            .handle(
+                InputEvent::Key(YoKeyEvent {
+                    code: YoKeyCode::Enter,
+                    modifiers: YoKeyModifiers::ALT,
+                    action: KeyAction::Press,
+                    state: KeyState::NONE,
+                }),
+                Duration::ZERO,
+            )
+            .unwrap();
+    }
+    let completed = Rc::new(Cell::new(0));
+    let timed_out = Rc::new(Cell::new(false));
+    let mut agent = QueuedAgent {
+        sent: Vec::new(),
+        observations: VecDeque::new(),
+        completed: Rc::clone(&completed),
+    };
+    let started = Instant::now();
+    run_generation_with_termination_at(
+        &mut retained,
+        &mut agent,
+        Events::new([], Rc::new(Cell::new(0)), Rc::new(Cell::new(0))),
+        StopAfterOrWatchdog {
+            counter: completed,
+            threshold: 2,
+            deadline: started + Duration::from_secs(2),
+            armed: false,
+            watchdog_fired: Rc::clone(&timed_out),
+        },
+        Rc::new(Cell::new(0)),
+        started,
+    );
+    assert!(!timed_out.get(), "queue did not finish through the runner");
+    assert_eq!(agent.sent, ["first", "second"]);
+    assert!(
+        retained
+            .parts_mut()
+            .state
+            .next_follow_up()
+            .unwrap()
+            .is_none()
+    );
 }

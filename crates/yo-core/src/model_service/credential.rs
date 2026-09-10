@@ -96,6 +96,25 @@ impl CredentialStore {
         self.auxiliary_secret_material.extend(credentials);
     }
 
+    /// Withholds a suffix that may become credential material when more bytes arrive.
+    /// Call `contains_secret_material` separately to reject complete secret occurrences.
+    #[must_use]
+    pub fn without_incomplete_secret_suffix<'a>(&self, value: &'a str) -> &'a str {
+        let withheld = self
+            .credentials
+            .values()
+            .chain(self.auxiliary_secret_material.iter())
+            .flat_map(|credential| {
+                let secret = credential.expose_secret();
+                secret.char_indices().map(move |(end, _)| &secret[..end])
+            })
+            .filter(|prefix| !prefix.is_empty() && value.ends_with(prefix))
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        &value[..value.len() - withheld]
+    }
+
     /// Reports whether a semantic value contains any credential in this snapshot.
     ///
     /// This permits redaction gates to cover every configured Account without exposing an

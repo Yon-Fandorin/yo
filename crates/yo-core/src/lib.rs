@@ -30,24 +30,34 @@ pub use backend::{
     AgentBackend, BackendAdapter, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
     BackendOutcomeEvidence, BackendPoll, BackendRequestEvidence, BackendResumeSource,
-    BackendResumeTarget, BackendScriptStep, BackendStopHandle, ContextCheckpointProposal,
-    ContextPressureDecision, ContextPressureObservation, ContinuationStrategy, ModelReplay,
+    BackendResumeTarget, BackendScriptStep, BackendStopHandle, ContextAccounting,
+    ContextAccountingQuality, ContextCheckpointProposal, ContextPressureDecision,
+    ContextPressureObservation, ContinuationStrategy, ImageInputCapability, InputImageSnapshot,
+    InputImageSnapshotError, KIMI_CODE_IMAGE_ACCOUNTING_PROFILE, ModelInputPart, ModelReplay,
     ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
     ModelReplayTool, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
     provider_private_schema,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
-pub use event::{ActivityKind, ActivityOutcome, ActivityUpdate, AgentEvent, Failure, TurnOutcome};
+pub use event::{
+    ActivityApproval, ActivityDocument, ActivityKind, ActivityNotice, ActivityOutcome,
+    ActivityPlan, ActivityQuestion, ActivityReasoning, ActivitySummary, ActivityUpdate, AgentEvent,
+    ApprovalChoice, Failure, MessageContent, NoticeLevel, PlanStep, PlanStepStatus, QuestionChoice,
+    SummaryKind, ToolOutput, TurnOutcome,
+};
 pub use host::{
     HostWorkspacePath, HostWorkspacePathError, LocalWorkspaceHostIdentity,
     LocalWorkspaceHostIdentityError, WorkspaceHostId, WorkspaceHostIdError,
     WorkspaceHostIdGenerationError,
 };
 pub use input::{
-    InputReference, InputSubmission, SubmissionId, SubmissionIdError, SubmissionIdGenerationError,
-    SubmissionOutcome, SubmissionRejection, SubmissionRejectionKind, UserInput, UserInputError,
-    skill_reference_projection, workspace_reference_projection,
+    ImagePreparationHost, ImagePreparationRequest, ImagePreparationUpdate,
+    InputAdmissionConfigurationError, InputAdmissionHost, InputImage, InputImageDisplay,
+    InputReference, InputSubmission, PreparedImageAttachment, ResolvedSkill, SubmissionId,
+    SubmissionIdError, SubmissionIdGenerationError, SubmissionOutcome, SubmissionRejection,
+    SubmissionRejectionKind, UserInput, UserInputError, skill_reference_projection,
+    workspace_reference_projection,
 };
 pub use journal::{
     ContextCheckpointObservation, ContextPolicyChanged, ContextStrategy, DurabilityGapCause,
@@ -61,7 +71,7 @@ pub use model_binding_admission::{
     ModelBindingAdmission,
 };
 pub use model_connector::{
-    CacheReadInputTokens, ConnectorError, ConnectorFailureKind, FunctionTool,
+    CacheReadInputTokens, ConnectorError, ConnectorFailureKind, FunctionTool, ImageSummarySource,
     ModelCacheAffinityHint, ModelConnector, ModelConnectorCancellation, ModelConnectorEvent,
     ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll,
     ModelConnectorRequest, ModelConnectorStreamPort, ModelConnectorTerminal, ModelConnectorUsage,
@@ -83,18 +93,18 @@ pub use model_service::{
     CredentialRevision, CredentialSnapshot, CredentialStore, EffectiveModelBinding,
     EffectiveModelProfile, ExternalConnectionError, ExternalDisconnectCredentialAction,
     ExternalDisconnectError, HostCatalogModel, HostId, HostModelCatalog, HostModelSelection,
-    KIMI_PRIVATE_REPLAY_PROFILE, LocalConnectionOperationGuard, LocalConnectionOperationJournal,
-    LocalConnectionOperationRepositories, LocalConnectionOperationSession,
-    LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStore,
-    LocalCredentialStoreError, LocalModelRequestObservation, ModelCatalog, ModelCatalogEntry,
-    ModelContextProfile, ModelId, ModelLastFailure, ModelObservationWriteOutcome,
-    ModelPickerChoice, ModelPickerSection, ModelPickerTarget, ModelProfileLayer,
-    ModelProfileParameters, ModelRequestFailureKind, ModelRequestOutcome, ModelSelection,
-    ModelSelectionChoice, ModelSelectionController, ModelServiceError, ModelServiceErrorKind,
-    ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint, PreparedAccountSessionMutation,
-    PreparedConnectionMutation, PreparedCredentialMutation, PreparedExternalConnection,
-    PreparedExternalDisconnect, ProviderId, SEMANTIC_REPLAY_PROFILE, StartupPolicy,
-    StartupSelectionSources, StartupTarget, StoredModelBinding, VersionedProfileId,
+    KIMI_CODE_IMAGE_INPUT_PROFILE, KIMI_PRIVATE_REPLAY_PROFILE, LocalConnectionOperationGuard,
+    LocalConnectionOperationJournal, LocalConnectionOperationRepositories,
+    LocalConnectionOperationSession, LocalConnectionRepository, LocalCredentialRepository,
+    LocalCredentialStore, LocalCredentialStoreError, LocalModelRequestObservation, ModelCatalog,
+    ModelCatalogEntry, ModelContextProfile, ModelId, ModelLastFailure,
+    ModelObservationWriteOutcome, ModelPickerChoice, ModelPickerSection, ModelPickerTarget,
+    ModelProfileLayer, ModelProfileParameters, ModelRequestFailureKind, ModelRequestOutcome,
+    ModelSelection, ModelSelectionChoice, ModelSelectionController, ModelServiceError,
+    ModelServiceErrorKind, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint,
+    PreparedAccountSessionMutation, PreparedConnectionMutation, PreparedCredentialMutation,
+    PreparedExternalConnection, PreparedExternalDisconnect, ProviderId, SEMANTIC_REPLAY_PROFILE,
+    StartupPolicy, StartupSelectionSources, StartupTarget, StoredModelBinding, VersionedProfileId,
     derive_host_account_id, derive_host_catalog_revision, plan_connection_recovery,
     resolve_startup_target,
 };
@@ -111,22 +121,23 @@ pub use session_repository::{
     UsageValue,
 };
 pub use skill_reference::{
-    SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceProvider,
-    SkillReferenceProviderPoll, SkillReferenceScope, SkillReferenceSearchRequest,
-    SkillReferenceSearchStatus, SkillReferenceSearchUpdate, search_skill_reference_candidates,
+    LocalSkillInputAdmission, LocalSkillReferenceProvider, LocalSkillRoot, SkillAvailability,
+    SkillReference, SkillReferenceCandidate, SkillReferenceProvider, SkillReferenceProviderPoll,
+    SkillReferenceScope, SkillReferenceSearchRequest, SkillReferenceSearchStatus,
+    SkillReferenceSearchUpdate, search_skill_reference_candidates,
 };
 pub use tool::{
     FrozenToolRegistry, TOOL_SCHEMA_DIALECT, ToolApprovalBinding, ToolApprovalRequirement,
     ToolDefinition, ToolEffect, ToolExecution, ToolExecutionError, ToolExecutionHost,
-    ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest, ToolExecutionResult, ToolId,
-    ToolRegistry, ToolRegistryError, ToolSemanticAdmission, ToolSemanticAdmissionError,
-    ToolValidationError, ToolValidationFailure, ValidatedToolCall,
+    ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionProgress, ToolExecutionRequest,
+    ToolExecutionResult, ToolId, ToolRegistry, ToolRegistryError, ToolSemanticAdmission,
+    ToolSemanticAdmissionError, ToolValidationError, ToolValidationFailure, ValidatedToolCall,
 };
 pub use workspace_reference::{
-    LocalWorkspaceReferenceProvider, WorkspaceReference, WorkspaceReferenceCandidate,
-    WorkspaceReferenceKind, WorkspaceReferenceProvider, WorkspaceReferenceProviderPoll,
-    WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchStatus,
-    WorkspaceReferenceSearchUpdate, normalized_search_key,
+    LocalWorkspaceInputAdmission, LocalWorkspaceReferenceProvider, WorkspaceReference,
+    WorkspaceReferenceCandidate, WorkspaceReferenceKind, WorkspaceReferenceProvider,
+    WorkspaceReferenceProviderPoll, WorkspaceReferenceSearchRequest,
+    WorkspaceReferenceSearchStatus, WorkspaceReferenceSearchUpdate, normalized_search_key,
 };
 
 #[cfg(test)]

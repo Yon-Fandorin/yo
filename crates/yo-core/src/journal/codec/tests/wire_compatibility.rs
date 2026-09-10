@@ -226,22 +226,41 @@ fn round_trips_structured_start_input_and_submission_identity() {
 // structured input object를 사용해 typed identity를 손실 없이 보존해야 한다.
 #[test]
 fn round_trips_structured_activity_user_input_without_submission_identity() {
-    let command = AgentCommand::RespondToActivity {
-        request: crate::ActivityRequestRef::new(
-            activity(),
-            crate::RequestId::new(std::num::NonZeroU64::new(9).unwrap()),
-        ),
-        response: crate::ActivityResponse::UserInput(structured_input()),
-    };
-    let commit = JournalCommit::incremental(sequenced(1, [committed(command.clone(), None)]));
+    use std::num::NonZeroU64;
 
-    let decoded = decode(&encode(&commit).unwrap()).unwrap();
-    let JournalRecord::CommandCommitted(decoded_command) = decoded.records()[0].record() else {
-        panic!("the response remains a committed command");
-    };
+    use crate::{ActivityRequestRef, ActivityResponse, RequestId};
+    for response in [
+        ActivityResponse::UserInput(structured_input()),
+        ActivityResponse::PreviousQuestion {
+            choice: None,
+            draft: structured_input(),
+        },
+        ActivityResponse::PreviousQuestion {
+            choice: Some(2),
+            draft: structured_input(),
+        },
+        ActivityResponse::QuestionAnswer {
+            choice: 2,
+            notes: structured_input(),
+        },
+    ] {
+        let command = AgentCommand::RespondToActivity {
+            request: ActivityRequestRef::new(
+                activity(),
+                RequestId::new(NonZeroU64::new(9).unwrap()),
+            ),
+            response,
+        };
+        let commit = JournalCommit::incremental(sequenced(1, [committed(command.clone(), None)]));
 
-    assert_eq!(decoded_command.command(), &command);
-    assert_eq!(decoded_command.submission_id(), None);
+        let decoded = decode(&encode(&commit).unwrap()).unwrap();
+        let JournalRecord::CommandCommitted(decoded_command) = decoded.records()[0].record() else {
+            panic!("the response remains a committed command");
+        };
+
+        assert_eq!(decoded_command.command(), &command);
+        assert_eq!(decoded_command.submission_id(), None);
+    }
 }
 
 // Start/Steer의 correlation identity가 wire에 없으면 reader가 임의 ID를 만들거나
@@ -455,4 +474,254 @@ fn rejects_an_unknown_v1_workspace_path_field() {
     let error = decode(&wire.to_string()).expect_err("unknown workspace path field is unsupported");
 
     assert!(error.to_string().contains("future_field"), "{error}");
+}
+
+// 승인 선택지 번호는 원래 request identity와 함께 저장되며 submission ID를 새로 만들지 않는다.
+#[test]
+fn round_trips_offered_approval_choice_with_original_request_identity() {
+    use std::num::NonZeroU64;
+
+    use crate::{ActivityRequestRef, ActivityResponse, ApprovalDecision, RequestId};
+    for choice in [1, 64, u32::MAX] {
+        let command = AgentCommand::RespondToActivity {
+            request: ActivityRequestRef::new(
+                activity(),
+                RequestId::new(NonZeroU64::new(9).unwrap()),
+            ),
+            response: ActivityResponse::Approval(ApprovalDecision::Offered(choice)),
+        };
+        let commit = JournalCommit::incremental(sequenced(1, [committed(command.clone(), None)]));
+        let decoded = decode(&encode(&commit).unwrap()).unwrap();
+        let JournalRecord::CommandCommitted(decoded_command) = decoded.records()[0].record() else {
+            panic!("response command missing")
+        };
+        assert_eq!(decoded_command.command(), &command);
+        assert_eq!(decoded_command.submission_id(), None);
+    }
+}
+
+// 스킬 지침이 붙은 입력만 v2로 기록하며 표시 원문·신원·지침·모델 framing을 정확히 복구한다.
+// v1에 snapshot을 끼워 넣거나 v2에서 snapshot을 없애는 downgrade도 거절한다.
+#[test]
+fn resolved_skill_input_round_trips_without_reopening_assets_or_downgrading_profile() {
+    use crate::{InputReference, ResolvedSkill};
+    let original = structured_input();
+    let reference = original
+        .references()
+        .iter()
+        .find_map(InputReference::skill_reference)
+        .unwrap()
+        .clone();
+    let input = original
+        .with_resolved_skill(
+            ResolvedSkill::new(reference, "# Frozen\nOriginal instructions").unwrap(),
+        )
+        .unwrap();
+    let command = AgentCommand::StartTurn {
+        turn: activity().turn(),
+        input: input.clone(),
+    };
+    let commit = JournalCommit::incremental(sequenced(
+        1,
+        [committed(command.clone(), Some(submission(4)))],
+    ));
+    let encoded = encode(&commit).unwrap();
+    let decoded = decode(&encoded).unwrap();
+    let JournalRecord::CommandCommitted(observed) = decoded.records()[0].record() else {
+        panic!("command")
+    };
+    assert_eq!(observed.command(), &command);
+    let AgentCommand::StartTurn {
+        input: restored, ..
+    } = observed.command()
+    else {
+        panic!("start")
+    };
+    assert_eq!(restored.model_input(), input.model_input());
+    let wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(
+        wire["records"][0]["command"]["input"]["profile"],
+        "yo.structured-input/v2"
+    );
+    for mutation in ["v1", "missing", "null", "empty", "oversized", "no-skill"] {
+        let mut malformed = wire.clone();
+        let value = &mut malformed["records"][0]["command"]["input"];
+        match mutation {
+            "v1" => value["profile"] = serde_json::json!("yo.structured-input/v1"),
+            "missing" => {
+                value.as_object_mut().unwrap().remove("resolved_skill");
+            },
+            "null" => value["resolved_skill"] = serde_json::Value::Null,
+            "empty" => value["resolved_skill"]["instructions"] = serde_json::json!(""),
+            "oversized" => {
+                value["resolved_skill"]["instructions"] =
+                    serde_json::json!("x".repeat(ResolvedSkill::MAX_INSTRUCTION_BYTES + 1))
+            },
+            "no-skill" => value["references"] = serde_json::json!([]),
+            _ => unreachable!(),
+        }
+        assert!(decode(&malformed.to_string()).is_err(), "{mutation}");
+    }
+}
+
+// 질문 응답의 세 입력 경로는 v1을 보존한다. v2 snapshot은 encode와 decode 양쪽에서
+// 거절하여 실행 시 무시되는 지침이 저장되거나 복구되는 일을 막는다.
+#[test]
+fn activity_response_inputs_reject_resolved_skill_snapshots() {
+    use crate::{ActivityRequestRef, ActivityResponse, InputReference, RequestId, ResolvedSkill};
+    let original = structured_input();
+    let reference = original
+        .references()
+        .iter()
+        .find_map(InputReference::skill_reference)
+        .unwrap()
+        .clone();
+    let resolved = original
+        .clone()
+        .with_resolved_skill(ResolvedSkill::new(reference, "instructions").unwrap())
+        .unwrap();
+    for variant in ["user_input", "question_answer", "previous_question"] {
+        let response = |input| match variant {
+            "user_input" => ActivityResponse::UserInput(input),
+            "question_answer" => ActivityResponse::QuestionAnswer {
+                choice: 1,
+                notes: input,
+            },
+            _ => ActivityResponse::PreviousQuestion {
+                choice: None,
+                draft: input,
+            },
+        };
+        let commit = |input| {
+            JournalCommit::incremental(sequenced(
+                1,
+                [committed(
+                    AgentCommand::RespondToActivity {
+                        request: ActivityRequestRef::new(
+                            activity(),
+                            RequestId::new(std::num::NonZeroU64::new(1).unwrap()),
+                        ),
+                        response: response(input),
+                    },
+                    None,
+                )],
+            ))
+        };
+        let encoded = encode(&commit(original.clone())).unwrap();
+        assert!(decode(&encoded).is_ok());
+        assert!(
+            encode(&commit(resolved.clone()))
+                .unwrap_err()
+                .to_string()
+                .contains("require structured input v1")
+        );
+        let mut wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let field = match variant {
+            "user_input" => "input",
+            "question_answer" => "notes",
+            _ => "draft",
+        };
+        let input = &mut wire["records"][0]["command"]["response"][field];
+        input["profile"] = serde_json::json!("yo.structured-input/v2");
+        input["resolved_skill"] = serde_json::json!({"instructions": "instructions"});
+        let error = decode(&wire.to_string()).unwrap_err();
+        assert!(
+            error.to_string().contains("require structured input v1"),
+            "{variant}: {error}"
+        );
+    }
+}
+
+// command 경계의 선행 text flush는 허용하지만, 먼저 발생한 semantic event나
+// 두 번째 command를 같은 incremental command commit으로 위장할 수 없습니다.
+#[test]
+fn command_commit_allows_only_storage_flush_before_its_single_command() {
+    let command = committed(
+        AgentCommand::InterruptTurn {
+            turn: activity().turn(),
+        },
+        None,
+    );
+    let segment = JournalRecord::MessageSegment(MessageSegment::new(
+        activity(),
+        MessageStream::Agent,
+        1,
+        "buffered text".into(),
+    ));
+    let valid = JournalCommit::incremental(sequenced(1, [segment.clone(), command.clone()]));
+    assert_eq!(decode(&encode(&valid).unwrap()).unwrap(), valid);
+    for records in [
+        vec![
+            JournalRecord::EventCommitted(AgentEvent::TurnStarted {
+                turn: activity().turn(),
+            }),
+            command.clone(),
+        ],
+        vec![segment, command.clone(), command],
+    ] {
+        let invalid = JournalCommit::incremental(sequenced(1, records));
+        let error = encode(&invalid).unwrap_err();
+        assert!(error.to_string().contains("one leading command"), "{error}");
+    }
+}
+
+// 이미지 입력도 세 ActivityResponse 경로에서는 encode/decode 모두 거절하여 문자열로 지우지 않는다.
+#[test]
+fn activity_responses_reject_image_input_without_dropping_snapshots() {
+    use crate::{ActivityRequestRef, ActivityResponse, InputImage, RequestId, UserInput};
+    let snapshot = serde_json::from_str(r#"{"profile":"yo.input-image-rgba8-triangle/v1","mime_type":"image/png","width":1,"height":1,"byte_length":70,"sha256":"sha256:4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5","data_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="}"#).unwrap();
+    let image = UserInput::new("[image]")
+        .with_images(vec![InputImage::new(0..7, 70, snapshot).unwrap()])
+        .unwrap();
+    let start = JournalCommit::incremental(sequenced(
+        1,
+        [committed(
+            AgentCommand::StartTurn {
+                turn: activity().turn(),
+                input: image.clone(),
+            },
+            Some(submission(4)),
+        )],
+    ));
+    let start_wire: serde_json::Value = serde_json::from_str(&encode(&start).unwrap()).unwrap();
+    assert_eq!(decode(&encode(&start).unwrap()).unwrap(), start);
+    for variant in ["user_input", "question_answer", "previous_question"] {
+        let response = |input| match variant {
+            "user_input" => ActivityResponse::UserInput(input),
+            "question_answer" => ActivityResponse::QuestionAnswer {
+                choice: 1,
+                notes: input,
+            },
+            _ => ActivityResponse::PreviousQuestion {
+                choice: None,
+                draft: input,
+            },
+        };
+        let commit = |input| {
+            JournalCommit::incremental(sequenced(
+                1,
+                [committed(
+                    AgentCommand::RespondToActivity {
+                        request: ActivityRequestRef::new(
+                            activity(),
+                            RequestId::new(1.try_into().unwrap()),
+                        ),
+                        response: response(input),
+                    },
+                    None,
+                )],
+            ))
+        };
+        assert!(encode(&commit(image.clone())).is_err());
+        let mut wire: serde_json::Value =
+            serde_json::from_str(&encode(&commit(UserInput::new("plain"))).unwrap()).unwrap();
+        let field = match variant {
+            "user_input" => "input",
+            "question_answer" => "notes",
+            _ => "draft",
+        };
+        wire["records"][0]["command"]["response"][field] =
+            start_wire["records"][0]["command"]["input"].clone();
+        assert!(decode(&wire.to_string()).is_err());
+    }
 }

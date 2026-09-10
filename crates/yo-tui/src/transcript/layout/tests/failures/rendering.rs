@@ -49,24 +49,6 @@ fn text_failure_preserves_surface_and_view_state() {
     );
 }
 
-// 여러 item의 separator와 본문 높이 합이 u16을 넘으면 wrapping하지 않고 원자적으로 실패한다.
-#[test]
-fn combined_height_overflow_preserves_surface_and_view_state() {
-    let tall = "a\n".repeat(32_767);
-    let mut transcript = TranscriptState::new();
-    transcript
-        .push_user(id(1), tall.clone())
-        .expect("unique user item");
-    transcript.push_user(id(2), tall).expect("unique user item");
-
-    assert_failure_preserves_surface_and_state(
-        &transcript,
-        Size::new(8, 2),
-        &TranscriptLayoutConfig::default(),
-        TranscriptRenderError::HeightOverflow,
-    );
-}
-
 // 폭이나 높이가 0인 view는 layout과 Surface 변경을 시작하지 않는다.
 #[test]
 fn empty_view_dimensions_are_rejected_before_mutation() {

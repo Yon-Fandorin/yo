@@ -1,4 +1,5 @@
 use serde_json::Value;
+use yo_core::AccountId;
 
 pub(crate) fn managed_binding_matches(
     binding_identity: &str,
@@ -23,14 +24,23 @@ pub(crate) fn delegated_binding_matches(
     host: &str,
     execution_profile: &str,
 ) -> Result<bool, String> {
-    let expected_schema = match host {
-        "codex" => "codex.app-server/thread-binding/v1alpha1",
-        "grok" => "grok.acp/session-binding/v1alpha1",
+    let schema_matches = match host {
+        "codex" => matches!(
+            binding_schema,
+            "codex.app-server/thread-binding/v1alpha1" | "codex.app-server/thread-binding/v1alpha2"
+        ),
+        "grok" => binding_schema == "grok.acp/session-binding/v1alpha1",
         other => return Err(format!("unsupported delegated review host `{other}`")),
     };
     let binding: Value = serde_json::from_str(binding_identity)
         .map_err(|error| format!("delegated binding identity is not JSON: {error}"))?;
-    Ok(binding_schema == expected_schema
+    let account_matches = binding_schema != "codex.app-server/thread-binding/v1alpha2"
+        || binding
+            .get("accountId")
+            .and_then(Value::as_str)
+            .is_some_and(|account| AccountId::new(account).is_ok());
+    Ok(schema_matches
+        && account_matches
         && binding.get("executionProfile").and_then(Value::as_str) == Some(execution_profile))
 }
 
@@ -132,5 +142,41 @@ mod tests {
         assert!(delegated_backend_kind_matches("grok-build-acp", "grok"));
         assert!(!delegated_backend_kind_matches("codex", "codex"));
         assert!(!delegated_backend_kind_matches("codex-app-server", "grok"));
+    }
+
+    // 계정 식별자를 포함하는 현재 Codex review binding도 허용하되, 일반 세션·다른 host·
+    // 누락된 계정·다른 실행 profile을 review 증거로 받아들이지 않는다.
+    #[test]
+    fn account_bound_codex_review_preserves_host_and_execution_checks() {
+        let profile = "yo.delegated-review-execution/v1alpha1";
+        let schema = "codex.app-server/thread-binding/v1alpha2";
+        let value = serde_json::json!({
+            "accountId": "account-test",
+            "threadId": "thread-test",
+            "sessionId": "thread-test",
+            "executionProfile": profile,
+        });
+        assert!(delegated_binding_matches(schema, &value.to_string(), "codex", profile).unwrap());
+        assert!(!delegated_binding_matches(schema, &value.to_string(), "grok", profile).unwrap());
+        assert!(
+            !delegated_binding_matches(
+                "codex.app-server/thread-binding/v2",
+                &value.to_string(),
+                "codex",
+                profile
+            )
+            .unwrap()
+        );
+        for (field, replacement) in [
+            ("accountId", serde_json::Value::Null),
+            ("accountId", serde_json::json!("")),
+            ("executionProfile", serde_json::json!("other")),
+        ] {
+            let mut invalid = value.clone();
+            invalid[field] = replacement;
+            assert!(
+                !delegated_binding_matches(schema, &invalid.to_string(), "codex", profile).unwrap()
+            );
+        }
     }
 }

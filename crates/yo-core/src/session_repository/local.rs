@@ -3,8 +3,10 @@ mod reader;
 mod wire;
 
 use std::{
-    collections::HashMap,
-    fs,
+    collections::{BTreeMap, BTreeSet, HashMap},
+    ffi::OsStr,
+    fs::{self, File},
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::PathBuf,
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
@@ -12,18 +14,27 @@ use std::{
 
 use file::{
     LegacyWriterCompatibilityGuard, RootAppendGuard, SessionWriterLease, append_line,
-    coordination_file, prepare_root, scan_entries,
+    coordination_file, pin_reader_root, prepare_root, scan_entries,
 };
-use reader::{open_existing_root, read_snapshot_entries, read_tail_discovery};
+use reader::{
+    TreeReadBudget, open_existing_root, read_fork_entries, read_snapshot_entries,
+    read_tail_discovery, read_tree_entries,
+};
+use rustix::{
+    fs::{AtFlags, Dir, FileType, statat},
+    io::Errno,
+};
 use wire::WireEntry;
 
 use super::{
     AppendError, AppendReceipt, DurableCutoff, DurableRecord, DurableRecordKind, RepositoryEntry,
-    RepositoryError, RepositorySequence, SessionRepository, SessionWriterRepository,
-    StoragePressure, StoragePressureCause, StoredSession, StoredSessionReader,
-    StoredSessionSnapshot, StoredSessionSummary, StoredSessionUnavailableReason,
+    RepositoryError, RepositorySequence, SessionRepository, SessionTreeLimits,
+    SessionTreePlaceholder, SessionWriterRepository, StoragePressure, StoragePressureCause,
+    StoredSession, StoredSessionReader, StoredSessionSnapshot, StoredSessionSummary,
+    StoredSessionTree, StoredSessionUnavailableReason,
+    tree::{self, TreeCandidate},
 };
-use crate::{JournalSequence, SessionId};
+use crate::{HostWorkspacePath, JournalSequence, SessionId, WorkspaceHostId};
 
 #[derive(Clone, Copy, Debug, Default)]
 struct SessionState {
@@ -46,13 +57,22 @@ pub struct LocalSessionRepository {
 #[derive(Debug)]
 pub struct LocalSessionReader {
     root: PathBuf,
+    tree_root: File,
 }
 
 impl LocalSessionReader {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, RepositoryError> {
-        Ok(Self {
-            root: open_existing_root(&root.into())?,
-        })
+        let requested = root.into();
+        let original = fs::symlink_metadata(&requested)?;
+        let root = open_existing_root(&requested)?;
+        let tree_root = pin_reader_root(&root)?;
+        let pinned = tree_root.metadata()?;
+        if original.dev() != pinned.dev() || original.ino() != pinned.ino() {
+            return Err(RepositoryError::Unavailable {
+                message: "Session repository root changed while the reader was opening".into(),
+            });
+        }
+        Ok(Self { root, tree_root })
     }
 
     fn session_path(&self, session_id: SessionId) -> PathBuf {
@@ -61,6 +81,129 @@ impl LocalSessionReader {
 }
 
 impl StoredSessionReader for LocalSessionReader {
+    fn read_tree(
+        &self,
+        workspace_host: WorkspaceHostId,
+        workspace: &HostWorkspacePath,
+        limits: SessionTreeLimits,
+    ) -> Result<StoredSessionTree, RepositoryError> {
+        let mut paths = BTreeMap::new();
+        let mut duplicates = BTreeSet::new();
+        let mut truncated = false;
+        let directory = Dir::read_from(&self.tree_root).map_err(std::io::Error::from)?;
+        let mut index = 0;
+        for entry in directory {
+            let entry = entry.map_err(std::io::Error::from)?;
+            let name = entry.file_name().to_bytes();
+            if matches!(name, b"." | b"..") {
+                continue;
+            }
+            if index == limits.directory_entries() {
+                truncated = true;
+                break;
+            }
+            index += 1;
+            let path = PathBuf::from(OsStr::from_bytes(name));
+            if path
+                .extension()
+                .is_none_or(|extension| extension != "jsonl")
+            {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let Ok(session_id) = SessionId::from_str(stem) else {
+                continue;
+            };
+            if paths.insert(session_id, path).is_some() {
+                duplicates.insert(session_id);
+            }
+        }
+        let collected: BTreeSet<_> = paths.keys().copied().collect();
+        truncated |= paths.len() > limits.sessions();
+        let mut candidates = Vec::new();
+        let mut budget = TreeReadBudget::new(limits);
+        for (session_id, path) in paths.into_iter().take(limits.sessions()) {
+            if budget.exhausted() {
+                candidates.push(TreeCandidate::uninspected(session_id));
+                continue;
+            }
+            let inspected = if duplicates.contains(&session_id) {
+                Err(RepositoryError::Unavailable {
+                    message: "multiple repository filenames claim the same Session identity".into(),
+                })
+            } else {
+                read_tree_entries(&self.tree_root, &path, session_id, &mut budget)
+            };
+            let candidate = match inspected {
+                Ok(Some((entries, summary))) => {
+                    TreeCandidate::inspect(StoredSession::Available(summary), &entries)
+                },
+                Ok(None) => TreeCandidate::unavailable(
+                    StoredSession::Unavailable {
+                        session_id,
+                        reason: StoredSessionUnavailableReason::NoCompleteEnvelope,
+                    },
+                    "Session tree candidate has no complete envelope".into(),
+                ),
+                Err(_) if budget.exhausted() => {
+                    truncated = true;
+                    TreeCandidate::uninspected(session_id)
+                },
+                Err(error) => {
+                    let detail = error.to_string();
+                    let reason = match error {
+                        RepositoryError::Quarantined { message } => {
+                            StoredSessionUnavailableReason::Quarantined { message }
+                        },
+                        RepositoryError::UnsupportedSchema { schema } => {
+                            StoredSessionUnavailableReason::UnsupportedSchema { schema }
+                        },
+                        RepositoryError::CorruptLog { .. }
+                        | RepositoryError::CorruptTail { .. } => {
+                            StoredSessionUnavailableReason::Corrupt {
+                                message: detail.clone(),
+                            }
+                        },
+                        RepositoryError::Unavailable { message } => {
+                            StoredSessionUnavailableReason::Unreadable { message }
+                        },
+                    };
+                    TreeCandidate::unavailable(
+                        StoredSession::Unavailable { session_id, reason },
+                        detail,
+                    )
+                },
+            };
+            candidates.push(candidate);
+        }
+        Ok(tree::assemble(
+            candidates,
+            workspace_host,
+            workspace,
+            truncated,
+            |parent| {
+                if collected.contains(&parent) {
+                    return SessionTreePlaceholder::Uninspected;
+                }
+                match statat(
+                    &self.tree_root,
+                    format!("{parent}.jsonl"),
+                    AtFlags::SYMLINK_NOFOLLOW,
+                ) {
+                    Err(Errno::NOENT) => SessionTreePlaceholder::MissingAncestor,
+                    Ok(metadata)
+                        if FileType::from_raw_mode(metadata.st_mode) == FileType::RegularFile =>
+                    {
+                        SessionTreePlaceholder::Uninspected
+                    },
+                    Ok(_) | Err(_) => SessionTreePlaceholder::Unavailable,
+                }
+            },
+        ))
+    }
+
     fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError> {
         let mut sessions = Vec::new();
         for entry in fs::read_dir(&self.root)? {
@@ -162,6 +305,25 @@ impl StoredSessionReader for LocalSessionReader {
                 StoredSessionSnapshot::Missing,
                 StoredSessionSnapshot::Present,
             )
+        })
+    }
+
+    fn read_session_bounded(
+        &self,
+        session_id: SessionId,
+        limits: super::SessionForkLimits,
+    ) -> Result<StoredSessionSnapshot, RepositoryError> {
+        let mut budget = TreeReadBudget::for_fork(limits);
+        read_fork_entries(
+            &self.tree_root,
+            std::path::Path::new(&format!("{session_id}.jsonl")),
+            session_id,
+            &mut budget,
+        )
+        .map(|captured| {
+            captured.map_or(StoredSessionSnapshot::Missing, |(entries, _)| {
+                StoredSessionSnapshot::Present(entries)
+            })
         })
     }
 

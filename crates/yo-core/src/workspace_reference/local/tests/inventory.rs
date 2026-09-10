@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::{
-    super::{build_inventory, discover_entries, git_command},
+    super::{DiscoveryBudget, build_inventory, discover_entries, git_command, pin_root},
     support::{TempFixture, host_id},
 };
 use crate::WorkspaceReferenceKind;
@@ -224,7 +224,13 @@ fn discovery_supports_a_plain_non_git_workspace() {
     fs::create_dir(root.join("notes/drafts")).unwrap();
     fs::write(root.join("notes/drafts/plan.md"), "plan\n").unwrap();
 
-    let (entries, incomplete) = discover_entries(root, false).unwrap();
+    let (entries, incomplete) = discover_entries(
+        root,
+        &pin_root(root).unwrap(),
+        false,
+        &mut DiscoveryBudget::default(),
+    )
+    .unwrap();
     assert!(!incomplete);
     let paths = entries
         .iter()
@@ -233,4 +239,129 @@ fn discovery_supports_a_plain_non_git_workspace() {
     assert!(paths.contains(&"notes"));
     assert!(paths.contains(&"notes/drafts"));
     assert!(paths.contains(&"notes/drafts/plan.md"));
+}
+
+// 루트 경로가 외부 디렉터리 symlink로 바뀌어도 이미 고정한 루트의 항목만 검색한다.
+// inventory 조립 단계는 이 결과를 공개하기 전에 루트 identity를 다시 비교한다.
+#[test]
+fn discovery_uses_the_pinned_root_after_path_replacement() {
+    let fixture = TempFixture::new("pinned-discovery");
+    let outside = TempFixture::new("pinned-discovery-outside");
+    let root = fixture.path().join("workspace");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/inside.rs"), "inside").unwrap();
+    fs::write(outside.path().join("outside.rs"), "outside").unwrap();
+    let descriptor = pin_root(&root).unwrap();
+    fs::rename(&root, fixture.path().join("original")).unwrap();
+    symlink(outside.path(), &root).unwrap();
+    let (entries, incomplete) =
+        discover_entries(&root, &descriptor, false, &mut DiscoveryBudget::default()).unwrap();
+    assert!(!incomplete);
+    assert!(entries.contains(&("src/inside.rs".to_owned(), WorkspaceReferenceKind::File)));
+    assert!(!entries.iter().any(|(path, _)| path.contains("outside")));
+    assert!(pin_root(&root).is_err());
+}
+
+// 항목 수와 경로 byte 한도는 경계값까지 허용하고 첫 초과부터 불완전 상태로 반환한다.
+// 예산이 끝나도 이미 수집한 후보를 없애거나 완전한 검색으로 보고하지 않는다.
+#[test]
+fn discovery_reports_the_first_excess_entry_and_path_byte() {
+    let fixture = TempFixture::new("discovery-entry-budget");
+    for name in ["a", "b", "c"] {
+        fs::write(fixture.path().join(name), "contents").unwrap();
+    }
+    let root = fixture.path();
+    let descriptor = pin_root(root).unwrap();
+    for limit in [3, 2] {
+        let mut budget = DiscoveryBudget {
+            entries_left: limit,
+            ..DiscoveryBudget::default()
+        };
+        let (entries, incomplete) =
+            discover_entries(root, &descriptor, false, &mut budget).unwrap();
+        assert_eq!(entries.len(), limit);
+        assert_eq!(incomplete, limit == 2);
+    }
+    for limit in [3, 2] {
+        let mut budget = DiscoveryBudget {
+            bytes_left: limit,
+            ..DiscoveryBudget::default()
+        };
+        let (entries, incomplete) =
+            discover_entries(root, &descriptor, false, &mut budget).unwrap();
+        assert_eq!(entries.len(), limit);
+        assert_eq!(incomplete, limit == 2);
+    }
+    let mut budget = DiscoveryBudget {
+        deadline: std::time::Instant::now(),
+        ..DiscoveryBudget::default()
+    };
+    let (entries, incomplete) = discover_entries(root, &descriptor, false, &mut budget).unwrap();
+    assert!(entries.is_empty());
+    assert!(incomplete);
+}
+
+// Git index가 참조하는 파일의 상위 디렉터리를 외부 symlink로 교체하면 tracked 경로도
+// 후보로 되살리지 않는다. 일반 검색과 tracked 보충 경로가 같은 no-follow 규칙을 쓴다.
+#[test]
+fn tracked_discovery_cannot_restore_files_below_replaced_symlink_ancestors() {
+    let fixture = TempFixture::new("tracked-discovery-symlink");
+    let outside = TempFixture::new("tracked-discovery-symlink-outside");
+    let root = fixture.path();
+    fs::create_dir(root.join("src")).unwrap();
+    fs::write(root.join("src/a"), "original").unwrap();
+    fs::write(outside.path().join("a"), "outside").unwrap();
+    assert!(
+        git_command(root)
+            .args(["init", "-q"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        git_command(root)
+            .args(["add", "src/a"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::remove_file(root.join("src/a")).unwrap();
+    fs::remove_dir(root.join("src")).unwrap();
+    symlink(outside.path(), root.join("src")).unwrap();
+    let inventory = build_inventory(root, host_id()).unwrap();
+    assert!(
+        !inventory
+            .entries
+            .iter()
+            .any(|entry| entry.reference().relative_path().starts_with("src"))
+    );
+    assert!(matches!(
+        inventory.status,
+        crate::WorkspaceReferenceSearchStatus::Incomplete(_)
+    ));
+}
+
+// check-ignore의 입력과 출력이 모두 pipe 용량을 넘더라도 서로 기다리지 않고 완료한다.
+// Git 단계 자체에 제한 시간이 있어 회귀 시 테스트가 무한 대기하지 않는다.
+#[test]
+fn discovery_drains_large_ignore_batches_while_sending_paths() {
+    let fixture = TempFixture::new("discovery-large-ignore");
+    let root = fixture.path();
+    assert!(
+        git_command(root)
+            .args(["init", "-q"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(root.join(".gitignore"), "*\n").unwrap();
+    for index in 0..1500 {
+        fs::write(root.join(format!("{index:04}-{}", "x".repeat(180))), "").unwrap();
+    }
+    let inventory = build_inventory(root, host_id()).unwrap();
+    assert!(inventory.entries.is_empty());
+    assert!(matches!(
+        inventory.status,
+        crate::WorkspaceReferenceSearchStatus::Complete
+    ));
 }

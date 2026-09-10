@@ -21,3 +21,31 @@ fn missing_read_only_storage_reports_requested_session_not_found() {
         format!("stored Session {session_id} was not found")
     );
 }
+
+// 저장 세션 선택 시 현재 모델·도구·sandbox 강제 설정은 넘기지 않고 화면 설정만 유지한다.
+#[test]
+fn saved_session_options_preserve_presentation_without_overriding_saved_execution() {
+    let target = "01890f00-0000-7000-8000-000000000009".parse().unwrap();
+    let options = command::LiveOptions {
+        mode: yo_tui::PresentationMode::Fullscreen,
+        theme: None,
+        glyph_profile: yo_tui::GlyphProfile::Ascii,
+        selection: command::LiveSelection::New,
+        model: Some("host:codex".to_owned()),
+        no_tools: true,
+        sandbox: Some(command::SandboxMode::ReadOnly),
+    };
+    for selection in [
+        command::LiveSelection::Resume(target),
+        command::LiveSelection::New,
+    ] {
+        let selected = saved_execution_options(options.clone(), selection);
+        assert_eq!(selected.selection, selection);
+        assert!(selected.model.is_none());
+        assert!(!selected.no_tools);
+        assert!(selected.sandbox.is_none());
+        assert_eq!(selected.mode, options.mode);
+        assert_eq!(selected.theme, options.theme);
+        assert_eq!(selected.glyph_profile, options.glyph_profile);
+    }
+}

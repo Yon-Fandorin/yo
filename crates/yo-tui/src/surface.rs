@@ -1,6 +1,8 @@
 //! A deterministic, adapter-independent two-dimensional cell surface.
 
 mod cell;
+mod raster;
+pub(crate) use raster::RasterImage;
 mod diff;
 mod geometry;
 mod storage;
@@ -8,7 +10,7 @@ mod style;
 mod text;
 mod view;
 
-pub use cell::{Cell, CellContent};
+pub use cell::{Cell, CellContent, Hyperlink};
 pub use diff::{FrameDiff, RowSpan};
 pub use geometry::{GeometryError, Point, Rect, Size};
 pub use storage::{Surface, SurfaceError};

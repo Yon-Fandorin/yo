@@ -87,7 +87,7 @@ fn final_prefix_waits_for_acknowledgement_and_stops_before_streaming() {
         .unwrap();
     assert_eq!(
         plain_surface(&next.publication.as_ref().unwrap().surface),
-        "\n• Thinking…\n\n\n❯ later final"
+        "\n• Model work completed\n\n\n❯ later final"
     );
 }
 
@@ -241,4 +241,77 @@ fn plain_surface(surface: &Surface) -> String {
         .join("\n")
         .trim_end()
         .to_owned()
+}
+
+// 미완료 Chat suffix의 논리 높이가 65,535를 넘어도 inline live Surface는 실제 terminal
+// 높이로만 만들어지고, 아직 완료되지 않은 본문은 persistent 후보로 잘라 게시하지 않는다.
+#[test]
+fn large_unpublished_history_clamps_only_the_physical_live_surface() {
+    use yo_core::ActivityUpdate;
+    let mut state = TuiState::new();
+    for number in 1..=3 {
+        state
+            .observe(AgentEvent::ActivityStarted {
+                activity: activity(number),
+                kind: ActivityKind::ModelWork,
+            })
+            .unwrap();
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: activity(number),
+                update: ActivityUpdate::TextSnapshot(format!(
+                    "{}last{number}",
+                    "x\n".repeat(30000)
+                )),
+            })
+            .unwrap();
+    }
+    let size = Size::new(32, 12);
+    let frame = state
+        .prepare_frame_for_geometry(size, &AppearanceState::default().pin(), Duration::ZERO, 1)
+        .unwrap();
+    assert_eq!(frame.surface.size(), size);
+    assert!(frame.publication.is_none());
+    assert!(plain_surface(&frame.surface).contains("last3"));
+}
+
+// persistent Surface의 마지막 허용 행은 보존하고 첫 초과 후보는 반복 준비에도 cursor를
+// 전진시키지 않는다. 같은 대화의 Fullscreen 렌더는 논리 높이로 계속 동작한다.
+#[test]
+fn persistent_publication_keeps_its_surface_bound_without_limiting_fullscreen_history() {
+    for total in [65_535_usize, 65_536] {
+        let mut state = TuiState::new();
+        for rows in [32_768, total - 32_770] {
+            state
+                .observe_record(TranscriptRecord::CommandCommitted(
+                    AgentCommand::StartTurn {
+                        turn: turn(),
+                        input: UserInput::from(format!("{}x", "x\n".repeat(rows - 1))),
+                    },
+                ))
+                .unwrap();
+        }
+        let appearance = AppearanceState::default().pin();
+        let size = Size::new(3, 12);
+        if total == 65_535 {
+            let frame = state
+                .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
+                .unwrap();
+            assert_eq!(frame.publication.unwrap().surface.size().height, u16::MAX);
+        } else {
+            for _ in 0..2 {
+                assert!(
+                    state
+                        .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
+                        .is_err()
+                );
+            }
+            state.set_presentation_mode(PresentationMode::Fullscreen);
+            let frame = state
+                .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
+                .unwrap();
+            assert!(frame.publication.is_none());
+            assert_eq!(frame.surface.size(), size);
+        }
+    }
 }

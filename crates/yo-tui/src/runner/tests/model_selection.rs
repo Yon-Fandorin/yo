@@ -749,3 +749,57 @@ fn pending_activity_keeps_model_selection_local_and_the_next_reply_correlated() 
     );
     assert_eq!(state.take_model_selection(), None);
 }
+
+// 수락 알림이 시작 이벤트보다 먼저 도착해도 model 교체는 현재 요청의 완료 뒤로 예약한다.
+#[test]
+fn accepted_start_reserves_model_selection_before_turn_started_arrives() {
+    use yo_core::SubmissionOutcome;
+
+    use crate::input::event::KeyModifiers;
+    let mut state = TuiState::new();
+    state.enable_model_selection(model_controller("qwen3.8max"));
+    state
+        .observe_durability(JournalDurability::Durable {
+            journal_sequence: None,
+            repository_sequence: RepositorySequence::new(1),
+        })
+        .unwrap();
+    state
+        .handle(InputEvent::Paste("work".to_owned()), Duration::ZERO)
+        .unwrap();
+    let StateEffect::Dispatch(AgentAction::Submit(start)) = state
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("start");
+    };
+    state
+        .observe_submission_outcome(SubmissionOutcome::Accepted { id: start.id() })
+        .unwrap();
+    state
+        .handle(
+            InputEvent::Paste("/model openrouter::free-model".to_owned()),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(state.take_model_selection().is_none());
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    assert_eq!(
+        state
+            .observe(AgentEvent::TurnFinished {
+                turn: turn(),
+                outcome: TurnOutcome::Completed
+            })
+            .unwrap(),
+        StateEffect::Exit
+    );
+    assert!(state.take_model_selection().is_some());
+}

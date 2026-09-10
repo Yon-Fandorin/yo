@@ -21,10 +21,32 @@ pub(crate) enum ConfigError {
         path: PathBuf,
         source: Box<yo_yaml::Error>,
     },
+    InvalidSkills {
+        path: PathBuf,
+        detail: String,
+    },
+    InvalidTools {
+        path: PathBuf,
+        detail: &'static str,
+    },
+    InvalidPrompts {
+        path: PathBuf,
+        detail: String,
+    },
     InvalidDateFormat(String),
     InvalidMaxFps {
         path: PathBuf,
         value: u16,
+    },
+    InvalidThemeColor {
+        path: PathBuf,
+        role: String,
+        value: String,
+        detail: &'static str,
+    },
+    InvalidTheme {
+        path: PathBuf,
+        value: String,
     },
     TimestampOutOfRange(u64),
 }
@@ -52,10 +74,34 @@ impl fmt::Display for ConfigError {
                 "{} contains invalid configuration: {source}",
                 path.display()
             ),
+            Self::InvalidSkills { path, detail } => {
+                write!(formatter, "{}: skills: {detail}", path.display())
+            },
+            Self::InvalidTools { path, detail } => {
+                write!(formatter, "{}: tools.commands: {detail}", path.display())
+            },
+            Self::InvalidPrompts { path, detail } => {
+                write!(formatter, "{}: prompts: {detail}", path.display())
+            },
             Self::InvalidDateFormat(message) => formatter.write_str(message),
             Self::InvalidMaxFps { path, value } => write!(
                 formatter,
                 "{}: tui.max_fps must be 60 or 120, not {value}",
+                path.display()
+            ),
+            Self::InvalidThemeColor {
+                path,
+                role,
+                value,
+                detail,
+            } => write!(
+                formatter,
+                "{}: tui.colors.{role} ({value:?}): {detail}",
+                path.display()
+            ),
+            Self::InvalidTheme { path, value } => write!(
+                formatter,
+                "{}: tui.theme must be default, light, or mono, not {value:?}",
                 path.display()
             ),
             Self::TimestampOutOfRange(millis) => write!(

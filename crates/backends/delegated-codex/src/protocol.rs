@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use yo_core::{
     AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
-    AccountId, BackendFailure, BackendFailureKind, ProviderId,
+    AccountId, ActivityNotice, BackendFailure, BackendFailureKind, NoticeLevel, ProviderId,
 };
 
 const SUPPORTED_CODEX_MAJOR: u64 = 0;
@@ -43,14 +43,94 @@ pub(super) struct InitializeResult {
     pub compatibility_warning: Option<CodexCompatibilityWarning>,
 }
 
-/// A bounded, terminal-safe compatibility warning from the Codex app-server handshake.
+/// A bounded, terminal-safe Codex compatibility or server warning.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CodexCompatibilityWarning {
+pub struct CodexWarning {
     display_user_agent: String,
+    notice: Option<ActivityNotice>,
+    thread_id: Option<String>,
 }
 
-impl fmt::Display for CodexCompatibilityWarning {
+/// Historical observer argument name retained for source compatibility.
+pub type CodexCompatibilityWarning = CodexWarning;
+
+impl CodexWarning {
+    /// Structured, terminal-safe presentation independent of a Turn or tool activity.
+    pub fn to_notice(&self) -> ActivityNotice {
+        self.notice.clone().unwrap_or_else(|| ActivityNotice {
+            title: "Codex compatibility warning".to_owned(),
+            message: self.to_string(),
+            level: NoticeLevel::Warning,
+        })
+    }
+
+    pub(super) fn from_notification(method: &str, params: &Value) -> Option<Self> {
+        let (title, mut message) = match method {
+            "warning" => ("Codex warning", params.get("message")?.as_str()?.to_owned()),
+            "guardianWarning" => {
+                params.get("threadId")?.as_str()?;
+                (
+                    "Codex approval warning",
+                    params.get("message")?.as_str()?.to_owned(),
+                )
+            },
+            "deprecationNotice" => (
+                "Codex deprecation notice",
+                params.get("summary")?.as_str()?.to_owned(),
+            ),
+            "configWarning" => (
+                "Codex configuration warning",
+                params.get("summary")?.as_str()?.to_owned(),
+            ),
+            _ => return None,
+        };
+        for (field, label) in [("details", "Details"), ("path", "File")] {
+            if let Some(value) = params.get(field).and_then(Value::as_str) {
+                message.push_str(&format!("\n{label}: {value}"));
+            }
+        }
+        if let Some(range) = params.get("range").filter(|value| !value.is_null()) {
+            message.push_str(&format!("\nRange: {range}"));
+        }
+        let thread_id = match params.get("threadId") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) => Some(id.clone()),
+            _ => return None,
+        };
+        let mut safe = String::new();
+        for character in message.chars() {
+            let rendered = if character.is_control() && !matches!(character, '\n' | '\t') {
+                character.escape_default().collect::<String>()
+            } else {
+                character.to_string()
+            };
+            if safe.len() + rendered.len() + 3 > 8192 {
+                safe.push('…');
+                break;
+            }
+            safe.push_str(&rendered);
+        }
+        Some(Self {
+            display_user_agent: String::new(),
+            notice: Some(ActivityNotice {
+                title: title.to_owned(),
+                message: safe,
+                level: NoticeLevel::Warning,
+            }),
+            thread_id,
+        })
+    }
+
+    pub(super) fn thread_id(&self) -> Option<&str> {
+        self.thread_id.as_deref()
+    }
+}
+
+impl fmt::Display for CodexWarning {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(notice) = &self.notice {
+            return write!(formatter, "{}: {}", notice.title, notice.message);
+        }
         let supported = SUPPORTED_CODEX_MINORS
             .iter()
             .map(|minor| format!("{SUPPORTED_CODEX_MAJOR}.{minor}"))
@@ -420,7 +500,11 @@ fn version_compatibility_warning(
     if SUPPORTED_CODEX_MINORS.contains(&minor) {
         return Ok(None);
     }
-    Ok(Some(CodexCompatibilityWarning { display_user_agent }))
+    Ok(Some(CodexWarning {
+        display_user_agent,
+        notice: None,
+        thread_id: None,
+    }))
 }
 
 fn safe_user_agent(user_agent: &str) -> String {

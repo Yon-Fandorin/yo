@@ -137,3 +137,63 @@ fn supported_steer_is_forwarded_without_creating_a_turn() {
     assert_eq!(runtime.backend().remaining_steps(), 1);
     runtime.shutdown().unwrap();
 }
+
+// 미리 해석된 스킬이 포함된 질문 응답은 backend와 journal에 도달하지 않는다.
+// 거절 후 같은 요청에 일반 응답을 보낼 수 있어 질문 상태도 소비하지 않는다.
+#[test]
+fn resolved_skills_in_activity_responses_never_reach_the_backend() {
+    use crate::{InputReference, ResolvedSkill, SkillReference, SkillReferenceScope};
+    let active_turn = turn(session(1), 1);
+    let request_activity = activity(active_turn, 1);
+    let request_id = RequestId::new(id(1));
+    let request = ActivityRequestRef::new(request_activity, request_id);
+    let plain = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::UserInput(UserInput::new("answer")),
+    };
+    let (mut runtime, _) = runtime_with_active_turn([
+        BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        }),
+        BackendScriptStep::AcceptCommand(plain.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    runtime.poll_event().unwrap();
+    let reference = SkillReference::new(
+        "skill:review",
+        "host:one",
+        "/skills/review/SKILL.md",
+        "review",
+        SkillReferenceScope::User,
+        1,
+        "revision",
+    );
+    let input = UserInput::with_references(
+        "$review",
+        vec![InputReference::skill(0..7, reference.clone())],
+    )
+    .unwrap()
+    .with_resolved_skill(ResolvedSkill::new(reference, "instructions").unwrap())
+    .unwrap();
+    for response in [
+        ActivityResponse::UserInput(input.clone()),
+        ActivityResponse::QuestionAnswer {
+            choice: 1,
+            notes: input.clone(),
+        },
+        ActivityResponse::PreviousQuestion {
+            choice: None,
+            draft: input,
+        },
+    ] {
+        let error = runtime
+            .execute_command(AgentCommand::RespondToActivity { request, response })
+            .unwrap_err();
+        assert!(matches!(error, RuntimeError::InputRejected(_)), "{error}");
+        assert_eq!(runtime.backend().remaining_steps(), 2);
+    }
+    runtime.execute_command(plain).unwrap();
+    assert_eq!(runtime.backend().remaining_steps(), 1);
+    runtime.shutdown().unwrap();
+}

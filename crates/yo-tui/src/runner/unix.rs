@@ -2,19 +2,21 @@ use std::{
     error::Error,
     panic::AssertUnwindSafe,
     sync::Arc,
-    task::{Context, Wake, Waker},
+    task::{Context, Poll, Wake, Waker},
     thread::{self, Thread},
     time::Instant,
 };
 
-use yo_core::SubmissionOutcome;
+use yo_core::{
+    ImagePreparationUpdate, SubmissionOutcome, SubmissionRejection, SubmissionRejectionKind,
+};
 
 use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
     appearance::{ColorCapability, MotionPreference},
     runner::{
-        AgentConnection, DispatchOutcome, PresentationMode, RunError, TerminalOutcome,
-        TerminationSource, TuiSession,
+        AgentConnection, DispatchOutcome, ExitReason, PresentationMode, RunError, RunOutcome,
+        TerminalOutcome, TerminationSource, TuiSession,
         frame::{FrameRequest, FrameScheduler},
         session::SessionParts,
         source_schedule::SourceSchedule,
@@ -52,15 +54,17 @@ pub(super) trait FrameViewport {
 #[cfg(test)]
 pub(super) use presenter::RenderReceipt;
 pub(super) use presenter::{LivePresenter, prepare_resize};
+#[cfg(test)]
+pub(super) use sources::apply_agent_poll;
 pub(super) use sources::{
-    OrdinaryObservation, OrdinaryPoll, apply_agent_poll, apply_skill_poll, apply_workspace_poll,
+    OrdinaryObservation, OrdinaryPoll, apply_host_poll, apply_skill_poll, apply_workspace_poll,
     handle_backpressured_input, poll_ordinary,
 };
 
 use self::{
     presenter::{PresentationState, render_requested_frame},
     sources::{dispatch_skill_search, dispatch_workspace_search},
-    timing::{WORKER_RETRY_INTERVAL, request_due_motion, wait_timeout},
+    timing::{GEOMETRY_CHECK_INTERVAL, WORKER_RETRY_INTERVAL, request_due_motion, wait_timeout},
 };
 
 pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
@@ -97,6 +101,9 @@ pub(super) enum LoopError {
 impl LoopError {
     pub(super) fn detail(&self) -> String {
         match self {
+            Self::State(StateError::RequestPanel(error)) => {
+                format!("presenting an agent request failed: {error:?}")
+            },
             Self::State(StateError::PreviewAgent) => "offline preview agent failed".to_owned(),
             Self::Input(error) => format!("reading terminal input failed: {error}"),
             Self::Agent(error) => format!("communicating with the agent failed: {error}"),
@@ -197,13 +204,73 @@ where
     })))?;
     if matches!(
         outcome,
-        TerminalOutcome::Exited(crate::runner::RunOutcome {
-            reason: crate::runner::ExitReason::UserRequested,
+        TerminalOutcome::Exited(RunOutcome {
+            reason: ExitReason::UserRequested,
+            ..
+        })
+    ) && let Some((picker, index)) = session.take_fork_boundary_request()
+    {
+        return Ok(TerminalOutcome::ForkBoundaryRequested { picker, index });
+    }
+    if matches!(
+        outcome,
+        TerminalOutcome::Exited(RunOutcome {
+            reason: ExitReason::UserRequested,
+            ..
+        })
+    ) && session.take_fork_picker_request()
+    {
+        return Ok(TerminalOutcome::ForkPickerRequested);
+    }
+    if matches!(
+        outcome,
+        TerminalOutcome::Exited(RunOutcome {
+            reason: ExitReason::UserRequested,
             ..
         })
     ) && let Some(selection) = session.take_model_selection()
     {
         return Ok(TerminalOutcome::ModelSelectionRequested(selection));
+    }
+    if matches!(
+        outcome,
+        TerminalOutcome::Exited(RunOutcome {
+            reason: ExitReason::UserRequested,
+            ..
+        })
+    ) && session.take_session_tree_request()
+    {
+        return Ok(TerminalOutcome::SessionTreeRequested);
+    }
+    if matches!(
+        outcome,
+        TerminalOutcome::Exited(RunOutcome {
+            reason: ExitReason::UserRequested,
+            ..
+        })
+    ) && session.take_fork_session_request()
+    {
+        return Ok(TerminalOutcome::ForkSessionRequested);
+    }
+    if matches!(
+        outcome,
+        TerminalOutcome::Exited(RunOutcome {
+            reason: ExitReason::UserRequested,
+            ..
+        })
+    ) && session.take_new_session_request()
+    {
+        return Ok(TerminalOutcome::NewSessionRequested);
+    }
+    if matches!(
+        outcome,
+        TerminalOutcome::Exited(RunOutcome {
+            reason: ExitReason::UserRequested,
+            ..
+        })
+    ) && let Some(target) = session.take_resume_session_request()
+    {
+        return Ok(TerminalOutcome::ResumeSessionRequested(target));
     }
     Ok(outcome)
 }
@@ -322,15 +389,48 @@ where
         frame_rate_limit,
         workspace_references,
         skill_references,
+        image_preparation,
         publication_recovery_evidence,
     } = retained.parts_mut();
     let mut presentation =
         PresentationState::new(start.size, start.started, publication_recovery_evidence);
     let mut frames = FrameScheduler::new(frame_rate_limit);
     let mut source_schedule = SourceSchedule::default();
+    let mut geometry_deadline = Instant::now() + GEOMETRY_CHECK_INTERVAL;
     frames.request(FrameRequest::Immediate);
 
     loop {
+        if let Some(host) = image_preparation.as_mut() {
+            if !state.image_preparation_is_current() {
+                host.cancel();
+            }
+            if let Poll::Ready(update) = host.poll(&mut context)
+                && state
+                    .observe_image_preparation(update)
+                    .map_err(LoopError::State)?
+            {
+                frames.request(FrameRequest::Coalesced);
+            }
+        }
+        let now = Instant::now();
+        // Recover missed terminal resize notifications even while all producers are idle.
+        // Stable geometry does not invalidate or publish another frame.
+        if now >= geometry_deadline {
+            let next = sample_geometry().map_err(|error| {
+                LoopError::Input(format!("reading terminal size failed: {error}"))
+            })?;
+            geometry_deadline = now + GEOMETRY_CHECK_INTERVAL;
+            if next != presentation.size {
+                presentation.geometry_epoch = presentation
+                    .geometry_epoch
+                    .checked_add(1)
+                    .ok_or(LoopError::GeometryEpochOverflow)?;
+                prepare_resize(viewport, &mut presentation.size, next);
+                presentation.frame_visible = false;
+                presentation.motion_deadline = None;
+                frames.request(FrameRequest::Immediate);
+            }
+        }
         if state.tick_preview().map_err(LoopError::State)? {
             frames.request(FrameRequest::Coalesced);
         }
@@ -382,12 +482,29 @@ where
                 return Ok(LoopExit::User);
             }
         }
+        if pending_control.is_none()
+            && pending_dispatch.is_none()
+            && let Some(action) = state.next_follow_up().map_err(LoopError::State)?
+        {
+            let admission = agent
+                .dispatch(action)
+                .map_err(|error| LoopError::Agent(error.to_string()))?;
+            let effect = apply_admission(state, pending_dispatch, admission)?;
+            if finish_admission_effect(effect, &mut frames) {
+                return Ok(LoopExit::User);
+            }
+            frames.request(FrameRequest::Coalesced);
+        }
         let backpressured = pending_control.is_some() || pending_dispatch.is_some();
         let base = backpressured.then_some(WORKER_RETRY_INTERVAL);
-        let motion_or_preview_deadline = [presentation.motion_deadline, state.preview_deadline()]
-            .into_iter()
-            .flatten()
-            .min();
+        let motion_or_preview_deadline = [
+            presentation.motion_deadline,
+            state.preview_deadline(),
+            Some(geometry_deadline),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         let timeout = wait_timeout(
             base,
             motion_or_preview_deadline,
@@ -417,7 +534,7 @@ where
         };
         match observation {
             OrdinaryObservation::Agent(observation) => {
-                if apply_agent_poll(state, observation)? {
+                if apply_host_poll(state, appearance, observation)? {
                     if state.model_switch_ready() {
                         return Ok(LoopExit::User);
                     }
@@ -482,6 +599,27 @@ where
                         dispatch_skill_search(skill_references, state, request);
                         frames.request(FrameRequest::Coalesced);
                     },
+                    StateEffect::PrepareImage(request) => {
+                        let result = image_preparation
+                            .as_mut()
+                            .ok_or_else(|| {
+                                SubmissionRejection::new(
+                                    SubmissionRejectionKind::EnvironmentUnavailable,
+                                    "Image preparation is unavailable.",
+                                )
+                            })
+                            .and_then(|host| host.start(request.clone()));
+                        if let Err(error) = result {
+                            state
+                                .observe_image_preparation(ImagePreparationUpdate {
+                                    id: request.id,
+                                    revision: request.revision,
+                                    result: Err(error),
+                                })
+                                .map_err(LoopError::State)?;
+                        }
+                        frames.request(FrameRequest::Coalesced);
+                    },
                     StateEffect::Resize(next) => {
                         presentation.geometry_epoch = presentation
                             .geometry_epoch
@@ -532,6 +670,7 @@ fn finish_admission_effect(effect: StateEffect, frames: &mut FrameScheduler) -> 
         StateEffect::Dispatch(_)
         | StateEffect::WorkspaceSearch(_)
         | StateEffect::SkillSearch(_)
+        | StateEffect::PrepareImage(_)
         | StateEffect::Resize(_)
         | StateEffect::Suspend => {
             unreachable!("submission admission cannot produce an unrelated state effect")

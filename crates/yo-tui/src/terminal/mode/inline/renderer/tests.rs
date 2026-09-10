@@ -284,3 +284,77 @@ impl Write for OneShotFailingWriter {
         Ok(())
     }
 }
+
+// OSC 중간에서 쓰기가 실패해도 링크를 닫고 다음 일반 frame을 링크 없이 복구한다.
+#[test]
+fn partial_hyperlink_output_is_closed_before_inline_recovery() {
+    use crate::{
+        surface::{Grapheme, Hyperlink, Rect, Style},
+        terminal::RESET_HYPERLINK,
+    };
+    let size = Size::new(2, 1);
+    let mut current = Surface::new(size).unwrap();
+    current
+        .view(Rect::new(Point::new(0, 0), size))
+        .unwrap()
+        .write_linked(
+            Point::new(0, 0),
+            Grapheme::try_from("한").unwrap(),
+            Style::default(),
+            Hyperlink::new("https://example.com/inline"),
+        );
+    let mut probe = InlineRenderer::new(Vec::new());
+    let mut viewport = InlineViewport::default();
+    probe
+        .render(
+            viewport.begin_frame(size),
+            None,
+            &current,
+            None,
+            TERMINAL_SIZE,
+        )
+        .unwrap();
+    let bytes = probe.into_inner();
+    let start = bytes
+        .windows(5)
+        .position(|bytes| bytes == b"\x1b]8;;")
+        .unwrap();
+    let mut viewport = InlineViewport::default();
+    let mut renderer = InlineRenderer::new(OneShotFailingWriter {
+        bytes: Vec::new(),
+        remaining: start + 7,
+        failed: false,
+    });
+    assert!(
+        renderer
+            .render(
+                viewport.begin_frame(size),
+                None,
+                &current,
+                None,
+                TERMINAL_SIZE
+            )
+            .is_err()
+    );
+    assert!(
+        renderer
+            .ansi
+            .writer_mut()
+            .bytes
+            .ends_with(&[RESET_HYPERLINK, b"\x1b[?25h"].concat())
+    );
+    let before = renderer.ansi.writer_mut().bytes.len();
+    let plain = Surface::new(size).unwrap();
+    renderer
+        .render(
+            viewport.begin_frame(size),
+            None,
+            &plain,
+            None,
+            TERMINAL_SIZE,
+        )
+        .unwrap();
+    let bytes = renderer.into_inner().bytes;
+    assert!(bytes[before..].starts_with(RESET_HYPERLINK));
+    assert!(!String::from_utf8_lossy(&bytes[before..]).contains("https://"));
+}

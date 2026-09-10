@@ -291,10 +291,15 @@ fn publication_row(surface: &'_ Surface, row: u16) -> Vec<TerminalOp<'_>> {
         .map_or(0, |column| column + 1);
     let mut column = 0;
     let mut style = None;
+    let mut hyperlink = None;
     while column < end {
         let cell = surface
             .cell(Point::new(column, row))
             .expect("the publication row stays inside its Surface");
+        if hyperlink != cell.hyperlink() {
+            output.push(TerminalOp::SetHyperlink(cell.hyperlink()));
+            hyperlink = cell.hyperlink();
+        }
         if style != Some(cell.style()) {
             output.push(TerminalOp::SetStyle(cell.style()));
             style = Some(cell.style());
@@ -327,6 +332,9 @@ fn publication_row(surface: &'_ Surface, row: u16) -> Vec<TerminalOp<'_>> {
                 unreachable!("publication row iteration advances over complete grapheme footprints")
             },
         }
+    }
+    if hyperlink.is_some() {
+        output.push(TerminalOp::SetHyperlink(None));
     }
     if end < width {
         let trailing = surface

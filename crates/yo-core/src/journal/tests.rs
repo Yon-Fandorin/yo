@@ -7,8 +7,9 @@ use std::{
 };
 
 use super::{
-    JournalDurability, SemanticRecord, SessionJournal,
+    JournalDurability, JournalEntry, SemanticRecord, SessionJournal,
     codec::{decode, recover},
+    write_state,
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
@@ -23,6 +24,56 @@ use crate::{
 
 mod durable_messages;
 mod gap_recovery;
+
+// 복구된 의미 기록은 codec 전용 기록을 제외해 sequence가 성길 수 있으므로,
+// cursor를 배열 index로 쓰지 않고 실제 좌표 뒤의 첫 이벤트부터 전달한다.
+#[test]
+fn transcript_cursor_preserves_events_after_sparse_recovery() {
+    let mut journal = SessionJournal::new();
+    let session_id = session(1);
+    let prior = AgentEvent::SessionCreated { session_id };
+    write_state(&journal.state).entries = vec![
+        JournalEntry::new(
+            JournalSequence::new(5),
+            SemanticRecord::EventCommitted(prior),
+        ),
+        JournalEntry::new(
+            JournalSequence::new(9),
+            SemanticRecord::EventCommitted(AgentEvent::TurnFinished {
+                turn: turn(session_id, 1),
+                outcome: TurnOutcome::Completed,
+            }),
+        ),
+    ];
+    let reader = journal.transcript_reader();
+    let cursor = reader.head_sequence();
+    let started = AgentEvent::TurnStarted {
+        turn: turn(session_id, 2),
+    };
+    journal.append_events(std::slice::from_ref(&started));
+
+    let resumed = reader.read_after(cursor);
+    assert_eq!(resumed.entries().len(), 1);
+    assert_eq!(resumed.entries()[0].sequence(), JournalSequence::new(10));
+    assert_eq!(
+        resumed.entries()[0].record(),
+        &crate::TranscriptRecord::EventCommitted(started)
+    );
+    assert!(reader.read_after(resumed.head()).entries().is_empty());
+    assert_eq!(
+        reader
+            .read_after(Some(JournalSequence::new(6)))
+            .entries()
+            .len(),
+        2
+    );
+    assert!(
+        reader
+            .read_after(Some(JournalSequence::new(u64::MAX)))
+            .entries()
+            .is_empty()
+    );
+}
 
 #[derive(Default)]
 struct RepositoryState {

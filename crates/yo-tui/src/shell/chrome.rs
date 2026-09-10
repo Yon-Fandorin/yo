@@ -13,8 +13,34 @@ use crate::{
 };
 
 mod help;
+pub(super) use help::{paint_overlay, paint_request};
 
 const WORKING_LABEL: &str = "Working";
+
+pub(super) fn paint_history_position(
+    view: &mut SurfaceView<'_>,
+    first: usize,
+    visible: u16,
+    total: usize,
+    style: Style,
+) -> Result<(), ShellChromeError> {
+    if view.size().height == 0 {
+        return Ok(());
+    }
+    let end = first.saturating_add(usize::from(visible)).min(total);
+    let candidates = [
+        format!(
+            "History  {}-{end}/{total}  ·  End latest",
+            first.saturating_add(1)
+        ),
+        "History · End latest".to_owned(),
+        "History".to_owned(),
+    ];
+    let mut row = view
+        .subview(Rect::new(Point::new(0, 0), Size::new(view.size().width, 1)))
+        .expect("history position occupies one reserved row");
+    paint_fitting_row(&mut row, &candidates, style).map(|_| ())
+}
 
 pub(super) fn paint_welcome(
     view: &mut SurfaceView<'_>,
@@ -42,9 +68,24 @@ pub(super) fn paint_welcome(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RequestPrompt {
+    Approval,
+    Answer,
+    Choice,
+    Notes,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ShellChromeSnapshot<'value> {
+    pub(crate) image_thumbnail: Option<&'value crate::prompt::image::ImageThumbnail>,
     pub(crate) turn_active: bool,
+    pub(crate) queued_messages: usize,
+    pub(crate) queue_paused: bool,
+    pub(crate) request: Option<RequestPrompt>,
     pub(crate) backend: Option<&'value str>,
+    pub(crate) usage: Option<&'value str>,
+    pub(crate) status: Option<&'value str>,
+    pub(crate) storage_warning: Option<&'value str>,
     pub(crate) workspace: &'value str,
     pub(crate) mode: PresentationMode,
 }
@@ -63,6 +104,7 @@ pub(super) struct ShellChromeLayout {
     pub(super) transient: Rect,
     pub(super) prompt: Rect,
     pub(super) metrics: Rect,
+    pub(super) status: Rect,
     pub(super) mode: Rect,
 }
 
@@ -76,6 +118,7 @@ pub(super) fn layout(
     area: Rect,
     prompt_desired: NonZeroU16,
     _turn_active: bool,
+    has_status: bool,
 ) -> ShellChromeLayout {
     let mut remaining = area.size.height;
     let mut activity_rows = 0;
@@ -105,6 +148,7 @@ pub(super) fn layout(
 
     let prompt_extra = prompt_desired
         .get()
+        .min((area.size.height / 3).max(5))
         .saturating_sub(prompt_rows)
         .min(remaining);
     prompt_rows += prompt_extra;
@@ -112,13 +156,16 @@ pub(super) fn layout(
 
     let separator_rows = u16::from(remaining > 0);
     remaining = remaining.saturating_sub(separator_rows);
+    let status_rows = u16::from(has_status && remaining > 0);
+    remaining = remaining.saturating_sub(status_rows);
     let transcript_height = transcript_floor + remaining;
     let chrome_origin = area.origin.y + transcript_height;
     let transient_rows = separator_rows + activity_rows;
     let transient_origin = chrome_origin;
     let prompt_origin = transient_origin + transient_rows;
     let metrics_origin = prompt_origin + prompt_rows;
-    let mode_origin = metrics_origin + metrics_rows;
+    let status_origin = metrics_origin + metrics_rows;
+    let mode_origin = status_origin + status_rows;
 
     ShellChromeLayout {
         transcript: Rect::new(area.origin, Size::new(area.size.width, transcript_height)),
@@ -134,6 +181,10 @@ pub(super) fn layout(
             Point::new(area.origin.x, metrics_origin),
             Size::new(area.size.width, metrics_rows),
         ),
+        status: Rect::new(
+            Point::new(area.origin.x, status_origin),
+            Size::new(area.size.width, status_rows),
+        ),
         mode: Rect::new(
             Point::new(area.origin.x, mode_origin),
             Size::new(area.size.width, mode_rows),
@@ -148,7 +199,24 @@ pub(super) fn paint_transient(
     motion: ActivityMotionFrame<'_>,
     show_shortcuts: bool,
 ) -> Result<Option<Duration>, ShellChromeError> {
-    if view.size().height == 0 || !snapshot.turn_active {
+    if view.size().height == 0 {
+        return Ok(None);
+    }
+    if let Some(request) = snapshot.request {
+        let label = match request {
+            RequestPrompt::Approval => "Waiting for approval",
+            RequestPrompt::Answer | RequestPrompt::Choice | RequestPrompt::Notes => {
+                "Waiting for your answer"
+            },
+        };
+        paint_fitting_row(
+            view,
+            &[label.to_owned(), "Waiting for you".to_owned()],
+            styles.key_hint,
+        )?;
+        return Ok(None);
+    }
+    if !snapshot.turn_active {
         return Ok(None);
     }
     let marker = motion.marker();
@@ -204,6 +272,37 @@ pub(super) fn paint_transient(
     paint_fitting_activity_row(&mut content, &candidates, styles, motion)
 }
 
+pub(super) fn paint_host_status(
+    view: &mut SurfaceView<'_>,
+    text: &str,
+    style: Style,
+) -> Result<(), ShellChromeError> {
+    if view.size().height == 0 || view.size().width == 0 {
+        return Ok(());
+    }
+    let flow = flow_text(text, NonZeroU16::MAX).map_err(ShellChromeError::Text)?;
+    let width = view.size().width;
+    if row_width(&flow) <= usize::from(width) {
+        return paint_flow(view, flow, 0, style);
+    }
+    let dots = ".".repeat(usize::from(width.min(3)));
+    let available = width - width.min(3);
+    for glyph in flow.glyphs {
+        if glyph.point.x + glyph.grapheme.width().get() > available {
+            break;
+        }
+        if view.write(glyph.point, glyph.grapheme, style) == WriteOutcome::Clipped {
+            return Err(ShellChromeError::SurfaceConflict);
+        }
+    }
+    paint_flow(
+        view,
+        flow_text(&dots, NonZeroU16::MAX).map_err(ShellChromeError::Text)?,
+        available,
+        style,
+    )
+}
+
 pub(super) fn paint_metrics(
     view: &mut SurfaceView<'_>,
     snapshot: ShellChromeSnapshot<'_>,
@@ -215,6 +314,9 @@ pub(super) fn paint_metrics(
     let mut groups = StatusGroups::default();
     if let Some(backend) = snapshot.backend {
         groups.left.push(StatusSegment::new(backend, 100));
+    }
+    if let Some(usage) = snapshot.usage {
+        groups.right.push(StatusSegment::new(usage, 50));
     }
     if !snapshot.workspace.is_empty() {
         groups.left.push(StatusSegment::new(snapshot.workspace, 30));

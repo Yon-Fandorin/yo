@@ -1,5 +1,6 @@
 pub use yo_backend::{
     BackendAdapter, BackendCapabilities, BackendFailure, BackendFailureKind, BackendStopHandle,
+    ImageInputCapability,
 };
 
 use crate::{

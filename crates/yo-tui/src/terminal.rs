@@ -2,9 +2,11 @@
 
 mod ansi;
 pub(crate) mod backend;
+pub(crate) mod graphics;
 pub(crate) mod mode;
 mod ops;
 
+pub(crate) use ansi::RESET_HYPERLINK;
 pub use ansi::{AnsiEncodeError, AnsiEncoder};
 pub use ops::{TerminalOp, TerminalOps};
 

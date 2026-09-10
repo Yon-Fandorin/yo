@@ -239,3 +239,46 @@ fn adjacent_blanks_with_the_same_style_are_coalesced() {
         ]
     );
 }
+
+// 보이는 글자가 같아도 목적지 변경은 frame diff이며 링크는 span 끝에서 닫힌다.
+#[test]
+fn destination_only_changes_redraw_and_close_the_link() {
+    use crate::surface::Hyperlink;
+    let size = Size::new(2, 1);
+    let first = Hyperlink::new("https://example.com/first").unwrap();
+    let second = Hyperlink::new("https://example.com/second").unwrap();
+    let mut previous = Surface::new(size).unwrap();
+    previous
+        .view(Rect::new(Point::new(0, 0), size))
+        .unwrap()
+        .write_linked(
+            Point::new(0, 0),
+            Grapheme::try_from("한").unwrap(),
+            Style::default(),
+            Some(first),
+        );
+    let mut current = previous.clone();
+    current
+        .view(Rect::new(Point::new(0, 0), size))
+        .unwrap()
+        .write_linked(
+            Point::new(0, 0),
+            Grapheme::try_from("한").unwrap(),
+            Style::default(),
+            Some(second.clone()),
+        );
+    let diff = FrameDiff::between(&previous, &current);
+    let ops = TerminalOps::from_diff(&diff);
+    assert!(
+        ops.as_slice()
+            .contains(&TerminalOp::SetHyperlink(Some(&second)))
+    );
+    assert_eq!(ops.as_slice().last(), Some(&TerminalOp::SetHyperlink(None)));
+    assert_eq!(
+        ops.as_slice()
+            .iter()
+            .filter(|op| matches!(op, TerminalOp::WriteGrapheme { .. }))
+            .count(),
+        1
+    );
+}

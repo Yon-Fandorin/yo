@@ -4,7 +4,7 @@ use super::chat::PublicationCandidate;
 use crate::{
     appearance::{AppearanceRevision, AppearanceSnapshot},
     input::editor::PromptEditor,
-    shell::{AgentShellMeasureError, AgentShellRenderOptions},
+    shell::{AgentShellMeasureError, AgentShellRenderOptions, natural_height},
     surface::{Point, Rect, Size, Surface, SurfaceError},
     transcript::{
         TranscriptMeasureError, TranscriptRenderError, TranscriptSlice, TranscriptViewState,
@@ -41,10 +41,11 @@ pub(super) fn compact_live_size(
     terminal_size: Size,
     options: AgentShellRenderOptions<'_>,
 ) -> Result<Size, AgentShellMeasureError> {
-    let natural = crate::shell::natural_height(transcript, editor, terminal_size.width, options)?;
+    let natural = natural_height(transcript, editor, terminal_size.width, options)?;
     Ok(Size::new(
         terminal_size.width,
-        natural.min(terminal_size.height),
+        u16::try_from(natural.min(usize::from(terminal_size.height)))
+            .expect("live height is bounded by terminal geometry"),
     ))
 }
 
@@ -63,6 +64,8 @@ pub(super) fn prepare(
     )
     .map_err(|error| PublicationPrepareError::Transcript(render_error(error)))?
     .content_height;
+    let height = u16::try_from(height)
+        .map_err(|_| PublicationPrepareError::Transcript(TranscriptRenderError::HeightOverflow))?;
     let mut surface = Surface::new(Size::new(observed_terminal_size.width, height))
         .map_err(PublicationPrepareError::Allocate)?;
     let mut view = surface

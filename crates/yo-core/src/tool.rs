@@ -17,7 +17,7 @@ pub use errors::{
 };
 pub use execution::{
     ToolExecution, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
-    ToolExecutionRequest, ToolExecutionResult,
+    ToolExecutionProgress, ToolExecutionRequest, ToolExecutionResult,
 };
 pub use registry::{FrozenToolRegistry, ToolRegistry, ValidatedToolCall};
 // Keep the characterized unit-test paths attached to the facade's private

@@ -405,7 +405,10 @@ fn idle_replacement_is_immediately_resumable_without_another_turn() {
         target.context_policy().cloned(),
         target.context_epoch(),
         target.model_replay_groups().to_vec(),
-    );
+    )
+    // 첫 replacement epoch는 아직 request를 받지 않았고 다음 delta에 새 contract가 필요하다.
+    .with_replay_contract_rebind_required(true)
+    .with_binding_has_accepted_request(false);
     let second_candidate = ScriptedBackend::new([
         BackendScriptStep::ReplaceBinding {
             target: Box::new(second_target),
@@ -436,6 +439,7 @@ fn idle_replacement_is_immediately_resumable_without_another_turn() {
     assert_eq!(recovered.target().epoch(), 3);
     assert_eq!(recovered.target().binding(), &second_replacement);
     assert!(recovered.target().replay_contract_rebind_required());
+    assert!(!recovered.target().binding_has_accepted_request());
 }
 
 // replacement transition의 durable append가 실패하면 candidate만 정리하고 기존 backend가
@@ -812,4 +816,155 @@ fn resumed_agent_rejects_snapshot_failure_before_command_admission() {
 
     assert!(error.to_string().contains("complete Journal snapshot"));
     assert_eq!(repository.entries.lock().unwrap().len(), before);
+}
+
+fn exact_child_binding() -> BackendBindingEvidence {
+    let source = binding();
+    BackendBindingEvidence::new(
+        source.backend_kind(),
+        source.backend_version(),
+        source.binding_identity().clone(),
+        source.model_identity().clone(),
+        BackendIdentity::new(source.session_locator().schema(), "independent-child"),
+        source.continuation_strategy(),
+    )
+}
+
+// fork 준비는 부모 저장소를 바꾸지 않으며 실제 startup의 첫 envelope가 child의 전체 bootstrap을
+// 원자적으로 저장한 뒤에만 실행 가능한 Session을 반환합니다.
+#[test]
+fn prepared_exact_fork_starts_and_publishes_one_atomic_child_snapshot() {
+    use crate::{
+        BackendResumeSource, JournalSequence, fixture_descriptor,
+        journal::codec::{decode, recover},
+    };
+    let (parent_repository, parent) = durable_resumable_session();
+    let before = parent_repository
+        .entries
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.record().payload().to_owned())
+        .collect::<Vec<_>>();
+    let child_id = SessionId::new().unwrap();
+    let candidate = exact_child_binding();
+    let child = parent
+        .prepare_exact_fork(fixture_descriptor(child_id), candidate.clone())
+        .unwrap();
+    assert_eq!(child.next_turn_id(), 1);
+    assert!(child.submission_ids().is_empty());
+    assert_eq!(
+        child.target().source(),
+        Some(BackendResumeSource::InitialFork(JournalSequence::new(2)))
+    );
+    assert_eq!(child.target().epoch(), 1);
+    assert_eq!(child.target().context_epoch(), Some(1));
+    assert_eq!(
+        child.target().model_replay(),
+        parent.target().model_replay()
+    );
+    let target = child.target().clone();
+    let repository = MemoryRepository::default();
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::Resume {
+            target: Box::new(target),
+            evidence: candidate,
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut session = AgentSession::start_cancellable_with_continuation(
+        backend,
+        child,
+        repository.clone(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    let entries = repository.entries.lock().unwrap().clone();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].record().kind(), DurableRecordKind::Snapshot);
+    let snapshot = decode(entries[0].record().payload()).unwrap();
+    let recovered = recover(&[snapshot]).unwrap();
+    assert_eq!(recovered.descriptor().unwrap().session_id(), child_id);
+    assert_eq!(recovered.initial_fork_seed(), Some(JournalSequence::new(2)));
+    assert_eq!(recovered.binding_epoch(), Some(1));
+    assert_eq!(recovered.model_replay(), parent.target().model_replay());
+    assert!(recovered.records().iter().all(|entry| !matches!(
+        entry.record(),
+        JournalRecord::CommandCommitted(_) | JournalRecord::BackendRequestAccepted(_)
+    )));
+    let reopened = build_continuation(recovered, child_id).unwrap();
+    assert_eq!(
+        reopened.target().model_replay(),
+        parent.target().model_replay()
+    );
+    assert_eq!(reopened.next_turn_id(), 1);
+    session.shutdown().unwrap();
+    let after = parent_repository
+        .entries
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.record().payload().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(after, before);
+}
+
+// 준비된 child의 최초 snapshot append가 실패하면 실행 가능한 child를 반환하지 않고 candidate
+// backend를 정리하며 부모의 durable bytes를 그대로 유지합니다.
+#[test]
+fn prepared_exact_fork_append_failure_never_publishes_executable_child() {
+    use crate::fixture_descriptor;
+    let (parent_repository, parent) = durable_resumable_session();
+    let before = parent_repository
+        .entries
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.record().payload().to_owned())
+        .collect::<Vec<_>>();
+    let candidate = exact_child_binding();
+    let child = parent
+        .prepare_exact_fork(
+            fixture_descriptor(SessionId::new().unwrap()),
+            candidate.clone(),
+        )
+        .unwrap();
+    let repository = MemoryRepository::default();
+    repository.fail_append.store(true, Ordering::Release);
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::Resume {
+            target: Box::new(child.target().clone()),
+            evidence: candidate,
+        },
+        BackendScriptStep::Shutdown(Err(crate::BackendFailure::new(
+            crate::BackendFailureKind::Cleanup,
+            "fork candidate cleanup observed",
+        ))),
+    ]);
+    let result = AgentSession::start_cancellable_with_continuation(
+        backend,
+        child,
+        repository.clone(),
+        || false,
+    );
+    let error = match result {
+        Ok(_) => panic!("failed bootstrap must not return a child"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("complete Journal snapshot"));
+    assert!(
+        error
+            .to_string()
+            .contains("fork candidate cleanup observed")
+    );
+    assert!(repository.entries.lock().unwrap().is_empty());
+    let after = parent_repository
+        .entries
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.record().payload().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(after, before);
 }

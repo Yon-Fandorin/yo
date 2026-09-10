@@ -3,6 +3,16 @@ use std::fmt;
 use super::schema::ToolDefinition;
 
 pub trait ToolSemanticAdmission: Send {
+    /// Admits a nonterminal snapshot only when the policy supports incomplete output.
+    /// None withholds progress; existing policies remain final-output-only by default.
+    fn admit_progress(
+        &self,
+        _definition: &ToolDefinition,
+        _bounded_output: &str,
+    ) -> Result<Option<String>, ToolSemanticAdmissionError> {
+        Ok(None)
+    }
+
     fn admit_arguments(
         &self,
         definition: &ToolDefinition,

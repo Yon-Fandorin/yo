@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use super::TuiState;
+use yo_core::JournalDurability;
+
+use super::{PendingRequest, TuiState};
 use crate::{
     appearance::{AppearancePin, AppearanceRevision},
     overlay::OverlayPresentation,
@@ -11,7 +13,7 @@ use crate::{
         publication::{self, PreparedPublication, PublicationPrepareError},
         view::{ObservabilityRenderError, ObservabilityRenderOptions, ObservabilityViewState},
     },
-    shell::{AgentShellMeasureError, AgentShellRenderOptions, ShellChromeSnapshot},
+    shell::{AgentShellMeasureError, AgentShellRenderOptions, RequestPrompt, ShellChromeSnapshot},
     surface::{Point, Rect, Size, Surface, SurfaceError},
 };
 
@@ -150,10 +152,11 @@ impl TuiState {
             overlay_bindings: self.overlay.bindings(),
         };
         let frame_size = if publication_eligible {
+            let transcript_config = self.views.chat_transcript_config(snapshot);
             let shell_options = AgentShellRenderOptions {
-                transcript_config: snapshot.transcript_config(),
+                transcript_config: &transcript_config,
                 styles: snapshot.styles(),
-                scroll: None,
+                scroll: &[],
                 frame_prompt: true,
                 chrome: render_options.chrome,
                 activity_motion: snapshot.activity_motion_frame(elapsed),
@@ -216,8 +219,32 @@ impl TuiState {
 
     fn chrome_snapshot(&self) -> ShellChromeSnapshot<'_> {
         ShellChromeSnapshot {
+            image_thumbnail: self.prompt_assist.image_thumbnail(),
             turn_active: self.active_turn.is_some(),
+            queued_messages: self.follow_ups.len(),
+            queue_paused: self.follow_ups_paused,
+            request: self.pending_requests.front().map(|request| match request {
+                PendingRequest::Approval(_) => RequestPrompt::Approval,
+                PendingRequest::UserInput(_) if self.question_notes.is_some() => {
+                    RequestPrompt::Notes
+                },
+                PendingRequest::UserInput(request)
+                    if self
+                        .chat
+                        .question(request.activity())
+                        .is_some_and(|question| {
+                            question.allow_notes && !question.choices.is_empty()
+                        }) =>
+                {
+                    RequestPrompt::Choice
+                },
+                PendingRequest::UserInput(_) => RequestPrompt::Answer,
+            }),
             backend: self.session_info.backend(),
+            usage: self.chat.latest_usage(),
+            status: (!self.host_status.as_str().is_empty()).then_some(self.host_status.as_str()),
+            storage_warning: matches!(self.durability, Some(JournalDurability::Gap { .. }))
+                .then_some("History not saved"),
             workspace: self.session_info.workspace(),
             mode: self.presentation_mode,
         }

@@ -308,5 +308,75 @@ fn checkpoint_for(
 
 mod artifacts;
 mod checkpoint;
+mod images;
 mod replacement;
 mod requests;
+
+// 같은 seed의 완전한 group들은 index 순서로 보존하며 local range 앞에서만 허용합니다.
+#[test]
+fn imported_retained_groups_use_seed_and_index_order_before_local_ranges() {
+    let items = || {
+        vec![ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "retained".into(),
+            refusal: None,
+        }]
+    };
+    let imported = |index| {
+        ContextRetainedGroup::try_imported(JournalSequence::new(2), index, items(), vec![]).unwrap()
+    };
+    let local = || {
+        ContextRetainedGroup::try_new(JournalSequence::new(5), JournalSequence::new(6), items())
+            .unwrap()
+    };
+    let validate = |groups: Vec<ContextRetainedGroup>, first| {
+        ContextCheckpoint::try_new(
+            1,
+            1,
+            2,
+            JournalSequence::new(10),
+            JournalSequence::new(9),
+            1,
+            ContextStrategy::PortableSummaryV1Alpha1,
+            100_000,
+            90_000,
+            20_000,
+            ModelReplayContract::new("system", vec![]),
+            portable_body(),
+            groups,
+            first,
+            vec![],
+            vec![],
+            summary_usage(),
+        )
+    };
+    assert!(
+        validate(
+            vec![imported(0), imported(1), local()],
+            Some(JournalSequence::new(2))
+        )
+        .is_ok()
+    );
+    for groups in [
+        vec![imported(0), imported(0)],
+        vec![imported(1), imported(0)],
+        vec![local(), imported(0)],
+        vec![local(), local()],
+    ] {
+        let first = groups.first().map(ContextRetainedGroup::first_sequence);
+        assert!(validate(groups, first).is_err());
+    }
+    assert!(validate(vec![imported(0)], Some(JournalSequence::new(3))).is_err());
+    let split = ContextRetainedGroup::try_imported(
+        JournalSequence::new(2),
+        0,
+        vec![ModelReplayItem::FunctionCall {
+            call_id: "call".into(),
+            name: "tool".into(),
+            arguments: "{}".into(),
+        }],
+        vec![],
+    )
+    .unwrap();
+    assert!(validate(vec![split], Some(JournalSequence::new(2))).is_err());
+}

@@ -11,13 +11,21 @@
 
 use std::{collections::HashMap, ops::Range};
 
+mod activity;
 mod layout;
+use activity::ActivityPresentation;
+pub(crate) use activity::FileChangeView;
+pub use activity::{
+    AssistantRenderInput, AssistantRenderer, DocumentRenderInput, DocumentRenderer, LinkResolver,
+    ToolRenderInput, ToolRenderer, TranscriptActivityOutcome,
+};
 mod viewport;
 
 pub(crate) use layout::{
-    TranscriptLayoutConfig, TranscriptLayoutConfigError, TranscriptMeasure, TranscriptMeasureError,
-    TranscriptPaintError, TranscriptRenderError, TranscriptRenderFrame, TranscriptStyles, measure,
-    measure_slice, paint_prepared, prepare, prepare_slice, render, render_slice,
+    MarkdownStyles, TranscriptActivityStyles, TranscriptLayoutConfig, TranscriptLayoutConfigError,
+    TranscriptMeasure, TranscriptMeasureError, TranscriptPaintError, TranscriptRenderError,
+    TranscriptRenderFrame, TranscriptStyles, measure, measure_slice, paint_prepared,
+    paint_prepared_commands, prepare, prepare_slice, render, render_commands, render_slice,
 };
 pub(crate) use viewport::{TranscriptScrollCommand, TranscriptViewMode, TranscriptViewState};
 
@@ -49,12 +57,19 @@ pub(crate) enum MessageRole {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TranscriptMessage {
     role: MessageRole,
+    markdown: bool,
+    assistant_footer_start: Option<usize>,
+    activity: Option<ActivityPresentation>,
     text: String,
 }
 
 impl TranscriptMessage {
     pub(crate) const fn role(&self) -> MessageRole {
         self.role
+    }
+
+    pub(crate) const fn is_markdown(&self) -> bool {
+        self.markdown
     }
 
     pub(crate) fn text(&self) -> &str {
@@ -115,6 +130,9 @@ impl TranscriptItem {
             phase: TranscriptPhase::Final,
             body: TranscriptBody::Message(TranscriptMessage {
                 role: MessageRole::User,
+                markdown: false,
+                assistant_footer_start: None,
+                activity: None,
                 text,
             }),
         }
@@ -127,6 +145,9 @@ impl TranscriptItem {
             phase: TranscriptPhase::Streaming,
             body: TranscriptBody::Message(TranscriptMessage {
                 role: MessageRole::Assistant,
+                markdown: false,
+                assistant_footer_start: None,
+                activity: None,
                 text: String::new(),
             }),
         }
@@ -138,6 +159,8 @@ pub(crate) enum TranscriptStateError {
     DuplicateId(TranscriptItemId),
     UnknownId(TranscriptItemId),
     FinalItem(TranscriptItemId),
+    UnfinishedItem(TranscriptItemId),
+    NotActivity(TranscriptItemId),
     RevisionOverflow(TranscriptItemId),
 }
 
@@ -189,7 +212,22 @@ impl TranscriptState {
         slice: TranscriptSlice<'_>,
         config: &TranscriptLayoutConfig,
     ) -> Result<Option<String>, TranscriptMeasureError> {
-        prepare_slice(slice, u16::MAX, config).map(|prepared| prepared.into_plain_text())
+        layout::plain_output(slice, config)
+    }
+
+    /// Copies immutable presentation only; execution identities remain with the source.
+    pub(crate) fn push_final_copy(
+        &mut self,
+        id: TranscriptItemId,
+        source: &TranscriptItem,
+    ) -> Result<(), TranscriptStateError> {
+        if source.phase != TranscriptPhase::Final {
+            return Err(TranscriptStateError::UnfinishedItem(source.id));
+        }
+        let mut item = source.clone();
+        item.id = id;
+        item.revision = 0;
+        self.push(item)
     }
 
     pub(crate) fn push_user(
@@ -205,6 +243,29 @@ impl TranscriptState {
         id: TranscriptItemId,
     ) -> Result<(), TranscriptStateError> {
         self.push(TranscriptItem::streaming_assistant(id))
+    }
+
+    pub(crate) fn start_markdown_assistant(
+        &mut self,
+        id: TranscriptItemId,
+    ) -> Result<(), TranscriptStateError> {
+        let mut item = TranscriptItem::streaming_assistant(id);
+        let TranscriptBody::Message(message) = &mut item.body;
+        message.markdown = true;
+        self.push(item)
+    }
+
+    pub(crate) fn append_outcome_footer(
+        &mut self,
+        id: TranscriptItemId,
+        footer: &str,
+    ) -> Result<(), TranscriptStateError> {
+        self.append_text(id, footer)?;
+        let TranscriptBody::Message(message) = &mut self.item_mut(id)?.body;
+        if message.markdown && message.activity.is_none() {
+            message.assistant_footer_start = Some(message.text.len() - footer.len());
+        }
+        Ok(())
     }
 
     pub(crate) fn append_text(

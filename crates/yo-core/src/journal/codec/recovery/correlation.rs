@@ -6,13 +6,15 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use super::super::{
-    BindingCloseReason, CacheState, ContextLoss, ContextPolicyChanged, ContextStrategy,
-    ExchangeDirection, ExchangeKind, JournalCodecError, JournalRecord, OperationId, TransitionMode,
-    VersionedIdentity,
+    BackendBindingOpened, BindingCloseReason, CacheState, ContextImageLoss, ContextImageSource,
+    ContextLoss, ContextPolicyChanged, ContextRetainedGroup, ContextStrategy, ExchangeDirection,
+    ExchangeKind, ForkExactReplay, ForkGroup, ForkItemCoordinate, ForkItemOrigin, ForkSeed,
+    InitialForkSeed, JournalCodecError, JournalRecord, OperationId, TransitionMode,
+    VersionedIdentity, validate_image_losses,
 };
 use crate::{
-    AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
-    ReplayProfile, SessionId, TurnId, TurnOutcome,
+    AgentCommand, AgentEvent, BackendBindingEvidence, BackendIdentity, ContinuationStrategy,
+    JournalSequence, ModelReplay, ModelReplayItem, ReplayProfile, SessionId, TurnId, TurnOutcome,
     backend::{provider_private_schema, validate_provider_private_replay_sequence},
 };
 
@@ -22,7 +24,7 @@ pub(super) struct CorrelationRecovery {
     operation_roots: BTreeSet<OperationId>,
     submission_commands: BTreeMap<OperationId, TurnId>,
     active_turn_starts: BTreeMap<TurnId, JournalSequence>,
-    submitted_inputs: BTreeMap<JournalSequence, String>,
+    submitted_inputs: BTreeMap<JournalSequence, ModelReplayItem>,
     completed_activity_boundaries: BTreeSet<JournalSequence>,
     latest_request_exchange: BTreeMap<(u64, OperationId), JournalSequence>,
     latest_accepted_request: BTreeMap<(u64, TurnId), JournalSequence>,
@@ -48,6 +50,17 @@ pub(super) struct CorrelationRecovery {
     open_binding_identity: Option<VersionedIdentity>,
     replay_contract_rebind_required: bool,
     model_replay: ModelReplay,
+    model_replay_origins: Vec<ForkItemOrigin>,
+    open_binding: Option<BackendBindingEvidence>,
+    fork_seed: Option<RegisteredFork>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RegisteredFork {
+    sequence: JournalSequence,
+    seed: Box<InitialForkSeed>,
+    owner_epoch: Option<u64>,
+    has_accepted_request: bool,
 }
 
 #[cfg(test)]
@@ -67,6 +80,136 @@ mod tests {
         recovery
             .validate_source_range(first, last, (7, 9), "sparse source range")
             .unwrap();
+    }
+
+    // 같은 본문이 두 번 있어도 value로 provenance를 합치지 않고 각 delta 좌표를 보존한다.
+    // 진행 중 turn이나 하나라도 빠진 origin은 완전한 fork root로 노출하지 않는다.
+    #[test]
+    fn fork_replay_keeps_distinct_origins_for_equal_items_and_rejects_partial_state() {
+        use crate::{ModelReplayContract, ModelReplayRole, ReplayExecutor, fixture_session};
+        let session = fixture_session(1);
+        let binding = BackendBindingEvidence::new(
+            "managed",
+            "1",
+            BackendIdentity::new("binding/v1", "account"),
+            BackendIdentity::new("model/v1", "model"),
+            BackendIdentity::new("locator/v1", "session"),
+            ContinuationStrategy::ExactReplay {
+                executor: ReplayExecutor::LocalClient,
+                replay_profile: ReplayProfile::SemanticOnly,
+            },
+        );
+        let item = ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "same".into(),
+            refusal: None,
+        };
+        let mut recovery = CorrelationRecovery {
+            session_id: Some(session),
+            open_binding: Some(binding),
+            model_replay: ModelReplay::from_checkpoint(
+                ModelReplayContract::new("system", vec![]),
+                vec![item.clone(), item.clone()],
+            )
+            .unwrap(),
+            ..CorrelationRecovery::default()
+        };
+        for sequence in [7, 14] {
+            let sequence = JournalSequence::new(sequence);
+            recovery
+                .model_replay_origins
+                .push(recovery.local_item_origin(3, 2, sequence, 0).unwrap());
+            recovery.replay_groups.push(ReplayGroup {
+                first_sequence: sequence,
+                last_sequence: sequence,
+                replay_delta_sequence: sequence,
+                epoch: 3,
+                context_epoch: 2,
+                items: vec![item.clone()],
+                fork_group_index: None,
+                image_losses: Vec::new(),
+            });
+        }
+        let replay = recovery.fork_replay().unwrap();
+        assert_eq!(
+            replay.item_origins()[0].original().record_sequence(),
+            JournalSequence::new(7)
+        );
+        assert_eq!(
+            replay.item_origins()[1].original().record_sequence(),
+            JournalSequence::new(14)
+        );
+        assert_eq!(replay.item_origins()[0].original().binding_epoch(), 3);
+        recovery
+            .active_turn_starts
+            .insert(TurnId::new(1.try_into().unwrap()), JournalSequence::new(20));
+        assert!(
+            recovery
+                .fork_replay()
+                .unwrap_err()
+                .to_string()
+                .contains("idle")
+        );
+        recovery.active_turn_starts.clear();
+        recovery.model_replay_origins.pop();
+        assert!(recovery.fork_replay().is_err());
+    }
+
+    // binding 교체는 retained checkpoint·fork의 local source 좌표와 원래 context epoch를 바꾸지
+    // 않는다.
+    #[test]
+    fn image_source_coordinates_survive_exact_binding_transfer() {
+        let snapshot: crate::InputImageSnapshot = serde_json::from_str(r#"{"profile":"yo.input-image-rgba8-triangle/v1","mime_type":"image/png","width":1,"height":1,"byte_length":70,"sha256":"sha256:4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5","data_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="}"#).unwrap();
+        let items = vec![ModelReplayItem::MultimodalUser {
+            parts: vec![
+                crate::ModelInputPart::Text {
+                    text: "before".into(),
+                },
+                crate::ModelInputPart::Image { snapshot },
+            ],
+        }];
+        for imported in [false, true] {
+            let losses = ContextImageLoss::for_items(
+                &items,
+                if imported { 1 } else { 2 },
+                |item_index, part_index| {
+                    if imported {
+                        ContextImageSource::InitialForkSeed {
+                            sequence: 2,
+                            group_index: 0,
+                            item_index,
+                            part_index,
+                        }
+                    } else {
+                        ContextImageSource::RetainedCheckpoint {
+                            sequence: 11,
+                            group_index: 3,
+                            item_index,
+                            part_index,
+                        }
+                    }
+                },
+            )
+            .unwrap();
+            let mut recovery = CorrelationRecovery {
+                context_epoch: Some(4),
+                ..Default::default()
+            };
+            recovery.replay_groups.push(ReplayGroup {
+                first_sequence: JournalSequence::new(11),
+                last_sequence: JournalSequence::new(11),
+                replay_delta_sequence: JournalSequence::new(11),
+                epoch: 1,
+                context_epoch: 4,
+                items: items.clone(),
+                fork_group_index: imported.then_some(0),
+                image_losses: losses.clone(),
+            });
+            recovery.rebind_fork_groups(JournalSequence::new(20), 2);
+            assert_eq!(recovery.replay_groups[0].image_losses, losses);
+            assert_eq!(recovery.replay_groups[0].epoch, 2);
+            assert_eq!(recovery.replay_groups[0].context_epoch, 4);
+        }
     }
 }
 
@@ -112,6 +255,8 @@ struct ReplayGroup {
     epoch: u64,
     context_epoch: u64,
     items: Vec<ModelReplayItem>,
+    fork_group_index: Option<usize>,
+    image_losses: Vec<ContextImageLoss>,
 }
 
 fn artifact_matches(
@@ -134,6 +279,7 @@ fn artifact_matches(
     match item {
         ModelReplayItem::FunctionCallOutput { output, .. } => matches(output.as_bytes()),
         ModelReplayItem::Message { .. }
+        | ModelReplayItem::MultimodalUser { .. }
         | ModelReplayItem::FunctionCall { .. }
         | ModelReplayItem::ProviderPrivateAssistant { .. } => false,
     }
@@ -141,6 +287,10 @@ fn artifact_matches(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReplacementSource {
+    InitialFork {
+        sequence: JournalSequence,
+        epoch: u64,
+    },
     Anchor {
         sequence: JournalSequence,
         epoch: u64,
@@ -170,14 +320,32 @@ impl CorrelationRecovery {
         previous_in_commit: Option<(JournalSequence, &JournalRecord)>,
     ) -> Result<(), JournalCodecError> {
         let anchor_before_record = self.latest_anchor;
-        if !matches!(
+        let fork_before_record = self.initial_fork_seed();
+        let preserves_anchor = matches!(
             record,
             JournalRecord::ContinuationAnchor(_) | JournalRecord::ContextPolicyChanged(_)
-        ) {
+        ) || matches!(record, JournalRecord::CommandCommitted(command)
+            if matches!(command.command(), AgentCommand::CompactContext { .. }));
+        // A manual compaction command changes no replay until its checkpoint commits.
+        // Ordinary submitted input and accepted requests still invalidate this source.
+        if !preserves_anchor {
             self.latest_anchor = None;
         }
 
         match record {
+            JournalRecord::InitialForkSeed(seed) => {
+                if self.fork_seed.is_some() || self.last_epoch.is_some() || !self.session_created {
+                    return Err(JournalCodecError::new(
+                        "initial fork seed must precede the first child binding",
+                    ));
+                }
+                self.fork_seed = Some(RegisteredFork {
+                    sequence,
+                    seed: seed.clone(),
+                    owner_epoch: None,
+                    has_accepted_request: false,
+                });
+            },
             JournalRecord::CommandCommitted(command) => self.observe_command(sequence, command),
             JournalRecord::EventCommitted(event) => self.observe_event(sequence, event),
             JournalRecord::BackendExchangeObserved(exchange) => {
@@ -213,6 +381,12 @@ impl CorrelationRecovery {
                                     sequence,
                                     epoch: binding.epoch(),
                                 })
+                        })
+                        .or_else(|| {
+                            fork_before_record.map(|sequence| ReplacementSource::InitialFork {
+                                sequence,
+                                epoch: binding.epoch(),
+                            })
                         })
                 } else {
                     None
@@ -270,6 +444,9 @@ impl CorrelationRecovery {
                 self.latest_accepted_request
                     .insert((request.epoch(), request.turn_id()), sequence);
                 self.open_epoch_has_accepted_request = true;
+                if let Some(fork) = &mut self.fork_seed {
+                    fork.has_accepted_request = true;
+                }
                 if self.latest_checkpoint.is_some() {
                     self.request_after_checkpoint = true;
                 }
@@ -339,6 +516,16 @@ impl CorrelationRecovery {
                     ));
                 }
                 let apply_result = if self.replay_contract_rebind_required {
+                    if self
+                        .replay_groups
+                        .iter()
+                        .any(|group| group.fork_group_index.is_some())
+                        && replay.delta().contract() != self.model_replay.contract()
+                    {
+                        return Err(JournalCodecError::new(
+                            "fork replacement delta must declare the preserved replay contract",
+                        ));
+                    }
                     self.model_replay.apply_binding_replacement(replay.delta())
                 } else {
                     self.model_replay.apply(replay.delta())
@@ -350,6 +537,12 @@ impl CorrelationRecovery {
                 })?;
                 self.replay_contract_rebind_required = false;
                 if let Some(context_epoch) = replay.context_epoch() {
+                    let origins = (0..replay.delta().items().len())
+                        .map(|index| {
+                            self.local_item_origin(replay.epoch(), context_epoch, sequence, index)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    self.model_replay_origins.extend(origins);
                     self.replay_deltas.insert(
                         sequence,
                         ReplayDeltaSource {
@@ -488,7 +681,18 @@ impl CorrelationRecovery {
                         replay_delta_sequence,
                         epoch: delta.epoch,
                         context_epoch,
+                        image_losses: ContextImageLoss::for_items(
+                            &delta.items,
+                            context_epoch,
+                            |item_index, part_index| ContextImageSource::ReplayDelta {
+                                sequence: replay_delta_sequence.get(),
+                                item_index,
+                                part_index,
+                            },
+                        )
+                        .map_err(JournalCodecError::new)?,
                         items: delta.items.clone(),
+                        fork_group_index: None,
                     });
                 }
                 self.latest_anchor = Some(sequence);
@@ -601,6 +805,167 @@ impl CorrelationRecovery {
         }
     }
 
+    pub(super) fn initial_fork_seed(&self) -> Option<JournalSequence> {
+        self.fork_seed
+            .as_ref()
+            .filter(|fork| {
+                !fork.has_accepted_request
+                    && self.latest_checkpoint.is_none()
+                    && fork.owner_epoch.is_some()
+                    && fork.owner_epoch == self.open_epoch
+                    && !matches!(fork.seed.seed(), ForkSeed::Empty)
+            })
+            .map(|fork| fork.sequence)
+    }
+
+    pub(super) fn fork_replay(&self) -> Result<ForkExactReplay, JournalCodecError> {
+        if !self.active_turn_starts.is_empty() {
+            return Err(JournalCodecError::new(
+                "fork replay requires an idle Session",
+            ));
+        }
+        if self.model_replay_origins.len() != self.model_replay.items().len()
+            || !self
+                .replay_groups
+                .iter()
+                .flat_map(|group| &group.items)
+                .eq(self.model_replay.items())
+        {
+            return Err(JournalCodecError::new(
+                "fork replay lacks complete correlated item provenance",
+            ));
+        }
+        let contract = self
+            .model_replay
+            .contract()
+            .cloned()
+            .ok_or_else(|| JournalCodecError::new("fork replay has no exact contract"))?;
+        let mut start = 0;
+        let groups = self
+            .replay_groups
+            .iter()
+            .map(|group| {
+                let end = start + group.items.len();
+                let result = ForkGroup::new(start, end);
+                start = end;
+                result
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        ForkExactReplay::new(
+            contract,
+            self.model_replay.items().to_vec(),
+            self.model_replay_origins.clone(),
+            groups,
+        )
+    }
+
+    pub(super) fn fork_boundary_is_idle(&self) -> bool {
+        self.active_turn_starts.is_empty() && self.model_replay.contract().is_some()
+    }
+
+    pub(super) const fn open_binding_has_accepted_request(&self) -> bool {
+        self.open_epoch_has_accepted_request
+    }
+
+    fn local_item_origin(
+        &self,
+        epoch: u64,
+        context_epoch: u64,
+        sequence: JournalSequence,
+        index: usize,
+    ) -> Result<ForkItemOrigin, JournalCodecError> {
+        let session = self
+            .session_id
+            .ok_or_else(|| JournalCodecError::new("replay origin has no Session"))?;
+        let binding = self
+            .open_binding
+            .clone()
+            .ok_or_else(|| JournalCodecError::new("replay origin has no exact binding"))?;
+        let coordinate = ForkItemCoordinate::new(session, epoch, context_epoch, sequence, index)?;
+        ForkItemOrigin::new(coordinate, coordinate, binding)
+    }
+
+    fn checkpoint_origins(
+        &self,
+        sequence: JournalSequence,
+        checkpoint: &super::super::ContextCheckpoint,
+    ) -> Result<Vec<ForkItemOrigin>, JournalCodecError> {
+        if self.model_replay_origins.len() != self.model_replay.items().len()
+            || !self
+                .replay_groups
+                .iter()
+                .flat_map(|group| &group.items)
+                .eq(self.model_replay.items())
+        {
+            return Err(JournalCodecError::new(
+                "checkpoint source lacks complete replay provenance",
+            ));
+        }
+        let mut origins = vec![self.local_item_origin(
+            checkpoint.epoch(),
+            checkpoint.successor_context_epoch(),
+            sequence,
+            0,
+        )?];
+        let mut used = BTreeSet::new();
+        for retained in checkpoint.retained_groups() {
+            let mut offset = 0;
+            let mut selected = None;
+            for (index, group) in self.replay_groups.iter().enumerate() {
+                let end = offset + group.items.len();
+                if !used.contains(&index)
+                    && group.first_sequence == retained.first_sequence()
+                    && group.last_sequence == retained.last_sequence()
+                    && group.fork_group_index == retained.fork_import().map(|(_, index)| index)
+                    && group.items == retained.items()
+                {
+                    selected = Some((index, offset, end));
+                    break;
+                }
+                offset = end;
+            }
+            if let Some((index, start, end)) = selected {
+                used.insert(index);
+                let session = self.session_id.ok_or_else(|| {
+                    JournalCodecError::new("checkpoint provenance has no Session")
+                })?;
+                for origin in &self.model_replay_origins[start..end] {
+                    let imported_from = ForkItemCoordinate::new(
+                        session,
+                        checkpoint.epoch(),
+                        checkpoint.successor_context_epoch(),
+                        sequence,
+                        origins.len(),
+                    )?;
+                    origins.push(ForkItemOrigin::new(
+                        *origin.original(),
+                        imported_from,
+                        origin.source_binding().clone(),
+                    )?);
+                }
+            } else if retained.fork_import().is_none()
+                && retained.first_sequence() > checkpoint.source_anchor_sequence()
+                && retained.last_sequence() <= checkpoint.source_journal_boundary()
+                && self.active_input_group_matches(retained)
+            {
+                let first = origins.len();
+                for index in first..first + retained.items().len() {
+                    origins.push(self.local_item_origin(
+                        checkpoint.epoch(),
+                        checkpoint.successor_context_epoch(),
+                        sequence,
+                        index,
+                    )?);
+                }
+            } else {
+                return Err(JournalCodecError::new(
+                    "checkpoint retained provenance has no exact source group",
+                ));
+            }
+        }
+        Ok(origins)
+    }
+
     pub(super) const fn context_epoch(&self) -> Option<u64> {
         self.context_epoch
     }
@@ -670,6 +1035,16 @@ impl CorrelationRecovery {
                 "context checkpoint requires its open local-client exact-replay binding",
             ));
         }
+        checkpoint
+            .validate_profile()
+            .map_err(JournalCodecError::new)?;
+        let binding = self
+            .open_binding
+            .as_ref()
+            .ok_or_else(|| JournalCodecError::new("checkpoint has no owning binding evidence"))?;
+        checkpoint
+            .validate_binding_accounting(binding.binding_identity().value())
+            .map_err(JournalCodecError::new)?;
         let Some(policy) = &self.current_policy else {
             return Err(JournalCodecError::new(
                 "context checkpoint requires a current context policy",
@@ -768,12 +1143,32 @@ impl CorrelationRecovery {
             },
             _ => {},
         }
+        let next_origins = self.checkpoint_origins(sequence, checkpoint)?;
         self.model_replay = checkpoint.replay_root().map_err(|detail| {
             JournalCodecError::new(format!(
                 "context checkpoint cannot establish its replay root: {detail}"
             ))
         })?;
+        self.model_replay_origins = next_origins;
         let root_items = self.model_replay.items().to_vec();
+        let retained_image_losses = checkpoint
+            .retained_groups()
+            .iter()
+            .enumerate()
+            .map(|(group_index, group)| {
+                ContextImageLoss::for_items(
+                    group.items(),
+                    checkpoint.successor_context_epoch(),
+                    |item_index, part_index| ContextImageSource::RetainedCheckpoint {
+                        sequence: sequence.get(),
+                        group_index: group_index as u32,
+                        item_index,
+                        part_index,
+                    },
+                )
+                .map_err(JournalCodecError::new)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         self.context_epoch = Some(checkpoint.successor_context_epoch());
         self.latest_checkpoint = Some(sequence);
         self.request_after_checkpoint = false;
@@ -787,7 +1182,49 @@ impl CorrelationRecovery {
             epoch: checkpoint.epoch(),
             context_epoch: checkpoint.successor_context_epoch(),
             items: root_items,
+            fork_group_index: None,
+            image_losses: retained_image_losses.iter().flatten().cloned().collect(),
         });
+        if checkpoint
+            .retained_groups()
+            .iter()
+            .any(|group| group.fork_import().is_some())
+        {
+            // The synthetic body precedes imports; the local retained tail follows them.
+            self.replay_groups[0].items.truncate(1);
+            self.replay_groups[0].image_losses.clear();
+            let mut local_tail = Vec::new();
+            let mut local_losses = Vec::new();
+            for (group_index, group) in checkpoint.retained_groups().iter().enumerate() {
+                if let Some((seed_sequence, index)) = group.fork_import() {
+                    self.replay_groups.push(ReplayGroup {
+                        first_sequence: seed_sequence,
+                        last_sequence: seed_sequence,
+                        replay_delta_sequence: seed_sequence,
+                        epoch: checkpoint.epoch(),
+                        context_epoch: checkpoint.successor_context_epoch(),
+                        items: group.items().to_vec(),
+                        fork_group_index: Some(index),
+                        image_losses: retained_image_losses[group_index].clone(),
+                    });
+                } else {
+                    local_tail.extend(group.items().iter().cloned());
+                    local_losses.extend(retained_image_losses[group_index].iter().cloned());
+                }
+            }
+            if !local_tail.is_empty() {
+                self.replay_groups.push(ReplayGroup {
+                    first_sequence: sequence,
+                    last_sequence: sequence,
+                    replay_delta_sequence: sequence,
+                    epoch: checkpoint.epoch(),
+                    context_epoch: checkpoint.successor_context_epoch(),
+                    items: local_tail,
+                    fork_group_index: None,
+                    image_losses: local_losses,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -803,20 +1240,32 @@ impl CorrelationRecovery {
             .filter(|(_, group)| group.last_sequence <= checkpoint.source_journal_boundary())
             .collect::<Vec<_>>();
         let mut retained = BTreeSet::new();
+        let imported_context = source_groups
+            .iter()
+            .any(|(_, group)| group.fork_group_index.is_some());
         let mut active_retained = Vec::new();
         for retained_group in checkpoint.retained_groups() {
-            self.validate_source_range(
-                retained_group.first_sequence(),
-                retained_group.last_sequence(),
-                expected_coordinates,
-                "context retained group",
-            )?;
-            let source_group = source_groups.iter().find(|(_, source_group)| {
+            if retained_group.fork_import().is_some() {
+                self.validate_fork_retained_group(retained_group, checkpoint.epoch())?;
+            } else {
+                self.validate_source_range(
+                    retained_group.first_sequence(),
+                    retained_group.last_sequence(),
+                    expected_coordinates,
+                    "context retained group",
+                )?;
+            }
+            let source_group = source_groups.iter().find(|(index, source_group)| {
                 source_group.first_sequence == retained_group.first_sequence()
                     && source_group.last_sequence == retained_group.last_sequence()
+                    && source_group.fork_group_index
+                        == retained_group.fork_import().map(|(_, index)| index)
+                    && source_group.items == retained_group.items()
+                    && !retained.contains(index)
             });
             let Some((index, source_group)) = source_group else {
-                if retained_group.first_sequence() > checkpoint.source_anchor_sequence()
+                if retained_group.fork_import().is_none()
+                    && retained_group.first_sequence() > checkpoint.source_anchor_sequence()
                     && retained_group.last_sequence() <= checkpoint.source_journal_boundary()
                 {
                     if !self.active_input_group_matches(retained_group) {
@@ -828,7 +1277,7 @@ impl CorrelationRecovery {
                     continue;
                 }
                 return Err(JournalCodecError::new(
-                    "context retained range does not identify one whole completed replay group",
+                    "context retained range does not identify one whole completed replay group with exact Journal-backed replay",
                 ));
             };
             if source_group.epoch != checkpoint.epoch()
@@ -844,8 +1293,19 @@ impl CorrelationRecovery {
 
         let mut summarized = BTreeSet::new();
         let mut declared_private_losses = Vec::new();
+        let mut declared_image_losses = Vec::new();
+        let mut image_losses_started = false;
         for loss in checkpoint.losses() {
+            if !matches!(loss, ContextLoss::ImageInputSummarized(_)) && image_losses_started {
+                return Err(JournalCodecError::new(
+                    "image losses must follow all legacy loss entries",
+                ));
+            }
             match loss {
+                ContextLoss::ImageInputSummarized(loss) => {
+                    image_losses_started = true;
+                    declared_image_losses.push(loss.clone());
+                },
                 ContextLoss::VisiblePrefixSummarized {
                     first_sequence,
                     last_sequence,
@@ -855,23 +1315,29 @@ impl CorrelationRecovery {
                             "visible summarized range crosses the mandatory active suffix",
                         ));
                     }
-                    self.validate_source_range(
-                        *first_sequence,
-                        *last_sequence,
-                        expected_coordinates,
-                        "visible summarized range",
-                    )?;
+                    if !imported_context {
+                        self.validate_source_range(
+                            *first_sequence,
+                            *last_sequence,
+                            expected_coordinates,
+                            "visible summarized range",
+                        )?;
+                    }
                     let covered = source_groups
                         .iter()
-                        .filter(|(_, group)| {
+                        .filter(|(index, group)| {
                             group.first_sequence >= *first_sequence
                                 && group.last_sequence <= *last_sequence
+                                && (!imported_context || !retained.contains(index))
                         })
                         .collect::<Vec<_>>();
-                    if covered.first().map(|(_, group)| group.first_sequence)
+                    if covered.iter().map(|(_, group)| group.first_sequence).min()
                         != Some(*first_sequence)
-                        || covered.last().map(|(_, group)| group.last_sequence)
+                        || covered.iter().map(|(_, group)| group.last_sequence).max()
                             != Some(*last_sequence)
+                        || covered.iter().any(|(_, group)| {
+                            (group.epoch, group.context_epoch) != expected_coordinates
+                        })
                     {
                         return Err(JournalCodecError::new(
                             "visible summarized range does not cover whole replay groups",
@@ -892,6 +1358,11 @@ impl CorrelationRecovery {
                 } => {
                     if self.record_coordinates.get(source_journal_sequence)
                         != Some(&expected_coordinates)
+                        && !source_groups.iter().any(|(_, group)| {
+                            group.fork_group_index.is_some()
+                                && group.replay_delta_sequence == *source_journal_sequence
+                                && (group.epoch, group.context_epoch) == expected_coordinates
+                        })
                     {
                         return Err(JournalCodecError::new(
                             "provider-private context loss source is outside its binding or context epoch",
@@ -940,24 +1411,24 @@ impl CorrelationRecovery {
                 group.first_sequence() <= *source_sequence
                     && *source_sequence <= group.last_sequence()
             });
-            if !retained_input.is_some_and(|group| {
-                group.items().iter().any(|item| {
-                    matches!(
-                        item,
-                        ModelReplayItem::Message {
-                            role: crate::ModelReplayRole::User,
-                            content,
-                            ..
-                        } if content == input
-                    )
-                })
-            }) {
+            if !retained_input.is_some_and(|group| group.items().iter().any(|item| item == input)) {
                 return Err(JournalCodecError::new(
                     "context checkpoint does not retain an active submitted input",
                 ));
             }
         }
 
+        let expected_image_losses = source_groups
+            .iter()
+            .filter(|(index, _)| summarized.contains(index))
+            .flat_map(|(_, group)| group.image_losses.iter().cloned())
+            .collect::<Vec<_>>();
+        validate_image_losses(&declared_image_losses).map_err(JournalCodecError::new)?;
+        if declared_image_losses != expected_image_losses {
+            return Err(JournalCodecError::new(
+                "checkpoint image losses do not match exact ordered summarized occurrences",
+            ));
+        }
         let mut expected_private_losses = source_groups
             .iter()
             .filter(|(index, _)| summarized.contains(index))
@@ -983,25 +1454,19 @@ impl CorrelationRecovery {
 
         let mut artifact_identities = BTreeSet::new();
         for receipt in checkpoint.artifact_receipts() {
-            let Some((group_index, group)) = source_groups.iter().find(|(_, group)| {
+            if !source_groups.iter().any(|(group_index, group)| {
                 group.replay_delta_sequence == receipt.source_journal_sequence()
-            }) else {
-                return Err(JournalCodecError::new(
-                    "context artifact receipt source is not a completed replay group",
-                ));
-            };
-            if !summarized.contains(group_index)
-                || !group
-                    .items
-                    .iter()
-                    .any(|item| artifact_matches(item, receipt))
-                || !artifact_identities.insert((
-                    receipt.source_journal_sequence(),
-                    receipt.content_hash().to_owned(),
-                    receipt.byte_count(),
-                    receipt.media_kind().to_owned(),
-                ))
-            {
+                    && summarized.contains(group_index)
+                    && group
+                        .items
+                        .iter()
+                        .any(|item| artifact_matches(item, receipt))
+            }) || !artifact_identities.insert((
+                receipt.source_journal_sequence(),
+                receipt.content_hash().to_owned(),
+                receipt.byte_count(),
+                receipt.media_kind().to_owned(),
+            )) {
                 return Err(JournalCodecError::new(
                     "context artifact receipt is duplicated or not bound to visible summarized replay",
                 ));
@@ -1010,19 +1475,51 @@ impl CorrelationRecovery {
         Ok(())
     }
 
-    fn active_input_group_matches(&self, group: &super::super::ContextRetainedGroup) -> bool {
+    fn validate_fork_retained_group(
+        &self,
+        group: &ContextRetainedGroup,
+        epoch: u64,
+    ) -> Result<(), JournalCodecError> {
+        let (seed_sequence, index) = group
+            .fork_import()
+            .expect("imported group checked by caller");
+        let fork = self
+            .fork_seed
+            .as_ref()
+            .filter(|fork| fork.sequence == seed_sequence && fork.owner_epoch == Some(epoch))
+            .ok_or_else(|| {
+                JournalCodecError::new("imported retained group has no current fork owner")
+            })?;
+        let ForkSeed::ExactReplay(replay) = fork.seed.seed() else {
+            return Err(JournalCodecError::new(
+                "imported retained group requires an exact seed",
+            ));
+        };
+        let source = replay.groups().get(index).ok_or_else(|| {
+            JournalCodecError::new("imported retained group index is outside its seed")
+        })?;
+        let items = &replay.items()[source.first_item()..source.end_item()];
+        let private_epochs = items
+            .iter()
+            .zip(&replay.item_origins()[source.first_item()..source.end_item()])
+            .filter_map(|(item, origin)| {
+                matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. })
+                    .then_some(origin.original().binding_epoch())
+            })
+            .collect::<Vec<_>>();
+        if items != group.items() || private_epochs != group.private_epochs() {
+            return Err(JournalCodecError::new(
+                "imported retained group changes seed items or original private epochs",
+            ));
+        }
+        Ok(())
+    }
+
+    fn active_input_group_matches(&self, group: &ContextRetainedGroup) -> bool {
         let Some(input) = self.submitted_inputs.get(&group.first_sequence()) else {
             return false;
         };
-        let Some(ModelReplayItem::Message {
-            role: crate::ModelReplayRole::User,
-            content,
-            refusal: None,
-        }) = group.items().first()
-        else {
-            return false;
-        };
-        if content != input
+        if group.items().first() != Some(input)
             || self
                 .submitted_inputs
                 .range(group.first_sequence()..=group.last_sequence())
@@ -1080,12 +1577,12 @@ impl CorrelationRecovery {
             AgentCommand::StartTurn { turn, input } => {
                 self.active_turn_starts.insert(turn.turn_id(), sequence);
                 self.submitted_inputs
-                    .insert(sequence, input.as_str().to_owned());
+                    .insert(sequence, input.model_replay_item());
                 turn.turn_id()
             },
             AgentCommand::SteerTurn { turn, input } => {
                 self.submitted_inputs
-                    .insert(sequence, input.as_str().to_owned());
+                    .insert(sequence, input.model_replay_item());
                 turn.turn_id()
             },
             AgentCommand::CreateSession { .. }
@@ -1218,7 +1715,7 @@ impl CorrelationRecovery {
     fn observe_binding_open(
         &mut self,
         sequence: JournalSequence,
-        binding: &super::super::BackendBindingOpened,
+        binding: &BackendBindingOpened,
     ) -> Result<(), JournalCodecError> {
         if self.open_epoch.is_some() {
             return Err(JournalCodecError::new(
@@ -1227,24 +1724,142 @@ impl CorrelationRecovery {
         }
         let is_replacement = self.last_epoch.is_some();
         let seed_items = self.model_replay.items().to_vec();
+        let seed_image_losses = self
+            .replay_groups
+            .iter()
+            .flat_map(|group| group.image_losses.iter().cloned())
+            .collect::<Vec<_>>();
         match self.last_epoch {
             None => {
+                let expected_mode = if self.fork_seed.is_some() {
+                    TransitionMode::InitialFork
+                } else {
+                    TransitionMode::Initial
+                };
                 if binding.epoch() != 1
                     || !self.session_created
-                    || binding.transition().mode() != TransitionMode::Initial
+                    || binding.transition().mode() != expected_mode
                     || binding.transition().cache() != CacheState::NotApplicable
                     || binding.transition().source_anchor_sequence().is_some()
                     || binding.transition().source_checkpoint_sequence().is_some()
+                    || binding
+                        .transition()
+                        .source_initial_fork_sequence()
+                        .is_some()
                 {
                     return Err(JournalCodecError::new(
                         "first backend binding must open epoch 1 after SessionCreated with an initial transition",
                     ));
                 }
+                if let Some(fork) = &mut self.fork_seed {
+                    if binding.transition().fork_seed_sequence() != Some(fork.sequence) {
+                        return Err(JournalCodecError::new(
+                            "initial fork binding names another seed",
+                        ));
+                    }
+                    match fork.seed.seed() {
+                        ForkSeed::Empty => {},
+                        ForkSeed::ExactReplay(replay) => {
+                            let source = fork.seed.source().point().ok_or_else(|| {
+                                JournalCodecError::new("exact fork requires a nonempty source")
+                            })?;
+                            if !fork_binding_matches(binding, source.binding()) {
+                                return Err(JournalCodecError::new(
+                                    "initial fork binding differs from its exact source identity or replay profile",
+                                ));
+                            }
+                            self.model_replay = ModelReplay::from_checkpoint(
+                                replay.contract().clone(),
+                                replay.items().to_vec(),
+                            )
+                            .map_err(JournalCodecError::new)?;
+                            let session_id = self.session_id.ok_or_else(|| {
+                                JournalCodecError::new("fork import has no child Session")
+                            })?;
+                            self.model_replay_origins = replay
+                                .item_origins()
+                                .iter()
+                                .enumerate()
+                                .map(|(index, origin)| {
+                                    ForkItemOrigin::new(
+                                        *origin.original(),
+                                        ForkItemCoordinate::new(
+                                            session_id,
+                                            1,
+                                            1,
+                                            fork.sequence,
+                                            index,
+                                        )?,
+                                        origin.source_binding().clone(),
+                                    )
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            self.replay_groups = replay
+                                .groups()
+                                .iter()
+                                .enumerate()
+                                .map(|(index, group)| {
+                                    Ok(ReplayGroup {
+                                        first_sequence: fork.sequence,
+                                        last_sequence: fork.sequence,
+                                        replay_delta_sequence: fork.sequence,
+                                        epoch: 1,
+                                        context_epoch: 1,
+                                        items: replay.items()[group.first_item()..group.end_item()]
+                                            .to_vec(),
+                                        fork_group_index: Some(index),
+                                        image_losses: ContextImageLoss::for_items(
+                                            &replay.items()[group.first_item()..group.end_item()],
+                                            1,
+                                            |item_index, part_index| {
+                                                ContextImageSource::InitialForkSeed {
+                                                    sequence: fork.sequence.get(),
+                                                    group_index: index as u32,
+                                                    item_index,
+                                                    part_index,
+                                                }
+                                            },
+                                        )
+                                        .map_err(JournalCodecError::new)?,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, JournalCodecError>>()?;
+                        },
+                        ForkSeed::BackendNative { .. } => {
+                            return Err(JournalCodecError::new(
+                                "native fork source boundary schema has no supported verifier",
+                            ));
+                        },
+                    }
+                    fork.owner_epoch = Some(1);
+                    self.context_epoch = Some(1);
+                }
             },
             Some(previous) => {
+                if let Some(fork) = &self.fork_seed
+                    && self
+                        .replay_groups
+                        .iter()
+                        .any(|group| group.fork_group_index.is_some())
+                {
+                    let source = fork.seed.source().point().ok_or_else(|| {
+                        JournalCodecError::new("empty fork has no imported replacement root")
+                    })?;
+                    if fork.owner_epoch != Some(previous)
+                        || binding.transition().mode() != TransitionMode::ExactReplay
+                        || !fork_binding_matches(binding, source.binding())
+                    {
+                        return Err(JournalCodecError::new(
+                            "fork replacement must preserve its current import owner identity and profile",
+                        ));
+                    }
+                }
                 if binding.epoch() != previous.saturating_add(1)
                     || self.last_close_reason != Some(BindingCloseReason::Replaced)
-                    || binding.transition().mode() == TransitionMode::Initial
+                    || matches!(
+                        binding.transition().mode(),
+                        TransitionMode::Initial | TransitionMode::InitialFork
+                    )
                 {
                     return Err(JournalCodecError::new(
                         "replacement binding must follow a replaced epoch with the next number",
@@ -1252,8 +1867,27 @@ impl CorrelationRecovery {
                 }
                 let anchor_source = binding.transition().source_anchor_sequence();
                 let checkpoint_source = binding.transition().source_checkpoint_sequence();
-                match (anchor_source, checkpoint_source) {
-                    (Some(source), None) => {
+                let fork_source = binding.transition().source_initial_fork_sequence();
+                match (anchor_source, checkpoint_source, fork_source) {
+                    (None, None, Some(source)) => {
+                        if self.replacement_source
+                            != Some(ReplacementSource::InitialFork {
+                                sequence: source,
+                                epoch: previous,
+                            })
+                            || self.fork_seed.as_ref().is_none_or(|fork| {
+                                fork.sequence != source
+                                    || fork.owner_epoch != Some(previous)
+                                    || fork.has_accepted_request
+                                    || self.latest_checkpoint.is_some()
+                            })
+                        {
+                            return Err(JournalCodecError::new(
+                                "replacement initial fork source has no complete current owner chain",
+                            ));
+                        }
+                    },
+                    (Some(source), None, None) => {
                         let Some(ReferenceTarget::Anchor {
                             epoch,
                             context_epoch,
@@ -1264,11 +1898,15 @@ impl CorrelationRecovery {
                                 "replacement binding source does not identify a continuation Anchor",
                             ));
                         };
-                        let inherited_local_replay_anchor = binding.continuation_strategy()
+                        let inherited_local_replay_anchor = (binding.continuation_strategy()
                             == (ContinuationStrategy::ExactReplay {
                                 executor: crate::ReplayExecutor::LocalClient,
                                 replay_profile: ReplayProfile::SemanticOnly,
                             })
+                            || self
+                                .replay_groups
+                                .iter()
+                                .any(|group| group.fork_group_index.is_some()))
                             && binding.transition().mode() == TransitionMode::ExactReplay;
                         let backend_native_model_rebind = binding.continuation_strategy()
                             == ContinuationStrategy::BackendManagedState
@@ -1292,7 +1930,7 @@ impl CorrelationRecovery {
                             self.latest_anchor = Some(source);
                         }
                     },
-                    (None, Some(source)) => {
+                    (None, Some(source), None) => {
                         let Some(ReferenceTarget::Checkpoint {
                             epoch: _,
                             context_epoch,
@@ -1328,7 +1966,7 @@ impl CorrelationRecovery {
                             ));
                         }
                     },
-                    (None, None)
+                    (None, None, None)
                         if binding.transition().mode()
                             == TransitionMode::BackendNativeModelRebind
                             && binding.continuation_strategy()
@@ -1345,15 +1983,43 @@ impl CorrelationRecovery {
         self.open_epoch = Some(binding.epoch());
         self.open_strategy = Some(binding.continuation_strategy());
         self.open_binding_identity = Some(binding.binding_identity().clone());
+        self.open_binding = Some(BackendBindingEvidence::new(
+            binding.backend_kind(),
+            binding.backend_version(),
+            BackendIdentity::new(
+                binding.binding_identity().schema(),
+                binding.binding_identity().value(),
+            ),
+            BackendIdentity::new(
+                binding.model_identity().schema(),
+                binding.model_identity().value(),
+            ),
+            BackendIdentity::new(
+                binding.session_locator().schema(),
+                binding.session_locator().value(),
+            ),
+            binding.continuation_strategy(),
+        ));
         if binding.continuation_strategy() == ContinuationStrategy::BackendManagedState
-            || binding.transition().mode() != TransitionMode::ExactReplay
+            || !matches!(
+                binding.transition().mode(),
+                TransitionMode::ExactReplay | TransitionMode::InitialFork
+            )
         {
             self.model_replay = ModelReplay::default();
+            self.model_replay_origins.clear();
             self.replay_contract_rebind_required = false;
         } else {
             self.replay_contract_rebind_required = is_replacement;
         }
-        if is_replacement {
+        if is_replacement
+            && self
+                .replay_groups
+                .iter()
+                .any(|group| group.fork_group_index.is_some())
+        {
+            self.rebind_fork_groups(sequence, binding.epoch());
+        } else if is_replacement {
             self.replay_deltas.clear();
             self.replay_groups.clear();
             if matches!(
@@ -1369,8 +2035,13 @@ impl CorrelationRecovery {
                     epoch: binding.epoch(),
                     context_epoch,
                     items: seed_items,
+                    fork_group_index: None,
+                    image_losses: seed_image_losses,
                 });
             }
+        }
+        if is_replacement && let Some(fork) = &mut self.fork_seed {
+            fork.owner_epoch = Some(binding.epoch());
         }
         self.last_epoch = Some(binding.epoch());
         self.last_close_reason = None;
@@ -1379,4 +2050,51 @@ impl CorrelationRecovery {
         self.open_epoch_has_accepted_request = false;
         Ok(())
     }
+
+    fn rebind_fork_groups(&mut self, sequence: JournalSequence, epoch: u64) {
+        let context_epoch = self
+            .context_epoch
+            .expect("fork imports have an initialized context epoch");
+        let mut local_items = Vec::new();
+        let mut local_losses = Vec::new();
+        let local_group = |items, image_losses| ReplayGroup {
+            first_sequence: sequence,
+            last_sequence: sequence,
+            replay_delta_sequence: sequence,
+            epoch,
+            context_epoch,
+            items,
+            fork_group_index: None,
+            image_losses,
+        };
+        for mut group in std::mem::take(&mut self.replay_groups) {
+            if group.fork_group_index.is_some() {
+                if !local_items.is_empty() {
+                    self.replay_groups.push(local_group(
+                        std::mem::take(&mut local_items),
+                        std::mem::take(&mut local_losses),
+                    ));
+                }
+                group.epoch = epoch;
+                self.replay_groups.push(group);
+            } else {
+                local_items.extend(group.items);
+                local_losses.extend(group.image_losses);
+            }
+        }
+        if !local_items.is_empty() {
+            self.replay_groups
+                .push(local_group(local_items, local_losses));
+        }
+        self.replay_deltas.clear();
+    }
+}
+
+fn fork_binding_matches(binding: &BackendBindingOpened, source: &BackendBindingEvidence) -> bool {
+    binding.backend_kind() == source.backend_kind()
+        && binding.binding_identity().schema() == source.binding_identity().schema()
+        && binding.binding_identity().value() == source.binding_identity().value()
+        && binding.model_identity().schema() == source.model_identity().schema()
+        && binding.model_identity().value() == source.model_identity().value()
+        && binding.continuation_strategy() == source.continuation_strategy()
 }

@@ -17,6 +17,7 @@ use crate::{
 
 pub(crate) mod assist;
 mod chrome;
+pub(crate) mod image;
 mod viewport;
 
 use chrome::PromptChrome;
@@ -34,6 +35,8 @@ pub(crate) struct PreparedPrompt {
     layout: crate::input::editor::layout::TextLayout,
     chrome: PromptChrome,
     empty: bool,
+    placeholder: Option<&'static str>,
+    image_thumbnail: Option<image::ImageThumbnail>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +89,8 @@ pub(crate) fn prepare(
         layout,
         chrome,
         empty: editor.text().is_empty(),
+        placeholder: None,
+        image_thumbnail: None,
     })
 }
 
@@ -133,7 +138,37 @@ pub(crate) fn paint_prepared(
         });
     }
     let height = NonZeroU16::new(view.size().height).ok_or(PromptPaintError::ZeroHeight)?;
-    let viewport = prepared.chrome.viewport(height);
+    let mut viewport = prepared.chrome.viewport(height);
+    if let Some(thumbnail) = prepared.image_thumbnail.as_ref() {
+        let (width, height) = thumbnail_cells(thumbnail, viewport.content_size.width);
+        if viewport.content_size.height > height + 1 && width > 0 {
+            let area = Rect::new(
+                viewport.content_origin,
+                crate::surface::Size::new(width, height),
+            );
+            view.place_raster(crate::surface::RasterImage {
+                area,
+                png: thumbnail.png.clone(),
+            });
+            for (column, character) in "Image preview"
+                .chars()
+                .take(usize::from(viewport.content_size.width))
+                .enumerate()
+            {
+                let _ = view.write(
+                    Point::new(
+                        viewport.content_origin.x + column as u16,
+                        viewport.content_origin.y + height,
+                    ),
+                    crate::surface::Grapheme::try_from(character.to_string().as_str())
+                        .expect("preview label is ASCII"),
+                    styles.rule,
+                );
+            }
+            viewport.content_origin.y += height + 1;
+            viewport.content_size.height -= height + 1;
+        }
+    }
     let visible = VisibleRows::for_cursor(
         prepared.layout.height,
         prepared.layout.cursor.y,
@@ -159,14 +194,21 @@ pub(crate) fn paint_prepared(
             }
         }
     }
-    prepared
-        .chrome
-        .paint(view, viewport, styles.glyphs, styles, visible.first());
+    prepared.chrome.paint(
+        view,
+        viewport,
+        styles.glyphs,
+        styles,
+        visible.first(),
+        prepared.layout.height.get(),
+    );
 
     // The hint is painted after measurement: it never becomes input, changes
     // cursor mapping, or creates a wrapped row in a narrow terminal.
     if prepared.empty && viewport.content_size.width >= 30 {
-        let hint = if viewport.content_size.width >= 33 {
+        let hint = if let Some(placeholder) = prepared.placeholder {
+            placeholder
+        } else if viewport.content_size.width >= 33 {
             "Ask anything, or describe a change"
         } else {
             "Describe a change..."
@@ -200,14 +242,39 @@ pub(crate) fn paint_prepared(
 }
 
 impl PreparedPrompt {
+    pub(crate) fn with_image_thumbnail(
+        mut self,
+        thumbnail: Option<&image::ImageThumbnail>,
+    ) -> Self {
+        self.image_thumbnail = thumbnail.cloned();
+        self
+    }
+    pub(crate) fn with_placeholder(mut self, placeholder: &'static str) -> Self {
+        self.placeholder = Some(placeholder);
+        self
+    }
+
     pub(crate) fn desired_height(&self) -> NonZeroU16 {
-        self.chrome.desired_height(self.layout.height)
+        let preview_rows = self.image_thumbnail.as_ref().map_or(0, |thumbnail| {
+            thumbnail_cells(thumbnail, self.chrome.content_width().get()).1 + 1
+        });
+        self.chrome.desired_height(
+            NonZeroU16::new(self.layout.height.get().saturating_add(preview_rows)).unwrap(),
+        )
     }
 
     pub(crate) const fn with_frame(mut self, enabled: bool) -> Self {
         self.chrome = self.chrome.with_frame(enabled);
         self
     }
+}
+
+fn thumbnail_cells(thumbnail: &image::ImageThumbnail, available: u16) -> (u16, u16) {
+    let width = available.min(16).min(thumbnail.width as u16).max(1);
+    let height =
+        ((u64::from(thumbnail.height) * u64::from(width)) / u64::from(thumbnail.width).max(1) / 2)
+            .clamp(1, 6) as u16;
+    (width, height)
 }
 
 pub(crate) mod skill_reference;

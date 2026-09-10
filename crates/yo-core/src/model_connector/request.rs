@@ -2,8 +2,8 @@ use std::{collections::HashSet, fmt};
 
 use serde_json::Value;
 
-use super::{ConnectorError, ConnectorFailureKind};
-use crate::{ProviderPrivateReplayEnvelope, SessionId};
+use super::{ConnectorError, ConnectorFailureKind, ImageSummarySource};
+use crate::{InputImageSnapshot, ModelInputPart, ProviderPrivateReplayEnvelope, SessionId};
 
 const MAX_WIRE_ID_BYTES: usize = 256;
 const MAX_TOOL_DESCRIPTION_BYTES: usize = 4 * 1024;
@@ -29,6 +29,12 @@ impl ResponsesInputRole {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResponsesInputItem {
+    ImageSummarySource {
+        source: ImageSummarySource,
+    },
+    MultimodalUser {
+        parts: Vec<ModelInputPart>,
+    },
     Message {
         role: ResponsesInputRole,
         content: String,
@@ -223,6 +229,11 @@ impl ResponsesRequest {
         }
         for item in &input {
             match item {
+                ResponsesInputItem::MultimodalUser { parts } => {
+                    ModelInputPart::validate_user_parts(parts).map_err(|message| {
+                        ConnectorError::new(ConnectorFailureKind::Configuration, message)
+                    })?;
+                },
                 ResponsesInputItem::Message { role, refusal, .. } => {
                     if refusal.is_some() && *role != ResponsesInputRole::Assistant {
                         return Err(ConnectorError::new(
@@ -238,7 +249,8 @@ impl ResponsesRequest {
                 ResponsesInputItem::FunctionCallOutput { call_id, .. } => {
                     validate_wire_id("function call_id", call_id)?;
                 },
-                ResponsesInputItem::ProviderPrivateAssistant { .. } => {},
+                ResponsesInputItem::ProviderPrivateAssistant { .. }
+                | ResponsesInputItem::ImageSummarySource { .. } => {},
             }
         }
         Ok(Self {
@@ -263,6 +275,25 @@ impl ResponsesRequest {
 
     pub fn input(&self) -> &[ResponsesInputItem] {
         &self.input
+    }
+
+    /// Ordered immutable image descriptors, separate from the text tokenizer payload.
+    pub fn input_images(&self) -> impl Iterator<Item = &InputImageSnapshot> {
+        self.input
+            .iter()
+            .flat_map(|item| match item {
+                ResponsesInputItem::MultimodalUser { parts } => parts.as_slice(),
+                ResponsesInputItem::ImageSummarySource { source } => source.parts(),
+                _ => &[],
+            })
+            .filter_map(|part| match part {
+                ModelInputPart::Image { snapshot } => Some(snapshot),
+                ModelInputPart::Text { .. } => None,
+            })
+    }
+
+    pub fn image_count(&self) -> usize {
+        self.input_images().count()
     }
 
     pub fn contains_provider_private_input(&self) -> bool {

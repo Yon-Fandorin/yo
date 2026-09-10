@@ -8,6 +8,8 @@ pub(crate) enum InputEvent {
     Key(KeyEvent),
     Paste(String),
     Resize(Size),
+    /// Vertical wheel distance; zero consumes other pointer reports safely.
+    MouseScroll(i16),
 }
 
 impl InputEvent {

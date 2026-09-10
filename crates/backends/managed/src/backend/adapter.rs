@@ -7,13 +7,14 @@ use yo_backend::BackendAdapter;
 use yo_core::{
     ActivityKind, ActivityResponse, AgentCommand, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendPoll,
-    BackendResumeTarget, BackendStopHandle, ModelConnectorEvent, ModelConnectorPoll,
+    BackendResumeTarget, BackendStopHandle, ImageInputCapability, InputImageSnapshot,
+    ModelConnectorEvent, ModelConnectorPoll, ModelReplayItem,
 };
 
 use super::{
     CompactionState, IdleCompactionState, NativeModelBackend, failure,
-    identity::semantically_equal_native_binding_identity, map_connector_cleanup,
-    map_connector_turn, map_tool_cleanup,
+    identity::{same_execution_manifest, semantically_equal_native_binding_identity},
+    map_connector_cleanup, map_connector_turn, map_tool_cleanup,
 };
 
 impl BackendAdapter for NativeModelBackend {
@@ -34,7 +35,15 @@ impl BackendAdapter for NativeModelBackend {
     }
 
     fn capabilities(&self) -> BackendCapabilities {
-        BackendCapabilities::none()
+        BackendCapabilities::none().with_image_input(if self.image_accounting {
+            ImageInputCapability::Supported {
+                maximum_occurrences: 16,
+                maximum_image_bytes: InputImageSnapshot::MAX_BYTES as u64,
+                maximum_input_bytes: InputImageSnapshot::MAX_BYTES as u64,
+            }
+        } else {
+            ImageInputCapability::Unsupported
+        })
     }
 
     fn resume_session(
@@ -78,6 +87,24 @@ impl BackendAdapter for NativeModelBackend {
                 "durable exact replay contract does not match the replacement binding",
             ));
         }
+        if !self.image_accounting
+            && target
+                .model_replay()
+                .items()
+                .iter()
+                .any(|item| matches!(item, ModelReplayItem::MultimodalUser { .. }))
+        {
+            return Err(failure(
+                BackendFailureKind::Unsupported,
+                "The replacement binding cannot replay retained image input",
+            ));
+        }
+        if !same_execution_manifest(&self.binding_identity, target.binding().binding_identity()) {
+            return Err(failure(
+                BackendFailureKind::Session,
+                "durable command execution manifest does not match the replacement binding",
+            ));
+        }
         self.session = Some(target.session_id());
         self.replay = target.model_replay().clone();
         self.restore_context_state(target)?;
@@ -111,7 +138,9 @@ impl BackendAdapter for NativeModelBackend {
                     self.binding_evidence(session_id),
                 ))
             },
-            AgentCommand::StartTurn { turn, input } => self.start_turn(turn, input.into_string()),
+            AgentCommand::StartTurn { turn, input } => {
+                self.start_turn(turn, input.model_replay_item())
+            },
             AgentCommand::SteerTurn { .. } => Err(failure(
                 BackendFailureKind::Unsupported,
                 "native model loop does not support steering",
@@ -167,6 +196,10 @@ impl BackendAdapter for NativeModelBackend {
             match poll {
                 Ok(ModelConnectorPoll::Event(event)) => {
                     if let Err(error) = self.apply_idle_compaction_event(event) {
+                        if error.kind() == BackendFailureKind::CommandRejected {
+                            self.cleanup_idle_compaction();
+                            return Err(error);
+                        }
                         self.context_exhausted = true;
                         self.cleanup_idle_compaction();
                         return Err(if error.kind() == BackendFailureKind::ContextExhausted {

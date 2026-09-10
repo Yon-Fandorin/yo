@@ -2,7 +2,12 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Seek, SeekFrom, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
+};
+
+use rustix::{
+    fs::{Mode, OFlags, open, openat},
+    io::Errno,
 };
 
 use super::{
@@ -130,14 +135,91 @@ fn open_lock_file(path: &Path) -> Result<File, RepositoryError> {
 }
 
 fn exclusive_lock_is_active(path: &Path) -> Result<bool, RepositoryError> {
-    reject_symlink(path)?;
-    let file = match OpenOptions::new().read(true).open(path) {
+    let Some(file) = open_readonly_regular(path)? else {
+        return Ok(false);
+    };
+    exclusive_file_lock_is_active(&file)
+}
+
+pub(super) fn pin_reader_root(root: &Path) -> Result<File, RepositoryError> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let mut directory = open("/", flags, Mode::empty()).map_err(std::io::Error::from)?;
+    for component in root.components() {
+        match component {
+            Component::RootDir | Component::CurDir => {},
+            Component::Normal(name) => {
+                directory =
+                    openat(&directory, name, flags, Mode::empty()).map_err(std::io::Error::from)?;
+            },
+            Component::ParentDir => {
+                directory =
+                    openat(&directory, "..", flags, Mode::empty()).map_err(std::io::Error::from)?;
+            },
+            _ => {
+                return Err(RepositoryError::Unavailable {
+                    message: "Session reader root must be a canonical absolute path".into(),
+                });
+            },
+        }
+    }
+    let file = File::from(directory);
+    require_user_only_file(&file)?;
+    Ok(file)
+}
+
+pub(super) fn open_readonly_regular_at(
+    root: &File,
+    name: &Path,
+) -> Result<Option<File>, RepositoryError> {
+    let opened = match openat(
+        root,
+        name,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(Errno::NOENT) => return Ok(None),
+        Err(error) => return Err(std::io::Error::from(error).into()),
+    };
+    let file = File::from(opened);
+    if !file.metadata()?.is_file() {
+        return Err(RepositoryError::Unavailable {
+            message: "Session repository entry is not a regular file".into(),
+        });
+    }
+    require_user_only_file(&file)?;
+    Ok(Some(file))
+}
+
+pub(super) fn tree_lock_is_active(root: &File, name: &Path) -> Result<bool, RepositoryError> {
+    match open_readonly_regular_at(root, name)? {
+        Some(file) => exclusive_file_lock_is_active(&file),
+        None => Ok(false),
+    }
+}
+
+/// Opens only an existing regular user-owned-permission file, without following links or waiting on
+/// FIFOs.
+pub(super) fn open_readonly_regular(path: &Path) -> Result<Option<File>, RepositoryError> {
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
+    if !file.metadata()?.is_file() {
+        return Err(RepositoryError::Unavailable {
+            message: format!(
+                "Session repository entry is not a regular file: {}",
+                path.display()
+            ),
+        });
+    }
     require_user_only_file(&file)?;
-    exclusive_file_lock_is_active(&file)
+    Ok(Some(file))
 }
 
 fn exclusive_file_lock_is_active(file: &File) -> Result<bool, RepositoryError> {

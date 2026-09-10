@@ -378,3 +378,87 @@ fn provider_private_item_requires_one_preceding_visible_assistant_group() {
     );
     assert!(valid.validate().is_ok());
 }
+
+fn image_replay_part() -> crate::ModelInputPart {
+    crate::ModelInputPart::Image { snapshot: serde_json::from_str(r#"{"profile":"yo.input-image-rgba8-triangle/v1","mime_type":"image/png","width":1,"height":1,"byte_length":70,"sha256":"sha256:4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5","data_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="}"#).unwrap() }
+}
+
+// 반복된 이미지도 독립 occurrence로 replay에 남으며 16개 제한과 empty/adjacent text를 검증한다.
+#[test]
+fn multimodal_replay_preserves_occurrences_and_validates_user_shape() {
+    use crate::ModelInputPart;
+    let image = image_replay_part();
+    let item = ModelReplayItem::MultimodalUser {
+        parts: vec![image.clone(), image.clone()],
+    };
+    let delta = ModelReplayDelta::new(
+        Some(ModelReplayContract::new("system", vec![])),
+        vec![item.clone()],
+    );
+    let mut replay = ModelReplay::default();
+    replay.apply(&delta).unwrap();
+    assert_eq!(replay.items(), &[item]);
+    for parts in [
+        vec![],
+        vec![ModelInputPart::Text {
+            text: "only text".into(),
+        }],
+        vec![
+            ModelInputPart::Text {
+                text: String::new(),
+            },
+            image.clone(),
+        ],
+        vec![
+            ModelInputPart::Text { text: "a".into() },
+            ModelInputPart::Text { text: "b".into() },
+            image.clone(),
+        ],
+        vec![image.clone(); 17],
+    ] {
+        assert!(
+            ModelReplayDelta::new(None, vec![ModelReplayItem::MultimodalUser { parts }])
+                .validate()
+                .is_err()
+        );
+    }
+    assert!(
+        ModelReplayDelta::new(
+            None,
+            vec![ModelReplayItem::MultimodalUser {
+                parts: vec![image; 16]
+            }]
+        )
+        .validate()
+        .is_ok()
+    );
+}
+
+// replay 전체 JSON의 16 MiB는 허용하고 escaping을 포함한 첫 초과 byte는 거절한다.
+#[test]
+fn multimodal_replay_charges_complete_encoded_delta() {
+    use crate::ModelInputPart;
+    let item = |text: String| ModelReplayItem::MultimodalUser {
+        parts: vec![image_replay_part(), ModelInputPart::Text { text }],
+    };
+    let base = item("x".into());
+    let overhead =
+        ModelReplayDelta::prospective_encoded_len(None, [&base].into_iter()).unwrap() - 1;
+    let text = "x".repeat(MAX_REPLAY_DELTA_BYTES - overhead);
+    let exact = item(text.clone());
+    assert_eq!(
+        ModelReplayDelta::prospective_encoded_len(None, [&exact].into_iter()),
+        Some(MAX_REPLAY_DELTA_BYTES)
+    );
+    ModelReplayDelta::new(None, vec![exact]).validate().unwrap();
+    assert!(
+        ModelReplayDelta::new(None, vec![item(format!("{text}x"))])
+            .validate()
+            .is_err()
+    );
+    assert!(
+        ModelReplayDelta::new(None, vec![item(format!("{}\"", &text[..text.len() - 1]))])
+            .validate()
+            .is_err()
+    );
+}

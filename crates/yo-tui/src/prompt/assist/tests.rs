@@ -115,3 +115,112 @@ fn accepted_skill_span_is_not_rescanned_into_an_overlay() {
     );
     assert!(!overlay.is_open());
 }
+
+// 뒤쪽에 이미 선택한 참조가 있어도 앞쪽 후보를 긴 Unicode 경로로 바꾸면 두 신원과
+// byte span을 함께 보존한다. 이전 제출 snapshot은 이후 편집으로 변하지 않는다.
+#[test]
+fn accepting_an_earlier_reference_preserves_later_selected_identity_and_snapshot() {
+    use yo_core::{WorkspaceReference, WorkspaceReferenceCandidate, WorkspaceReferenceKind};
+    let mut controller = PromptAssistController::default();
+    controller.enable_workspace();
+    let mut editor = PromptEditor::new();
+    let mut overlay = PromptOverlaySlot::default();
+    editor.handle(InputEvent::Paste("@a".to_owned()), false, Duration::ZERO);
+    let mut old_snapshot = None;
+    for (index, path) in ["src/a.rs", "src/한글 이름.rs"].into_iter().enumerate() {
+        let edit = if index == 1 {
+            old_snapshot = Some(controller.input(editor.text()).unwrap());
+            editor.handle(
+                InputEvent::Key(KeyEvent {
+                    code: KeyCode::Character('a'),
+                    modifiers: KeyModifiers::CONTROL,
+                    action: KeyAction::Press,
+                    state: KeyState::NONE,
+                }),
+                false,
+                Duration::ZERO,
+            );
+            let before = editor.text().to_owned();
+            let cursor = editor.cursor_byte_index();
+            editor.handle(InputEvent::Paste("@b ".to_owned()), false, Duration::ZERO);
+            let edit =
+                WorkspaceEdit::between(&before, cursor, editor.text(), editor.cursor_byte_index());
+            editor.handle(
+                InputEvent::Key(KeyEvent {
+                    code: KeyCode::Left,
+                    modifiers: KeyModifiers::NONE,
+                    action: KeyAction::Press,
+                    state: KeyState::NONE,
+                }),
+                false,
+                Duration::ZERO,
+            );
+            edit
+        } else {
+            None
+        };
+        let PromptAssistRequest::Workspace(request) = controller
+            .prompt_changed(&editor, &mut overlay, edit.as_ref(), true)
+            .unwrap()
+        else {
+            panic!("workspace request")
+        };
+        let reference = WorkspaceReference::new(
+            format!("file:{index}"),
+            "host:one",
+            "workspace:one",
+            "root:one",
+            path,
+            WorkspaceReferenceKind::File,
+        )
+        .unwrap();
+        assert!(controller.observe_workspace(
+            WorkspaceReferenceSearchUpdate::final_result(
+                &request,
+                WorkspaceReferenceSearchStatus::Complete,
+                vec![WorkspaceReferenceCandidate::new(reference)]
+            ),
+            &mut overlay
+        ));
+        overlay.set_presented(true);
+        let OverlayInputEffect::Accepted(receipt) = overlay.handle(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            action: KeyAction::Press,
+            state: KeyState::NONE,
+        })) else {
+            panic!("candidate acceptance")
+        };
+        assert!(controller.accept(&receipt, &mut editor));
+    }
+    let input = controller.input(editor.text()).unwrap();
+    assert_eq!(input.as_str(), "@src/한글 이름.rs @src/a.rs");
+    assert_eq!(input.references().len(), 2);
+    assert_eq!(
+        input.references()[0]
+            .workspace_reference()
+            .unwrap()
+            .relative_path(),
+        "src/한글 이름.rs"
+    );
+    assert_eq!(
+        input.references()[1]
+            .workspace_reference()
+            .unwrap()
+            .relative_path(),
+        "src/a.rs"
+    );
+    let old = old_snapshot.unwrap();
+    assert_eq!(old.as_str(), "@src/a.rs");
+    assert_eq!(old.references().len(), 1);
+    controller.prompt_cleared(&mut overlay);
+    assert!(
+        controller
+            .input(input.as_str())
+            .unwrap()
+            .references()
+            .is_empty()
+    );
+    controller.restore_input(&input, &mut overlay);
+    assert_eq!(controller.input(input.as_str()).unwrap(), input);
+}

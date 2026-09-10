@@ -2,14 +2,27 @@
 
 use std::{collections::HashSet, sync::OnceLock};
 
-use super::{CommandDefinition, compact, exit, help, model, preview};
+use yo_core::ActivityDocument;
+
+use super::{
+    CommandDefinition, attach, changes, compact, exit, fork, help, model, new, output, preview,
+    prompt, resume, tree,
+};
 
 const ORDERED_DEFINITIONS: &[&CommandDefinition] = &[
     &help::DEFINITION,
     &model::DEFINITION,
     &compact::DEFINITION,
+    &changes::DEFINITION,
+    &output::DEFINITION,
     &preview::DEFINITION,
+    &attach::DEFINITION,
     &exit::DEFINITION,
+    &new::DEFINITION,
+    &fork::DEFINITION,
+    &tree::DEFINITION,
+    &resume::DEFINITION,
+    &prompt::DEFINITION,
 ];
 
 #[derive(Debug)]
@@ -70,16 +83,16 @@ impl CommandRegistry {
         })
     }
 
-    pub(crate) fn help_notice(&self) -> String {
-        let mut notice = String::from("Available commands:");
+    pub(crate) fn help_document(&self) -> ActivityDocument {
+        let mut commands = String::new();
         for definition in self.definitions {
-            notice.push_str(&format!(
-                "\n  {:<7} {}",
+            commands.push_str(&format!(
+                "- `{}`: {}\n",
                 definition.invocation(),
                 definition.description()
             ));
         }
-        notice
+        help::document(commands)
     }
 }
 

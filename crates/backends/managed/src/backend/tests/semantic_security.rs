@@ -152,6 +152,8 @@ fn native_backend_refuses_to_expose_tools_without_semantic_admission() {
 // 검증합니다.
 #[test]
 fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_request() {
+    use yo_core::ToolOutput;
+
     let requests = Arc::new(Mutex::new(Vec::new()));
     let rounds = vec![
         vec![
@@ -227,6 +229,22 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
             BackendPoll::Closed => panic!("backend closed before resumable completion"),
         }
     };
+    let typed = visible_updates
+        .iter()
+        .filter_map(|text| ToolOutput::from_snapshot(text))
+        .collect::<Vec<_>>();
+    assert_eq!(typed.len(), 2);
+    assert!(typed[0].result.is_none());
+    assert_eq!(typed[0].arguments.as_ref().unwrap()["path"], "[redacted]");
+    let typed = &typed[1..];
+    assert_eq!(typed[0].tool, "read_file");
+    assert_eq!(typed[0].arguments.as_ref().unwrap()["path"], "[redacted]");
+    let result = typed[0].result.as_ref().unwrap();
+    assert_eq!(result["content"][0]["text"], "[redacted-output]");
+    assert_eq!(result["call_id"], "call-1");
+    assert_eq!(result["outcome"], "completed");
+    assert_eq!(result["isError"], false);
+    assert!(typed[0].plain_text.contains("[redacted-output]"));
     let visible = visible_updates.join("\n");
     assert!(!visible.contains("secret.txt"));
     assert!(!visible.contains("contents"));

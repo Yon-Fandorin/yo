@@ -120,7 +120,7 @@ enum WireCatalog {
         provider: String,
         account: String,
         base_url: String,
-        profile: WireProfile,
+        profile: Box<WireProfile>,
     },
     BuiltIn {
         provider: String,
@@ -136,7 +136,7 @@ impl From<&ConnectionCatalogSeed> for WireCatalog {
                 provider: seed.provider().as_str().to_owned(),
                 account: seed.account().as_str().to_owned(),
                 base_url: endpoint.as_str().to_owned(),
-                profile: WireProfile::from(profile.as_ref()),
+                profile: Box::new(WireProfile::from(profile.as_ref())),
             },
             CatalogSource::BuiltIn { catalog } => Self::BuiltIn {
                 provider: seed.provider().as_str().to_owned(),
@@ -264,6 +264,12 @@ struct WireProfile {
         skip_serializing_if = "Option::is_none"
     )]
     replay_profile: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    image_input_profile: Option<String>,
 }
 
 impl From<&EffectiveModelProfile> for WireProfile {
@@ -278,6 +284,9 @@ impl From<&EffectiveModelProfile> for WireProfile {
             tool_capability_policy: profile.tool_capability_policy().as_str().to_owned(),
             replay_profile: (profile.replay_profile().as_str() != SEMANTIC_REPLAY_PROFILE)
                 .then(|| profile.replay_profile().as_str().to_owned()),
+            image_input_profile: profile
+                .image_input_profile()
+                .map(|profile| profile.as_str().to_owned()),
         }
     }
 }
@@ -463,6 +472,12 @@ fn parse_profile(profile: WireProfile) -> Result<EffectiveModelProfile, crate::M
             .replay_profile
             .map(VersionedProfileId::new)
             .transpose()?,
+    )
+    .with_image_input_profile(
+        profile
+            .image_input_profile
+            .map(VersionedProfileId::new)
+            .transpose()?,
     );
     EffectiveModelProfile::resolve(None, &layer)
 }
@@ -487,7 +502,7 @@ fn parse_catalog(
                 metadata.provider_display_name().map(str::to_owned),
                 metadata.account_display_name().map(str::to_owned),
                 NormalizedEndpoint::parse(&base_url)?,
-                parse_profile(profile)?,
+                parse_profile(*profile)?,
             )
         },
         WireCatalog::BuiltIn {

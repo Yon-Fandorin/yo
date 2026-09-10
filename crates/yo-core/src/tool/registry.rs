@@ -126,6 +126,15 @@ impl FrozenToolRegistry {
                 "tool call names an unavailable registry entry",
             ));
         };
+        let definition_limit = definition
+            .argument_byte_limit()
+            .map(|limit| limit.min(maximum_argument_bytes));
+        if definition_limit.is_some_and(|limit| argument_bytes.len() > limit) {
+            return Err(ToolValidationError::new(
+                ToolValidationFailure::ArgumentLimit,
+                "tool call arguments exceed the definition limit",
+            ));
+        }
         let arguments: Value = serde_json::from_str(argument_bytes).map_err(|_| {
             ToolValidationError::new(
                 ToolValidationFailure::InvalidJson,
@@ -142,6 +151,13 @@ impl FrozenToolRegistry {
                     "validated tool arguments cannot be normalized",
                 )
             })?;
+        // The execution protocol appends one LF to these exact normalized bytes.
+        if definition_limit.is_some_and(|limit| normalized_arguments.len() >= limit) {
+            return Err(ToolValidationError::new(
+                ToolValidationFailure::ArgumentLimit,
+                "normalized tool arguments plus LF exceed the definition limit",
+            ));
+        }
         Ok(ValidatedToolCall {
             call_id,
             definition: definition.clone(),
@@ -178,7 +194,9 @@ impl ValidatedToolCall {
         &self.arguments
     }
 
-    pub(super) fn normalized_arguments(&self) -> &[u8] {
+    /// Exact normalized JSON bytes used by approval identity and execution.
+    /// These bytes omit the LF; a definition limit reserves space for that byte.
+    pub fn normalized_arguments(&self) -> &[u8] {
         &self.normalized_arguments
     }
 }

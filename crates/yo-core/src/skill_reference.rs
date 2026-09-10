@@ -5,8 +5,9 @@ use std::{
     task::{Context, Poll},
 };
 
+mod local;
 mod search;
-
+pub use local::{LocalSkillInputAdmission, LocalSkillReferenceProvider, LocalSkillRoot};
 #[cfg(test)]
 use search::search_skill_reference_candidates as search_candidates;
 /// Ranks one execution environment's admitted skill candidates for a visible query.
@@ -298,3 +299,15 @@ impl SkillReferenceSearchUpdate {
 
 #[cfg(test)]
 mod tests;
+
+impl<T: SkillReferenceProvider + ?Sized> SkillReferenceProvider for Box<T> {
+    fn search(&mut self, request: SkillReferenceSearchRequest) -> Result<(), String> {
+        (**self).search(request)
+    }
+    fn poll(&mut self) -> Result<SkillReferenceProviderPoll, String> {
+        (**self).poll()
+    }
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()> {
+        (**self).poll_ready(context)
+    }
+}

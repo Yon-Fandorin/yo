@@ -165,10 +165,25 @@ impl fmt::Debug for BackendStopHandle {
     }
 }
 
+/// Evidence for the exact selected backend/model's canonical PNG input path.
+/// Unknown is distinct from an explicitly unsupported media contract.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ImageInputCapability {
+    #[default]
+    Unknown,
+    Unsupported,
+    Supported {
+        maximum_occurrences: u32,
+        maximum_image_bytes: u64,
+        maximum_input_bytes: u64,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BackendCapabilities {
     steer: bool,
     native_model_rebind: bool,
+    image_input: ImageInputCapability,
 }
 
 impl BackendCapabilities {
@@ -176,7 +191,17 @@ impl BackendCapabilities {
         Self {
             steer: false,
             native_model_rebind: false,
+            image_input: ImageInputCapability::Unknown,
         }
+    }
+
+    pub const fn with_image_input(mut self, image_input: ImageInputCapability) -> Self {
+        self.image_input = image_input;
+        self
+    }
+
+    pub const fn image_input(self) -> ImageInputCapability {
+        self.image_input
     }
 
     pub const fn with_steer(mut self) -> Self {

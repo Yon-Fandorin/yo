@@ -6,13 +6,42 @@ use super::{
     support::{MemoryReader, activity, finished, record_with_discovery, session, started},
 };
 use crate::{
-    ActivityOutcome, JournalSequence,
+    ActivityOutcome, JournalSequence, fixture_descriptor,
     journal::codec::{
         JournalCommit, JournalRecord, MessageEnded, MessageOutcome, MessageStream, MessageTerminal,
         SequencedJournalRecord, encode,
     },
     session_repository::{DurableRecord, RecordDiscovery, RepositoryEntry, RepositorySequence},
 };
+
+// 양의 checksummed hint만으로 분기 context를 꾸며낼 수 없으며, 실제 seed 기록이
+// 없는 Session은 실행 복구 전에 정확한 metadata 불일치로 식별해야 합니다.
+#[test]
+fn rejects_a_fork_discovery_hint_without_a_semantic_seed() {
+    let commit = JournalCommit::descriptor(fixture_descriptor(session()));
+    let reader = MemoryReader {
+        entries: vec![RepositoryEntry::new(
+            RepositorySequence::new(1),
+            record_with_discovery(
+                &commit,
+                RecordDiscovery::new(fixture_descriptor(session()))
+                    .with_initial_fork_seed(JournalSequence::new(7)),
+            ),
+        )],
+        missing: false,
+    };
+    let history = read_stored_session(&reader, session()).unwrap();
+    assert_eq!(
+        history.discovery_validation(),
+        StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch::new(
+            RepositorySequence::new(1),
+            StoredDiscoveryMismatchKind::InitialForkSeed {
+                referenced: JournalSequence::new(7)
+            },
+        )),
+    );
+    assert!(!history.discovery_consistent());
+}
 
 // mismatch가 원인별 typed 좌표를 직접 소유하므로 서로 다른 두 sequence가 같은 숫자여도
 // CLI 진단에서 repository 위치와 Journal 참조 위치를 구분할 수 있습니다.
@@ -89,7 +118,7 @@ fn distinguishes_coordinate_disagreement_from_missing_evidence() {
 fn identifies_the_envelope_that_is_missing_discovery() {
     let commit = JournalCommit::snapshot(vec![SequencedJournalRecord::new(
         JournalSequence::new(1),
-        JournalRecord::SessionDescriptor(crate::fixture_descriptor(session())),
+        JournalRecord::SessionDescriptor(fixture_descriptor(session())),
     )]);
     let record = DurableRecord::snapshot(encode(&commit).unwrap())
         .with_journal_cutoff(commit.journal_cutoff());
@@ -113,13 +142,13 @@ fn identifies_the_envelope_that_is_missing_discovery() {
 // 그 envelope의 descriptor 불일치를 정확히 보고합니다.
 #[test]
 fn identifies_the_envelope_with_a_mismatched_descriptor() {
-    let commit = JournalCommit::descriptor(crate::fixture_descriptor(session()));
+    let commit = JournalCommit::descriptor(fixture_descriptor(session()));
     let reader = MemoryReader {
         entries: vec![RepositoryEntry::new(
             RepositorySequence::new(9),
             record_with_discovery(
                 &commit,
-                RecordDiscovery::new(crate::fixture_descriptor(crate::fixture_session(2))),
+                RecordDiscovery::new(fixture_descriptor(crate::fixture_session(2))),
             ),
         )],
         missing: false,
@@ -143,7 +172,7 @@ fn rejects_an_envelope_kind_mismatch() {
     let commit = JournalCommit::snapshot(vec![
         SequencedJournalRecord::new(
             JournalSequence::new(1),
-            JournalRecord::SessionDescriptor(crate::fixture_descriptor(session())),
+            JournalRecord::SessionDescriptor(fixture_descriptor(session())),
         ),
         started(2),
         SequencedJournalRecord::new(
@@ -163,7 +192,7 @@ fn rejects_an_envelope_kind_mismatch() {
     ]);
     let mismatched = DurableRecord::incremental(encode(&commit).unwrap())
         .with_journal_cutoff(commit.journal_cutoff())
-        .with_discovery(RecordDiscovery::new(crate::fixture_descriptor(session())));
+        .with_discovery(RecordDiscovery::new(fixture_descriptor(session())));
     let reader = MemoryReader {
         entries: vec![RepositoryEntry::new(RepositorySequence::new(7), mismatched)],
         missing: false,

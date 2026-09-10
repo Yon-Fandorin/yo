@@ -10,7 +10,7 @@ use crate::{bounded_file, git, slice_contract, slice_worktree};
 
 mod delivery;
 
-const RESULT_SCHEMA: &str = "yo.slice-status/v1alpha3";
+const RESULT_SCHEMA: &str = "yo.slice-status/v1alpha4";
 const JSON_LIMIT: usize = 8 * 1024 * 1024;
 const MAX_JSON_FILES: usize = 256;
 const MAX_SCAN_DEPTH: usize = 6;
@@ -27,6 +27,7 @@ pub(crate) struct SliceState {
 struct Artifacts {
     validations: Vec<ValidationSummary>,
     gate_requests: usize,
+    gate_request: Option<PathBuf>,
     claims: usize,
     delivery_receipts: usize,
     review_rounds: usize,
@@ -42,6 +43,7 @@ impl Default for Artifacts {
         Self {
             validations: Vec::new(),
             gate_requests: 0,
+            gate_request: None,
             claims: 0,
             delivery_receipts: 0,
             review_rounds: 0,
@@ -119,6 +121,8 @@ struct ResultDocument {
     next_action: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     next_argv: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_working_directory: Option<String>,
 }
 
 pub(crate) fn run(repository: &Path, slice: &str) -> Result<(), String> {
@@ -144,6 +148,8 @@ pub(crate) fn run(repository: &Path, slice: &str) -> Result<(), String> {
     )?;
     let next_action = next_action(&state, &reviews, &artifacts);
     let (next_argv, blocking_reason) = next_invocation(slice, next_action, &artifacts);
+    let next_working_directory = (next_action == "run_gate" && next_argv.is_some())
+        .then(|| state.worktree.display().to_string());
     let result = ResultDocument {
         schema: RESULT_SCHEMA,
         ok: true,
@@ -167,6 +173,7 @@ pub(crate) fn run(repository: &Path, slice: &str) -> Result<(), String> {
         blocking_reason,
         next_action,
         next_argv,
+        next_working_directory,
     };
     println!(
         "{}",
@@ -182,7 +189,10 @@ fn next_action(state: &SliceState, reviews: &ReviewLineage, artifacts: &Artifact
     } else if reviews.status == "broken" {
         "restore_review_lineage"
     } else if reviews.current_review_ids.is_empty() {
-        if reviews
+        // 직접 검토도 gate의 입력이므로 packet 부재만으로 검토를 반복하지 않습니다.
+        if artifacts.gate_requests > 0 {
+            "run_gate"
+        } else if reviews
             .latest_candidate
             .as_deref()
             .is_some_and(|candidate| candidate != state.head)
@@ -207,6 +217,30 @@ fn next_invocation(
     artifacts: &Artifacts,
 ) -> (Option<Vec<String>>, Option<String>) {
     match action {
+        "run_gate" => artifacts
+            .gate_request
+            .as_ref()
+            .map(|path| {
+                (
+                    Some(vec![
+                        "cargo".to_owned(),
+                        "xtask".to_owned(),
+                        "slice".to_owned(),
+                        "gate".to_owned(),
+                        path.display().to_string(),
+                    ]),
+                    None,
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    None,
+                    Some(format!(
+                        "expected one current gate request, found {}; select an explicit request to evaluate",
+                        artifacts.gate_requests
+                    )),
+                )
+            }),
         "deliver_current_review" => artifacts
             .delivery_request
             .as_ref()
@@ -326,6 +360,7 @@ fn scan_coordination(
     let mut values = Vec::new();
     let mut current_claims = Vec::new();
     let mut delivery_requests = Vec::new();
+    let mut gate_requests = Vec::new();
     for path in files {
         let bytes = bounded_file::read_regular(&path, JSON_LIMIT, "Slice coordination JSON")?;
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
@@ -369,13 +404,14 @@ fn scan_coordination(
             } else {
                 found.superseded += 1;
             }
-        } else if schema.starts_with("yo.slice-gate-request/") {
+        } else if schema == "yo.slice-gate-request/v1alpha1" {
             if value
                 .get("candidate_commit")
                 .and_then(serde_json::Value::as_str)
                 == Some(scope.candidate)
             {
                 found.gate_requests += 1;
+                gate_requests.push(path.clone());
             } else {
                 found.superseded += 1;
             }
@@ -477,6 +513,9 @@ fn scan_coordination(
     });
     if delivery_requests.len() == 1 {
         found.delivery_request = delivery_requests.pop();
+    }
+    if gate_requests.len() == 1 {
+        found.gate_request = gate_requests.pop();
     }
     Ok(found)
 }
@@ -801,7 +840,7 @@ fn is_commit(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::TestRepository;
+    use crate::test_support::{TestRepository, unique_path};
 
     fn state(head: &str) -> SliceState {
         SliceState {
@@ -886,6 +925,103 @@ mod tests {
         );
     }
 
+    // 패킷 없는 직접 검토의 gate를 재사용하되 과거 후보·미지원 스키마·저장된 결과는
+    // 실행 요청으로 취급하지 않습니다. 복수 요청은 임의 선택 대신 모호성을 알립니다.
+    #[test]
+    fn direct_review_gate_discovery_returns_exact_request_without_granting_approval() {
+        let root = unique_path("slice-status-direct-gate");
+        fs::create_dir_all(&root).unwrap();
+        let reviews = ReviewLineage {
+            packets: 0,
+            latest_candidate: None,
+            status: "preserved",
+            current_review_ids: BTreeSet::new(),
+            latest_review_ids: BTreeSet::new(),
+            current_validations: Vec::new(),
+        };
+        let scan = || {
+            scan_coordination(
+                &root,
+                &CoordinationScope {
+                    repository: &root,
+                    workspace: &root,
+                    candidate: "current",
+                    current_review_ids: &reviews.current_review_ids,
+                    latest_review_ids: &reviews.latest_review_ids,
+                    current_validations: &[],
+                },
+                &mut ScanBudget::default(),
+            )
+            .unwrap()
+        };
+        for (name, schema, candidate) in [
+            ("stale", "yo.slice-gate-request/v1alpha1", "prior"),
+            ("future", "yo.slice-gate-request/v999", "current"),
+            ("result", "yo.slice-gate-result/v1alpha1", "current"),
+        ] {
+            fs::write(
+                root.join(format!("{name}.json")),
+                serde_json::to_vec(&serde_json::json!({
+                    "schema": schema,
+                    "candidate_commit": candidate,
+                    "next_action": "integrate"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(scan().gate_requests, 0);
+        assert_eq!(
+            next_action(&state("current"), &reviews, &scan()),
+            "build_review"
+        );
+
+        // 발견은 검증이 아닙니다. 불완전한 입력도 gate 실행만 제안하며 승인으로 해석하지 않습니다.
+        let request = root.join("gate request.json");
+        fs::write(
+            &request,
+            br#"{"schema":"yo.slice-gate-request/v1alpha1","candidate_commit":"current"}"#,
+        )
+        .unwrap();
+        let artifacts = scan();
+        let action = next_action(&state("current"), &reviews, &artifacts);
+        assert_eq!(action, "run_gate");
+        let (argv, reason) = next_invocation("example", action, &artifacts);
+        assert_eq!(
+            argv.unwrap(),
+            ["cargo", "xtask", "slice", "gate", request.to_str().unwrap()]
+        );
+        assert!(reason.is_none());
+        let mut dirty = state("current");
+        dirty.clean = false;
+        assert_eq!(next_action(&dirty, &reviews, &artifacts), "clean_candidate");
+        let mut broken = reviews;
+        broken.status = "broken";
+        assert_eq!(
+            next_action(&state("current"), &broken, &artifacts),
+            "restore_review_lineage"
+        );
+
+        fs::copy(&request, root.join("other-request.json")).unwrap();
+        let artifacts = scan_coordination(
+            &root,
+            &CoordinationScope {
+                repository: &root,
+                workspace: &root,
+                candidate: "current",
+                current_review_ids: &BTreeSet::new(),
+                latest_review_ids: &BTreeSet::new(),
+                current_validations: &[],
+            },
+            &mut ScanBudget::default(),
+        )
+        .unwrap();
+        let (argv, reason) = next_invocation("example", "run_gate", &artifacts);
+        assert!(argv.is_none());
+        assert!(reason.unwrap().contains("found 2"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     // Slice 이름과 branch matcher는 임의 경로나 다른 Wave의 접두사를 느슨하게
     // 받아들이지 않고 direct 또는 정확한 한 Wave branch만 선택합니다.
     #[test]
@@ -964,7 +1100,7 @@ mod tests {
     // 완료 수로 합산하지 않아 compact status가 stale progress를 만들지 않습니다.
     #[test]
     fn coordination_counts_only_candidate_bound_progress() {
-        let root = crate::test_support::unique_path("slice-status-coordination");
+        let root = unique_path("slice-status-coordination");
         fs::create_dir_all(&root).unwrap();
         for (name, value) in [
             (
@@ -1052,7 +1188,7 @@ mod tests {
     // coordinator는 같은 review에 대한 두 번째 delivery 명령을 절대 제안하지 않습니다.
     #[test]
     fn current_claim_blocks_a_second_delivery() {
-        let root = crate::test_support::unique_path("slice-status-current-claim");
+        let root = unique_path("slice-status-current-claim");
         fs::create_dir_all(root.join("attempt")).unwrap();
         fs::write(
             root.join("attempt/claim.json"),
@@ -1099,7 +1235,7 @@ mod tests {
     // 가리키는 manifest ReviewId를 다시 결속해 현재 review의 exact argv로 제안하지 않습니다.
     #[test]
     fn stale_delivery_request_is_not_current_next_argv() {
-        let repository = crate::test_support::unique_path("slice-status-stale-delivery");
+        let repository = unique_path("slice-status-stale-delivery");
         let coordination = repository.join("coordination");
         let manifest_path = repository.join("stale-manifest.json");
         fs::create_dir_all(&coordination).unwrap();
@@ -1198,8 +1334,8 @@ mod tests {
     // 읽는 방식으로 문서화된 bounded 입력 한도를 우회하지 않습니다.
     #[test]
     fn json_scan_budget_is_global_across_roots() {
-        let first = crate::test_support::unique_path("slice-status-budget-first");
-        let second = crate::test_support::unique_path("slice-status-budget-second");
+        let first = unique_path("slice-status-budget-first");
+        let second = unique_path("slice-status-budget-second");
         fs::create_dir_all(&first).unwrap();
         fs::create_dir_all(&second).unwrap();
         for index in 0..128 {

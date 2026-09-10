@@ -11,6 +11,9 @@ const NO_TOOLS_PROFILE: &str = "no-tools/v1";
 pub(crate) fn admit_explicit_model_profile(
     profile: &EffectiveModelProfile,
 ) -> Result<AdmittedModelProfile, String> {
+    if profile.image_input_profile().is_some() {
+        return Err("this Connector has no reviewed image input/accounting profile".to_owned());
+    }
     let optional = profile.optional_request_parameters().to_json_value();
     let supported_optional = optional
         .as_object()

@@ -11,10 +11,10 @@ use std::{
 use serde_json::{Value, json};
 use yo_backend::BackendAdapter;
 use yo_core::{
-    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
-    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
-    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
+    ActivityApproval, ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef,
+    ActivityResponse, ActivityUpdate, AgentCommand, ApprovalDecision, BackendBindingEvidence,
+    BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind,
+    BackendIdentity, BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
     ContinuationStrategy, RequestId, SessionId, TurnRef,
 };
 
@@ -106,6 +106,7 @@ struct SessionBinding {
 enum MessageChannel {
     Agent,
     Thought,
+    Plan,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -116,6 +117,7 @@ struct MessageKey {
 
 struct MessageBinding {
     activity: ActivityRef,
+    reasoning: Option<String>,
 }
 
 #[derive(Default)]
@@ -127,7 +129,9 @@ struct ToolIdentity {
 
 struct ToolBinding {
     activity: ActivityRef,
+    file_change: bool,
     result_activity: Option<ActivityRef>,
+    output: Value,
     identity: ToolIdentity,
     finished: bool,
 }
@@ -138,6 +142,10 @@ struct ApprovalBinding {
     activity: ActivityRef,
     allow_option: String,
     reject_option: String,
+    offered: Vec<Option<String>>,
+    profile: ActivityApproval,
+    tool_call_id: Option<String>,
+    pending_display: Option<Value>,
 }
 
 struct PromptBinding {
@@ -213,9 +221,20 @@ impl<P: JsonPeer> Backend<P> {
         &mut self,
         command: AgentCommand,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
+        if let AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. } =
+            &command
+            && !input.images().is_empty()
+        {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "Grok ACP image input requires negotiated protocol and selected-model capability",
+            ));
+        }
         match command {
             AgentCommand::CreateSession { session_id } => self.create_session(session_id),
-            AgentCommand::StartTurn { turn, input } => self.start_turn(turn, input.into_string()),
+            AgentCommand::StartTurn { turn, input } => {
+                self.start_turn(turn, input.into_model_input())
+            },
             AgentCommand::SteerTurn { .. } => Err(BackendFailure::new(
                 BackendFailureKind::Unsupported,
                 "Grok ACP v1 does not support steering an active Turn",
@@ -382,13 +401,30 @@ impl<P: JsonPeer> Backend<P> {
         let option_id = match response {
             ActivityResponse::Approval(ApprovalDecision::Approved) => approval.allow_option,
             ActivityResponse::Approval(ApprovalDecision::Declined) => approval.reject_option,
-            ActivityResponse::UserInput(_) => {
+            ActivityResponse::Approval(ApprovalDecision::Offered(ordinal)) => ordinal
+                .checked_sub(1)
+                .and_then(|index| approval.offered.get(index as usize))
+                .and_then(Clone::clone)
+                .ok_or_else(|| protocol::protocol_failure("Grok approval choice is unavailable"))?,
+            ActivityResponse::UserInput(_)
+            | ActivityResponse::QuestionAnswer { .. }
+            | ActivityResponse::PreviousQuestion { .. } => {
                 return Err(BackendFailure::new(
                     BackendFailureKind::Unsupported,
                     "Grok user-input responses are not enabled in the ACP adapter",
                 ));
             },
         };
+        let selected = approval
+            .offered
+            .iter()
+            .position(|id| id.as_ref() == Some(&option_id))
+            .and_then(|index| approval.profile.choices.get(index))
+            .expect("validated approval choice remains bound");
+        let receipt = format!(
+            "Selected: {}\n{}\nResponse sent to agent.",
+            selected.label, selected.description
+        );
         self.client.respond(
             approval.wire_id,
             json!({
@@ -409,6 +445,11 @@ impl<P: JsonPeer> Backend<P> {
                 kind: ActivityKind::ApprovalResponse {
                     request_id: request.request_id(),
                 },
+            });
+        self.pending_events
+            .push_back(BackendEvent::ActivityUpdated {
+                activity: response_activity,
+                update: ActivityUpdate::TextSnapshot(receipt),
             });
         self.pending_events
             .push_back(BackendEvent::ActivityFinished {

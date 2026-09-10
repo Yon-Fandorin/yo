@@ -160,10 +160,7 @@ fn general_configuration_remains_supported() {
         "session:\n  list:\n    date_format: '%Y'\ntui:\n  max_fps: 60\n",
     )
     .unwrap();
-    assert!(matches!(
-        config.frame_rate_limit(),
-        yo_tui::FrameRateLimit::Fps60
-    ));
+    assert!(matches!(config.frame_rate_limit(), FrameRateLimit::Fps60));
     assert!(config.model_catalog().entries().is_empty());
 }
 
@@ -190,10 +187,7 @@ fn max_fps_remains_closed() {
 #[test]
 fn empty_config_uses_defaults() {
     let config = parse(Path::new("/tmp/config.yaml"), "{}\n").unwrap();
-    assert!(matches!(
-        config.frame_rate_limit(),
-        yo_tui::FrameRateLimit::Fps120
-    ));
+    assert!(matches!(config.frame_rate_limit(), FrameRateLimit::Fps120));
     assert!(config.date_formatter().is_ok());
 }
 
@@ -228,7 +222,7 @@ fn missing_configuration_uses_defaults_without_creating_a_file() {
     let config = load_from(&path).unwrap();
 
     assert!(config.date_formatter().is_ok());
-    assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps120);
+    assert_eq!(config.frame_rate_limit(), FrameRateLimit::Fps120);
     assert!(!path.exists());
 }
 
@@ -429,4 +423,287 @@ fn version_and_unknown_configuration_fields_are_rejected() {
         assert!(matches!(error, ConfigError::InvalidYaml { .. }));
         assert!(error.to_string().contains("unknown field"));
     }
+}
+
+// 테마는 기존 tui 설정 안에서 영속 선택되고 생략 시 원래 팔레트를 유지한다.
+#[test]
+fn configured_theme_loads_with_existing_tui_settings() {
+    let directory = TestDirectory::new("theme");
+    let path = directory.path().join("config.yaml");
+    for (name, expected) in [
+        ("default", Theme::Default),
+        ("light", Theme::Light),
+        ("mono", Theme::Mono),
+    ] {
+        fs::write(&path, format!("tui:\n  theme: {name}\n  max_fps: 60\n")).unwrap();
+        let config = load_from(&path).unwrap();
+        assert_eq!(config.theme(), expected);
+        assert_eq!(config.frame_rate_limit(), FrameRateLimit::Fps60);
+        config.verify_unchanged().unwrap();
+    }
+    fs::write(&path, "tui:\n  max_fps: 120\n").unwrap();
+    assert_eq!(load_from(&path).unwrap().theme(), Theme::Default);
+    fs::remove_file(&path).unwrap();
+    assert_eq!(load_from(&path).unwrap().theme(), Theme::Default);
+}
+
+// 잘못된 테마는 경로와 허용 값을 제시하며 조용히 다른 팔레트로 대체하지 않는다.
+#[test]
+fn invalid_theme_has_actionable_configuration_error() {
+    let directory = TestDirectory::new("bad-theme");
+    let path = directory.path().join("config.yaml");
+    fs::write(&path, "tui:\n  theme: typo\n").unwrap();
+    let error = load_from(&path).unwrap_err();
+    assert!(
+        matches!(&error, ConfigError::InvalidTheme { path: found, value } if found == &path && value == "typo")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("tui.theme must be default, light, or mono")
+    );
+    for value in ["[light]", "{name: light}"] {
+        fs::write(&path, format!("tui:\n  theme: {value}\n")).unwrap();
+        assert!(load_from(&path).is_err());
+    }
+}
+
+// 사용자 출력 설정은 세션에 전달할 타입으로 보존되고 0열·음수·범위 초과·오타는 거절한다.
+#[test]
+fn output_preferences_load_and_reject_invalid_dimensions() {
+    use std::num::NonZeroU16;
+    let config = parse(
+        Path::new("/tmp/yo-config.yaml"),
+        "tui:\n  max_body_width: 80\n  tool_head_rows: 4\n  shell_tail_rows: 7\n  diff_head_rows: 10\n  show_images: false\n  hyperlinks: false\n  show_reasoning: false\n  show_diagrams: false\n  image_max_width: 8\n  code_padding: 3\n",
+    )
+    .unwrap();
+    assert_eq!(
+        config.output_preferences(),
+        OutputPreferences::default()
+            .with_max_body_width(NonZeroU16::new(80))
+            .with_tool_head_rows(4)
+            .with_shell_tail_rows(7)
+            .with_diff_head_rows(10)
+            .with_images(false)
+            .with_hyperlinks(false)
+            .with_reasoning(false)
+            .with_diagrams(false)
+            .with_image_max_width(NonZeroU16::new(8).unwrap())
+            .with_code_padding(3)
+    );
+    for field in [
+        "max_body_width: 0",
+        "image_max_width: 0",
+        "image_max_width: 65536",
+        "show_images: sometimes",
+        "hyperlinks: sometimes",
+        "show_reasoning: sometimes",
+        "show_diagrams: sometimes",
+        "max_body_width: 65536",
+        "code_padding: -1",
+        "code_padding: 65536",
+        "code_padding: 1.5",
+        "tool_head_rows: -1",
+        "shell_tail_rows: -1",
+        "shell_tail_rows: 65536",
+        "diff_head_rows: 65536",
+        "tool_head_row: 4",
+    ] {
+        assert!(
+            parse(
+                Path::new("/tmp/yo-config.yaml"),
+                &format!("tui:\n  {field}\n")
+            )
+            .is_err(),
+            "{field}"
+        );
+    }
+    assert_eq!(
+        parse(Path::new("/tmp/yo-config.yaml"), "tui: {}\n")
+            .unwrap()
+            .output_preferences(),
+        OutputPreferences::default()
+    );
+}
+
+// 팔레트 역할과 색상은 정확히 해석하고 오타·잘못된 RGB·제어 문자열을 설정 경로와 함께 거절한다.
+#[test]
+fn semantic_theme_colors_load_and_reject_invalid_values() {
+    use yo_tui::{ThemeColor, ThemeRole};
+    let config = parse(
+        Path::new("/tmp/yo-config.yaml"),
+        "tui:\n  colors:\n    code_background: '#5f87af'\n    accent: terminal\n    reasoning_text: '#987654'\n    chart: '#e6a028'\n    chart_2: '#010203'\n    chart_3: '#040506'\n    chart_4: '#070809'\n",
+    )
+    .unwrap();
+    assert_eq!(
+        config.theme_overrides(),
+        &ThemeOverrides::default()
+            .with_color(ThemeRole::CodeBackground, ThemeColor::Rgb(95, 135, 175))
+            .with_color(ThemeRole::Accent, ThemeColor::Terminal)
+            .with_color(ThemeRole::ReasoningText, ThemeColor::Rgb(152, 118, 84))
+            .with_color(ThemeRole::Chart, ThemeColor::Rgb(230, 160, 40))
+            .with_color(ThemeRole::Chart2, ThemeColor::Rgb(1, 2, 3))
+            .with_color(ThemeRole::Chart3, ThemeColor::Rgb(4, 5, 6))
+            .with_color(ThemeRole::Chart4, ThemeColor::Rgb(7, 8, 9))
+    );
+    for (role, value) in [
+        ("typo", "#112233"),
+        ("accent", "#123"),
+        ("accent", "#xxxxxx"),
+        ("accent", "#éabcd"),
+        ("accent", "red"),
+    ] {
+        let error = parse(
+            Path::new("/tmp/yo-config.yaml"),
+            &format!("tui:\n  colors:\n    {role}: '{value}'\n"),
+        )
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::InvalidThemeColor { .. }));
+        assert!(error.to_string().contains(&format!("tui.colors.{role}")));
+    }
+}
+
+// 코드 여백은 0을 허용하고 첫 상한 초과와 최대 u16 값을 같은 8칸으로 제한한다.
+#[test]
+fn code_padding_config_preserves_zero_and_caps_excess() {
+    for value in [0, 1, 8, 9, u16::MAX] {
+        let config = parse(
+            Path::new("/tmp/yo-config.yaml"),
+            &format!("tui:\n  code_padding: {value}\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.output_preferences(),
+            OutputPreferences::default().with_code_padding(value.min(8))
+        );
+    }
+}
+
+// 템플릿은 치환 없이 Unicode·공백·줄바꿈과 입력 기호를 그대로 보존한다.
+#[test]
+fn prompt_templates_preserve_literal_text_and_default_to_empty() {
+    let body = " 한글\t\r\n$name @path ${HOME} $(echo no)\n ";
+    let yaml = format!(
+        "prompts:\n  Review_1: {}\n",
+        serde_json::to_string(body).unwrap()
+    );
+    let config = parse(Path::new("config.yaml"), &yaml).unwrap();
+    assert_eq!(config.prompts().get("Review_1").unwrap(), body);
+    assert!(
+        parse(Path::new("config.yaml"), "{}")
+            .unwrap()
+            .prompts()
+            .names()
+            .next()
+            .is_none()
+    );
+    assert!(Config::default().prompts().names().next().is_none());
+}
+
+// 개수·이름·본문 바이트 상한은 경계값을 허용하고 첫 초과를 거부한다.
+#[test]
+fn prompt_template_limits_reject_first_excess() {
+    let path = Path::new("config.yaml");
+    let body = "한".repeat(21845) + "x";
+    let name = "a".repeat(64);
+    let yaml = format!(
+        "prompts:\n  {name}: {}\n",
+        serde_json::to_string(&body).unwrap()
+    );
+    assert_eq!(
+        parse(path, &yaml)
+            .unwrap()
+            .prompts()
+            .get(&name)
+            .unwrap()
+            .len(),
+        65536
+    );
+    for (name, body) in [(name.clone(), body + "x"), (name + "a", "body".into())] {
+        let yaml = format!(
+            "prompts:\n  {name}: {}\n",
+            serde_json::to_string(&body).unwrap()
+        );
+        assert!(matches!(
+            parse(path, &yaml),
+            Err(ConfigError::InvalidPrompts { .. })
+        ));
+    }
+    let mut yaml = "prompts:\n".to_owned();
+    for index in 0..128 {
+        yaml.push_str(&format!("  p{index}: body\n"));
+    }
+    assert_eq!(parse(path, &yaml).unwrap().prompts().names().count(), 128);
+    yaml.push_str("  excess: body\n");
+    assert!(matches!(
+        parse(path, &yaml),
+        Err(ConfigError::InvalidPrompts { .. })
+    ));
+}
+
+// 중복 키·잘못된 이름·빈 본문·제어문자는 설정 경계에서 거부하여 숨은 실행 입력을 만들지 않는다.
+#[test]
+fn prompt_templates_reject_duplicates_invalid_names_and_controls() {
+    let path = Path::new("config.yaml");
+    let duplicate = parse(path, "prompts:\n  review: first\n  review: second\n").unwrap_err();
+    assert!(matches!(duplicate, ConfigError::InvalidYaml { .. }));
+    for name in ["", "한글", "a b", "a/b", "$name"] {
+        let yaml = format!(
+            "prompts:\n  {}: body\n",
+            serde_json::to_string(name).unwrap()
+        );
+        assert!(parse(path, &yaml).is_err(), "{name:?}");
+    }
+    for body in ["", "a\0b", "a\u{1b}b", "a\u{7f}b", "a\u{85}b"] {
+        let yaml = format!(
+            "prompts:\n  review: {}\n",
+            serde_json::to_string(body).unwrap()
+        );
+        assert!(parse(path, &yaml).is_err(), "{body:?}");
+    }
+    assert!(parse(path, "prompts:\n  spacing: '   '\n").is_ok());
+}
+
+// 설정은 명시한 root의 구문만 검증하고 저장 Session의 workspace가 정해질 때까지 해석하지 않는다.
+#[test]
+fn skill_roots_are_explicit_and_preserve_relative_paths_and_scopes() {
+    let path = Path::new("/config/elsewhere/config.yaml");
+    assert!(parse(path, "{}").unwrap().skill_roots().is_empty());
+    let config = parse(path, "skills:\n  roots:\n    - path: .skills\n      scope: workspace\n    - path: /missing/user-skills\n      scope: user\n").unwrap();
+    assert_eq!(config.skill_roots()[0].path, Path::new(".skills"));
+    assert_eq!(
+        config.skill_roots()[0].scope,
+        SkillReferenceScope::Workspace
+    );
+    assert_eq!(
+        config.skill_roots()[1].path,
+        Path::new("/missing/user-skills")
+    );
+    assert_eq!(config.skill_roots()[1].scope, SkillReferenceScope::User);
+}
+
+// 잘못된 scope·알 수 없는 field·제어 문자·상한 초과는 filesystem I/O 전에 거부한다.
+#[test]
+fn skill_roots_reject_invalid_shapes_and_enforce_sixteen_root_limit() {
+    let path = Path::new("config.yaml");
+    for yaml in [
+        "skills: {roots: [{path: '', scope: workspace}]}",
+        "skills: {roots: [{path: x, scope: system}]}",
+        "skills: {roots: [{path: x}]}",
+        "skills: {roots: [{path: x, scope: user, extra: true}]}",
+        "skills: {defaults: true}",
+        "skills: {roots: [{path: \"bad\\u0000path\", scope: user}]}",
+    ] {
+        assert!(parse(path, yaml).is_err(), "{yaml}");
+    }
+    let mut yaml = "skills:\n  roots:\n".to_owned();
+    for index in 0..16 {
+        yaml.push_str(&format!("    - {{path: root-{index}, scope: workspace}}\n"));
+    }
+    assert_eq!(parse(path, &yaml).unwrap().skill_roots().len(), 16);
+    yaml.push_str("    - {path: excess, scope: user}\n");
+    assert!(matches!(
+        parse(path, &yaml),
+        Err(ConfigError::InvalidSkills { .. })
+    ));
 }

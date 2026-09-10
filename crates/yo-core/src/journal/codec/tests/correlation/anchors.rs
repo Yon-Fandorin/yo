@@ -391,3 +391,81 @@ fn rejects_an_anchor_that_claims_its_own_sequence_as_the_boundary() {
 
     assert!(error.to_string().contains("boundary"));
 }
+
+// checkpoint 없는 수동 압축 command는 원래 Anchor를 보존하지만, 그 뒤 일반 요청의
+// 수락은 완결되지 않은 suffix이므로 같은 Anchor로 계속 재개할 수 없어야 한다.
+#[test]
+fn compact_without_checkpoint_preserves_anchor_until_the_next_ordinary_request() {
+    let mut commits = valid_history();
+    commits.push(JournalCommit::incremental_through(
+        JournalSequence::new(10),
+        vec![semantic(
+            11,
+            10,
+            JournalRecord::CommandCommitted(
+                crate::journal::CommittedCommand::uncorrelated(AgentCommand::CompactContext {
+                    guidance: None,
+                })
+                .unwrap(),
+            ),
+        )],
+    ));
+    let recovered = recover(&commits).unwrap();
+    assert_eq!(recovered.binding_epoch(), Some(1));
+    assert_eq!(
+        recovered.continuation_anchor(),
+        Some(JournalSequence::new(9))
+    );
+    let submission_id = submission(12);
+    let turn = TurnRef::new(
+        activity().session_id(),
+        crate::TurnId::new(std::num::NonZeroU64::new(4).unwrap()),
+    );
+    commits.push(JournalCommit::incremental_through(
+        JournalSequence::new(13),
+        vec![
+            semantic(
+                12,
+                11,
+                JournalRecord::CommandCommitted(
+                    crate::journal::CommittedCommand::submission(
+                        AgentCommand::StartTurn {
+                            turn,
+                            input: crate::UserInput::new("next"),
+                        },
+                        submission_id,
+                    )
+                    .unwrap(),
+                ),
+            ),
+            semantic(
+                13,
+                12,
+                JournalRecord::BackendExchangeObserved(BackendExchangeObserved::new(
+                    1,
+                    OperationId::from(submission_id),
+                    ExchangeKind::Request,
+                    ExchangeDirection::YoToBackend,
+                    "codex.request/v1",
+                    None,
+                    None,
+                    DetailAvailability::Unpersisted,
+                )),
+            ),
+            semantic(
+                14,
+                13,
+                JournalRecord::BackendRequestAccepted(BackendRequestAccepted::new(
+                    1,
+                    turn.turn_id(),
+                    OperationId::from(submission_id),
+                    JournalSequence::new(12),
+                    identity("next-request"),
+                )),
+            ),
+        ],
+    ));
+    let recovered = recover(&commits).unwrap();
+    assert_eq!(recovered.binding_epoch(), Some(1));
+    assert_eq!(recovered.continuation_anchor(), None);
+}

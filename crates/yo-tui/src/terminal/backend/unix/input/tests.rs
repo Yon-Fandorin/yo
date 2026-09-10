@@ -248,7 +248,7 @@ fn resize_is_decoded_to_resolved_geometry() {
     );
 }
 
-// 활성화하지 않은 focus와 mouse event는 편집기를 건드리지 않는 구조화 실패다.
+// focus는 명시적 실패이며, 캡처된 클릭은 편집기 입력 없이 안전하게 소비한다.
 #[test]
 fn unsupported_events_are_explicit_failures() {
     let mouse = Event::Mouse(MouseEvent {
@@ -270,10 +270,7 @@ fn unsupported_events_are_explicit_failures() {
             UnsupportedInputKind::FocusLost
         ))
     );
-    assert_eq!(
-        decode_event(mouse),
-        Err(InputDecodeFailure::Unsupported(UnsupportedInputKind::Mouse))
-    );
+    assert_eq!(decode_event(mouse), Ok(InputEvent::MouseScroll(0)));
 }
 
 struct RecordingSource {
@@ -372,4 +369,25 @@ fn decode_key(source: CrosstermKeyEvent) -> KeyEvent {
         panic!("a key event is expected");
     };
     decoded
+}
+
+// tmux가 전달하는 휠은 세 줄씩 움직이며 클릭·수평 이동은 키 입력으로 바뀌지 않는다.
+#[test]
+fn mouse_wheel_decodes_without_turning_pointer_reports_into_keys() {
+    for (kind, lines) in [
+        (MouseEventKind::ScrollUp, -3),
+        (MouseEventKind::ScrollDown, 3),
+        (MouseEventKind::ScrollLeft, 0),
+        (MouseEventKind::Moved, 0),
+    ] {
+        assert_eq!(
+            decode_event(Event::Mouse(MouseEvent {
+                kind,
+                column: 10,
+                row: 5,
+                modifiers: CrosstermKeyModifiers::NONE
+            })),
+            Ok(InputEvent::MouseScroll(lines))
+        );
+    }
 }

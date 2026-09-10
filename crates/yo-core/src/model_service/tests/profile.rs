@@ -23,6 +23,26 @@ fn complete_layer() -> ModelProfileLayer {
     )
 }
 
+// 하위 계층의 부재는 상위 이미지 프로필을 지우지 않으며 unknown override는 승격되지 않는다.
+#[test]
+fn image_profile_inherits_explicit_identity_and_rejects_unknown_override() {
+    let base = complete_layer().with_image_input_profile(Some(id("kimi-code-png-advisory/v1")));
+    let inherited =
+        EffectiveModelProfile::resolve(Some(&base), &ModelProfileLayer::default()).unwrap();
+    assert_eq!(
+        inherited.image_input_profile().unwrap().as_str(),
+        "kimi-code-png-advisory/v1"
+    );
+    let unknown = ModelProfileLayer::default().with_image_input_profile(Some(id("other/v1")));
+    assert!(EffectiveModelProfile::resolve(Some(&base), &unknown).is_err());
+    assert!(
+        EffectiveModelProfile::resolve(None, &complete_layer())
+            .unwrap()
+            .image_input_profile()
+            .is_none()
+    );
+}
+
 // 상위 profile의 모든 필드를 먼저 상속한 뒤 모델이 명시한 scalar와 구조화 필드만
 // 통째로 교체하므로, 빠진 값은 유지되고 reasoning mapping은 재귀 병합되지 않습니다.
 #[test]

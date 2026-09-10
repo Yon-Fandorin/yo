@@ -5,10 +5,11 @@ use std::collections::BTreeMap;
 use serde_json::json;
 use yo_backend::validate_provider_private_replay_sequence;
 use yo_core::{
-    ActivityKind, ActivityOutcome, ActivityRef, BackendEvent, BackendFailure, BackendFailureKind,
-    CacheReadInputTokens, Failure, ModelConnectorEvent, ModelConnectorTerminal, ModelReplayItem,
-    ModelReplayRole, ReasoningChannel, ReplayProfile, ToolValidationFailure,
-    provider_private_schema,
+    ActivityKind, ActivityNotice, ActivityOutcome, ActivityRef, ActivityUpdate, BackendEvent,
+    BackendFailure, BackendFailureKind, CacheReadInputTokens, Failure, ModelConnectorEvent,
+    ModelConnectorTerminal, ModelReplayItem, ModelReplayRole, ModelRequestFailureKind,
+    ModelRequestOutcome, NoticeLevel, ReasoningChannel, ReplayProfile, ToolOutput,
+    ToolValidationFailure, provider_private_schema,
 };
 
 use super::{
@@ -58,7 +59,7 @@ impl NativeModelBackend {
         target.entry(key).or_default().push_str(&delta);
         self.events.push_back(BackendEvent::ActivityUpdated {
             activity,
-            update: yo_core::ActivityUpdate::TextDelta(delta),
+            update: ActivityUpdate::TextDelta(delta),
         });
         Ok(())
     }
@@ -135,7 +136,7 @@ impl NativeModelBackend {
                     };
                     self.events.push_back(BackendEvent::ActivityUpdated {
                         activity,
-                        update: yo_core::ActivityUpdate::TextDelta(delta),
+                        update: ActivityUpdate::TextDelta(delta),
                     });
                 }
             },
@@ -233,13 +234,27 @@ impl NativeModelBackend {
                         };
                         self.events.push_back(BackendEvent::ActivityUpdated {
                             activity,
-                            update: yo_core::ActivityUpdate::TextSnapshot(
-                                json!({
-                                    "call_id": call_id,
-                                    "name": name,
-                                    "arguments": admitted_arguments,
-                                })
-                                .to_string(),
+                            update: ActivityUpdate::TextSnapshot(
+                                ToolOutput {
+                                    tool: name.clone(),
+                                    server: None,
+                                    arguments: admitted_arguments.parse().ok(),
+                                    result: None,
+                                    content_items: None,
+                                    error: None,
+                                    plain_text: format!(
+                                        "{name} · {call_id}\nArguments:\n{admitted_arguments}"
+                                    ),
+                                }
+                                .to_snapshot()
+                                .unwrap_or_else(|| {
+                                    json!({
+                                        "call_id": call_id,
+                                        "name": name,
+                                        "arguments": admitted_arguments,
+                                    })
+                                    .to_string()
+                                }),
                             ),
                         });
                         if !self.tool_host.is_available(call.definition().id()) {
@@ -297,7 +312,7 @@ impl NativeModelBackend {
                         let message = durable_tool_validation_message(kind);
                         self.events.push_back(BackendEvent::ActivityUpdated {
                             activity,
-                            update: yo_core::ActivityUpdate::TextSnapshot(
+                            update: ActivityUpdate::TextSnapshot(
                                 json!({
                                     "call_id": call_id,
                                     "name": name,
@@ -367,16 +382,18 @@ impl NativeModelBackend {
                 status,
                 usage,
             } => {
-                if !state.call_activities.is_empty() {
-                    return Err(failure(
-                        BackendFailureKind::Protocol,
-                        "model terminal arrived with an incomplete function call",
-                    ));
-                }
                 if state.response_id.as_deref() != Some(response_id.as_str()) {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "model terminal identity does not match the created response",
+                    ));
+                }
+                if matches!(status, ModelConnectorTerminal::Completed)
+                    && !state.call_activities.is_empty()
+                {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "model terminal arrived with an incomplete function call",
                     ));
                 }
                 if let Some(mut stream) = state.stream.take() {
@@ -428,6 +445,50 @@ impl NativeModelBackend {
                     .to_string(),
                     Some(ActivityOutcome::Completed),
                 );
+                let terminal_failure = match &status {
+                    ModelConnectorTerminal::Completed => None,
+                    ModelConnectorTerminal::Incomplete {
+                        reason,
+                        request_failure,
+                    } => Some((
+                        *request_failure,
+                        format!(
+                            "model response was incomplete: {}",
+                            reason.as_deref().unwrap_or("unknown reason")
+                        ),
+                    )),
+                    ModelConnectorTerminal::Failed {
+                        code,
+                        request_failure,
+                    } => Some((
+                        *request_failure,
+                        format!(
+                            "model response failed: {}",
+                            code.as_deref().unwrap_or("unknown code")
+                        ),
+                    )),
+                };
+                if let Some((kind, message)) = terminal_failure {
+                    self.observe_model_request(state.turn, ModelRequestOutcome::Failed(kind));
+                    if kind == ModelRequestFailureKind::ResponseLimit {
+                        let notice = self.next_activity(state.turn)?;
+                        self.queue_activity_text(
+                            notice,
+                            ActivityKind::ModelWork,
+                            ActivityNotice {
+                                title: "Response limit reached".to_owned(),
+                                message: "The response stopped before completion.\nPartial answer text is retained. Unfinished tool calls were not executed.".to_owned(),
+                                level: NoticeLevel::Warning,
+                            }
+                            .to_snapshot()
+                            .expect("bounded static limit notice"),
+                            Some(ActivityOutcome::Completed),
+                        );
+                    }
+                    // Failed rounds are display evidence, never replay or executable calls.
+                    self.fail_turn(state, message);
+                    return Ok(());
+                }
                 for activity in state
                     .assistant_activities
                     .values()
@@ -498,17 +559,12 @@ impl NativeModelBackend {
                 match status {
                     ModelConnectorTerminal::Completed if state.pending_calls.is_empty() => {
                         if completed_round_has_assistant {
-                            self.observe_model_request(
-                                state.turn,
-                                yo_core::ModelRequestOutcome::Succeeded,
-                            );
+                            self.observe_model_request(state.turn, ModelRequestOutcome::Succeeded);
                             self.complete_turn(state)?;
                         } else {
                             self.observe_model_request(
                                 state.turn,
-                                yo_core::ModelRequestOutcome::Failed(
-                                    yo_core::ModelRequestFailureKind::Protocol,
-                                ),
+                                ModelRequestOutcome::Failed(ModelRequestFailureKind::Protocol),
                             );
                             self.fail_turn(
                                 state,
@@ -518,43 +574,12 @@ impl NativeModelBackend {
                         }
                     },
                     ModelConnectorTerminal::Completed => {
-                        self.observe_model_request(
-                            state.turn,
-                            yo_core::ModelRequestOutcome::Succeeded,
-                        );
+                        self.observe_model_request(state.turn, ModelRequestOutcome::Succeeded);
                         self.advance_tool_queue(state)?;
                     },
-                    ModelConnectorTerminal::Incomplete {
-                        reason,
-                        request_failure,
-                    } => {
-                        self.observe_model_request(
-                            state.turn,
-                            yo_core::ModelRequestOutcome::Failed(request_failure),
-                        );
-                        self.fail_turn(
-                            state,
-                            format!(
-                                "model response was incomplete: {}",
-                                reason.unwrap_or_else(|| "unknown reason".to_owned())
-                            ),
-                        );
-                    },
-                    ModelConnectorTerminal::Failed {
-                        code,
-                        request_failure,
-                    } => {
-                        self.observe_model_request(
-                            state.turn,
-                            yo_core::ModelRequestOutcome::Failed(request_failure),
-                        );
-                        self.fail_turn(
-                            state,
-                            format!(
-                                "model response failed: {}",
-                                code.unwrap_or_else(|| "unknown code".to_owned())
-                            ),
-                        );
+                    ModelConnectorTerminal::Incomplete { .. }
+                    | ModelConnectorTerminal::Failed { .. } => {
+                        unreachable!("failed terminals leave before replay preparation")
                     },
                 }
             },

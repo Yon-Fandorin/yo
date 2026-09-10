@@ -6,10 +6,13 @@ mod scripted;
 #[cfg(test)]
 mod tests;
 
-pub use context::{ContextCheckpointProposal, ContextPressureDecision, ContextPressureObservation};
+pub use context::{
+    ContextAccounting, ContextAccountingQuality, ContextCheckpointProposal,
+    ContextPressureDecision, ContextPressureObservation, KIMI_CODE_IMAGE_ACCOUNTING_PROFILE,
+};
 pub use contract::{
     AgentBackend, BackendAdapter, BackendCapabilities, BackendEvent, BackendFailure,
-    BackendFailureKind, BackendPoll, BackendStopHandle,
+    BackendFailureKind, BackendPoll, BackendStopHandle, ImageInputCapability,
 };
 pub use evidence::{
     BackendBindingEvidence, BackendCommandEvidence, BackendIdentity, BackendOutcomeEvidence,
@@ -22,3 +25,4 @@ pub(crate) use evidence::{
     ProviderPrivateReplayPayload, replay_profile_id, validate_provider_private_replay_sequence,
 };
 pub use scripted::{BackendScriptStep, ScriptedBackend};
+pub use yo_backend::{InputImageSnapshot, InputImageSnapshotError, ModelInputPart};

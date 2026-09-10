@@ -1,9 +1,7 @@
 use super::{
-    super::{
-        codex_diagnostics::{CodexWarningCollector, publish_pending_codex_diagnostics},
-        output::write_session_output,
-    },
+    super::{codex_diagnostics::CodexWarningCollector, output::write_session_output},
     LiveSession, PreparedAgent, SessionStep,
+    session::termination_requested,
 };
 use crate::{command, execution::model, interaction::diagnostic::AppError, state::config};
 
@@ -11,14 +9,19 @@ pub(super) fn build_live_session(
     prepared: PreparedAgent,
     config: &config::Config,
     options: &command::LiveOptions,
-) -> LiveSession {
+) -> Result<LiveSession, AppError> {
     let PreparedAgent {
-        agent,
+        is_resume,
+        session_id,
+        inherited_history,
+        mut agent,
         workspace,
         workspace_references,
         skill_references,
+        image_preparation,
         selection,
         local_tool_registry,
+        execution_manifest_digest,
         active_host,
         active_host_execution,
         active_host_model,
@@ -26,16 +29,40 @@ pub(super) fn build_live_session(
     } = prepared;
     let mut tui = yo_tui::TuiSession::with_session_info(
         options.glyph_profile,
-        yo_tui::TuiSessionInfo::new(selection.label(), compact_workspace_label(&workspace)),
+        yo_tui::TuiSessionInfo::new(
+            selection.label(active_host_model.as_ref()),
+            compact_workspace_label(&workspace),
+        )
+        .with_startup_notice(is_resume),
         terminal_color_capability(),
         yo_tui::MotionPreference::Standard,
     )
+    .with_theme(options.theme.unwrap_or_else(|| config.theme()))
+    .with_theme_overrides(config.theme_overrides().clone())
+    .with_output_preferences(config.output_preferences())
+    .with_prompt_templates(config.prompts().clone())
+    .with_image_preparation(image_preparation)
     .with_frame_rate_limit(config.frame_rate_limit())
     .with_workspace_references(
         workspace_references.expect("the terminal frontend started workspace references"),
     );
     if let Some(skill_references) = skill_references {
         tui = tui.with_skill_references(skill_references);
+    }
+    if let Some(history) = inherited_history {
+        tui = match tui.with_inherited_history(&history) {
+            Ok(tui) => tui,
+            Err(error) => {
+                let primary = AppError::single("projecting inherited conversation", error);
+                return Err(match agent.shutdown() {
+                    Ok(_) => primary,
+                    Err(cleanup) => AppError::combine([
+                        primary,
+                        AppError::single("inherited conversation candidate cleanup", cleanup),
+                    ]),
+                });
+            },
+        };
     }
     let model_controller = model::project_host_catalogs(
         yo_core::ModelSelectionController::new(
@@ -48,16 +75,28 @@ pub(super) fn build_live_session(
     if !model_controller.sections().is_empty() {
         tui = tui.with_model_selection(model_controller);
     }
-    LiveSession {
+    let startup_target = match selection.model_selection() {
+        Some(model) => yo_core::StartupTarget::Model(model),
+        None => {
+            yo_core::StartupTarget::Host(active_host.clone().expect("delegated startup has a host"))
+        },
+    };
+    Ok(LiveSession {
+        session_id,
+        startup_target,
+        presentation: super::presentation::Presentation::start(workspace.clone()),
         agent,
+        pending_diagnostic_poll: None,
+        fork_catalog: None,
         tui,
         workspace,
         local_tool_registry,
+        execution_manifest_digest,
         active_host,
         active_host_execution,
         active_host_model,
         host_catalogs,
-    }
+    })
 }
 
 pub(super) fn run_terminal_generation(
@@ -70,13 +109,15 @@ pub(super) fn run_terminal_generation(
 ) -> Result<SessionStep, AppError> {
     let codex_warning_observer = codex_warnings.observer();
 
-    publish_pending_codex_diagnostics(codex_warnings)?;
     let session = live
         .as_mut()
         .expect("live session is initialized before terminal acquisition");
     let terminal = yo_tui::run_session_with_mode(
         termination,
-        &mut session.agent,
+        &mut session.presentation.connection(
+            &mut codex_warnings
+                .connection(&mut session.agent, &mut session.pending_diagnostic_poll),
+        ),
         &mut session.tui,
         options.mode,
     );
@@ -84,6 +125,16 @@ pub(super) fn run_terminal_generation(
     let mut errors = Vec::<AppError>::new();
     match terminal {
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
+        Ok(yo_tui::TerminalOutcome::NewSessionRequested) => return Ok(SessionStep::New),
+        Ok(yo_tui::TerminalOutcome::ForkSessionRequested) => return Ok(SessionStep::Fork),
+        Ok(yo_tui::TerminalOutcome::ForkPickerRequested) => return Ok(SessionStep::ForkPicker),
+        Ok(yo_tui::TerminalOutcome::ForkBoundaryRequested { picker, index }) => {
+            return Ok(SessionStep::ForkBoundary { picker, index });
+        },
+        Ok(yo_tui::TerminalOutcome::SessionTreeRequested) => return Ok(SessionStep::Tree),
+        Ok(yo_tui::TerminalOutcome::ResumeSessionRequested(target)) => {
+            return Ok(SessionStep::Resume(target));
+        },
         Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(
             yo_core::ModelPickerTarget::Managed(selection),
         )) => {
@@ -100,6 +151,7 @@ pub(super) fn run_terminal_generation(
                 session
                     .local_tool_registry
                     .expect("only a live native Session exposes model selection"),
+                session.execution_manifest_digest.as_deref(),
             );
             match model::start_native(
                 config,
@@ -108,28 +160,38 @@ pub(super) fn run_terminal_generation(
                     .expect("a live native Session retained its credential snapshot"),
                 &replacement,
                 &session.workspace,
+                &mut || termination_requested(termination),
             ) {
-                Ok(backend) => match session.agent.replace_backend(backend, termination) {
-                    Ok(outcome) => {
-                        let cleanup_warning = outcome.cleanup_failure().map(ToString::to_string);
-                        let label = selection.model().to_string();
-                        let model_controller = model::project_host_catalogs(
-                            yo_core::ModelSelectionController::new(
-                                config.model_catalog().clone(),
-                                Some(selection),
-                            ),
-                            None,
-                            &session.host_catalogs,
-                        );
-                        session
-                            .tui
-                            .commit_model_switch(model_controller, label, cleanup_warning);
-                        return Ok(SessionStep::Continue);
-                    },
-                    Err(error) => {
-                        session.tui.report_model_switch_failure(error.to_string());
-                        return Ok(SessionStep::Continue);
-                    },
+                Ok((backend, digest)) => {
+                    match session.agent.replace_backend(backend, termination) {
+                        Ok(outcome) => {
+                            session.execution_manifest_digest = digest;
+                            session.fork_catalog = None;
+                            session.startup_target =
+                                yo_core::StartupTarget::Model(selection.clone());
+                            let cleanup_warning =
+                                outcome.cleanup_failure().map(ToString::to_string);
+                            let label = format!("{} · {}", selection.provider(), selection.model());
+                            let model_controller = model::project_host_catalogs(
+                                yo_core::ModelSelectionController::new(
+                                    config.model_catalog().clone(),
+                                    Some(selection),
+                                ),
+                                None,
+                                &session.host_catalogs,
+                            );
+                            session.tui.commit_model_switch(
+                                model_controller,
+                                label,
+                                cleanup_warning,
+                            );
+                            return Ok(SessionStep::Continue);
+                        },
+                        Err(error) => {
+                            session.tui.report_model_switch_failure(error.to_string());
+                            return Ok(SessionStep::Continue);
+                        },
+                    }
                 },
                 Err(error) => {
                     session.tui.report_model_switch_failure(error.to_string());
@@ -250,7 +312,7 @@ pub(super) fn run_terminal_generation(
                     );
                     session.tui.commit_model_switch(
                         controller,
-                        selection.model().to_string(),
+                        format!("host:{} · {}", selection.host().as_str(), selection.model()),
                         outcome.cleanup_failure().map(ToString::to_string),
                     );
                     return Ok(SessionStep::Continue);

@@ -679,3 +679,138 @@ fn warning_observer_receives_the_warning_before_initialized_send_failure() {
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("0.150.0"));
 }
+
+// 턴이 없는 초기화 경고도 observer로 전달하고 스레드 경고는 검증된 binding에만 연결한다.
+#[test]
+fn server_warnings_reach_observer_without_a_turn_and_filter_thread_scope() {
+    let (peer, _) = FakePeer::new([
+        json!({"method":"configWarning","params":{"summary":"check config\u{1b}[31m","details":"extra guidance","path":"/tmp/config.yaml","range":{"start":1}}}),
+        json!({"method":"warning","params":{"threadId":"thread-a","message":"queued before binding"}}),
+        initialize_response(1, "0.149.0"),
+        json!({"method":"warning","params":{"threadId":"other","message":"wrong session"}}),
+        json!({"method":"warning","params":{"threadId":"thread-a","message":"current session"}}),
+    ]);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&warnings);
+    let mut client = AppServerClient::new(peer, Duration::from_secs(1)).with_warning_observer(
+        Some(Arc::new(move |warning| {
+            observed.lock().unwrap().push(warning.to_string());
+        })),
+    );
+    client.initialize().unwrap();
+    {
+        let warnings = warnings.lock().unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("extra guidance"));
+        assert!(warnings[0].contains("/tmp/config.yaml"));
+        assert!(!warnings[0].contains('\u{1b}'));
+    }
+    client.bind_notice_thread("thread-a");
+    client.poll().unwrap();
+    let warnings = warnings.lock().unwrap();
+    assert_eq!(warnings.len(), 3);
+    assert!(warnings[1].contains("queued before binding"));
+    assert!(warnings[2].contains("current session"));
+    assert!(
+        !warnings
+            .iter()
+            .any(|message| message.contains("wrong session"))
+    );
+}
+
+// 경고 폭주가 한 번의 비차단 poll을 독점하지 않으며 잘린 경고도 UTF-8·제어문자 경계를 지킨다.
+#[test]
+fn server_warning_poll_is_bounded() {
+    let messages =
+        (0..33).map(|_| json!({"method":"warning","params":{"message":"한".repeat(4000)}}));
+    let (peer, _) = FakePeer::new(messages);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&warnings);
+    let mut client =
+        AppServerClient::new(peer, Duration::from_secs(1)).with_warning_observer(Some(Arc::new(
+            move |warning| observed.lock().unwrap().push(warning.to_string()),
+        )));
+    client.poll().unwrap();
+    assert_eq!(warnings.lock().unwrap().len(), 32);
+    client.poll().unwrap();
+    let warnings = warnings.lock().unwrap();
+    assert_eq!(warnings.len(), 33);
+    assert!(
+        warnings
+            .iter()
+            .all(|message| message.len() < 8300 && message.ends_with('…'))
+    );
+}
+
+// 사용 중단 안내와 승인 검토 경고도 원문·설정 안내를 보존하며 다른 스레드의 경고는 숨긴다.
+#[test]
+fn deprecation_and_guardian_notices_use_the_session_warning_observer() {
+    let (peer, _) = FakePeer::new([
+        json!({"method":"deprecationNotice","params":{
+            "summary":"Legacy setting", "details":"Use the replacement setting."}}),
+        json!({"method":"guardianWarning","params":{
+            "threadId":"other", "message":"Other thread"}}),
+        json!({"method":"guardianWarning","params":{
+            "threadId":"thread-a", "message":"Approval review unavailable\u{1b}[31m"}}),
+    ]);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&warnings);
+    let mut client =
+        AppServerClient::new(peer, Duration::from_secs(1)).with_warning_observer(Some(Arc::new(
+            move |warning| observed.lock().unwrap().push(warning.to_notice()),
+        )));
+    client.bind_notice_thread("thread-a");
+    client.poll().unwrap();
+    let warnings = warnings.lock().unwrap();
+    assert_eq!(warnings.len(), 2);
+    assert_eq!(warnings[0].title, "Codex deprecation notice");
+    assert_eq!(
+        warnings[0].message,
+        "Legacy setting\nDetails: Use the replacement setting."
+    );
+    assert_eq!(warnings[1].title, "Codex approval warning");
+    assert!(
+        warnings[1]
+            .message
+            .starts_with("Approval review unavailable")
+    );
+    assert!(!warnings[1].message.contains('\u{1b}'));
+}
+
+// 독립 세션은 fork/rebind RPC 없이 선택한 모델을 thread/start에 전달하고 응답 모델을 검증한다.
+// 계정이 바뀌면 thread/start 전 거절하여 기존 세션을 대체하지 않는다.
+#[test]
+fn independent_new_session_pins_account_and_model_without_forking() {
+    for (account, requested, succeeds, sends_start) in [
+        ("account-test", "gpt-test", true, true),
+        ("account-other", "gpt-test", false, false),
+        ("account-test", "different-model", false, true),
+    ] {
+        let (mut candidate, sent) = backend([thread_start_response(2, "independent-thread")]);
+        candidate.new_session_target = Some((
+            AccountId::new(account).unwrap(),
+            ModelId::new(requested).unwrap(),
+        ));
+        let result = candidate.execute_command(AgentCommand::CreateSession {
+            session_id: session(9),
+        });
+        assert_eq!(result.is_ok(), succeeds);
+        let sent = sent.0.borrow();
+        let starts = sent
+            .iter()
+            .filter(|request| request["method"] == "thread/start")
+            .collect::<Vec<_>>();
+        assert_eq!(starts.len(), usize::from(sends_start));
+        if sends_start {
+            assert_eq!(starts[0]["params"]["model"], requested);
+            assert_eq!(starts[0]["params"]["cwd"], "/workspace");
+        }
+        assert!(!sent.iter().any(|request| matches!(
+            request["method"].as_str(),
+            Some("thread/fork" | "thread/resume" | "thread/setModel")
+        )));
+        if let Ok(BackendCommandEvidence::BindingOpened(binding)) = result {
+            assert_eq!(binding.session_locator().value(), "independent-thread");
+        }
+    }
+}

@@ -6,8 +6,8 @@ use super::JournalCodecError;
 use crate::{
     ContinuationStrategy, JournalSequence, ReplayExecutor, TurnId,
     journal::codec::{
-        BindingCloseReason, CacheState, DetailAvailability, ExchangeDirection, ExchangeKind,
-        OperationId, TransitionMode, VersionedIdentity,
+        BindingCloseReason, BindingTransition, CacheState, DetailAvailability, ExchangeDirection,
+        ExchangeKind, OperationId, TransitionMode, VersionedIdentity,
     },
 };
 
@@ -51,6 +51,7 @@ pub(super) enum WireDetailAvailability {
 #[serde(rename_all = "snake_case")]
 pub(super) enum WireTransitionMode {
     Initial,
+    InitialFork,
     ExactReplay,
     BackendNativeModelRebind,
     LossyHandoff,
@@ -79,14 +80,110 @@ pub(super) enum WireResumableStatus {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+pub(super) enum WireBindingTransition {
+    InitialFork(WireInitialForkTransition),
+    Ordinary(WireOrdinaryTransition),
+}
+
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WireBindingTransition {
-    pub(super) mode: WireTransitionMode,
-    pub(super) cache: WireCacheState,
+pub(super) struct WireInitialForkTransition {
+    mode: WireInitialForkMode,
+    fork_seed_sequence: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WireInitialForkMode {
+    InitialFork,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WireOrdinaryTransition {
+    mode: WireTransitionMode,
+    cache: WireCacheState,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) source_anchor_sequence: Option<u64>,
+    source_anchor_sequence: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) source_checkpoint_sequence: Option<u64>,
+    source_checkpoint_sequence: Option<u64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "non_null_sequence"
+    )]
+    source_initial_fork_sequence: Option<u64>,
+}
+
+fn non_null_sequence<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<u64>, D::Error> {
+    u64::deserialize(decoder).map(Some)
+}
+
+impl WireBindingTransition {
+    pub(super) fn encode(value: &BindingTransition) -> Result<Self, JournalCodecError> {
+        super::validate_transition(value)?;
+        if value.mode() == TransitionMode::InitialFork {
+            return Ok(Self::InitialFork(WireInitialForkTransition {
+                mode: WireInitialForkMode::InitialFork,
+                fork_seed_sequence: value
+                    .fork_seed_sequence()
+                    .expect("validated fork transition")
+                    .get(),
+            }));
+        }
+        Ok(Self::Ordinary(WireOrdinaryTransition {
+            mode: value.mode().into(),
+            cache: value.cache().into(),
+            source_anchor_sequence: value.source_anchor_sequence().map(JournalSequence::get),
+            source_checkpoint_sequence: value
+                .source_checkpoint_sequence()
+                .map(JournalSequence::get),
+            source_initial_fork_sequence: value
+                .source_initial_fork_sequence()
+                .map(JournalSequence::get),
+        }))
+    }
+    pub(super) fn decode(self) -> Result<BindingTransition, JournalCodecError> {
+        let result = match self {
+            Self::InitialFork(value) => BindingTransition::initial_fork(sequence(
+                value.fork_seed_sequence,
+                "fork_seed_sequence",
+            )?),
+            Self::Ordinary(value) => {
+                if matches!(value.mode, WireTransitionMode::InitialFork) {
+                    return Err(JournalCodecError::new(
+                        "initial_fork transition forbids cache and replacement fields",
+                    ));
+                }
+                let mut result = BindingTransition::new(
+                    value.mode.into(),
+                    value.cache.into(),
+                    value
+                        .source_anchor_sequence
+                        .map(|v| sequence(v, "source_anchor_sequence"))
+                        .transpose()?,
+                );
+                if let Some(v) = value.source_checkpoint_sequence {
+                    result = result.with_source_checkpoint_sequence(sequence(
+                        v,
+                        "source_checkpoint_sequence",
+                    )?);
+                }
+                if let Some(v) = value.source_initial_fork_sequence {
+                    result = result.with_source_initial_fork_sequence(sequence(
+                        v,
+                        "source_initial_fork_sequence",
+                    )?);
+                }
+                result
+            },
+        };
+        super::validate_transition(&result)?;
+        Ok(result)
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -319,6 +416,7 @@ impl From<TransitionMode> for WireTransitionMode {
     fn from(value: TransitionMode) -> Self {
         match value {
             TransitionMode::Initial => Self::Initial,
+            TransitionMode::InitialFork => Self::InitialFork,
             TransitionMode::ExactReplay => Self::ExactReplay,
             TransitionMode::BackendNativeModelRebind => Self::BackendNativeModelRebind,
             TransitionMode::LossyHandoff => Self::LossyHandoff,
@@ -330,6 +428,7 @@ impl From<WireTransitionMode> for TransitionMode {
     fn from(value: WireTransitionMode) -> Self {
         match value {
             WireTransitionMode::Initial => Self::Initial,
+            WireTransitionMode::InitialFork => Self::InitialFork,
             WireTransitionMode::ExactReplay => Self::ExactReplay,
             WireTransitionMode::BackendNativeModelRebind => Self::BackendNativeModelRebind,
             WireTransitionMode::LossyHandoff => Self::LossyHandoff,

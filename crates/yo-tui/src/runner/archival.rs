@@ -1,5 +1,9 @@
 //! Read-only terminal-independent projections of one durable Session history.
 
+use yo_core::session_repository::{
+    InheritedHistorySection, InheritedHistorySource, InheritedSessionHistory,
+};
+
 pub(in crate::runner) mod request;
 pub(in crate::runner) mod usage;
 
@@ -62,7 +66,7 @@ impl ArchivedProjectionOptions {
 /// Failure to build a read-only projection from already validated history.
 #[derive(Debug)]
 pub struct ArchivedProjectionError {
-    detail: String,
+    pub(super) detail: String,
 }
 
 impl fmt::Display for ArchivedProjectionError {
@@ -106,7 +110,11 @@ pub fn project_archived_session_with_options(
         });
     }
     match view {
-        ArchivedSessionView::Chat => project_chat(history.records(), glyph_profile),
+        ArchivedSessionView::Chat => project_chat_with_inherited(
+            history.records(),
+            history.inherited_history(),
+            glyph_profile,
+        ),
         ArchivedSessionView::Transcript => Ok(project_transcript(history, options)),
         ArchivedSessionView::Request => Ok(request::project(history)),
     }
@@ -120,11 +128,26 @@ pub fn project_archived_usage(
     usage::project(history, glyph_profile)
 }
 
+#[cfg(test)]
 fn project_chat(
     records: &[yo_core::TranscriptRecord],
     glyph_profile: GlyphProfile,
 ) -> Result<String, ArchivedProjectionError> {
+    project_chat_with_inherited(records, None, glyph_profile)
+}
+
+fn project_chat_with_inherited(
+    records: &[yo_core::TranscriptRecord],
+    inherited: Option<&InheritedSessionHistory>,
+    glyph_profile: GlyphProfile,
+) -> Result<String, ArchivedProjectionError> {
     let mut chat = ChatProjection::new();
+    if let Some(history) = inherited {
+        chat.observe_inherited_history(history)
+            .map_err(|error| ArchivedProjectionError {
+                detail: format!("projecting inherited Chat history failed: {error:?}"),
+            })?;
+    }
     for record in records {
         chat.observe_record(record)
             .map_err(|error| ArchivedProjectionError {
@@ -145,15 +168,55 @@ fn project_transcript(
     history: &StoredSessionHistory,
     options: ArchivedProjectionOptions,
 ) -> String {
-    project_transcript_parts_with_options(
+    let inherited_count = history.inherited_history().map_or(0, |archive| {
+        archive
+            .sections()
+            .iter()
+            .map(|section| section.records().len())
+            .sum::<usize>()
+    });
+    let total = inherited_count.saturating_add(history.records().len());
+    let skip = options
+        .limit()
+        .map_or(0, |limit| total.saturating_sub(limit.get()));
+    let mut output = project_transcript_parts_with_options(
         history.descriptor(),
         history.journal_cutoff(),
         history.recovery(),
         history.continuity(),
         history.discovery_consistent(),
-        history.records(),
+        &[],
         options,
-    )
+    );
+    let mut index = 0;
+    if let Some(archive) = history.inherited_history() {
+        output.push_str("\n\n");
+        output.push_str(&inherited_header(archive));
+        for section in archive.sections() {
+            output.push_str("\n\n");
+            output.push_str(&inherited_section_header(section));
+            for record in section.records() {
+                if index >= skip {
+                    output.push_str("\n\n");
+                    output.push_str(&format_archival_record(index, record, options.content()));
+                }
+                index += 1;
+            }
+        }
+        output.push_str("\n\nCurrent Session · local records");
+    }
+    for (local_index, record) in history.records().iter().enumerate() {
+        if index >= skip {
+            output.push_str("\n\n");
+            output.push_str(&format_archival_record(
+                local_index,
+                record,
+                options.content(),
+            ));
+        }
+        index += 1;
+    }
+    output
 }
 
 #[cfg(test)]
@@ -213,6 +276,50 @@ fn project_transcript_parts_with_options(
         ));
     }
     output
+}
+
+pub(super) fn inherited_header(history: &InheritedSessionHistory) -> String {
+    let source = match history.source() {
+        InheritedHistorySource::Empty => "empty".to_owned(),
+        InheritedHistorySource::Anchor {
+            record_sequence,
+            journal_boundary,
+        } => format!(
+            "anchor {} · journal boundary {}",
+            record_sequence.get(),
+            journal_boundary.get()
+        ),
+        InheritedHistorySource::Checkpoint {
+            record_sequence,
+            journal_boundary,
+        } => format!(
+            "checkpoint {} · journal boundary {}",
+            record_sequence.get(),
+            journal_boundary.get()
+        ),
+        InheritedHistorySource::InitialFork {
+            record_sequence,
+            journal_boundary,
+        } => format!(
+            "initial fork {} · journal boundary {}",
+            record_sequence.get(),
+            journal_boundary.get()
+        ),
+    };
+    format!(
+        "Inherited history · read-only\nParent Session {} · {source}",
+        history.parent_session_id()
+    )
+}
+
+pub(super) fn inherited_section_header(section: &InheritedHistorySection) -> String {
+    let visible = section
+        .last_visible_journal_sequence()
+        .map_or_else(|| "none".to_owned(), |sequence| sequence.get().to_string());
+    format!(
+        "Source Session {} · last visible Journal {visible} · inherited/read-only",
+        section.source_session_id()
+    )
 }
 
 fn cutoff_text(journal_cutoff: Option<yo_core::JournalSequence>) -> String {

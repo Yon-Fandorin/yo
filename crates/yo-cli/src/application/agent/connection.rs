@@ -5,7 +5,11 @@ use std::{
 
 use yo_core::{
     AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, CommandAdmission,
-    PendingCommand,
+    InputAdmissionConfigurationError, InputAdmissionHost, PendingCommand,
+    session_repository::{
+        SessionForkLimits, StoredSessionContinuation, StoredSessionForkCatalog,
+        StoredSessionForkSelection, StoredSessionReader,
+    },
 };
 use yo_tui::{AgentConnection, AgentPoll};
 
@@ -21,6 +25,35 @@ pub(crate) struct TuiAgentConnection {
 }
 
 impl TuiAgentConnection {
+    pub(crate) fn capture_fork_source(
+        &self,
+        reader: &(impl StoredSessionReader + ?Sized),
+    ) -> Result<StoredSessionContinuation, AgentSessionError> {
+        self.session.capture_fork_source(reader)
+    }
+
+    pub(crate) fn capture_fork_catalog(
+        &self,
+        reader: &(impl StoredSessionReader + ?Sized),
+        limits: SessionForkLimits,
+    ) -> Result<StoredSessionForkCatalog, AgentSessionError> {
+        self.session.capture_fork_catalog(reader, limits)
+    }
+
+    pub(crate) fn prepare_historical_fork_source(
+        &self,
+        selection: &StoredSessionForkSelection,
+    ) -> Result<StoredSessionContinuation, AgentSessionError> {
+        self.session.prepare_historical_fork_source(selection)
+    }
+
+    pub(crate) fn configure_input_admission(
+        &mut self,
+        host: Box<dyn InputAdmissionHost>,
+    ) -> Result<(), InputAdmissionConfigurationError> {
+        self.session.configure_input_admission(host)
+    }
+
     pub(in crate::application::agent) fn from_session(session: AgentSession) -> Self {
         Self {
             journal: JournalState::from_session(&session),

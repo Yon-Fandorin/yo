@@ -1,5 +1,6 @@
 mod failure;
 mod flow;
+mod image_admission;
 mod interaction;
 mod journal;
 mod replacement_binding;

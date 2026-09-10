@@ -13,7 +13,7 @@ use yo_core::{
 };
 
 use super::{
-    command::CommandExecution,
+    command::{CommandExecution, PreparedCommandTools},
     execution::{ThreadExecution, failed},
 };
 
@@ -50,6 +50,7 @@ pub(crate) struct LocalToolHost {
     denied_credential: Option<descriptor::FileIdentity>,
     mutation_lock: Arc<Mutex<()>>,
     new_file_mode: u32,
+    commands: Option<PreparedCommandTools>,
 }
 
 impl LocalToolHost {
@@ -77,7 +78,13 @@ impl LocalToolHost {
             denied_credential,
             mutation_lock: Arc::new(Mutex::new(())),
             new_file_mode: descriptor::new_file_mode(),
+            commands: None,
         })
+    }
+
+    pub(crate) fn with_commands(mut self, commands: Option<PreparedCommandTools>) -> Self {
+        self.commands = commands;
+        self
     }
 
     fn open_directory(&self, value: &str) -> Result<(Dir, PathBuf), ToolExecutionError> {
@@ -96,14 +103,24 @@ impl LocalToolHost {
 
 impl ToolExecutionHost for LocalToolHost {
     fn identity(&self) -> &str {
-        HOST_IDENTITY
+        self.commands
+            .as_ref()
+            .map_or(HOST_IDENTITY, PreparedCommandTools::host_identity)
     }
 
     fn is_available(&self, tool: &ToolId) -> bool {
-        matches!(
-            tool.as_str(),
-            "read-file" | "list-files" | "read-files" | "edit-file" | "write-file" | "run-command"
-        )
+        self.commands
+            .as_ref()
+            .is_some_and(|commands| commands.command(tool).is_some())
+            || matches!(
+                tool.as_str(),
+                "read-file"
+                    | "list-files"
+                    | "read-files"
+                    | "edit-file"
+                    | "write-file"
+                    | "run-command"
+            )
     }
 
     fn start(
@@ -111,6 +128,25 @@ impl ToolExecutionHost for LocalToolHost {
         request: ToolExecutionRequest,
     ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
         let maximum_output_bytes = request.maximum_output_bytes;
+        if let Some(command) = self
+            .commands
+            .as_ref()
+            .and_then(|commands| commands.command(request.call.definition().id()))
+        {
+            if command.definition() != request.call.definition() {
+                return Err(ToolExecutionError::new(
+                    "command tool does not match its frozen definition",
+                ));
+            }
+            return Ok(Box::new(CommandExecution::spawn_prepared(
+                self.workspace.clone(),
+                command,
+                request.call.normalized_arguments().to_owned(),
+                maximum_output_bytes,
+                request.absolute_execution_timeout,
+                request.maximum_retained_output_bytes,
+            )?));
+        }
         match request.call.definition().id().as_str() {
             "read-file" => {
                 let path = path::string_argument(request.call.arguments(), "path")?;
@@ -148,6 +184,7 @@ impl ToolExecutionHost for LocalToolHost {
                     command,
                     maximum_output_bytes,
                     request.absolute_execution_timeout,
+                    request.maximum_retained_output_bytes,
                 )?))
             },
             "read-files" => {

@@ -3,6 +3,7 @@
 mod continuation;
 #[cfg(test)]
 pub(crate) use continuation::build_continuation;
+pub(crate) use continuation::read_fork_catalog;
 mod history;
 pub use history::{
     CODEX_USAGE_SCHEMA, CacheReadShare, CacheReadSummary, GROK_USAGE_SCHEMA, MANAGED_USAGE_SCHEMA,
@@ -13,14 +14,18 @@ pub use history::{
 pub(crate) mod journal;
 mod local;
 mod record;
+mod tree;
 
 use std::fmt;
 
 pub use continuation::{
-    StoredSessionContinuation, StoredSessionContinuationError, read_stored_session_continuation,
+    SessionForkLimits, StoredSessionContinuation, StoredSessionContinuationError,
+    StoredSessionForkBoundary, StoredSessionForkCatalog, StoredSessionForkSelection,
+    StoredSessionForkSourceKind, read_stored_session_continuation,
     recover_stored_session_continuation,
 };
 pub use history::{
+    InheritedHistorySection, InheritedHistorySource, InheritedSessionHistory,
     StoredBindingCacheState, StoredBindingCloseReason, StoredBindingTransition,
     StoredBindingTransitionMode, StoredContinuationStrategy, StoredDiscoveryMismatch,
     StoredDiscoveryMismatchKind, StoredDiscoveryValidation, StoredExchangeDirection,
@@ -34,8 +39,12 @@ pub use record::{
     RepositoryEntry, RepositorySequence, SessionDiscovery, SessionRecordVersion, StoredSession,
     StoredSessionSummary, StoredSessionUnavailableReason,
 };
+pub use tree::{
+    SessionTreeAncestry, SessionTreeLimits, SessionTreeNode, SessionTreePlaceholder,
+    StoredSessionTree,
+};
 
-use crate::{JournalSequence, SessionId};
+use crate::{HostWorkspacePath, JournalSequence, SessionId, WorkspaceHostId};
 
 pub trait SessionRepository {
     fn append(
@@ -64,9 +73,33 @@ pub trait SessionWriterRepository: SessionRepository {
 pub trait StoredSessionReader {
     fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError>;
 
+    /// Reads bounded, validated fork ancestry without starting a backend or acquiring a writer.
+    fn read_tree(
+        &self,
+        _workspace_host: WorkspaceHostId,
+        _workspace: &HostWorkspacePath,
+        _limits: SessionTreeLimits,
+    ) -> Result<StoredSessionTree, RepositoryError> {
+        Err(RepositoryError::Unavailable {
+            message: "bounded Session tree inspection is unavailable for this reader".to_owned(),
+        })
+    }
+
     /// Captures all committed physical records for one point-in-time Session view.
     fn read_session(&self, session_id: SessionId)
     -> Result<StoredSessionSnapshot, RepositoryError>;
+
+    /// Captures the complete pinned Session with physical bounds enforced before allocation.
+    /// Implementations must fail instead of returning a prefix when either budget is exhausted.
+    fn read_session_bounded(
+        &self,
+        _session_id: SessionId,
+        _limits: SessionForkLimits,
+    ) -> Result<StoredSessionSnapshot, RepositoryError> {
+        Err(RepositoryError::Unavailable {
+            message: "bounded historical fork capture is unavailable for this reader".to_owned(),
+        })
+    }
 
     fn read_after(
         &self,
@@ -91,11 +124,28 @@ where
         (**self).discover()
     }
 
+    fn read_tree(
+        &self,
+        workspace_host: WorkspaceHostId,
+        workspace: &HostWorkspacePath,
+        limits: SessionTreeLimits,
+    ) -> Result<StoredSessionTree, RepositoryError> {
+        (**self).read_tree(workspace_host, workspace, limits)
+    }
+
     fn read_session(
         &self,
         session_id: SessionId,
     ) -> Result<StoredSessionSnapshot, RepositoryError> {
         (**self).read_session(session_id)
+    }
+
+    fn read_session_bounded(
+        &self,
+        session_id: SessionId,
+        limits: SessionForkLimits,
+    ) -> Result<StoredSessionSnapshot, RepositoryError> {
+        (**self).read_session_bounded(session_id, limits)
     }
 
     fn read_after(

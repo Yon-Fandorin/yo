@@ -5,7 +5,7 @@ use super::{
         TOOL_SCHEMA_DIALECT, ToolApprovalRequirement, ToolEffect, ToolRegistry,
         ToolValidationFailure,
     },
-    support::{definition, definition_with_metadata},
+    support::{definition, definition_with_metadata, definition_with_schema},
 };
 use crate::{FunctionTool, ModelReplayTool};
 
@@ -64,6 +64,214 @@ fn frozen_registry_validates_the_exact_arguments_before_execution() {
         ToolValidationFailure::SchemaMismatch.code(),
         "yo.tool.validation.schema-mismatch/v1"
     );
+}
+
+// 실행 인자 한도는 모델 projection을 바꾸지 않는 host 정책이며 0바이트 설정은 거절한다.
+#[test]
+fn definition_argument_limit_is_nonzero_and_does_not_change_model_projection() {
+    let original = definition("command", "command_tool");
+    assert_eq!(original.argument_byte_limit(), None);
+    assert!(original.clone().with_argument_byte_limit(0).is_err());
+    let limited = original
+        .clone()
+        .with_argument_byte_limit(4 * 1024 * 1024)
+        .unwrap();
+    let original = ToolRegistry::new([original]).unwrap().freeze();
+    let limited = ToolRegistry::new([limited]).unwrap().freeze();
+
+    assert_eq!(
+        limited.definitions()[0].argument_byte_limit(),
+        Some(4 * 1024 * 1024)
+    );
+    assert_eq!(
+        original.function_tools().unwrap(),
+        limited.function_tools().unwrap()
+    );
+    assert_eq!(original.replay_tools(), limited.replay_tools());
+}
+
+// 공백으로 원문만 한계에 도달한 호출은 허용하되 첫 초과 바이트는 정규화 전에 거절한다.
+#[test]
+fn definition_raw_argument_limit_accepts_four_mebibytes_and_rejects_first_excess_byte() {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let registry = ToolRegistry::new([definition("command", "command_tool")
+        .with_argument_byte_limit(LIMIT)
+        .unwrap()])
+    .unwrap()
+    .freeze();
+    let mut raw = r#"{"path":"a"}"#.to_owned();
+    raw.extend(std::iter::repeat_n(' ', LIMIT - raw.len()));
+    let call = registry
+        .validate_call("call", "command_tool", &raw, 101 * 1024 * 1024)
+        .unwrap();
+    assert_eq!(call.argument_bytes().len(), LIMIT);
+    assert_eq!(call.normalized_arguments(), br#"{"path":"a"}"#);
+    raw.push(' ');
+    assert_eq!(
+        registry
+            .validate_call("call", "command_tool", &raw, 101 * 1024 * 1024)
+            .unwrap_err()
+            .kind(),
+        ToolValidationFailure::ArgumentLimit
+    );
+}
+
+// JSON 자체가 원문 한도 안이어도 stdin의 마지막 LF까지 포함한 첫 초과 바이트는 거절한다.
+#[test]
+fn definition_normalized_limit_reserves_lf_at_the_four_mebibyte_boundary() {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let registry = ToolRegistry::new([definition("command", "command_tool")
+        .with_argument_byte_limit(LIMIT)
+        .unwrap()])
+    .unwrap()
+    .freeze();
+    let framing = r#"{"path":""}"#.len();
+    let raw = format!(r#"{{"path":"{}"}}"#, "a".repeat(LIMIT - framing - 1));
+    let call = registry
+        .validate_call("call", "command_tool", &raw, 101 * 1024 * 1024)
+        .unwrap();
+    let mut stdin = call.normalized_arguments().to_vec();
+    stdin.push(b'\n');
+    assert_eq!(stdin.len(), LIMIT);
+    assert_eq!(&stdin[..stdin.len() - 1], raw.as_bytes());
+    let excess = format!(r#"{{"path":"{}"}}"#, "a".repeat(LIMIT - framing));
+    assert_eq!(excess.len(), LIMIT);
+    assert_eq!(
+        registry
+            .validate_call("call", "command_tool", &excess, 101 * 1024 * 1024)
+            .unwrap_err()
+            .kind(),
+        ToolValidationFailure::ArgumentLimit
+    );
+}
+
+// 큰 도구별 한도가 작은 caller 한도를 넓히지 않고 원문과 JSON+LF 양쪽에 적용된다.
+#[test]
+fn definition_argument_limit_intersects_the_caller_cap_for_raw_and_normalized_json() {
+    let registry = ToolRegistry::new([definition("command", "command_tool")
+        .with_argument_byte_limit(4 * 1024 * 1024)
+        .unwrap()])
+    .unwrap()
+    .freeze();
+    let raw = r#"{"path":"a"}"#;
+    assert!(
+        registry
+            .validate_call("call", "command_tool", raw, raw.len() + 1)
+            .is_ok()
+    );
+    for (input, limit) in [
+        (raw.to_owned(), raw.len()),
+        (format!("{raw}  "), raw.len() + 1),
+    ] {
+        assert_eq!(
+            registry
+                .validate_call("call", "command_tool", &input, limit)
+                .unwrap_err()
+                .kind(),
+            ToolValidationFailure::ArgumentLimit
+        );
+    }
+}
+
+// 숫자의 정규화로 JSON이 커지는 경우에도 실행에 넘기는 실제 bytes와 LF를 검사한다.
+#[test]
+fn normalized_number_expansion_is_checked_against_the_effective_limit() {
+    let registry = ToolRegistry::new([definition_with_schema(
+        "command",
+        "command_tool",
+        json!({
+            "type": "object",
+            "properties": {"n": {"type": "number"}},
+            "required": ["n"],
+            "additionalProperties": false
+        }),
+    )
+    .unwrap()
+    .with_argument_byte_limit(4 * 1024 * 1024)
+    .unwrap()])
+    .unwrap()
+    .freeze();
+    let raw = r#"{"n":1e1}"#;
+    let normalized = br#"{"n":10.0}"#;
+    let call = registry
+        .validate_call("call", "command_tool", raw, normalized.len() + 1)
+        .unwrap();
+    assert_eq!(call.normalized_arguments(), normalized);
+    assert_eq!(
+        registry
+            .validate_call("call", "command_tool", raw, normalized.len())
+            .unwrap_err()
+            .kind(),
+        ToolValidationFailure::ArgumentLimit
+    );
+}
+
+// 새 한도가 없는 built-in은 101 MiB caller 설정에서 4 MiB 초과 인자를 계속 허용한다.
+// 기존 raw-only admission에는 새 JSON+LF 제한을 소급 적용하지 않는다.
+#[test]
+fn definitions_without_limits_preserve_large_legacy_and_raw_only_admission() {
+    let registry = ToolRegistry::new([definition("write", "write_tool")])
+        .unwrap()
+        .freeze();
+    let raw = format!(r#"{{"path":"{}"}}"#, "a".repeat(4 * 1024 * 1024));
+    let call = registry
+        .validate_call("call", "write_tool", &raw, 101 * 1024 * 1024)
+        .unwrap();
+    assert!(call.normalized_arguments().len() > 4 * 1024 * 1024);
+    let small = r#"{"path":"a"}"#;
+    assert!(
+        registry
+            .validate_call("call", "write_tool", small, small.len())
+            .is_ok()
+    );
+    assert_eq!(
+        registry
+            .validate_call("call", "write_tool", small, small.len() - 1)
+            .unwrap_err()
+            .kind(),
+        ToolValidationFailure::ArgumentLimit
+    );
+}
+
+// worker용 accessor는 승인 digest와 같은 정규화 bytes를 제공하고 배열·숫자 종류를 보존한다.
+// manifest 전용 floating-zero 규칙을 기존 호출 인자 normalization에 섞지 않는다.
+#[test]
+fn execution_argument_bytes_preserve_existing_recursive_normalization() {
+    let registry = ToolRegistry::new([definition_with_schema(
+        "command",
+        "command_tool",
+        json!({
+            "type": "object",
+            "properties": {
+                "z": {"type": "array", "items": {"type": "number"}},
+                "a": {
+                    "type": "object",
+                    "properties": {
+                        "z": {"type": "string"},
+                        "a": {"type": "string"}
+                    },
+                    "required": ["z", "a"],
+                    "additionalProperties": false
+                }
+            },
+            "required": ["z", "a"],
+            "additionalProperties": false
+        }),
+    )
+    .unwrap()
+    .with_argument_byte_limit(4 * 1024 * 1024)
+    .unwrap()])
+    .unwrap()
+    .freeze();
+    let raw = r#"{ "z": [1.0,1,-0.0], "a": {"z":"\u0061", "a":"한"} }"#;
+    let call = registry
+        .validate_call("call", "command_tool", raw, 1024)
+        .unwrap();
+    assert_eq!(
+        call.normalized_arguments(),
+        r#"{"a":{"a":"한","z":"a"},"z":[1.0,1,-0.0]}"#.as_bytes()
+    );
+    assert_eq!(call.argument_bytes(), raw);
 }
 
 // 한 요청에 고정된 레지스트리는 커넥터와 리플레이에 같은 순서와 스키마를 투영한다.

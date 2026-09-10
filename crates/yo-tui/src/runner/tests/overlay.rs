@@ -286,9 +286,9 @@ fn switching_away_from_chat_closes_overlay_without_resurrection() {
 }
 
 // agent가 approval interaction을 게시하면 prompt 입력 소유권을 넘기기 전에 기존 overlay를
-// 닫아, 선택 panel이 request 응답을 가리지 않는다.
+// 닫고 요청 전용 panel로 교체하여 request 응답을 소유한다.
 #[test]
-fn agent_requested_interaction_closes_prompt_overlay() {
+fn agent_requested_interaction_replaces_prompt_overlay() {
     let mut state = TuiState::new();
     present_overlay(&mut state, Size::new(40, 12));
 
@@ -304,7 +304,7 @@ fn agent_requested_interaction_closes_prompt_overlay() {
     let frame = state
         .prepare_frame(Size::new(40, 12), &AppearanceState::default().pin())
         .unwrap();
-    assert!(!frame.overlay_presented);
+    assert!(frame.overlay_presented);
     assert_eq!(
         state.open_overlay(overlay_snapshot()),
         Err(SlotError::AgentInteractionPending)

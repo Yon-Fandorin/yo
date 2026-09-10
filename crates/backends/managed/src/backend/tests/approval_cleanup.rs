@@ -2,10 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
-    ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand,
-    ApprovalDecision, BackendEvent, BackendPoll, ModelConnectorEvent, ToolApprovalRequirement,
-    ToolExecution, ToolExecutionError, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
-    ToolExecutionRequest, ToolExecutionResult, ToolId, TurnOutcome, UserInput,
+    ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, ActivityUpdate,
+    AgentCommand, ApprovalDecision, BackendEvent, BackendPoll, ModelConnectorEvent,
+    ToolApprovalRequirement, ToolExecution, ToolExecutionError, ToolExecutionHost,
+    ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest, ToolExecutionResult, ToolId,
+    TurnOutcome, UserInput,
 };
 
 use super::support::{
@@ -194,6 +195,29 @@ fn native_backend_required_approval_gates_tool_execution() {
         }
     };
     assert_eq!(*starts.lock().unwrap(), 0);
+    let text = loop {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(text),
+            }) if activity == request.activity() => break text,
+            BackendPoll::Event(_) => {},
+            other => panic!("approval details missing: {other:?}"),
+        }
+    };
+    assert!(
+        text.starts_with("Tool: read_file\nScope: this tool call only\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Arguments (recorded view):\n{\"path\":\"README.md\"}"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Call: call-1\nTool ID: read-file\nArgument digest:"),
+        "{text}"
+    );
+    assert_eq!(*starts.lock().unwrap(), 0);
     backend
         .execute_command(AgentCommand::RespondToActivity {
             request,
@@ -371,4 +395,105 @@ fn native_backend_seals_the_turn_when_tool_cleanup_fails() {
     assert!(failure.message().contains("tool execution cleanup failed"));
     assert_eq!(*cancelled.lock().unwrap(), 1);
     assert_eq!(*shutdowns.lock().unwrap(), 2);
+}
+
+// 승인 화면은 실행 인자 원본을 다시 노출하지 않고 의미 보존 정책이 대체한 정확한 인자를 쓴다.
+#[test]
+fn native_backend_approval_displays_only_admitted_arguments() {
+    use yo_core::{
+        ToolDefinition, ToolSemanticAdmission, ToolSemanticAdmissionError,
+        admit_standard_complete_binding,
+    };
+
+    use super::support::MockHost;
+    struct Redacted;
+    impl ToolSemanticAdmission for Redacted {
+        fn admit_arguments(
+            &self,
+            _: &ToolDefinition,
+            _: &str,
+        ) -> Result<String, ToolSemanticAdmissionError> {
+            Ok(r#"{"path":"[hidden]"}"#.into())
+        }
+        fn admit_output(
+            &self,
+            _: &ToolDefinition,
+            output: &str,
+        ) -> Result<String, ToolSemanticAdmissionError> {
+            Ok(output.into())
+        }
+    }
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(vec![vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "r1".into(),
+                },
+                ModelConnectorEvent::FunctionCallStarted {
+                    output_index: 0,
+                    item_id: "item-1".into(),
+                    call_id: "call-1".into(),
+                    name: "read_file".into(),
+                },
+                ModelConnectorEvent::FunctionCallDone {
+                    output_index: 0,
+                    item_id: "item-1".into(),
+                    call_id: "call-1".into(),
+                    name: "read_file".into(),
+                    arguments: r#"{"path":"private-path"}"#.into(),
+                },
+                completed("r1"),
+            ]]),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Required),
+        NativeModelBackendServices::new(
+            Box::new(admit_standard_complete_binding),
+            Some(Box::new(Redacted)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("inspect"),
+        })
+        .unwrap();
+    let mut approval = None;
+    let mut found = false;
+    for _ in 0..64 {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::ApprovalRequest { .. },
+            }) => approval = Some(activity),
+            BackendPoll::Event(BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(text),
+            }) => {
+                assert!(!text.contains("private-path"), "{text}");
+                if Some(activity) == approval {
+                    assert!(
+                        text.contains("Arguments (recorded view):\n{\"path\":\"[hidden]\"}"),
+                        "{text}"
+                    );
+                    found = true;
+                    break;
+                }
+            },
+            BackendPoll::Event(_) | BackendPoll::Pending => {},
+            other => panic!("approval details missing: {other:?}"),
+        }
+    }
+    assert!(found);
 }

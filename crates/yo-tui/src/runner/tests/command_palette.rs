@@ -1,11 +1,15 @@
 use std::time::Duration;
 
-use yo_core::{AgentEvent, SubmissionOutcome, SubmissionRejection, SubmissionRejectionKind};
+use yo_core::{
+    AgentEvent, JournalDurability, SubmissionOutcome, SubmissionRejection, SubmissionRejectionKind,
+    session_repository::RepositorySequence,
+};
 
 use super::{key, rendered_row, turn};
 use crate::{
     appearance::AppearanceState,
     input::event::{InputEvent, KeyCode, KeyModifiers},
+    overlay::{PanelSnapshot, SelectionEntry, SlotError},
     runner::{
         AgentAction,
         state::{StateEffect, TuiState},
@@ -293,18 +297,16 @@ fn unpresented_model_admission_failure_restores_the_exact_draft() {
 fn selected_exit_uses_the_existing_runner_exit_boundary() {
     let mut state = TuiState::new();
     state
-        .handle(InputEvent::Paste("/".to_owned()), Duration::ZERO)
+        .handle(InputEvent::Paste("/ex".to_owned()), Duration::ZERO)
         .unwrap();
     present_palette(&mut state, Size::new(80, 16));
 
-    for _ in 0..4 {
-        assert_eq!(
-            state
-                .handle(key(KeyCode::Down, KeyModifiers::NONE), Duration::ZERO)
-                .unwrap(),
-            StateEffect::Redraw
-        );
-    }
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Down, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
     assert_eq!(
         state
             .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
@@ -431,4 +433,800 @@ fn unpresented_palette_does_not_claim_active_turn_escape() {
             .unwrap(),
         StateEffect::Dispatch(AgentAction::Interrupt)
     );
+}
+
+// 실제 /help는 펼쳐진 읽기 전용 문서로 렌더링하고 좁은 폭의 처음·끝 이동에서도 조작 안내를
+// 보존한다.
+#[test]
+fn help_document_is_expanded_and_scrollable_without_starting_work() {
+    use crate::surface::{CellContent, Point};
+    let mut state = TuiState::new();
+    state
+        .handle(InputEvent::Paste("/help".into()), Duration::ZERO)
+        .unwrap();
+    state
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    assert!(!state.turn_active());
+    let pin = AppearanceState::default().pin();
+    let source = state.session_output(&pin).unwrap().unwrap();
+    for width in [80, 24, 80] {
+        for code in [KeyCode::Home, KeyCode::End] {
+            state
+                .handle(key(code, KeyModifiers::NONE), Duration::ZERO)
+                .unwrap();
+            let frame = state.prepare_frame(Size::new(width, 30), &pin).unwrap();
+            let text: String = (0..frame.surface.size().height)
+                .flat_map(|y| (0..width).map(move |x| Point::new(x, y)))
+                .filter_map(|point| match frame.surface.cell(point).unwrap().content() {
+                    CellContent::Grapheme { text, .. } => Some(text.as_ref()),
+                    _ => None,
+                })
+                .collect();
+            let flat = text.split_whitespace().collect::<String>();
+            if code == KeyCode::Home {
+                assert!(flat.contains("Availablecommandsandkeyboardhelp"), "{flat}");
+            } else {
+                assert!(flat.contains("thisguide'sstart"), "{flat}");
+            }
+            assert!(!flat.contains("rowshidden"), "{flat}");
+            state.commit_frame(&frame);
+            assert_eq!(state.session_output(&pin).unwrap().unwrap(), source);
+        }
+    }
+}
+
+// /new는 idle에서만 host lifecycle 요청으로 끝나며 실행 중·예약 입력은 버리지 않는다.
+#[test]
+fn new_session_command_requires_idle_and_preserves_queued_work() {
+    use yo_core::session_repository::RepositorySequence;
+    for busy in [
+        "idle",
+        "active",
+        "queued",
+        "starting",
+        "memory-only",
+        "compacting",
+    ] {
+        let mut state = TuiState::new();
+        if busy != "memory-only" {
+            state
+                .observe_durability(JournalDurability::Durable {
+                    journal_sequence: None,
+                    repository_sequence: RepositorySequence::new(1),
+                })
+                .unwrap();
+        }
+        match busy {
+            "compacting" => {
+                state
+                    .handle(
+                        InputEvent::Paste("/compact keep context".to_owned()),
+                        Duration::ZERO,
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    state
+                        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                        .unwrap(),
+                    StateEffect::Dispatch(AgentAction::CompactContext { .. })
+                ));
+            },
+            "active" => {
+                state
+                    .observe(AgentEvent::TurnStarted { turn: turn() })
+                    .unwrap();
+            },
+            "queued" => {
+                state
+                    .handle(InputEvent::Paste("later".to_owned()), Duration::ZERO)
+                    .unwrap();
+                state
+                    .handle(key(KeyCode::Enter, KeyModifiers::ALT), Duration::ZERO)
+                    .unwrap();
+            },
+            "starting" => {
+                state
+                    .handle(InputEvent::Paste("work".to_owned()), Duration::ZERO)
+                    .unwrap();
+                let StateEffect::Dispatch(AgentAction::Submit(input)) = state
+                    .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                    .unwrap()
+                else {
+                    panic!("submission");
+                };
+                state
+                    .observe_submission_outcome(SubmissionOutcome::Accepted { id: input.id() })
+                    .unwrap();
+            },
+            _ => {},
+        }
+        state
+            .handle(InputEvent::Paste("/new".to_owned()), Duration::ZERO)
+            .unwrap();
+        present_palette(&mut state, Size::new(100, 24));
+        let outcome = state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        assert_eq!(state.take_new_session_request(), busy == "idle");
+        if busy == "idle" {
+            assert_eq!(outcome, StateEffect::Exit);
+            assert_eq!(state.editor().text(), "");
+        } else {
+            assert_eq!(outcome, StateEffect::Redraw);
+            assert_eq!(state.editor().text(), "/new");
+        }
+        if busy == "compacting" {
+            state
+                .observe_control_outcome(yo_core::AgentControlOutcome::ContextCompactionRejected {
+                    detail: "unsupported".to_owned(),
+                })
+                .unwrap();
+            state
+                .handle(
+                    key(KeyCode::Character('u'), KeyModifiers::CONTROL),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state
+                .handle(InputEvent::Paste("/new".to_owned()), Duration::ZERO)
+                .unwrap();
+            present_palette(&mut state, Size::new(100, 24));
+            assert_eq!(
+                state
+                    .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                    .unwrap(),
+                StateEffect::Exit
+            );
+            assert!(state.take_new_session_request());
+        }
+        if busy == "queued" {
+            let Some(AgentAction::Submit(input)) = state.next_follow_up().unwrap() else {
+                panic!("queued input was lost");
+            };
+            assert_eq!(input.input().as_str(), "later");
+        }
+    }
+}
+
+// /resume는 전체 UUID 또는 picker 요청으로만 전달되고 잘못된 ID는 draft를 보존한다.
+#[test]
+fn resume_command_routes_full_identity_or_picker_without_submitting_text() {
+    let target: yo_core::SessionId = "01890f00-0000-7000-8000-000000000009".parse().unwrap();
+    for (text, expected) in [
+        ("/resume".to_owned(), Some(None)),
+        (format!("/resume {target}"), Some(Some(target))),
+        ("/resume not-a-session".to_owned(), None),
+    ] {
+        let mut state = TuiState::new();
+        state
+            .observe_durability(JournalDurability::Durable {
+                journal_sequence: None,
+                repository_sequence: RepositorySequence::new(1),
+            })
+            .unwrap();
+        state
+            .handle(InputEvent::Paste(text.clone()), Duration::ZERO)
+            .unwrap();
+        if text == "/resume" {
+            present_palette(&mut state, Size::new(100, 24));
+        }
+        let result = state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        assert_eq!(state.take_resume_session_request(), expected);
+        assert_eq!(
+            result,
+            if expected.is_some() {
+                StateEffect::Exit
+            } else {
+                StateEffect::Redraw
+            }
+        );
+        assert_eq!(
+            state.editor().text(),
+            if expected.is_some() { "" } else { &text }
+        );
+        assert!(state.next_follow_up().unwrap().is_none());
+    }
+}
+
+// 저장 목록의 unavailable 항목은 건너뛰며 표시 이후 작성한 draft는 선택으로 지우지 않는다.
+#[test]
+fn resume_picker_skips_disabled_rows_and_preserves_newer_drafts() {
+    use crate::overlay::{PanelSnapshot, SelectionEntry};
+    let target: yo_core::SessionId = "01890f00-0000-7000-8000-000000000009".parse().unwrap();
+    for newer_draft in [false, true] {
+        let mut state = TuiState::new();
+        state
+            .observe_durability(JournalDurability::Durable {
+                journal_sequence: None,
+                repository_sequence: RepositorySequence::new(1),
+            })
+            .unwrap();
+        state
+            .show_resume_picker(
+                PanelSnapshot::new(
+                    "Resume saved session",
+                    vec![
+                        SelectionEntry::status("unavailable", "Cannot resume"),
+                        SelectionEntry::enabled_with_context(
+                            target.to_string(),
+                            target.to_string(),
+                            None,
+                            None,
+                        ),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        if newer_draft {
+            state
+                .handle(
+                    InputEvent::Paste("keep this draft".to_owned()),
+                    Duration::ZERO,
+                )
+                .unwrap();
+        }
+        present_palette(&mut state, Size::new(100, 24));
+        let result = state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        if newer_draft {
+            assert_eq!(result, StateEffect::Redraw);
+            assert_eq!(state.editor().text(), "keep this draft");
+            assert_eq!(state.take_resume_session_request(), None);
+        } else {
+            assert_eq!(result, StateEffect::Exit);
+            assert_eq!(state.take_resume_session_request(), Some(Some(target)));
+        }
+    }
+}
+
+// /new와 /resume는 같은 idle guard를 쓰므로 대기 중인 후속 입력을 전환으로 버리지 않는다.
+#[test]
+fn resume_command_preserves_queued_work() {
+    let mut state = TuiState::new();
+    state
+        .observe_durability(JournalDurability::Durable {
+            journal_sequence: None,
+            repository_sequence: RepositorySequence::new(1),
+        })
+        .unwrap();
+    state
+        .handle(InputEvent::Paste("later".to_owned()), Duration::ZERO)
+        .unwrap();
+    state
+        .handle(key(KeyCode::Enter, KeyModifiers::ALT), Duration::ZERO)
+        .unwrap();
+    let text = "/resume 01890f00-0000-7000-8000-000000000009";
+    state
+        .handle(InputEvent::Paste(text.to_owned()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(state.editor().text(), text);
+    assert_eq!(state.take_resume_session_request(), None);
+    let Some(AgentAction::Submit(input)) = state.next_follow_up().unwrap() else {
+        panic!("queue lost");
+    };
+    assert_eq!(input.input().as_str(), "later");
+}
+
+// /fork는 durable idle 상태에서만 terminal 전환을 요청하고 진행 중인 작업과 draft를 보존합니다.
+#[test]
+fn fork_command_requires_idle_and_preserves_queued_work() {
+    use yo_core::session_repository::RepositorySequence;
+    for busy in [
+        "idle",
+        "active",
+        "queued",
+        "starting",
+        "memory-only",
+        "compacting",
+    ] {
+        let mut state = TuiState::new();
+        if busy != "memory-only" {
+            state
+                .observe_durability(JournalDurability::Durable {
+                    journal_sequence: None,
+                    repository_sequence: RepositorySequence::new(1),
+                })
+                .unwrap();
+        }
+        match busy {
+            "compacting" => {
+                state
+                    .handle(
+                        InputEvent::Paste("/compact keep context".to_owned()),
+                        Duration::ZERO,
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    state
+                        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                        .unwrap(),
+                    StateEffect::Dispatch(AgentAction::CompactContext { .. })
+                ));
+            },
+            "active" => {
+                state
+                    .observe(AgentEvent::TurnStarted { turn: turn() })
+                    .unwrap();
+            },
+            "queued" => {
+                state
+                    .handle(InputEvent::Paste("later".to_owned()), Duration::ZERO)
+                    .unwrap();
+                state
+                    .handle(key(KeyCode::Enter, KeyModifiers::ALT), Duration::ZERO)
+                    .unwrap();
+            },
+            "starting" => {
+                state
+                    .handle(InputEvent::Paste("work".to_owned()), Duration::ZERO)
+                    .unwrap();
+                let StateEffect::Dispatch(AgentAction::Submit(input)) = state
+                    .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                    .unwrap()
+                else {
+                    panic!("submission");
+                };
+                state
+                    .observe_submission_outcome(SubmissionOutcome::Accepted { id: input.id() })
+                    .unwrap();
+            },
+            _ => {},
+        }
+        state
+            .handle(InputEvent::Paste("/fork".to_owned()), Duration::ZERO)
+            .unwrap();
+        present_palette(&mut state, Size::new(100, 24));
+        let outcome = state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        assert_eq!(state.take_fork_session_request(), busy == "idle");
+        if busy == "idle" {
+            assert_eq!(outcome, StateEffect::Exit);
+            assert_eq!(state.editor().text(), "");
+        } else {
+            assert_eq!(outcome, StateEffect::Redraw);
+            assert_eq!(state.editor().text(), "/fork");
+        }
+        if busy == "compacting" {
+            state
+                .observe_control_outcome(yo_core::AgentControlOutcome::ContextCompactionRejected {
+                    detail: "unsupported".to_owned(),
+                })
+                .unwrap();
+            state
+                .handle(
+                    key(KeyCode::Character('u'), KeyModifiers::CONTROL),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state
+                .handle(InputEvent::Paste("/fork".to_owned()), Duration::ZERO)
+                .unwrap();
+            present_palette(&mut state, Size::new(100, 24));
+            assert_eq!(
+                state
+                    .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                    .unwrap(),
+                StateEffect::Exit
+            );
+            assert!(state.take_fork_session_request());
+        }
+        if busy == "queued" {
+            let Some(AgentAction::Submit(input)) = state.next_follow_up().unwrap() else {
+                panic!("queued input was lost");
+            };
+            assert_eq!(input.input().as_str(), "later");
+        }
+    }
+}
+
+// 승인 대기와 잘못된 인수는 fork나 빈 child를 만들지 않으며 원래 draft를 유지합니다.
+#[test]
+fn fork_rejects_pending_requests_and_arguments_without_dispatch() {
+    use yo_core::{ActivityKind, RequestId, session_repository::RepositorySequence};
+    for (text, pending) in [
+        ("/fork", true),
+        ("/fork --empty", false),
+        ("/fork other", false),
+        ("/fork at extra", false),
+        ("/fork 10", false),
+    ] {
+        let mut state = TuiState::new();
+        state
+            .observe_durability(JournalDurability::Durable {
+                journal_sequence: None,
+                repository_sequence: RepositorySequence::new(1),
+            })
+            .unwrap();
+        if pending {
+            state
+                .observe(AgentEvent::ActivityStarted {
+                    activity: super::activity(1),
+                    kind: ActivityKind::ApprovalRequest {
+                        request_id: RequestId::new(super::nonzero(7)),
+                    },
+                })
+                .unwrap();
+        }
+        state
+            .handle(InputEvent::Paste(text.to_owned()), Duration::ZERO)
+            .unwrap();
+        let result = state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        assert_eq!(result, StateEffect::Redraw);
+        assert_eq!(state.editor().text(), text);
+        assert!(!state.take_fork_session_request());
+        assert!(!state.take_new_session_request());
+        assert!(state.next_follow_up().unwrap().is_none());
+    }
+}
+
+fn historical_fork_state() -> TuiState {
+    let mut state = TuiState::new();
+    state
+        .observe_durability(JournalDurability::Durable {
+            journal_sequence: None,
+            repository_sequence: RepositorySequence::new(1),
+        })
+        .unwrap();
+    state
+        .handle(InputEvent::Paste("/fork at".to_owned()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Exit
+    );
+    assert!(state.take_fork_picker_request());
+    assert!(!state.take_fork_session_request());
+    assert!(state.editor().text().is_empty());
+    state
+}
+
+fn historical_fork_panel() -> PanelSnapshot {
+    PanelSnapshot::new(
+        "Fork from an earlier point",
+        vec![
+            SelectionEntry::enabled("0", "Newest turn", None),
+            SelectionEntry::enabled("1", "Earlier checkpoint", None),
+            SelectionEntry::status("truncated", "Older boundaries were omitted"),
+        ],
+    )
+    .unwrap()
+}
+
+// /fork at은 catalog만 요청하고 선택은 exact picker token과 row index로 host에 넘긴다.
+#[test]
+fn historical_fork_selection_requests_the_row_from_its_exact_picker() {
+    let mut state = historical_fork_state();
+    let picker = state.show_fork_picker(historical_fork_panel(), 2).unwrap();
+    let output = present_palette(&mut state, Size::new(100, 24));
+    assert!(output.contains("Newest turn"));
+    assert!(output.contains("Older boundaries were omitted"));
+    state
+        .handle(key(KeyCode::Down, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    present_palette(&mut state, Size::new(100, 24));
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Exit
+    );
+    assert_eq!(state.take_fork_boundary_request(), Some((picker, 1)));
+    assert_eq!(state.take_fork_boundary_request(), None);
+    assert!(!state.take_fork_session_request());
+    assert_eq!(state.editor().text(), "");
+    state.report_fork_failure("historical model is unavailable".to_owned());
+    assert_eq!(state.editor().text(), "/fork at");
+}
+
+// 취소·준비 실패는 원래 draft를 복원하고 picker가 열린 뒤 입력한 새 draft는 덮어쓰지 않는다.
+#[test]
+fn historical_fork_cancel_and_failure_preserve_original_or_newer_drafts() {
+    for action in [
+        "cancel",
+        "capture-failure",
+        "newer-cancel",
+        "newer-selection",
+        "newer-failure",
+    ] {
+        let mut state = historical_fork_state();
+        if action != "capture-failure" {
+            state.show_fork_picker(historical_fork_panel(), 2).unwrap();
+            present_palette(&mut state, Size::new(100, 24));
+        }
+        let newer = action.starts_with("newer");
+        if newer {
+            state
+                .handle(
+                    InputEvent::Paste("keep this newer draft".to_owned()),
+                    Duration::ZERO,
+                )
+                .unwrap();
+        }
+        match action {
+            "cancel" | "newer-cancel" => {
+                state
+                    .handle(key(KeyCode::Escape, KeyModifiers::NONE), Duration::ZERO)
+                    .unwrap();
+            },
+            "newer-selection" => {
+                assert_eq!(
+                    state
+                        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                        .unwrap(),
+                    StateEffect::Redraw
+                );
+            },
+            _ => state.report_fork_failure("capture is no longer available".to_owned()),
+        }
+        assert_eq!(
+            state.editor().text(),
+            if newer {
+                "keep this newer draft"
+            } else {
+                "/fork at"
+            }
+        );
+        assert_eq!(state.take_fork_boundary_request(), None);
+        assert!(!state.take_fork_session_request());
+    }
+}
+
+// overlay가 교체되면 이전 token으로 닫거나 갱신할 수 없고 선택은 새 catalog generation에 묶인다.
+#[test]
+fn historical_fork_picker_replacement_invalidates_the_old_overlay_token() {
+    let mut state = historical_fork_state();
+    let first = state.show_fork_picker(historical_fork_panel(), 2).unwrap();
+    present_palette(&mut state, Size::new(100, 24));
+    let second = state.show_fork_picker(historical_fork_panel(), 2).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(state.close_overlay(first.0), Err(SlotError::StaleToken));
+    assert_eq!(
+        state.refresh_overlay(first.0, historical_fork_panel()),
+        Err(SlotError::StaleToken)
+    );
+    present_palette(&mut state, Size::new(100, 24));
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Exit
+    );
+    assert_eq!(state.take_fork_boundary_request(), Some((second, 0)));
+}
+
+// catalog 표시 후 active·queue·durability가 바뀌어도 기존 idle guard를 다시 검사한다.
+#[test]
+fn historical_fork_selection_rechecks_idle_and_durable_parent() {
+    for change in ["active", "queued", "memory-only"] {
+        let mut state = historical_fork_state();
+        state.show_fork_picker(historical_fork_panel(), 2).unwrap();
+        present_palette(&mut state, Size::new(100, 24));
+        match change {
+            "active" => {
+                state
+                    .observe(AgentEvent::TurnStarted { turn: turn() })
+                    .unwrap();
+            },
+            "queued" => {
+                state
+                    .handle(InputEvent::Paste("later".to_owned()), Duration::ZERO)
+                    .unwrap();
+                state
+                    .handle(key(KeyCode::Enter, KeyModifiers::ALT), Duration::ZERO)
+                    .unwrap();
+            },
+            _ => {
+                state
+                    .observe_durability(JournalDurability::MemoryOnly)
+                    .unwrap();
+            },
+        }
+        present_palette(&mut state, Size::new(100, 24));
+        assert_eq!(
+            state
+                .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                .unwrap(),
+            StateEffect::Redraw
+        );
+        assert_eq!(state.take_fork_boundary_request(), None);
+        assert_eq!(state.editor().text(), "/fork at");
+        if change == "queued" {
+            let Some(AgentAction::Submit(input)) = state.next_follow_up().unwrap() else {
+                panic!("queued input was lost");
+            };
+            assert_eq!(input.input().as_str(), "later");
+        }
+    }
+}
+
+// catalog 결과가 돌아오기 전에 생긴 새 draft나 durable 상태 변화도 표시 전에 다시 확인한다.
+#[test]
+fn historical_fork_picker_rechecks_state_before_displaying_a_capture() {
+    for newer in [false, true] {
+        let mut state = historical_fork_state();
+        if newer {
+            state
+                .handle(InputEvent::Paste("newer draft".to_owned()), Duration::ZERO)
+                .unwrap();
+        } else {
+            state
+                .observe_durability(JournalDurability::MemoryOnly)
+                .unwrap();
+        }
+        assert!(state.show_fork_picker(historical_fork_panel(), 2).is_err());
+        assert_eq!(
+            state.editor().text(),
+            if newer { "newer draft" } else { "/fork at" }
+        );
+        assert_eq!(state.take_fork_boundary_request(), None);
+    }
+}
+
+// /tree는 전환과 같은 durable idle guard를 지켜 대기 작업과 draft를 버리지 않습니다.
+#[test]
+fn tree_command_requires_idle_and_preserves_queued_work() {
+    use yo_core::session_repository::RepositorySequence;
+    for busy in [
+        "idle",
+        "active",
+        "queued",
+        "starting",
+        "memory-only",
+        "compacting",
+    ] {
+        let mut state = TuiState::new();
+        if busy != "memory-only" {
+            state
+                .observe_durability(JournalDurability::Durable {
+                    journal_sequence: None,
+                    repository_sequence: RepositorySequence::new(1),
+                })
+                .unwrap();
+        }
+        match busy {
+            "compacting" => {
+                state
+                    .handle(
+                        InputEvent::Paste("/compact keep context".to_owned()),
+                        Duration::ZERO,
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    state
+                        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                        .unwrap(),
+                    StateEffect::Dispatch(AgentAction::CompactContext { .. })
+                ));
+            },
+            "active" => {
+                state
+                    .observe(AgentEvent::TurnStarted { turn: turn() })
+                    .unwrap();
+            },
+            "queued" => {
+                state
+                    .handle(InputEvent::Paste("later".to_owned()), Duration::ZERO)
+                    .unwrap();
+                state
+                    .handle(key(KeyCode::Enter, KeyModifiers::ALT), Duration::ZERO)
+                    .unwrap();
+            },
+            "starting" => {
+                state
+                    .handle(InputEvent::Paste("work".to_owned()), Duration::ZERO)
+                    .unwrap();
+                let StateEffect::Dispatch(AgentAction::Submit(input)) = state
+                    .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                    .unwrap()
+                else {
+                    panic!("submission");
+                };
+                state
+                    .observe_submission_outcome(SubmissionOutcome::Accepted { id: input.id() })
+                    .unwrap();
+            },
+            _ => {},
+        }
+        state
+            .handle(InputEvent::Paste("/tree".to_owned()), Duration::ZERO)
+            .unwrap();
+        present_palette(&mut state, Size::new(100, 24));
+        let outcome = state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        assert_eq!(state.take_session_tree_request(), busy == "idle");
+        if busy == "idle" {
+            assert_eq!(outcome, StateEffect::Exit);
+            assert_eq!(state.editor().text(), "");
+        } else {
+            assert_eq!(outcome, StateEffect::Redraw);
+            assert_eq!(state.editor().text(), "/tree");
+        }
+        if busy == "compacting" {
+            state
+                .observe_control_outcome(yo_core::AgentControlOutcome::ContextCompactionRejected {
+                    detail: "unsupported".to_owned(),
+                })
+                .unwrap();
+            state
+                .handle(
+                    key(KeyCode::Character('u'), KeyModifiers::CONTROL),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state
+                .handle(InputEvent::Paste("/tree".to_owned()), Duration::ZERO)
+                .unwrap();
+            present_palette(&mut state, Size::new(100, 24));
+            assert_eq!(
+                state
+                    .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+                    .unwrap(),
+                StateEffect::Exit
+            );
+            assert!(state.take_session_tree_request());
+        }
+        if busy == "queued" {
+            let Some(AgentAction::Submit(input)) = state.next_follow_up().unwrap() else {
+                panic!("queued input was lost");
+            };
+            assert_eq!(input.input().as_str(), "later");
+        }
+    }
+}
+
+// /tree 인수와 승인 대기는 실제 Session 선택이나 모델 요청으로 해석하지 않습니다.
+#[test]
+fn tree_rejects_pending_requests_and_arguments_without_dispatch() {
+    use yo_core::{ActivityKind, RequestId, session_repository::RepositorySequence};
+    for (text, pending) in [
+        ("/tree", true),
+        ("/tree --empty", false),
+        ("/tree other", false),
+    ] {
+        let mut state = TuiState::new();
+        state
+            .observe_durability(JournalDurability::Durable {
+                journal_sequence: None,
+                repository_sequence: RepositorySequence::new(1),
+            })
+            .unwrap();
+        if pending {
+            state
+                .observe(AgentEvent::ActivityStarted {
+                    activity: super::activity(1),
+                    kind: ActivityKind::ApprovalRequest {
+                        request_id: RequestId::new(super::nonzero(7)),
+                    },
+                })
+                .unwrap();
+        }
+        state
+            .handle(InputEvent::Paste(text.to_owned()), Duration::ZERO)
+            .unwrap();
+        let result = state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        assert_eq!(result, StateEffect::Redraw);
+        assert_eq!(state.editor().text(), text);
+        assert!(!state.take_session_tree_request());
+        assert!(!state.take_new_session_request());
+        assert!(state.next_follow_up().unwrap().is_none());
+    }
 }

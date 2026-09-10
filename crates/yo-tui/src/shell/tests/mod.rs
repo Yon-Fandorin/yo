@@ -20,8 +20,8 @@ use crate::{
     shell::ShellChromeStyles,
     surface::{CellContent, Color, Point, Rect, Size, Style, Surface},
     transcript::{
-        TranscriptItemId, TranscriptLayoutConfig, TranscriptScrollCommand, TranscriptState,
-        TranscriptStyles, TranscriptViewMode,
+        MarkdownStyles, TranscriptActivityStyles, TranscriptItemId, TranscriptLayoutConfig,
+        TranscriptScrollCommand, TranscriptState, TranscriptStyles, TranscriptViewMode,
     },
 };
 
@@ -59,6 +59,8 @@ fn styles() -> AgentShellStyles {
             user_body: style(2),
             assistant_marker: style(3),
             assistant_body: style(4),
+            activity: TranscriptActivityStyles::plain(Style::default()),
+            markdown: MarkdownStyles::plain(Style::default()),
         },
         prompt: PromptStyles {
             body: style(5),
@@ -142,11 +144,18 @@ fn render_into_with_overlay(
             AgentShellRenderOptions {
                 transcript_config: &TranscriptLayoutConfig::default(),
                 styles: styles(),
-                scroll: None,
+                scroll: &[],
                 frame_prompt: size.height >= super::MIN_FRAMED_PROMPT_HEIGHT,
                 chrome: ShellChromeSnapshot {
+                    image_thumbnail: None,
                     turn_active,
+                    queued_messages: 0,
+                    queue_paused: false,
+                    request: None,
                     backend: Some("codex"),
+                    usage: None,
+                    status: None,
+                    storage_warning: None,
                     workspace: "~/yo",
                     mode: PresentationMode::Inline,
                 },

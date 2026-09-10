@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{TuiState, key, turn};
+use super::{TuiState, key, rendered_row, turn};
 use crate::{
     appearance::AppearanceState,
     input::event::{InputEvent, KeyCode, KeyModifiers},
@@ -66,4 +66,33 @@ fn active_real_turn_cannot_be_hidden_by_preview() {
         .unwrap();
     assert_eq!(send(&mut state, "/preview"), StateEffect::Redraw);
     assert!(!state.preview_active());
+}
+
+// Turn을 만들지 않는 host 문서·상태 preview를 보낸 뒤에도 후속 queue가 실제 preview
+// connection을 통해 전송된다. 상태 변경과 지우기가 각각 다음 요청으로 처리된다.
+#[test]
+fn preview_follow_ups_continue_after_host_only_commands() {
+    let mut state = TuiState::new();
+    send(&mut state, "/preview");
+    send(&mut state, "status");
+    for (message, expected) in [("status-update", true), ("status-clear", false)] {
+        state
+            .handle(InputEvent::Paste(message.to_owned()), Duration::ZERO)
+            .unwrap();
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::ALT), Duration::ZERO)
+            .unwrap();
+        state.tick_preview().unwrap();
+        let size = Size::new(88, 30);
+        let screen = (0..size.height)
+            .map(|y| rendered_row(&state, size, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            screen.contains("Demo checks: 20 passed"),
+            expected,
+            "{screen}"
+        );
+        assert!(!screen.contains("Queued 1"), "{screen}");
+    }
 }

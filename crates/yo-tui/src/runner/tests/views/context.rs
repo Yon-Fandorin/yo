@@ -10,7 +10,7 @@ use super::{
     support::{function, render_and_commit},
 };
 use crate::{
-    input::event::{KeyAction, KeyCode, KeyModifiers},
+    input::event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
     runner::state::TuiState,
     surface::Size,
 };
@@ -145,7 +145,7 @@ fn high_frequency_stream_updates_one_local_chat_context_entry() {
     assert!(!chat.contains("Chat ·"));
 }
 
-// 줄바꿈된 Chat item에서 한 줄 위로 이동하면 record 수가 아니라 실제 viewport 행으로
+// 요청 panel 옆에서 위로 스크롤하면 record 수가 아니라 실제 viewport 행으로
 // 문맥을 계산하여 화면 상단의 긴 user item을 정확히 anchor한다.
 #[test]
 fn wrapped_chat_rows_map_to_the_visible_record_context() {
@@ -171,7 +171,7 @@ fn wrapped_chat_rows_map_to_the_visible_record_context() {
     let size = Size::new(18, 12);
     render_and_commit(&mut state, size);
     state
-        .handle(key(KeyCode::PageUp, KeyModifiers::NONE), Duration::ZERO)
+        .handle(InputEvent::MouseScroll(-3), Duration::ZERO)
         .unwrap();
     let chat = render_and_commit(&mut state, size);
     assert!(!chat.contains("Chat ·"));

@@ -1,4 +1,4 @@
-use yo_tui::{GlyphProfile, PresentationMode};
+use yo_tui::{GlyphProfile, PresentationMode, Theme};
 
 use super::{live::SandboxMode, *};
 
@@ -199,6 +199,7 @@ fn no_argument_keeps_the_live_defaults() {
         Command::Live(LiveOptions {
             mode: PresentationMode::Inline,
             glyph_profile: GlyphProfile::Rich,
+            theme: None,
             selection: LiveSelection::New,
             model: None,
             no_tools: false,
@@ -830,4 +831,38 @@ fn misspelled_option_suggests_the_supported_spelling() {
     assert!(rendered.contains("unexpected argument '--modle'"));
     assert!(rendered.contains("similar argument exists: '--model'"));
     assert!(rendered.contains("Usage: yo --model <MODEL_REFERENCE>"));
+}
+
+// 테마는 대화형 출력에만 적용하고 ASCII·화면 모드 선택과 독립적으로 전달한다.
+#[test]
+fn live_theme_selection_reaches_options_and_rejects_invalid_contexts() {
+    for (name, theme) in [
+        ("default", Theme::Default),
+        ("light", Theme::Light),
+        ("mono", Theme::Mono),
+    ] {
+        let Command::Live(options) = parse([
+            "--theme".into(),
+            name.into(),
+            "--ascii".into(),
+            "--fullscreen".into(),
+        ])
+        .unwrap() else {
+            panic!("expected live options")
+        };
+        assert_eq!(options.theme, Some(theme));
+        assert_eq!(options.glyph_profile, GlyphProfile::Ascii);
+        assert_eq!(options.mode, PresentationMode::Fullscreen);
+    }
+    for args in [
+        vec!["--theme", "invalid"],
+        vec!["--theme", "light", "-p", "hello"],
+        vec!["--theme", "light", "account"],
+        vec!["--theme=light", "hello"],
+        vec!["account", "--theme", "light"],
+        vec!["--theme"],
+    ] {
+        let result = parse(args.iter().map(Into::into));
+        assert!(result.is_err(), "accepted {args:?}: {result:?}");
+    }
 }

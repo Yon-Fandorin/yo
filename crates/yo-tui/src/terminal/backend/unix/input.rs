@@ -15,7 +15,7 @@ use std::{
 use crossterm::event::{
     Event, EventStream, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyEventKind,
     KeyEventState, KeyModifiers as CrosstermKeyModifiers, MediaKeyCode as CrosstermMediaKeyCode,
-    ModifierKeyCode as CrosstermModifierKeyCode,
+    ModifierKeyCode as CrosstermModifierKeyCode, MouseEventKind,
 };
 
 use crate::{
@@ -35,7 +35,6 @@ pub(crate) enum InputDecodeFailure {
 pub(crate) enum UnsupportedInputKind {
     FocusGained,
     FocusLost,
-    Mouse,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -141,7 +140,11 @@ pub(super) fn decode_event(event: Event) -> Result<InputEvent, InputDecodeFailur
         Event::FocusLost => Err(InputDecodeFailure::Unsupported(
             UnsupportedInputKind::FocusLost,
         )),
-        Event::Mouse(_) => Err(InputDecodeFailure::Unsupported(UnsupportedInputKind::Mouse)),
+        Event::Mouse(event) => Ok(InputEvent::MouseScroll(match event.kind {
+            MouseEventKind::ScrollUp => -3,
+            MouseEventKind::ScrollDown => 3,
+            _ => 0,
+        })),
     }
 }
 

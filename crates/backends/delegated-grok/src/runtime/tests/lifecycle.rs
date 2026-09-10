@@ -113,3 +113,74 @@ fn rejected_cached_login_has_actionable_login_guidance() {
 
 // 첫 agent_message_chunk가 prompt 수락 증거가 되고, 같은 message의 text delta와 종료가
 // 하나의 AgentMessage Activity 및 재개 가능한 완료 Turn으로 순서대로 노출됩니다.
+
+#[cfg(unix)]
+// initialize 전에 종료하는 실제 process의 stderr는 안전한 고정 진단만 cleanup과 합성한다.
+#[test]
+fn early_process_failure_reports_safe_sandbox_diagnostics_without_stderr_secrets() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    struct Fixture(std::path::PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    for failure_kind in ["unknown", "bwrap", "profile"] {
+        let directory = std::env::temp_dir().join(format!(
+            "yo-grok-startup-diagnostic-{}-{}",
+            std::process::id(),
+            yo_core::WorkspaceHostId::new().unwrap(),
+        ));
+        fs::create_dir(&directory).unwrap();
+        let fixture = Fixture(directory);
+        let script = fixture.0.join("fake-grok");
+        let stderr = if failure_kind == "bwrap" {
+            format!(
+                "{}\ncould not create bwrap placeholder for read-deny path /private/secret-canary; refusing partial sandbox\nAuthorization: Bearer credential-canary",
+                "x".repeat(20000)
+            )
+        } else if failure_kind == "profile" {
+            "error: could not apply the 'secret-canary' sandbox profile; see the warning above for the cause. Refusing to start with its protections missing.\nAuthorization: Bearer credential-canary".to_owned()
+        } else {
+            "Authorization: Bearer credential-canary\nunknown secret-canary startup error"
+                .to_owned()
+        };
+        let stderr = stderr.replace('\'', "'\\''");
+        fs::write(&script, format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > arguments\nprintf '%s\\n' '{stderr}' >&2\nexit 1\n"
+        )).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let config = GrokBackendConfig::new(&fixture.0)
+            .with_executable(script.as_os_str())
+            .with_read_only_review(true)
+            .with_request_timeout(Duration::from_secs(2))
+            .with_shutdown_timeout(Duration::from_secs(1));
+
+        let failure = GrokBackend::verify(config).unwrap_err();
+        let message = failure.message();
+        assert!(!message.contains("credential-canary"));
+        assert!(!message.contains("secret-canary"));
+        assert!(message.len() < 1500, "diagnostic was not bounded");
+        if failure_kind == "bwrap" {
+            assert!(message.contains("bubblewrap placeholder"), "{message}");
+            assert!(message.contains("requested sandbox remains required"));
+        } else if failure_kind == "profile" {
+            assert!(
+                message.contains("could not apply requested sandbox protections"),
+                "{message}"
+            );
+            assert!(message.contains("check host sandbox configuration"));
+            assert!(!message.contains("bubblewrap"));
+        } else {
+            assert!(
+                message.contains("withheld to protect credentials"),
+                "{message}"
+            );
+        }
+        let arguments = fs::read_to_string(fixture.0.join("arguments")).unwrap();
+        assert!(arguments.starts_with("--sandbox\nread-only\n"));
+        assert!(!arguments.lines().any(|argument| argument == "off"));
+    }
+}

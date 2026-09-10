@@ -4,12 +4,15 @@ use super::{
     render_into, styles,
 };
 
-// transcript/prompt/chrome의 자연 높이가 u16 범위를 넘으면 compact viewport가 조용히
-// u16::MAX로 붙지 않고 typed measurement 오류를 반환해 잘못된 geometry를 게시하지 않는다.
+// 논리적 자연 높이는 u16을 넘어도 정확히 유지하며, usize 산술 한도 초과는 typed 오류로 남는다.
 #[test]
 fn natural_height_overflow_is_reported_instead_of_saturated() {
     assert_eq!(
-        checked_natural_height(u16::MAX, 1),
+        checked_natural_height(usize::from(u16::MAX), 1),
+        Ok(usize::from(u16::MAX) + 5)
+    );
+    assert_eq!(
+        checked_natural_height(usize::MAX, 1),
         Err(AgentShellMeasureError::HeightOverflow)
     );
 }

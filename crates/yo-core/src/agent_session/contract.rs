@@ -33,6 +33,24 @@ pub enum AgentIntent {
         /// The user's response text.
         input: String,
     },
+    /// Revisits the previous question without submitting the current draft.
+    PreviousQuestion {
+        /// Exact outstanding user-input request whose host supports moving back.
+        request: ActivityRequestRef,
+        /// Optional one-based selection associated with the draft.
+        choice: Option<u32>,
+        /// Unsubmitted answer or notes to retain while moving back.
+        draft: String,
+    },
+    /// Answers a correlated question with a choice and optional notes.
+    RespondToQuestion {
+        /// The outstanding request being answered.
+        request: ActivityRequestRef,
+        /// One-based ordinal within the question's choices.
+        choice: u32,
+        /// Additional text, kept separate from the selected option.
+        notes: String,
+    },
 }
 
 impl AgentIntent {

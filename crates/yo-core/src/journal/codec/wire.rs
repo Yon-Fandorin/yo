@@ -4,6 +4,7 @@ mod descriptor;
 mod event;
 mod identity;
 mod input;
+pub(crate) use input::validate_image_input_encoding;
 mod message;
 mod record;
 
@@ -13,13 +14,24 @@ use record::WireRecord;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BindingTransition, CacheState, JournalCommit, JournalCommitKind, JournalRecord, MessageSegment,
-    ReplaySequence, SequencedJournalRecord, TransitionMode, recover,
+    BindingTransition, CacheState, ForkHistoryCoordinate, ForkSeed, ForkSource, InitialForkSeed,
+    JournalCommit, JournalCommitKind, JournalRecord, MessageSegment, ReplaySequence,
+    SequencedJournalRecord, TransitionMode, recover,
 };
-use crate::{AgentEvent, JournalSequence};
+use crate::{AgentEvent, JournalSequence, SessionId};
 
 const SCHEMA: &str = "yo.semantic-journal-commit/v1";
 const FORMAT: &str = "anchored-session";
+
+pub(super) fn prepare_initial_fork_seed(
+    child: SessionId,
+    parent: SessionId,
+    source: ForkSource,
+    seed: ForkSeed,
+    history: Vec<(SessionId, ForkHistoryCoordinate, &SequencedJournalRecord)>,
+) -> Result<InitialForkSeed, JournalCodecError> {
+    WireRecord::prepare_initial_fork_seed(child, parent, source, seed, history)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCodecError {
@@ -122,6 +134,7 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
             wire.format
         )));
     }
+    let mut child_session = None;
     let records = wire
         .records
         .into_iter()
@@ -133,7 +146,14 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
                 .first_sequence
                 .checked_add(offset)
                 .ok_or_else(|| JournalCodecError::new("Journal sequence is exhausted"))?;
-            let (journal_sequence, record) = record.try_into()?;
+            let (journal_sequence, record) = record.decode_in_session(child_session)?;
+            if let JournalRecord::SessionDescriptor(descriptor) = &record
+                && child_session.replace(descriptor.session_id()).is_some()
+            {
+                return Err(JournalCodecError::new(
+                    "duplicate descriptor in one Journal commit",
+                ));
+            }
             Ok(SequencedJournalRecord::decoded(
                 ReplaySequence::new(sequence),
                 journal_sequence,
@@ -152,6 +172,30 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
 }
 
 fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
+    let mut child_session = None;
+    let mut fork_seen = false;
+    for entry in commit.records() {
+        match entry.record() {
+            JournalRecord::SessionDescriptor(descriptor) => {
+                child_session = Some(descriptor.session_id())
+            },
+            JournalRecord::InitialForkSeed(seed) => {
+                if fork_seen {
+                    return Err(JournalCodecError::new("duplicate initial fork seed"));
+                }
+                fork_seen = true;
+                WireRecord::validate_fork_child(
+                    child_session.ok_or_else(|| {
+                        JournalCodecError::new(
+                            "initial fork seed requires a preceding descriptor in the same commit",
+                        )
+                    })?,
+                    seed,
+                )?;
+            },
+            _ => {},
+        }
+    }
     let Some(first) = commit.records().first() else {
         return Err(JournalCodecError::new(
             "a semantic commit must contain at least one Journal record",
@@ -355,7 +399,9 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
                     correlation::positive(context_epoch, "context_epoch")?;
                 }
             },
-            JournalRecord::ContextPolicyChanged(_) | JournalRecord::ContextCheckpoint(_) => {},
+            JournalRecord::InitialForkSeed(_)
+            | JournalRecord::ContextPolicyChanged(_)
+            | JournalRecord::ContextCheckpoint(_) => {},
         }
     }
     if commit.kind() == JournalCommitKind::Snapshot {
@@ -375,8 +421,17 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
                 matches!(record.record(), JournalRecord::CommandCommitted(_)).then_some(index)
             })
             .collect::<Vec<_>>();
-        if command_positions.len() > 1 || command_positions.first().is_some_and(|index| *index != 0)
-        {
+        let has_non_flush_prefix = command_positions.first().is_some_and(|index| {
+            commit.records()[..*index].iter().any(|record| {
+                !matches!(
+                    record.record(),
+                    JournalRecord::MessageReset(_)
+                        | JournalRecord::MessageSegment(_)
+                        | JournalRecord::MessageEnded(_)
+                )
+            })
+        });
+        if command_positions.len() > 1 || has_non_flush_prefix {
             return Err(JournalCodecError::new(
                 "an incremental command commit must contain one leading command at most",
             ));
@@ -400,6 +455,39 @@ fn validate_segment(segment: &MessageSegment) -> Result<(), JournalCodecError> {
 }
 
 fn validate_transition(transition: &BindingTransition) -> Result<(), JournalCodecError> {
+    if transition.mode() == TransitionMode::InitialFork {
+        return if transition.cache() == CacheState::NotApplicable
+            && transition.fork_seed_sequence().is_some_and(|s| s.get() > 0)
+            && transition.source_anchor_sequence().is_none()
+            && transition.source_checkpoint_sequence().is_none()
+            && transition.source_initial_fork_sequence().is_none()
+        {
+            Ok(())
+        } else {
+            Err(JournalCodecError::new(
+                "initial_fork transition requires only its positive seed sequence",
+            ))
+        };
+    }
+    if transition.fork_seed_sequence().is_some() {
+        return Err(JournalCodecError::new(
+            "ordinary binding transition forbids fork_seed_sequence",
+        ));
+    }
+    if let Some(source) = transition.source_initial_fork_sequence() {
+        return if transition.mode() == TransitionMode::ExactReplay
+            && transition.cache() == CacheState::Lost
+            && source.get() > 0
+            && transition.source_anchor_sequence().is_none()
+            && transition.source_checkpoint_sequence().is_none()
+        {
+            Ok(())
+        } else {
+            Err(JournalCodecError::new(
+                "initial fork replacement source requires an exclusive exact replay transition",
+            ))
+        };
+    }
     let valid = matches!(
         (
             transition.mode(),

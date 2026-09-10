@@ -1,7 +1,7 @@
 use std::{fmt, ops::Range};
 
-use super::projection;
-use crate::{SkillReference, WorkspaceReference};
+use super::{InputImage, projection};
+use crate::{ModelInputPart, SkillReference, WorkspaceReference};
 
 /// One typed reference attached to an exact byte span in the visible input.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,6 +23,56 @@ pub enum InputReference {
 pub struct UserInput {
     text: String,
     references: Vec<InputReference>,
+    images: Vec<InputImage>,
+    resolved_skill: Option<Box<ResolvedSkill>>,
+    model_text: Option<String>,
+}
+
+/// Immutable instructions assembled by the execution host for one selected skill.
+/// Includes any required supporting instructions; optional assets remain host-owned and lazy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedSkill {
+    reference: SkillReference,
+    instructions: String,
+}
+
+impl ResolvedSkill {
+    /// Maximum UTF-8 instruction bytes, before request framing and model context accounting.
+    pub const MAX_INSTRUCTION_BYTES: usize = 256 * 1024;
+
+    /// Captures instructions from the same snapshot whose identity and eligibility were validated.
+    /// This constructor performs no filesystem access or authorization.
+    pub fn new(
+        reference: SkillReference,
+        instructions: impl Into<String>,
+    ) -> Result<Self, UserInputError> {
+        let instructions = instructions.into();
+        // This set is frozen by the persisted v2 profile, independently of Unicode updates.
+        let blank = instructions.chars().all(|character| {
+            matches!(character,
+                '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{0085}' | '\u{00a0}'
+                | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}'
+                | '\u{202f}' | '\u{205f}' | '\u{3000}'
+            )
+        });
+        if blank || instructions.len() > Self::MAX_INSTRUCTION_BYTES {
+            return Err(UserInputError::InvalidSkillInstructions);
+        }
+        Ok(Self {
+            reference,
+            instructions,
+        })
+    }
+
+    #[must_use]
+    pub const fn reference(&self) -> &SkillReference {
+        &self.reference
+    }
+
+    #[must_use]
+    pub fn instructions(&self) -> &str {
+        &self.instructions
+    }
 }
 
 /// Why text and typed reference occurrences cannot form one honest input.
@@ -34,6 +84,13 @@ pub enum UserInputError {
     ProjectionMismatch { index: usize },
     InvalidReferenceMetadata { index: usize },
     TooManySkills,
+    InvalidSkillInstructions,
+    SkillSnapshotMismatch,
+    InvalidImage { index: usize },
+    InvalidImageSourceLength,
+    InvalidImageDisplay,
+    ImageBudgetExceeded,
+    EncodedImageInputTooLarge,
 }
 
 impl InputReference {
@@ -151,6 +208,9 @@ impl UserInput {
         Self {
             text: text.into(),
             references: Vec::new(),
+            images: Vec::new(),
+            resolved_skill: None,
+            model_text: None,
         }
     }
 
@@ -161,6 +221,9 @@ impl UserInput {
         let input = Self {
             text: text.into(),
             references,
+            images: Vec::new(),
+            resolved_skill: None,
+            model_text: None,
         };
         input.validate()?;
         Ok(input)
@@ -170,9 +233,16 @@ impl UserInput {
         text: String,
         references: Vec<InputReference>,
     ) -> Self {
-        Self { text, references }
+        Self {
+            text,
+            references,
+            images: Vec::new(),
+            resolved_skill: None,
+            model_text: None,
+        }
     }
 
+    /// Visible draft text without execution-host instruction context.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.text
@@ -183,9 +253,141 @@ impl UserInput {
         &self.references
     }
 
+    /// Consumes the visible draft. Provider adapters use `into_model_input` instead.
     #[must_use]
     pub fn into_string(self) -> String {
         self.text
+    }
+
+    /// Adds a host-resolved snapshot while preserving the visible input and reference spans.
+    /// Live runtime admission never trusts a caller-supplied snapshot as authorization.
+    pub fn with_resolved_skill(mut self, skill: ResolvedSkill) -> Result<Self, UserInputError> {
+        let mut selected = self
+            .references
+            .iter()
+            .filter_map(InputReference::skill_reference);
+        if self.resolved_skill.is_some()
+            || selected.next() != Some(&skill.reference)
+            || selected.next().is_some()
+        {
+            return Err(UserInputError::SkillSnapshotMismatch);
+        }
+        // Frozen v2 input framing: recovery must reproduce the exact model-visible request.
+        let snapshot = serde_json::json!({
+            "name": skill.reference.name(),
+            "source": skill.reference.locator(),
+            "instructions": skill.instructions,
+        });
+        self.model_text = Some(format!(
+            "{}\n\nExplicit skill instructions (yo.skill-instructions/v1):\n{}",
+            self.text, snapshot
+        ));
+        self.resolved_skill = Some(Box::new(skill));
+        self.validate_image_encoding()?;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn resolved_skill(&self) -> Option<&ResolvedSkill> {
+        self.resolved_skill.as_deref()
+    }
+
+    /// Exact user-role content for provider requests, context accounting, and replay.
+    /// Unresolved and historical v1 inputs retain their original text byte-for-byte.
+    #[must_use]
+    pub fn model_input(&self) -> &str {
+        assert!(
+            self.images.is_empty(),
+            "image input requires ordered model_parts"
+        );
+        self.model_text.as_deref().unwrap_or(&self.text)
+    }
+
+    #[must_use]
+    pub fn into_model_input(self) -> String {
+        assert!(
+            self.images.is_empty(),
+            "image input requires ordered model_parts"
+        );
+        self.model_text.unwrap_or(self.text)
+    }
+
+    /// Attaches exact image occurrences, preserving separately validated reference projections.
+    /// Source lengths are retained metadata; execution-host admission must validate live evidence.
+    pub fn with_images(mut self, images: Vec<InputImage>) -> Result<Self, UserInputError> {
+        InputImage::validate_occurrences(&self.text, &self.references, &images)?;
+        self.images = images;
+        self.validate_image_encoding()?;
+        Ok(self)
+    }
+
+    /// Ordered image occurrences, including original compressed source-byte charges.
+    #[must_use]
+    pub fn images(&self) -> &[InputImage] {
+        &self.images
+    }
+
+    /// Exact ordered model content; visible attachment markers have no text projection.
+    #[must_use]
+    pub fn model_parts(&self) -> Vec<ModelInputPart> {
+        if self.images.is_empty() {
+            return vec![ModelInputPart::Text {
+                text: self.model_input().to_owned(),
+            }];
+        }
+        let mut parts = Vec::with_capacity(self.images.len() * 2 + 1);
+        let mut cursor = 0;
+        for image in &self.images {
+            if image.span().start > cursor {
+                parts.push(ModelInputPart::Text {
+                    text: self.text[cursor..image.span().start].to_owned(),
+                });
+            }
+            parts.push(ModelInputPart::Image {
+                snapshot: image.snapshot().clone(),
+            });
+            cursor = image.span().end;
+        }
+        if cursor < self.text.len() {
+            parts.push(ModelInputPart::Text {
+                text: self.text[cursor..].to_owned(),
+            });
+        }
+        if let Some(model_text) = &self.model_text {
+            let trailer = &model_text[self.text.len()..];
+            if let Some(ModelInputPart::Text { text }) = parts.last_mut() {
+                text.push_str(trailer);
+            } else {
+                parts.push(ModelInputPart::Text {
+                    text: trailer.to_owned(),
+                });
+            }
+        }
+        parts
+    }
+
+    /// Exact user-role replay item, preserving legacy string messages for text-only input.
+    #[must_use]
+    pub fn model_replay_item(&self) -> crate::ModelReplayItem {
+        if self.images.is_empty() {
+            crate::ModelReplayItem::Message {
+                role: crate::ModelReplayRole::User,
+                content: self.model_input().to_owned(),
+                refusal: None,
+            }
+        } else {
+            crate::ModelReplayItem::MultimodalUser {
+                parts: self.model_parts(),
+            }
+        }
+    }
+
+    fn validate_image_encoding(&self) -> Result<(), UserInputError> {
+        if !self.images.is_empty() {
+            crate::journal::codec::validate_image_input_encoding(self)
+                .map_err(|_| UserInputError::EncodedImageInputTooLarge)?;
+        }
+        Ok(())
     }
 
     fn validate(&self) -> Result<(), UserInputError> {
@@ -240,6 +442,21 @@ impl From<&str> for UserInput {
 impl fmt::Display for UserInputError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidImage { index } => write!(
+                formatter,
+                "input image {index} has an invalid or overlapping visible span"
+            ),
+            Self::InvalidImageSourceLength => {
+                formatter.write_str("image source byte length must be positive and at most 4 MiB")
+            },
+            Self::InvalidImageDisplay => {
+                formatter.write_str("image display metadata is invalid or exceeds its bounds")
+            },
+            Self::ImageBudgetExceeded => formatter
+                .write_str("input exceeds its image occurrence, source-byte or PNG-byte budget"),
+            Self::EncodedImageInputTooLarge => {
+                formatter.write_str("complete encoded image input exceeds 16 MiB")
+            },
             Self::EmptyReferenceSpan { index } => {
                 write!(formatter, "input reference {index} has an empty span")
             },
@@ -259,6 +476,12 @@ impl fmt::Display for UserInputError {
                 formatter,
                 "input reference {index} is missing required identity or revision metadata"
             ),
+            Self::InvalidSkillInstructions => {
+                formatter.write_str("skill instructions must be nonempty and at most 256 KiB")
+            },
+            Self::SkillSnapshotMismatch => {
+                formatter.write_str("resolved skill does not match the unique selected reference")
+            },
             Self::TooManySkills => {
                 formatter.write_str("version 1 accepts at most one explicit skill")
             },

@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt::Write as _};
+use std::{collections::BTreeSet, fmt::Write as _, mem};
 
 use sha2::Digest as _;
 
@@ -6,18 +6,21 @@ use super::{
     CommittedCommand, JournalSequence, SemanticRecord, SessionJournal,
     codec::{
         BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
-        BackendResumableOutcome, BindingTransition, CacheState, ContextArtifactReceipt,
-        ContextCheckpoint, ContextLoss, ContextPolicyChanged, ContextRetainedGroup,
-        ContextStrategy, ContextSummaryUsage, ContinuationAnchor, DetailAvailability,
-        ExchangeDirection, ExchangeKind, ModelReplayDeltaRecord, OperationId, TransitionMode,
-        VersionedIdentity,
+        BackendResumableOutcome, BindingCloseReason, BindingTransition, CacheState,
+        ContextArtifactReceipt, ContextCheckpoint, ContextImageLoss, ContextImageSource,
+        ContextLoss, ContextPolicyChanged, ContextRetainedGroup, ContextStrategy,
+        ContextSummaryUsage, ContinuationAnchor, DetailAvailability, ExchangeDirection,
+        ExchangeKind, ForkSeed, ModelReplayDeltaRecord, OperationId, TransitionMode,
+        VersionedIdentity, validate_image_losses,
     },
     read_state,
 };
+#[cfg(test)]
+use crate::ModelReplayRole;
 use crate::{
     AgentCommand, AgentEvent, BackendBindingEvidence, BackendOutcomeEvidence,
     BackendRequestEvidence, BackendResumeSource, ContextCheckpointProposal, ContinuationStrategy,
-    ModelReplay, ModelReplayItem, ModelReplayRole, SubmissionId, TurnOutcome, TurnRef,
+    ModelReplay, ModelReplayItem, SubmissionId, TurnOutcome, TurnRef,
 };
 
 #[derive(Clone)]
@@ -26,6 +29,9 @@ struct ContextSourceGroup {
     last_sequence: JournalSequence,
     replay_sequence: JournalSequence,
     items: Vec<ModelReplayItem>,
+    fork_import: Option<(JournalSequence, usize)>,
+    private_epochs: Vec<u64>,
+    image_losses: Vec<ContextImageLoss>,
 }
 
 #[derive(Clone)]
@@ -129,11 +135,19 @@ impl SessionJournal {
         let mut retained = groups[summarized_count..]
             .iter()
             .map(|group| {
-                ContextRetainedGroup::try_new(
-                    group.first_sequence,
-                    group.last_sequence,
-                    group.items.clone(),
-                )
+                match group.fork_import {
+                    Some((seed, index)) => ContextRetainedGroup::try_imported(
+                        seed,
+                        index,
+                        group.items.clone(),
+                        group.private_epochs.clone(),
+                    ),
+                    None => ContextRetainedGroup::try_new(
+                        group.first_sequence,
+                        group.last_sequence,
+                        group.items.clone(),
+                    ),
+                }
                 .ok()
             })
             .collect::<Option<Vec<_>>>()?;
@@ -145,17 +159,13 @@ impl SessionJournal {
                         AgentCommand::StartTurn {
                             turn: candidate,
                             input,
-                        } if *candidate == turn => Some((entry.sequence(), input.as_str())),
+                        } if *candidate == turn => Some((entry.sequence(), input)),
                         _ => None,
                     },
                     _ => None,
                 })?
             })?;
-            let expected_input = ModelReplayItem::Message {
-                role: ModelReplayRole::User,
-                content: input.to_owned(),
-                refusal: None,
-            };
+            let expected_input = input.model_replay_item();
             if source.turn != turn
                 || source.first_sequence != sequence
                 || source.last_sequence < source.first_sequence
@@ -197,8 +207,8 @@ impl SessionJournal {
         let mut receipt_identities = BTreeSet::new();
         let mut losses = vec![
             ContextLoss::visible_prefix_summarized(
-                summarized.first()?.first_sequence,
-                summarized.last()?.last_sequence,
+                summarized.iter().map(|group| group.first_sequence).min()?,
+                summarized.iter().map(|group| group.last_sequence).max()?,
             )
             .ok()?,
         ];
@@ -244,8 +254,21 @@ impl SessionJournal {
                 }
             }
         }
+        let mut image_losses = Vec::new();
+        for loss in summarized.iter().flat_map(|group| &group.image_losses) {
+            if image_losses.len() == 64 {
+                return None;
+            }
+            image_losses.push(loss.clone());
+            validate_image_losses(&image_losses).ok()?;
+        }
+        losses.extend(
+            image_losses
+                .into_iter()
+                .map(ContextLoss::ImageInputSummarized),
+        );
         let first_retained_sequence = retained.first().map(ContextRetainedGroup::first_sequence);
-        let checkpoint = ContextCheckpoint::try_new(
+        let mut checkpoint = ContextCheckpoint::try_new(
             epoch,
             previous_context_epoch,
             previous_context_epoch.checked_add(1)?,
@@ -265,6 +288,21 @@ impl SessionJournal {
             ContextSummaryUsage::try_new(proposal.summary_usage().clone()).ok()?,
         )
         .ok()?;
+        if let Some((before, after)) = proposal.accounting() {
+            checkpoint = checkpoint
+                .with_accounting(before.clone(), after.clone())
+                .ok()?;
+        }
+        checkpoint.validate_profile().ok()?;
+        let binding = entries.iter().find_map(|entry| match entry.record() {
+            SemanticRecord::BackendBindingOpened(binding) if binding.epoch() == epoch => {
+                Some(binding)
+            },
+            _ => None,
+        })?;
+        checkpoint
+            .validate_binding_accounting(binding.binding_identity().value())
+            .ok()?;
         let replay = checkpoint.replay_root().ok()?;
         let sequence = read_state(&self.state).next_sequence();
         let records = vec![SemanticRecord::ContextCheckpoint(checkpoint)];
@@ -336,6 +374,10 @@ impl SessionJournal {
                     BackendResumeSource::ContextCheckpoint(source_checkpoint_sequence) => {
                         BindingTransition::new(TransitionMode::ExactReplay, CacheState::Lost, None)
                             .with_source_checkpoint_sequence(source_checkpoint_sequence)
+                    },
+                    BackendResumeSource::InitialFork(sequence) => {
+                        BindingTransition::new(TransitionMode::ExactReplay, CacheState::Lost, None)
+                            .with_source_initial_fork_sequence(sequence)
                     },
                 },
                 evidence.continuation_strategy(),
@@ -534,23 +576,250 @@ fn context_source_groups(
     context_epoch: u64,
 ) -> Option<Vec<ContextSourceGroup>> {
     let mut groups = Vec::new();
+    let mut registered = None;
+    let mut owner_epoch = None;
+    let mut accepted_since_seed = false;
+    let mut current_context = None;
+    let mut closed_owner = None;
+    let mut source_anchor = None;
+    let mut source_checkpoint = None;
     for (index, entry) in entries.iter().enumerate() {
         match entry.record() {
+            SemanticRecord::InitialForkSeed(seed) => {
+                if registered.is_some() {
+                    return None;
+                }
+                registered = Some((entry.sequence(), seed));
+            },
+            SemanticRecord::BackendRequestAccepted(_) if registered.is_some() => {
+                accepted_since_seed = true;
+                source_anchor = None;
+                source_checkpoint = None;
+            },
+            SemanticRecord::BackendBindingClosed(binding) if registered.is_some() => {
+                if owner_epoch != Some(binding.epoch()) {
+                    return None;
+                }
+                closed_owner = Some((binding.epoch(), binding.reason()));
+            },
+            SemanticRecord::BackendBindingOpened(binding) if registered.is_some() => {
+                let (seed_sequence, seed) = registered?;
+                if matches!(seed.seed(), ForkSeed::Empty) {
+                    // Empty forks carry no imported baseline; ordinary recovery owns bindings.
+                    registered = None;
+                    owner_epoch = Some(binding.epoch());
+                    current_context = Some(1);
+                    continue;
+                }
+                let ForkSeed::ExactReplay(replay) = seed.seed() else {
+                    return None;
+                };
+                let source = seed.source().point()?.binding();
+                if (owner_epoch.is_none()
+                    || groups
+                        .iter()
+                        .any(|group: &ContextSourceGroup| group.fork_import.is_some()))
+                    && (binding.backend_kind() != source.backend_kind()
+                        || binding.binding_identity().schema()
+                            != source.binding_identity().schema()
+                        || binding.binding_identity().value() != source.binding_identity().value()
+                        || binding.model_identity().schema() != source.model_identity().schema()
+                        || binding.model_identity().value() != source.model_identity().value()
+                        || binding.continuation_strategy() != source.continuation_strategy())
+                {
+                    return None;
+                }
+                if owner_epoch.is_none() {
+                    if binding.epoch() != 1
+                        || binding.transition().mode() != TransitionMode::InitialFork
+                        || binding.transition().fork_seed_sequence() != Some(seed_sequence)
+                    {
+                        return None;
+                    }
+                    groups = replay
+                        .groups()
+                        .iter()
+                        .enumerate()
+                        .map(|(group_index, group)| {
+                            let range = group.first_item()..group.end_item();
+                            Some(ContextSourceGroup {
+                                first_sequence: seed_sequence,
+                                last_sequence: seed_sequence,
+                                replay_sequence: seed_sequence,
+                                image_losses: ContextImageLoss::for_items(
+                                    &replay.items()[range.clone()],
+                                    1,
+                                    |item_index, part_index| ContextImageSource::InitialForkSeed {
+                                        sequence: seed_sequence.get(),
+                                        group_index: group_index as u32,
+                                        item_index,
+                                        part_index,
+                                    },
+                                )
+                                .ok()?,
+                                items: replay.items()[range.clone()].to_vec(),
+                                fork_import: Some((seed_sequence, group_index)),
+                                private_epochs: replay.items()[range.clone()]
+                                    .iter()
+                                    .zip(&replay.item_origins()[range])
+                                    .filter_map(|(item, origin)| {
+                                        matches!(
+                                            item,
+                                            ModelReplayItem::ProviderPrivateAssistant { .. }
+                                        )
+                                        .then_some(origin.original().binding_epoch())
+                                    })
+                                    .collect(),
+                            })
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    current_context = Some(1);
+                } else {
+                    if closed_owner
+                        != owner_epoch.map(|owner| (owner, BindingCloseReason::Replaced))
+                        || owner_epoch.and_then(|owner: u64| owner.checked_add(1))
+                            != Some(binding.epoch())
+                    {
+                        return None;
+                    }
+                    if binding.transition().mode() == TransitionMode::ExactReplay {
+                        let valid_source = match (
+                            binding.transition().source_anchor_sequence(),
+                            binding.transition().source_checkpoint_sequence(),
+                            binding.transition().source_initial_fork_sequence(),
+                        ) {
+                            (Some(sequence), None, None) => source_anchor == Some(sequence),
+                            (None, Some(sequence), None) => source_checkpoint == Some(sequence),
+                            (None, None, Some(sequence)) => {
+                                sequence == seed_sequence
+                                    && !accepted_since_seed
+                                    && source_checkpoint.is_none()
+                            },
+                            _ => false,
+                        };
+                        if !valid_source {
+                            return None;
+                        }
+                        groups = transfer_context_groups(groups, entry.sequence());
+                    } else {
+                        if groups.iter().any(|group| group.fork_import.is_some()) {
+                            return None;
+                        }
+                        groups.clear();
+                    }
+                }
+                owner_epoch = Some(binding.epoch());
+                closed_owner = None;
+            },
+            SemanticRecord::BackendBindingOpened(binding) => {
+                if owner_epoch.is_some() {
+                    if binding.transition().mode() == TransitionMode::ExactReplay {
+                        groups = transfer_context_groups(groups, entry.sequence());
+                    } else {
+                        groups.clear();
+                    }
+                } else {
+                    current_context = Some(1);
+                }
+                owner_epoch = Some(binding.epoch());
+                closed_owner = None;
+            },
             SemanticRecord::ContextCheckpoint(checkpoint)
-                if checkpoint.epoch() == epoch
-                    && checkpoint.successor_context_epoch() == context_epoch =>
+                if Some(checkpoint.epoch()) == owner_epoch
+                    || (registered.is_none()
+                        && checkpoint.epoch() == epoch
+                        && checkpoint.successor_context_epoch() == context_epoch) =>
             {
+                let root = checkpoint.replay_root().ok()?;
+                if owner_epoch.is_some() {
+                    if current_context != Some(checkpoint.previous_context_epoch()) {
+                        return None;
+                    }
+                    current_context = Some(checkpoint.successor_context_epoch());
+                    source_checkpoint = Some(entry.sequence());
+                    source_anchor = None;
+                }
                 groups.clear();
-                groups.push(ContextSourceGroup {
-                    first_sequence: entry.sequence(),
-                    last_sequence: entry.sequence(),
-                    replay_sequence: entry.sequence(),
-                    items: checkpoint.replay_root().ok()?.items().to_vec(),
-                });
+                let retained_image_losses = checkpoint
+                    .retained_groups()
+                    .iter()
+                    .enumerate()
+                    .map(|(group_index, group)| {
+                        ContextImageLoss::for_items(
+                            group.items(),
+                            checkpoint.successor_context_epoch(),
+                            |item_index, part_index| ContextImageSource::RetainedCheckpoint {
+                                sequence: entry.sequence().get(),
+                                group_index: group_index as u32,
+                                item_index,
+                                part_index,
+                            },
+                        )
+                        .ok()
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                if checkpoint
+                    .retained_groups()
+                    .iter()
+                    .any(|group| group.fork_import().is_some())
+                {
+                    groups.push(local_context_group(
+                        entry.sequence(),
+                        root.items()[..1].to_vec(),
+                        Vec::new(),
+                    ));
+                    let mut local_tail = Vec::new();
+                    let mut local_losses = Vec::new();
+                    for (group_index, retained) in checkpoint.retained_groups().iter().enumerate() {
+                        if let Some(import) = retained.fork_import() {
+                            if !local_tail.is_empty() {
+                                return None;
+                            }
+                            groups.push(ContextSourceGroup {
+                                first_sequence: import.0,
+                                last_sequence: import.0,
+                                replay_sequence: import.0,
+                                items: retained.items().to_vec(),
+                                fork_import: Some(import),
+                                private_epochs: retained.private_epochs().to_vec(),
+                                image_losses: retained_image_losses[group_index].clone(),
+                            });
+                        } else {
+                            local_tail.extend_from_slice(retained.items());
+                            local_losses.extend(retained_image_losses[group_index].iter().cloned());
+                        }
+                    }
+                    if !local_tail.is_empty() {
+                        groups.push(local_context_group(
+                            entry.sequence(),
+                            local_tail,
+                            local_losses,
+                        ));
+                    }
+                    if !groups
+                        .iter()
+                        .flat_map(|group| &group.items)
+                        .eq(root.items())
+                    {
+                        return None;
+                    }
+                } else {
+                    groups.push(local_context_group(
+                        entry.sequence(),
+                        root.items().to_vec(),
+                        retained_image_losses.into_iter().flatten().collect(),
+                    ));
+                }
             },
             SemanticRecord::ContinuationAnchor(anchor)
-                if anchor.epoch() == epoch && anchor.context_epoch() == Some(context_epoch) =>
+                if (Some(anchor.epoch()) == owner_epoch
+                    && anchor.context_epoch() == current_context)
+                    || (registered.is_none()
+                        && anchor.epoch() == epoch
+                        && anchor.context_epoch() == Some(context_epoch)) =>
             {
+                source_anchor = Some(entry.sequence());
+                source_checkpoint = None;
                 let outcome = entries.iter().find(|candidate| {
                     candidate.sequence() == anchor.resumable_outcome_sequence()
                 })?;
@@ -581,13 +850,76 @@ fn context_source_groups(
                     first_sequence: first.sequence(),
                     last_sequence: anchor.journal_boundary(),
                     replay_sequence,
+                    image_losses: ContextImageLoss::for_items(
+                        delta.delta().items(),
+                        delta.context_epoch()?,
+                        |item_index, part_index| ContextImageSource::ReplayDelta {
+                            sequence: replay_sequence.get(),
+                            item_index,
+                            part_index,
+                        },
+                    )
+                    .ok()?,
                     items: delta.delta().items().to_vec(),
+                    fork_import: None,
+                    private_epochs: Vec::new(),
                 });
             },
             _ => {},
         }
     }
+    if registered.is_some()
+        && (owner_epoch != Some(epoch)
+            || current_context != Some(context_epoch)
+            || closed_owner.is_some())
+    {
+        return None;
+    }
     (!groups.is_empty()).then_some(groups)
+}
+
+fn transfer_context_groups(
+    groups: Vec<ContextSourceGroup>,
+    sequence: JournalSequence,
+) -> Vec<ContextSourceGroup> {
+    let mut transferred = Vec::new();
+    let mut local = Vec::new();
+    let mut local_losses = Vec::new();
+    for group in groups {
+        if group.fork_import.is_some() {
+            if !local.is_empty() {
+                transferred.push(local_context_group(
+                    sequence,
+                    mem::take(&mut local),
+                    mem::take(&mut local_losses),
+                ));
+            }
+            transferred.push(group);
+        } else {
+            local.extend(group.items);
+            local_losses.extend(group.image_losses);
+        }
+    }
+    if !local.is_empty() {
+        transferred.push(local_context_group(sequence, local, local_losses));
+    }
+    transferred
+}
+
+fn local_context_group(
+    sequence: JournalSequence,
+    items: Vec<ModelReplayItem>,
+    image_losses: Vec<ContextImageLoss>,
+) -> ContextSourceGroup {
+    ContextSourceGroup {
+        first_sequence: sequence,
+        last_sequence: sequence,
+        replay_sequence: sequence,
+        items,
+        fork_import: None,
+        private_epochs: Vec::new(),
+        image_losses,
+    }
 }
 
 fn submission_turn(command: &AgentCommand) -> TurnRef {
@@ -599,4 +931,139 @@ fn submission_turn(command: &AgentCommand) -> TurnRef {
 
 fn versioned(identity: &crate::BackendIdentity) -> VersionedIdentity {
     VersionedIdentity::new(identity.schema(), identity.value())
+}
+
+#[cfg(test)]
+// 두 번째 압축의 source는 새 요약 본문, 원본 import, child local tail 순서를 유지한다.
+// 동일 checkpoint 좌표의 앞·뒤 local group을 합쳐 import 앞으로 옮기면 이 검증이 실패한다.
+#[test]
+fn imported_checkpoint_sources_preserve_root_order_and_private_origin_epochs() {
+    use super::JournalEntry;
+    use crate::{
+        ModelReplayContract, ProviderPrivateReplayEnvelope, ReplayProfile, provider_private_schema,
+    };
+
+    let private = ModelReplayItem::ProviderPrivateAssistant {
+        envelope: ProviderPrivateReplayEnvelope::new(
+            provider_private_schema(ReplayProfile::ProviderPrivateLocalPlaintext).unwrap(),
+            br#"{"reasoning_content":"original private bytes","content":"inherited"}"#.to_vec(),
+        )
+        .unwrap(),
+    };
+    let inherited = vec![
+        ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "inherited".into(),
+            refusal: None,
+        },
+        private,
+    ];
+    let tail = ModelReplayItem::Message {
+        role: ModelReplayRole::User,
+        content: "child tail".into(),
+        refusal: None,
+    };
+    let body = "# Context Checkpoint\n## Current Objective\nContinue.\n## Active Constraints\nNone.\n## Decisions\nKeep imports.\n## Verified Progress\nDone.\n## Current State\nIdle.\n## Unknown or Unverified\nNone.\n## Next Actions\nContinue.\n## Critical References\nNone.";
+    let usage = ContextSummaryUsage::try_new(serde_json::json!({
+        "schema":"yo.model-usage-receipt/v1", "response_id":"summary", "round":1,
+        "provider":"test", "account":"default", "model":"test", "connector":"openai-responses",
+        "api_dialect":"openai-responses", "base_url":"https://example.invalid/",
+        "usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120,"reasoning_tokens":0},
+        "cache_read_input_tokens":{"availability":"unsupported"}
+    }))
+    .unwrap();
+    let checkpoint = ContextCheckpoint::try_new(
+        1,
+        1,
+        2,
+        JournalSequence::new(19),
+        JournalSequence::new(18),
+        1,
+        ContextStrategy::PortableSummaryV1Alpha1,
+        1000,
+        900,
+        100,
+        ModelReplayContract::new("system", vec![]),
+        body,
+        vec![
+            ContextRetainedGroup::try_imported(
+                JournalSequence::new(2),
+                1,
+                inherited.clone(),
+                vec![3],
+            )
+            .unwrap(),
+            ContextRetainedGroup::try_new(
+                JournalSequence::new(15),
+                JournalSequence::new(18),
+                vec![tail.clone()],
+            )
+            .unwrap(),
+        ],
+        Some(JournalSequence::new(2)),
+        vec![],
+        vec![
+            ContextLoss::visible_prefix_summarized(
+                JournalSequence::new(2),
+                JournalSequence::new(2),
+            )
+            .unwrap(),
+        ],
+        usage,
+    )
+    .unwrap();
+    let expected = checkpoint.replay_root().unwrap();
+    let entries = vec![JournalEntry::new(
+        JournalSequence::new(20),
+        SemanticRecord::ContextCheckpoint(checkpoint),
+    )];
+    let groups = context_source_groups(&entries, 1, 2).unwrap();
+    assert_eq!(groups.len(), 3);
+    assert_eq!(groups[0].items, expected.items()[..1]);
+    assert_eq!(groups[0].first_sequence, JournalSequence::new(20));
+    assert_eq!(groups[1].items, inherited);
+    assert_eq!(groups[1].fork_import, Some((JournalSequence::new(2), 1)));
+    assert_eq!(groups[1].private_epochs, vec![3]);
+    assert_eq!(groups[2].items, vec![tail]);
+    assert_eq!(groups[2].first_sequence, JournalSequence::new(20));
+    assert!(
+        groups
+            .iter()
+            .flat_map(|group| &group.items)
+            .eq(expected.items())
+    );
+    assert_eq!(
+        groups[..2].iter().map(|group| group.first_sequence).min(),
+        Some(JournalSequence::new(2))
+    );
+    assert_eq!(
+        groups[..2].iter().map(|group| group.last_sequence).max(),
+        Some(JournalSequence::new(20))
+    );
+    // exact replacement를 두 번 거쳐도 import를 local run에 흡수하지 않는다.
+    let transferred = transfer_context_groups(groups, JournalSequence::new(30));
+    assert_eq!(transferred.len(), 3);
+    assert_eq!(transferred[0].first_sequence, JournalSequence::new(30));
+    assert_eq!(
+        transferred[1].fork_import,
+        Some((JournalSequence::new(2), 1))
+    );
+    assert_eq!(transferred[1].private_epochs, vec![3]);
+    assert_eq!(transferred[2].first_sequence, JournalSequence::new(30));
+    assert!(
+        transferred
+            .iter()
+            .flat_map(|group| &group.items)
+            .eq(expected.items())
+    );
+    let twice = transfer_context_groups(transferred, JournalSequence::new(40));
+    assert_eq!(twice[0].first_sequence, JournalSequence::new(40));
+    assert_eq!(twice[1].fork_import, Some((JournalSequence::new(2), 1)));
+    assert_eq!(twice[2].first_sequence, JournalSequence::new(40));
+    assert!(
+        twice
+            .iter()
+            .flat_map(|group| &group.items)
+            .eq(expected.items())
+    );
 }

@@ -3,8 +3,9 @@
 use std::{collections::HashMap, ops::Range};
 
 use yo_core::{
-    SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceScope,
-    SkillReferenceSearchRequest, SkillReferenceSearchStatus, SkillReferenceSearchUpdate,
+    InputReference, SkillAvailability, SkillReference, SkillReferenceCandidate,
+    SkillReferenceScope, SkillReferenceSearchRequest, SkillReferenceSearchStatus,
+    SkillReferenceSearchUpdate, UserInput, skill_reference_projection,
 };
 
 #[cfg(test)]
@@ -241,7 +242,7 @@ impl SkillReferenceAssist {
         {
             return false;
         }
-        let replacement = yo_core::skill_reference_projection(candidate.reference());
+        let replacement = skill_reference_projection(candidate.reference());
         let start = active.trigger.span.start;
         editor.replace_range(active.trigger.span, &replacement);
         self.accepted = Some(AcceptedAnnotation {
@@ -251,6 +252,25 @@ impl SkillReferenceAssist {
         });
         self.last_text = editor.text().to_owned();
         true
+    }
+
+    pub(super) fn restore_input(&mut self, input: &UserInput) {
+        self.accepted = input.references().iter().find_map(|occurrence| {
+            occurrence
+                .skill_reference()
+                .map(|reference| AcceptedAnnotation {
+                    span: occurrence.span().clone(),
+                    projection: input.as_str()[occurrence.span().clone()].to_owned(),
+                    reference: reference.clone(),
+                })
+        });
+        self.last_text = input.as_str().to_owned();
+    }
+
+    pub(super) fn reference(&self) -> Option<InputReference> {
+        self.accepted.as_ref().map(|annotation| {
+            InputReference::skill(annotation.span.clone(), annotation.reference.clone())
+        })
     }
 
     pub(crate) const fn has_accepted_reference(&self) -> bool {

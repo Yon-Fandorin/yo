@@ -4,8 +4,9 @@ use std::{collections::HashMap, ops::Range};
 
 use unicode_segmentation::UnicodeSegmentation;
 use yo_core::{
-    WorkspaceReference, WorkspaceReferenceCandidate, WorkspaceReferenceSearchRequest,
-    WorkspaceReferenceSearchStatus, WorkspaceReferenceSearchUpdate,
+    InputReference, UserInput, WorkspaceReference, WorkspaceReferenceCandidate,
+    WorkspaceReferenceKind, WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchStatus,
+    WorkspaceReferenceSearchUpdate, workspace_reference_projection,
 };
 
 use crate::{
@@ -176,8 +177,8 @@ impl WorkspaceReferenceAssist {
             let context = (!candidate.detail().is_empty())
                 .then(|| display_candidate_text(candidate.detail()));
             let kind = match candidate.reference().kind() {
-                yo_core::WorkspaceReferenceKind::File => "File",
-                yo_core::WorkspaceReferenceKind::Directory => "Dir",
+                WorkspaceReferenceKind::File => "File",
+                WorkspaceReferenceKind::Directory => "Dir",
             };
             entries.push(SelectionEntry::enabled_with_context(
                 identity,
@@ -257,9 +258,14 @@ impl WorkspaceReferenceAssist {
         {
             return false;
         }
-        let replacement = yo_core::workspace_reference_projection(candidate.reference());
+        let replacement = workspace_reference_projection(candidate.reference());
         let start = active.trigger.span.start;
+        let changed = WorkspaceEdit {
+            old: active.trigger.span.clone(),
+            new: start..start + replacement.len(),
+        };
         editor.replace_range(active.trigger.span, &replacement);
+        self.transform_annotations(editor.text(), Some(&changed));
         self.accepted.push(AcceptedAnnotation {
             span: start..start + replacement.len(),
             projection: replacement,
@@ -267,6 +273,29 @@ impl WorkspaceReferenceAssist {
         });
         self.last_text = editor.text().to_owned();
         true
+    }
+
+    pub(super) fn restore_input(&mut self, input: &UserInput) {
+        self.accepted = input
+            .references()
+            .iter()
+            .filter_map(|occurrence| {
+                occurrence
+                    .workspace_reference()
+                    .map(|reference| AcceptedAnnotation {
+                        span: occurrence.span().clone(),
+                        projection: input.as_str()[occurrence.span().clone()].to_owned(),
+                        reference: reference.clone(),
+                    })
+            })
+            .collect();
+        self.last_text = input.as_str().to_owned();
+    }
+
+    pub(super) fn references(&self) -> impl Iterator<Item = InputReference> + '_ {
+        self.accepted.iter().map(|annotation| {
+            InputReference::workspace(annotation.span.clone(), annotation.reference.clone())
+        })
     }
 
     pub(crate) fn has_accepted_references(&self) -> bool {

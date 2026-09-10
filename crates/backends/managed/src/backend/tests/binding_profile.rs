@@ -71,6 +71,20 @@ fn backend_with_profile_and_registry(
     registry: yo_core::FrozenToolRegistry,
     requests: Arc<Mutex<Vec<yo_core::ModelConnectorRequest>>>,
 ) -> Result<NativeModelBackend, yo_core::BackendFailure> {
+    backend_with_profile_registry_and_config(
+        profile,
+        registry,
+        requests,
+        NativeModelBackendConfig::default(),
+    )
+}
+
+fn backend_with_profile_registry_and_config(
+    profile: EffectiveModelProfile,
+    registry: yo_core::FrozenToolRegistry,
+    requests: Arc<Mutex<Vec<yo_core::ModelConnectorRequest>>>,
+    config: NativeModelBackendConfig,
+) -> Result<NativeModelBackend, yo_core::BackendFailure> {
     let model_context = profile.context().clone();
     NativeModelBackend::with_connector_and_profile(
         Box::new(MockConnector {
@@ -87,7 +101,7 @@ fn backend_with_profile_and_registry(
         ),
         model_context,
         Some(profile),
-        NativeModelBackendConfig::default(),
+        config,
     )
 }
 
@@ -174,8 +188,27 @@ impl Drop for TestDirectory {
 }
 
 fn resume_through_durable_agent_session(
-    mut first_backend: NativeModelBackend,
+    first_backend: NativeModelBackend,
     resumed_backend: NativeModelBackend,
+) {
+    let (directory, continuation) = durable_continuation(first_backend);
+    let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
+    let mut resumed = AgentSession::start_cancellable_with_continuation(
+        resumed_backend,
+        continuation,
+        repository,
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    resumed.shutdown().unwrap();
+}
+
+fn durable_continuation(
+    mut first_backend: NativeModelBackend,
+) -> (
+    TestDirectory,
+    yo_core::session_repository::StoredSessionContinuation,
 ) {
     first_backend.connector = Box::new(MockConnector {
         rounds: event_rounds(vec![vec![
@@ -252,16 +285,7 @@ fn resume_through_durable_agent_session(
     let reader = LocalSessionReader::open(&directory.0).unwrap();
     let continuation = read_stored_session_continuation(&reader, session_id).unwrap();
     drop(reader);
-    let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
-    let mut resumed = AgentSession::start_cancellable_with_continuation(
-        resumed_backend,
-        continuation,
-        repository,
-        || false,
-    )
-    .unwrap()
-    .unwrap();
-    resumed.shutdown().unwrap();
+    (directory, continuation)
 }
 
 // explicit profile로 시작한 native backend는 profile의 reasoning effort를 실제 request
@@ -494,4 +518,430 @@ fn legacy_resume_preserves_valid_unknown_durable_fields() {
     first_backend.binding_identity = durable;
 
     resume_through_durable_agent_session(first_backend, backend_without_profile());
+}
+
+const COMMAND_SCHEMA: &str = "yo.managed-command-binding/v1";
+
+fn manifest_digest(byte: char) -> String {
+    format!("sha256:{}", byte.to_string().repeat(64))
+}
+
+fn command_backend(digest: Option<String>) -> NativeModelBackend {
+    command_backend_for_model(digest, "qwen3.8max")
+}
+
+fn command_backend_for_model(digest: Option<String>, model: &str) -> NativeModelBackend {
+    let saved = binding();
+    let selected = yo_core::EffectiveModelBinding::new(
+        saved.provider_id().clone(),
+        saved.account_id().clone(),
+        yo_core::ModelId::new(model).unwrap(),
+        saved.api_dialect(),
+        saved.endpoint().clone(),
+    );
+    let profile = profile("{}", "{}", "local-tools/v1");
+    NativeModelBackend::with_connector_and_profile(
+        Box::new(MockConnector {
+            rounds: event_rounds(Vec::new()),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        selected,
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        profile.context().clone(),
+        Some(profile),
+        NativeModelBackendConfig {
+            execution_manifest_digest: digest,
+            ..NativeModelBackendConfig::default()
+        },
+    )
+    .unwrap()
+}
+
+fn wrapped_identity(base: &BackendIdentity, digest: &str) -> BackendIdentity {
+    BackendIdentity::new(
+        COMMAND_SCHEMA,
+        format!(
+            r#"{{"model_binding":{{"schema":"{}","value":{}}},"execution_manifest_digest":"{digest}"}}"#,
+            base.schema(),
+            base.value(),
+        ),
+    )
+}
+
+// 명령 digest가 없으면 기존 bytes를 유지하고 no-tools는 제공된 digest도 노출하지 않는다.
+#[test]
+fn command_binding_keeps_legacy_and_no_tools_identity_bytes() {
+    let legacy = backend_without_profile();
+    assert_eq!(
+        legacy.binding_identity.value(),
+        r#"{"account":"default","api_dialect":"openai-responses","base_url":"https://example.invalid/v1","connector":"openai-responses","model":"qwen3.8max","provider":"qwencloud"}"#
+    );
+    let (decoded, digest) =
+        NativeModelBackend::decode_binding_identity(&legacy.binding_identity).unwrap();
+    assert_eq!(decoded, legacy.binding_identity);
+    assert_eq!(digest, None);
+
+    let make_no_tools = |digest| {
+        backend_with_profile_registry_and_config(
+            profile("{}", "{}", "no-tools/v1"),
+            ToolRegistry::default().freeze(),
+            Arc::new(Mutex::new(Vec::new())),
+            NativeModelBackendConfig {
+                execution_manifest_digest: digest,
+                ..NativeModelBackendConfig::default()
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        make_no_tools(None).binding_identity,
+        make_no_tools(Some(manifest_digest('a'))).binding_identity
+    );
+    let base = command_backend(None).binding_identity;
+    let wrapped = command_backend(Some(manifest_digest('a'))).binding_identity;
+    assert_eq!(
+        NativeModelBackend::decode_binding_identity(&wrapped).unwrap(),
+        (base, Some(manifest_digest('a')))
+    );
+}
+
+// wrapper와 두 envelope는 object만 허용하고 중복·unknown·null·중첩 wrapper를 거절한다.
+#[test]
+fn command_binding_rejects_non_objects_duplicates_unknowns_and_nulls() {
+    let legacy = backend_without_profile().binding_identity;
+    let valid = wrapped_identity(&legacy, &manifest_digest('a'));
+    let base = legacy.value();
+    let model = format!(r#"{{"schema":"{}","value":{base}}}"#, legacy.schema());
+    let digest = manifest_digest('a');
+    let invalid = vec![
+        format!(r#"[{model},"{digest}"]"#),
+        format!(r#"{{"model_binding":["{}",{base}],"execution_manifest_digest":"{digest}"}}"#, legacy.schema()),
+        valid.value().replace(base, r#"["qwencloud","default","qwen3.8max","openai-responses","openai-responses","https://example.invalid/v1"]"#),
+        valid.value().replace(&model, "null"),
+        valid.value().replace(base, "null"),
+        valid.value().replace(base, &serde_json::to_string(base).unwrap()),
+        valid.value().replace(&format!(r#""{digest}""#), "null"),
+        valid.value().replace(r#""schema":"yo.model-binding/v1""#, r#""schema":null"#),
+        format!(r#"{{"model_binding":{model},"model_binding":{model},"execution_manifest_digest":"{digest}"}}"#),
+        format!(r#"{{"model_binding":{model},"execution_manifest_digest":"{digest}","execution_manifest_digest":"{digest}"}}"#),
+        valid.value().replacen('{', r#"{"extra":null,"#, 1),
+        valid.value().replace(r#""schema":"yo.model-binding/v1""#, r#""schema":"yo.model-binding/v1","extra":null"#),
+        valid.value().replace(r#""schema":"yo.model-binding/v1""#, r#""schema":"yo.model-binding/v1","schema":"yo.model-binding/v1""#),
+        valid.value().replace(r#""value":"#, &format!(r#""value":{base},"value":"#)),
+        valid.value().replace(r#""provider":"qwencloud""#, r#""provider":"qwencloud","provider":"qwencloud""#),
+        valid.value().replace(r#""provider":"qwencloud""#, r#""provider":"qwencloud","extra":1"#),
+        wrapped_identity(&valid, &digest).value().to_owned(),
+    ];
+    for value in invalid {
+        assert!(
+            NativeModelBackend::decode_binding_identity(&BackendIdentity::new(
+                COMMAND_SCHEMA,
+                value.clone()
+            ))
+            .is_err(),
+            "accepted {value}"
+        );
+    }
+    for digest in [
+        String::new(),
+        "sha256:".to_owned(),
+        manifest_digest('A'),
+        manifest_digest('g'),
+        format!("{}0", manifest_digest('a')),
+    ] {
+        assert!(
+            NativeModelBackend::decode_binding_identity(&wrapped_identity(&legacy, &digest))
+                .is_err()
+        );
+        assert!(
+            super::super::identity::native_binding_identity(&binding(), None, Some(&digest))
+                .is_err()
+        );
+    }
+}
+
+// complete decoder의 숫자 spelling과 recursive parameter 규칙을 wrapper도 그대로 적용한다.
+#[test]
+fn command_binding_preserves_complete_number_grammar_and_recursive_duplicates() {
+    let base = command_backend(None).binding_identity;
+    let value = base.value();
+    for invalid_parameters in [
+        r#"{"x":18446744073709551616}"#,
+        r#"{"x":-9223372036854775809}"#,
+        r#"{"x":1e400}"#,
+        r#"{"x":[{"same":1,"same":2}]}"#,
+    ] {
+        let invalid = BackendIdentity::new(
+            base.schema(),
+            value.replace(
+                r#""reasoning_parameters":{}"#,
+                &format!(r#""reasoning_parameters":{invalid_parameters}"#),
+            ),
+        );
+        assert!(
+            NativeModelBackend::decode_binding_identity(&wrapped_identity(
+                &invalid,
+                &manifest_digest('a')
+            ))
+            .is_err()
+        );
+    }
+    for (from, to) in [
+        (r#""max_output_tokens":4096"#, r#""max_output_tokens":null"#),
+        (
+            r#""model":"qwen3.8max""#,
+            r#""model":"qwen3.8max","unknown":null"#,
+        ),
+        (
+            r#""model":"qwen3.8max""#,
+            r#""model":"qwen3.8max","model":"qwen3.8max""#,
+        ),
+    ] {
+        let invalid = BackendIdentity::new(base.schema(), value.replace(from, to));
+        assert!(
+            NativeModelBackend::decode_binding_identity(&wrapped_identity(
+                &invalid,
+                &manifest_digest('a')
+            ))
+            .is_err()
+        );
+    }
+    let number_binding = |number| {
+        wrapped_identity(
+            &BackendIdentity::new(
+                base.schema(),
+                value.replace(
+                    r#""reasoning_parameters":{}"#,
+                    &format!(r#""reasoning_parameters":{{"x":{number}}}"#),
+                ),
+            ),
+            &manifest_digest('a'),
+        )
+    };
+    let integer = number_binding("1");
+    let float = number_binding("1.0");
+    assert!(NativeModelBackend::decode_binding_identity(&integer).is_ok());
+    assert!(NativeModelBackend::decode_binding_identity(&float).is_ok());
+    assert!(!semantically_equal_native_binding_identity(
+        &integer, &float
+    ));
+    assert!(semantically_equal_native_binding_identity(
+        &number_binding("-0.0"),
+        &number_binding("0.0")
+    ));
+}
+
+// outer encoded UTF-8의 4096 byte는 허용하고 첫 초과는 JSON parsing 전에 거절한다.
+#[test]
+fn command_binding_enforces_the_complete_encoded_identity_limit() {
+    let base = backend_without_profile().binding_identity;
+    let valid = wrapped_identity(&base, &manifest_digest('a'));
+    let padding = 4096 - valid.value().len();
+    let at_limit = format!("{}{}", valid.value(), " ".repeat(padding));
+    assert!(
+        NativeModelBackend::decode_binding_identity(&BackendIdentity::new(
+            COMMAND_SCHEMA,
+            &at_limit
+        ))
+        .is_ok()
+    );
+    assert!(
+        NativeModelBackend::decode_binding_identity(&BackendIdentity::new(
+            COMMAND_SCHEMA,
+            format!("{at_limit} ")
+        ))
+        .is_err()
+    );
+
+    let encode = |padding: usize| {
+        let profile = profile(
+            &format!(r#"{{"padding":"{}"}}"#, "x".repeat(padding)),
+            "{}",
+            "local-tools/v1",
+        );
+        super::super::identity::native_binding_identity(
+            &binding(),
+            Some(&profile),
+            Some(&manifest_digest('a')),
+        )
+    };
+    let padding = 4096 - encode(0).unwrap().value().len();
+    assert_eq!(encode(padding).unwrap().value().len(), 4096);
+    assert!(encode(padding + 1).is_err());
+
+    let unicode = BackendIdentity::new(base.schema(), base.value().replace("qwen3.8max", "모델"));
+    let wrapped = wrapped_identity(&unicode, &manifest_digest('a'));
+    let at_limit = format!(
+        "{}{}",
+        wrapped.value(),
+        " ".repeat(4096 - wrapped.value().len())
+    );
+    assert!(
+        NativeModelBackend::decode_binding_identity(&BackendIdentity::new(
+            COMMAND_SCHEMA,
+            &at_limit
+        ))
+        .is_ok()
+    );
+    assert!(
+        NativeModelBackend::decode_binding_identity(&BackendIdentity::new(
+            COMMAND_SCHEMA,
+            format!("{at_limit} ")
+        ))
+        .is_err()
+    );
+}
+
+// 동일 digest는 실제 durable resume/fork를 허용하고 변경·누락 digest는 둘 다 거절한다.
+#[test]
+fn command_manifest_is_required_for_exact_resume_and_fork() {
+    let (_directory, continuation) =
+        durable_continuation(command_backend(Some(manifest_digest('a'))));
+    for digest in [Some(manifest_digest('a')), Some(manifest_digest('b')), None] {
+        let matches = digest.as_deref() == Some(manifest_digest('a').as_str());
+        let mut resumed = command_backend(digest.clone());
+        assert_eq!(
+            resumed.resume_session(continuation.target()).is_ok(),
+            matches
+        );
+        let candidate = command_backend(digest);
+        let child = SessionDescriptor::new(
+            WorkspaceHostId::new().unwrap(),
+            HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            candidate.prepare_exact_fork(&continuation, child).is_ok(),
+            matches
+        );
+    }
+    resume_through_durable_agent_session(
+        command_backend(Some(manifest_digest('a'))),
+        command_backend(Some(manifest_digest('a'))),
+    );
+}
+
+// 순서와 공백이 다른 durable wrapper도 semantic 검증 후 resume/fork하며 자식은 원본 bytes를
+// 보존한다.
+#[test]
+fn command_fork_preserves_semantically_equal_durable_wrapper_bytes() {
+    use yo_core::session_repository::StoredSessionReader;
+
+    let digest = manifest_digest('a');
+    let mut first = command_backend(Some(digest.clone()));
+    let canonical = first.binding_identity.clone();
+    let (base, _) = NativeModelBackend::decode_binding_identity(&canonical).unwrap();
+    let base_value: serde_json::Value = serde_json::from_str(base.value()).unwrap();
+    let durable = BackendIdentity::new(
+        COMMAND_SCHEMA,
+        format!(
+            " {{\n  \"model_binding\" : {{ \"value\" : {}, \"schema\" : \"{}\" }},\n  \"execution_manifest_digest\" : \"{digest}\"\n}} ",
+            serde_json::to_string_pretty(&base_value).unwrap(),
+            base.schema(),
+        ),
+    );
+    assert_ne!(canonical, durable);
+    assert!(semantically_equal_native_binding_identity(
+        &canonical, &durable
+    ));
+    first.binding_identity = durable.clone();
+    let (directory, parent) = durable_continuation(first);
+    assert_eq!(parent.target().binding().binding_identity(), &durable);
+    let reader = LocalSessionReader::open(&directory.0).unwrap();
+    let before = reader
+        .read_session(parent.descriptor().session_id())
+        .unwrap();
+
+    let mut resumed = command_backend(Some(digest.clone()));
+    let evidence = resumed.resume_session(parent.target()).unwrap();
+    assert_eq!(evidence.binding_identity(), &durable);
+    resumed.shutdown().unwrap();
+
+    let child_descriptor = || {
+        SessionDescriptor::new(
+            WorkspaceHostId::new().unwrap(),
+            HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+        )
+        .unwrap()
+    };
+    for mut incompatible in [
+        command_backend(Some(manifest_digest('b'))),
+        command_backend(None),
+        command_backend_for_model(Some(digest.clone()), "different-model"),
+    ] {
+        assert!(
+            incompatible
+                .prepare_exact_fork(&parent, child_descriptor())
+                .is_err()
+        );
+        assert!(incompatible.resume_session(parent.target()).is_err());
+        assert!(incompatible.session.is_none());
+    }
+
+    let candidate = command_backend(Some(digest));
+    let child = candidate
+        .prepare_exact_fork(&parent, child_descriptor())
+        .unwrap();
+    let child_id = child.descriptor().session_id();
+    assert_eq!(child.target().binding().binding_identity(), &durable);
+    assert_eq!(
+        child.target().model_replay(),
+        parent.target().model_replay()
+    );
+    assert_ne!(
+        child.target().binding().session_locator(),
+        parent.target().binding().session_locator()
+    );
+    let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
+    let mut live_child =
+        AgentSession::start_cancellable_with_continuation(candidate, child, repository, || false)
+            .unwrap()
+            .unwrap();
+    live_child.shutdown().unwrap();
+    drop(live_child);
+    let recovered_child = read_stored_session_continuation(&reader, child_id).unwrap();
+    assert_eq!(
+        recovered_child.target().binding().binding_identity(),
+        &durable
+    );
+    assert_eq!(
+        recovered_child.target().model_replay(),
+        parent.target().model_replay()
+    );
+    assert_eq!(
+        reader
+            .read_session(parent.descriptor().session_id())
+            .unwrap(),
+        before
+    );
+}
+
+// semantic model 교체는 같은 manifest를 허용하지만 변경·누락·새 manifest로 도구를 바꾸지 못한다.
+#[test]
+fn command_manifest_replacement_allows_a_new_model_only_with_the_same_digest() {
+    for source_digest in [Some(manifest_digest('a')), None] {
+        let (_directory, continuation) =
+            durable_continuation(command_backend(source_digest.clone()));
+        for target_digest in [Some(manifest_digest('a')), Some(manifest_digest('b')), None] {
+            let mut replacement =
+                command_backend_for_model(target_digest.clone(), "replacement-model");
+            assert!(!semantically_equal_native_binding_identity(
+                &replacement.binding_identity,
+                continuation.target().binding().binding_identity()
+            ));
+            let result = replacement.resume_session_replacing_binding(continuation.target());
+            assert_eq!(result.is_ok(), source_digest == target_digest);
+            if let Ok(evidence) = result {
+                assert_eq!(evidence.binding_identity(), &replacement.binding_identity);
+            } else {
+                assert!(replacement.session.is_none());
+            }
+        }
+    }
 }

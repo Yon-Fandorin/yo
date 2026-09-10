@@ -1,9 +1,11 @@
 //! Provider-neutral Model Connector contract and semantic request/observation types.
 
+mod image_summary;
 mod port;
 mod request;
 mod types;
 
+pub use image_summary::ImageSummarySource;
 pub use port::{ModelConnector, ModelConnectorCancellation, ModelConnectorStreamPort};
 #[doc(hidden)]
 pub use request::ModelCacheAffinityHint;

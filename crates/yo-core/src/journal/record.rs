@@ -1,7 +1,7 @@
 use super::codec::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
     BackendResumableOutcome, ContextCheckpoint, ContextPolicyChanged, ContinuationAnchor,
-    ModelReplayDeltaRecord,
+    InitialForkSeed, ModelReplayDeltaRecord,
 };
 use crate::{AgentCommand, AgentEvent, SubmissionId};
 
@@ -40,6 +40,7 @@ impl JournalSequence {
 /// `TranscriptRecord` projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SemanticRecord {
+    InitialForkSeed(Box<InitialForkSeed>),
     CommandCommitted(CommittedCommand),
     EventCommitted(AgentEvent),
     BackendExchangeObserved(BackendExchangeObserved),

@@ -51,9 +51,9 @@ impl TranscriptReader {
             .find_map(TranscriptEntry::from_journal)
             .map(|entry| entry.sequence());
         let start = sequence.map_or(0, |sequence| {
-            usize::try_from(sequence.get())
-                .unwrap_or(usize::MAX)
-                .min(state.entries.len())
+            state
+                .entries
+                .partition_point(|entry| entry.sequence() <= sequence)
         });
         let entries = state
             .entries
@@ -294,7 +294,8 @@ impl TranscriptRecord {
             | SemanticRecord::BackendRequestAccepted(_)
             | SemanticRecord::ModelReplayDelta(_)
             | SemanticRecord::BackendResumableOutcome(_)
-            | SemanticRecord::ContinuationAnchor(_) => return None,
+            | SemanticRecord::ContinuationAnchor(_)
+            | SemanticRecord::InitialForkSeed(_) => return None,
             SemanticRecord::ContextPolicyChanged(policy) => {
                 Self::ContextPolicyChanged(policy.clone())
             },
@@ -306,7 +307,7 @@ impl TranscriptRecord {
 }
 
 /// Redacted operator-facing facts about one durably committed lossy checkpoint.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContextCheckpointObservation {
     source_anchor_sequence: JournalSequence,
     source_journal_boundary: JournalSequence,
@@ -320,6 +321,8 @@ pub struct ContextCheckpointObservation {
     artifact_receipt_count: u64,
     visible_prefix_loss_count: u64,
     provider_private_loss_count: u64,
+    image_input_loss_count: u64,
+    accounting: Option<(crate::ContextAccounting, crate::ContextAccounting)>,
 }
 
 impl From<&super::codec::ContextCheckpoint> for ContextCheckpointObservation {
@@ -336,8 +339,19 @@ impl From<&super::codec::ContextCheckpoint> for ContextCheckpointObservation {
             .count();
         let provider_private_loss_count = checkpoint
             .losses()
-            .len()
-            .saturating_sub(visible_prefix_loss_count);
+            .iter()
+            .filter(|loss| {
+                matches!(
+                    loss,
+                    super::codec::ContextLoss::ProviderPrivateDropped { .. }
+                )
+            })
+            .count();
+        let image_input_loss_count = checkpoint
+            .losses()
+            .iter()
+            .filter(|loss| matches!(loss, super::codec::ContextLoss::ImageInputSummarized(_)))
+            .count();
         Self {
             source_anchor_sequence: checkpoint.source_anchor_sequence(),
             source_journal_boundary: checkpoint.source_journal_boundary(),
@@ -355,68 +369,81 @@ impl From<&super::codec::ContextCheckpoint> for ContextCheckpointObservation {
                 .expect("bounded loss count fits u64"),
             provider_private_loss_count: u64::try_from(provider_private_loss_count)
                 .expect("bounded loss count fits u64"),
+            image_input_loss_count: image_input_loss_count as u64,
+            accounting: checkpoint.accounting().cloned(),
         }
     }
 }
 
 impl ContextCheckpointObservation {
+    /// Separate estimate, quality and reserve for each side of an image-aware checkpoint.
+    pub const fn accounting(
+        &self,
+    ) -> Option<&(crate::ContextAccounting, crate::ContextAccounting)> {
+        self.accounting.as_ref()
+    }
+    /// Count of explicitly summarized image occurrences, independent of private-message losses.
+    pub const fn image_input_loss_count(&self) -> u64 {
+        self.image_input_loss_count
+    }
+
     #[must_use]
-    pub const fn source_anchor_sequence(self) -> JournalSequence {
+    pub const fn source_anchor_sequence(&self) -> JournalSequence {
         self.source_anchor_sequence
     }
 
     #[must_use]
-    pub const fn source_journal_boundary(self) -> JournalSequence {
+    pub const fn source_journal_boundary(&self) -> JournalSequence {
         self.source_journal_boundary
     }
 
     #[must_use]
-    pub const fn policy_revision(self) -> u64 {
+    pub const fn policy_revision(&self) -> u64 {
         self.policy_revision
     }
 
     #[must_use]
-    pub const fn previous_context_epoch(self) -> u64 {
+    pub const fn previous_context_epoch(&self) -> u64 {
         self.previous_context_epoch
     }
 
     #[must_use]
-    pub const fn successor_context_epoch(self) -> u64 {
+    pub const fn successor_context_epoch(&self) -> u64 {
         self.successor_context_epoch
     }
 
     #[must_use]
-    pub const fn input_token_limit(self) -> u64 {
+    pub const fn input_token_limit(&self) -> u64 {
         self.input_token_limit
     }
 
     #[must_use]
-    pub const fn input_tokens_before(self) -> u64 {
+    pub const fn input_tokens_before(&self) -> u64 {
         self.input_tokens_before
     }
 
     #[must_use]
-    pub const fn input_tokens_after(self) -> u64 {
+    pub const fn input_tokens_after(&self) -> u64 {
         self.input_tokens_after
     }
 
     #[must_use]
-    pub const fn retained_group_count(self) -> u64 {
+    pub const fn retained_group_count(&self) -> u64 {
         self.retained_group_count
     }
 
     #[must_use]
-    pub const fn artifact_receipt_count(self) -> u64 {
+    pub const fn artifact_receipt_count(&self) -> u64 {
         self.artifact_receipt_count
     }
 
     #[must_use]
-    pub const fn visible_prefix_loss_count(self) -> u64 {
+    pub const fn visible_prefix_loss_count(&self) -> u64 {
         self.visible_prefix_loss_count
     }
 
     #[must_use]
-    pub const fn provider_private_loss_count(self) -> u64 {
+    pub const fn provider_private_loss_count(&self) -> u64 {
         self.provider_private_loss_count
     }
 }

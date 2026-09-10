@@ -295,10 +295,13 @@ pub struct ModelProfileLayer {
     optional_request_parameters: Option<ModelProfileParameters>,
     tool_capability_policy: Option<VersionedProfileId>,
     replay_profile: Option<VersionedProfileId>,
+    image_input_profile: Option<VersionedProfileId>,
 }
 
 pub const SEMANTIC_REPLAY_PROFILE: &str = "semantic-only/v1";
 pub const KIMI_PRIVATE_REPLAY_PROFILE: &str = "kimi-private-local-plaintext/v1";
+/// Explicit image and advisory-accounting profile for the reviewed Kimi Code envelope.
+pub const KIMI_CODE_IMAGE_INPUT_PROFILE: &str = "kimi-code-png-advisory/v1";
 
 impl ModelProfileLayer {
     #[allow(clippy::too_many_arguments)]
@@ -321,12 +324,20 @@ impl ModelProfileLayer {
             optional_request_parameters,
             tool_capability_policy,
             replay_profile: None,
+            image_input_profile: None,
         }
     }
 
     #[must_use]
     pub fn with_replay_profile(mut self, replay_profile: Option<VersionedProfileId>) -> Self {
         self.replay_profile = replay_profile;
+        self
+    }
+
+    /// Sets this layer's explicit image profile; absence still inherits the base.
+    #[must_use]
+    pub fn with_image_input_profile(mut self, profile: Option<VersionedProfileId>) -> Self {
+        self.image_input_profile = profile;
         self
     }
 }
@@ -339,6 +350,7 @@ pub struct EffectiveModelProfile {
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: VersionedProfileId,
     replay_profile: VersionedProfileId,
+    image_input_profile: Option<VersionedProfileId>,
 }
 
 impl EffectiveModelProfile {
@@ -383,6 +395,16 @@ impl EffectiveModelProfile {
             .clone()
             .or(base.replay_profile)
             .map_or_else(|| VersionedProfileId::new(SEMANTIC_REPLAY_PROFILE), Ok)?;
+        let image_input_profile = model
+            .image_input_profile
+            .clone()
+            .or(base.image_input_profile);
+        if image_input_profile
+            .as_ref()
+            .is_some_and(|profile| profile.as_str() != KIMI_CODE_IMAGE_INPUT_PROFILE)
+        {
+            return Err(ModelServiceError::new("unsupported image_input_profile"));
+        }
         let context = ModelContextProfile::from_versioned(
             input_token_limit,
             max_output_tokens,
@@ -395,6 +417,7 @@ impl EffectiveModelProfile {
             optional_request_parameters,
             tool_capability_policy,
             replay_profile,
+            image_input_profile,
         })
     }
 
@@ -426,6 +449,12 @@ impl EffectiveModelProfile {
     #[must_use]
     pub const fn replay_profile(&self) -> &VersionedProfileId {
         &self.replay_profile
+    }
+
+    /// Explicit media/accounting identity; absence retains the text-only profile.
+    #[must_use]
+    pub const fn image_input_profile(&self) -> Option<&VersionedProfileId> {
+        self.image_input_profile.as_ref()
     }
 }
 

@@ -1,4 +1,6 @@
-use serde::{Deserialize, Serialize};
+use std::num::NonZeroU64;
+
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::super::{
     DurableRecord, DurableRecordKind, RecordDiscovery, RepositoryEntry, RepositoryError,
@@ -35,6 +37,20 @@ struct WireDiscovery {
     updated_unix_millis: u64,
     binding_epoch: Option<u64>,
     continuation_anchor_journal_sequence: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_fork_sequence",
+        skip_serializing_if = "Option::is_none"
+    )]
+    initial_fork_seed_journal_sequence: Option<u64>,
+}
+
+fn deserialize_fork_sequence<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = NonZeroU64::deserialize(deserializer)?;
+    Ok(Some(value.get()))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -208,6 +224,9 @@ impl WireEntry {
         if let Some(anchor) = discovery.continuation_anchor() {
             record_discovery = record_discovery.with_continuation_anchor(anchor);
         }
+        if let Some(seed) = discovery.initial_fork_seed() {
+            record_discovery = record_discovery.with_initial_fork_seed(seed);
+        }
         let record = match self.kind {
             WireRecordKind::Incremental => DurableRecord::incremental(self.payload),
             WireRecordKind::Snapshot => DurableRecord::snapshot(self.payload),
@@ -326,6 +345,13 @@ impl WireDiscovery {
                 message: "Continuation Anchor Journal sequence must be positive".to_owned(),
             });
         }
+        let initial_fork_seed_journal_sequence =
+            discovery.initial_fork_seed().map(JournalSequence::get);
+        if initial_fork_seed_journal_sequence == Some(0) {
+            return Err(RepositoryError::Unavailable {
+                message: "Initial fork seed Journal sequence must be positive".to_owned(),
+            });
+        }
         Ok(Self {
             descriptor: WireDescriptor {
                 session_id: WireSessionId::from_session(descriptor.session_id()),
@@ -336,6 +362,7 @@ impl WireDiscovery {
             updated_unix_millis,
             binding_epoch: discovery.binding_epoch(),
             continuation_anchor_journal_sequence,
+            initial_fork_seed_journal_sequence,
         })
     }
 
@@ -377,12 +404,20 @@ impl WireDiscovery {
             },
             value => value.map(JournalSequence::new),
         };
-        Ok(SessionDiscovery::new(
+        let discovery = SessionDiscovery::new(
             descriptor,
             self.updated_unix_millis,
             self.binding_epoch,
             continuation_anchor,
-        ))
+        );
+        match self.initial_fork_seed_journal_sequence {
+            Some(0) => Err(corrupt(
+                line,
+                "Initial fork seed Journal sequence must be positive".to_owned(),
+            )),
+            Some(sequence) => Ok(discovery.with_initial_fork_seed(JournalSequence::new(sequence))),
+            None => Ok(discovery),
+        }
     }
 
     fn append_checksum_fields(&self, preimage: &mut Vec<u8>) {
@@ -402,6 +437,10 @@ impl WireDiscovery {
         append_field(preimage, &self.updated_unix_millis.to_be_bytes());
         append_optional_u64(preimage, self.binding_epoch);
         append_optional_u64(preimage, self.continuation_anchor_journal_sequence);
+        if let Some(sequence) = self.initial_fork_seed_journal_sequence {
+            append_field(preimage, b"yo.initial-fork-discovery/v1");
+            append_field(preimage, &sequence.to_be_bytes());
+        }
     }
 }
 

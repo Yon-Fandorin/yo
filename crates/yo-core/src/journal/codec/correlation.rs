@@ -164,6 +164,7 @@ impl BackendExchangeObserved {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TransitionMode {
     Initial,
+    InitialFork,
     ExactReplay,
     BackendNativeModelRebind,
     LossyHandoff,
@@ -182,6 +183,8 @@ pub(crate) struct BindingTransition {
     cache: CacheState,
     source_anchor_sequence: Option<JournalSequence>,
     source_checkpoint_sequence: Option<JournalSequence>,
+    source_initial_fork_sequence: Option<JournalSequence>,
+    fork_seed_sequence: Option<JournalSequence>,
 }
 
 impl BindingTransition {
@@ -195,6 +198,8 @@ impl BindingTransition {
             cache,
             source_anchor_sequence,
             source_checkpoint_sequence: None,
+            source_initial_fork_sequence: None,
+            fork_seed_sequence: None,
         }
     }
 
@@ -203,6 +208,25 @@ impl BindingTransition {
         source_checkpoint_sequence: JournalSequence,
     ) -> Self {
         self.source_checkpoint_sequence = Some(source_checkpoint_sequence);
+        self
+    }
+
+    pub(crate) const fn initial_fork(sequence: JournalSequence) -> Self {
+        Self {
+            mode: TransitionMode::InitialFork,
+            cache: CacheState::NotApplicable,
+            source_anchor_sequence: None,
+            source_checkpoint_sequence: None,
+            source_initial_fork_sequence: None,
+            fork_seed_sequence: Some(sequence),
+        }
+    }
+
+    pub(crate) const fn with_source_initial_fork_sequence(
+        mut self,
+        sequence: JournalSequence,
+    ) -> Self {
+        self.source_initial_fork_sequence = Some(sequence);
         self
     }
 
@@ -220,6 +244,14 @@ impl BindingTransition {
 
     pub(crate) const fn source_checkpoint_sequence(&self) -> Option<JournalSequence> {
         self.source_checkpoint_sequence
+    }
+
+    pub(crate) const fn source_initial_fork_sequence(&self) -> Option<JournalSequence> {
+        self.source_initial_fork_sequence
+    }
+
+    pub(crate) const fn fork_seed_sequence(&self) -> Option<JournalSequence> {
+        self.fork_seed_sequence
     }
 }
 

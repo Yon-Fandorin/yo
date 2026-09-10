@@ -1,7 +1,7 @@
 use std::{
     collections::{HashSet, VecDeque},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
     },
@@ -11,10 +11,16 @@ use std::{
 };
 
 use crate::{
-    AgentBackend, AgentEvent, BackendResumeTarget, BackendStopHandle, SessionDescriptor, SessionId,
-    SubmissionOutcome, TranscriptReader,
+    AgentBackend, AgentEvent, BackendResumeTarget, BackendStopHandle,
+    InputAdmissionConfigurationError, InputAdmissionHost, JournalDurability, SessionDescriptor,
+    SessionId, SubmissionOutcome, TranscriptReader,
     journal::SessionJournal,
-    session_repository::{SessionRepository, StoredSessionContinuation},
+    readiness::ReadyReceiver,
+    session_repository::{
+        SessionForkLimits, SessionRepository, StoredSessionContinuation, StoredSessionForkCatalog,
+        StoredSessionForkSelection, StoredSessionReader, read_fork_catalog,
+        read_stored_session_continuation,
+    },
 };
 
 mod admission;
@@ -82,7 +88,7 @@ pub struct AgentSession {
     commands: SyncSender<PendingCommand>,
     urgent_commands: SyncSender<PendingCommand>,
     replacements: SyncSender<ReplacementRequest>,
-    changes: Option<Receiver<WorkerSignal>>,
+    changes: Option<Mutex<ReadyReceiver<WorkerSignal>>>,
     finished: Receiver<()>,
     stop: BackendStopHandle,
     failure: Arc<Mutex<Option<AgentSessionError>>>,
@@ -97,6 +103,8 @@ pub struct AgentSession {
     control_outcomes: Arc<Mutex<VecDeque<AgentControlOutcome>>>,
     context_compaction_pending: Arc<AtomicBool>,
     submission_ids: HashSet<crate::SubmissionId>,
+    input_admission: Arc<OnceLock<Box<dyn InputAdmissionHost>>>,
+    input_admission_sealed: bool,
     readiness: Arc<crate::readiness::Readiness>,
     #[cfg(test)]
     processed: Arc<(Mutex<u64>, Condvar)>,
@@ -115,6 +123,20 @@ pub enum AgentSessionPoll {
 }
 
 impl AgentSession {
+    /// Binds the execution authority once, before any input is queued in this live Session.
+    /// Resumed history does not count as a new submission.
+    pub fn configure_input_admission(
+        &mut self,
+        host: Box<dyn InputAdmissionHost>,
+    ) -> Result<(), InputAdmissionConfigurationError> {
+        if self.input_admission_sealed {
+            return Err(InputAdmissionConfigurationError::InputAlreadySubmitted);
+        }
+        self.input_admission
+            .set(host)
+            .map_err(|_| InputAdmissionConfigurationError::AlreadyConfigured)
+    }
+
     /// Starts a Session and waits for its initial backend handshake.
     pub fn start<B>(backend: B) -> Result<Self, AgentSessionError>
     where
@@ -309,6 +331,8 @@ impl AgentSession {
         let worker_context_compaction_pending = Arc::clone(&context_compaction_pending);
         let readiness = Arc::new(crate::readiness::Readiness::new());
         let worker_readiness = Arc::clone(&readiness);
+        let input_admission = Arc::new(OnceLock::new());
+        let worker_input_admission = Arc::clone(&input_admission);
         let worker = match thread::Builder::new()
             .name("yo-agent-runtime".to_owned())
             .spawn(move || {
@@ -329,6 +353,7 @@ impl AgentSession {
                     ),
                     resume,
                 );
+                worker.runtime.bind_input_admission(worker_input_admission);
                 let outcome = match worker.initialize() {
                     Ok(_) => {
                         if startup_tx.send(Ok(())).is_err() {
@@ -418,7 +443,10 @@ impl AgentSession {
                     commands: command_tx,
                     urgent_commands: urgent_tx,
                     replacements: replacement_tx,
-                    changes: Some(change_rx),
+                    changes: Some(Mutex::new(ReadyReceiver::new(
+                        change_rx,
+                        Arc::clone(&readiness),
+                    ))),
                     finished: finished_rx,
                     stop,
                     failure,
@@ -433,6 +461,8 @@ impl AgentSession {
                     control_outcomes,
                     context_compaction_pending,
                     submission_ids,
+                    input_admission,
+                    input_admission_sealed: false,
                     readiness,
                     #[cfg(test)]
                     processed,
@@ -458,6 +488,92 @@ impl AgentSession {
                     Err(error)
                 }
             },
+        }
+    }
+
+    /// Captures the current durable fork source without acquiring another parent writer lease.
+    /// Fails if live work is pending or storage does not match the live durable boundary.
+    pub fn capture_fork_source(
+        &self,
+        reader: &(impl StoredSessionReader + ?Sized),
+    ) -> Result<StoredSessionContinuation, AgentSessionError> {
+        let before = self.inspect_fork_parent()?;
+        let captured = read_stored_session_continuation(reader, self.session_id)
+            .map_err(|error| AgentSessionError::WorkerUnavailable(error.to_string()))?;
+        let after = self.inspect_fork_parent()?;
+        if before != after || captured.journal_cutoff() != Some(before.1) {
+            return Err(AgentSessionError::WorkerUnavailable(
+                "fork source differs from the live durable boundary".to_owned(),
+            ));
+        }
+        Ok(captured)
+    }
+
+    /// Captures a fully validated, physically bounded historical catalog from an idle live parent.
+    pub fn capture_fork_catalog(
+        &self,
+        reader: &(impl StoredSessionReader + ?Sized),
+        limits: SessionForkLimits,
+    ) -> Result<StoredSessionForkCatalog, AgentSessionError> {
+        let before = self.inspect_fork_parent()?;
+        let catalog = read_fork_catalog(reader, self.session_id, limits)
+            .map_err(|error| AgentSessionError::WorkerUnavailable(error.to_string()))?;
+        if before != self.inspect_fork_parent()? || catalog.durability() != before.0 {
+            return Err(AgentSessionError::WorkerUnavailable(
+                "historical fork capture differs from the live durable boundary".to_owned(),
+            ));
+        }
+        Ok(catalog)
+    }
+
+    /// Revalidates the latest live parent, then reconstructs only the opaque selected point.
+    /// New work, compaction, binding changes, or loss of durability require a new selection.
+    pub fn prepare_historical_fork_source(
+        &self,
+        selection: &StoredSessionForkSelection,
+    ) -> Result<StoredSessionContinuation, AgentSessionError> {
+        let before = self.inspect_fork_parent()?;
+        let source = selection
+            .prepare_source(self.session_id, before.0)
+            .map_err(|error| AgentSessionError::WorkerUnavailable(error.to_string()))?;
+        if before != self.inspect_fork_parent()? {
+            return Err(AgentSessionError::WorkerUnavailable(
+                "historical fork selection became stale during preparation".to_owned(),
+            ));
+        }
+        Ok(source)
+    }
+
+    fn inspect_fork_parent(
+        &self,
+    ) -> Result<(JournalDurability, crate::JournalSequence), AgentSessionError> {
+        if self.worker.as_ref().is_none_or(JoinHandle::is_finished)
+            || self.lifecycle.load(Ordering::Acquire) != WORKER_IDLE
+            || self.context_compaction_pending.load(Ordering::Acquire)
+        {
+            return Err(AgentSessionError::WorkerUnavailable(
+                "fork capture requires an idle live Session".to_owned(),
+            ));
+        }
+        let state = self.state.try_lock().map_err(|_| {
+            AgentSessionError::WorkerUnavailable(
+                "fork capture cannot overtake a Session state update".to_owned(),
+            )
+        })?;
+        if state.active_turn.is_some() || !state.outstanding_requests.is_empty() {
+            return Err(AgentSessionError::WorkerUnavailable(
+                "fork capture cannot overtake pending input or requests".to_owned(),
+            ));
+        }
+        let durability = self.transcript.durability();
+        match durability {
+            JournalDurability::Durable {
+                journal_sequence: Some(cutoff),
+                ..
+            } => Ok((durability, cutoff)),
+            _ => Err(AgentSessionError::WorkerUnavailable(
+                "fork capture requires committed durable history".to_owned(),
+            )),
         }
     }
 
@@ -617,10 +733,14 @@ impl AgentSession {
     /// A `Changed` result carries no semantic data. Frontends read the
     /// committed suffix through [`Self::transcript_reader`].
     pub fn poll(&mut self) -> Result<AgentSessionPoll, AgentSessionError> {
-        let Some(changes) = self.changes.as_ref() else {
+        let Some(changes) = self.changes.as_mut() else {
             return Ok(AgentSessionPoll::Closed);
         };
-        match changes.try_recv() {
+        match changes
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner())
+            .try_recv()
+        {
             Ok(WorkerSignal::Changed) => Ok(AgentSessionPoll::Changed),
             Ok(WorkerSignal::Failure(error)) => {
                 if let Ok(mut failure) = self.failure.lock() {
@@ -635,8 +755,15 @@ impl AgentSession {
     }
 
     /// Registers the frontend task that should observe the next Session change.
+    /// An unread worker signal remains ready across repeated probes until `poll` consumes it.
     pub fn poll_ready(&self, context: &mut Context<'_>) -> Poll<()> {
-        self.readiness.poll(context)
+        let Some(changes) = self.changes.as_ref() else {
+            return Poll::Ready(());
+        };
+        changes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .poll_ready(context)
     }
 
     /// Returns read-only access to this Session's committed semantic history.

@@ -6,9 +6,12 @@ use super::{
 };
 use crate::{
     BackendIdentity, ContinuationStrategy, ReplayExecutor,
-    journal::codec::{
-        BindingCloseReason, CacheState, DetailAvailability, ExchangeDirection, ExchangeKind,
-        JournalRecord, RecoveredJournal, TransitionMode, VersionedIdentity,
+    journal::{
+        SemanticRecord,
+        codec::{
+            BindingCloseReason, CacheState, DetailAvailability, ExchangeDirection, ExchangeKind,
+            JournalRecord, RecoveredJournal, TransitionMode, VersionedIdentity,
+        },
     },
 };
 
@@ -26,26 +29,20 @@ pub(crate) fn project(recovered: &RecoveredJournal) -> Vec<RequestTraceEntry> {
 
 pub(crate) fn project_live(
     sequence: crate::JournalSequence,
-    record: &crate::journal::SemanticRecord,
+    record: &SemanticRecord,
 ) -> Option<RequestTraceEntry> {
     let record = match record {
-        crate::journal::SemanticRecord::BackendBindingOpened(binding) => binding_opened(binding),
-        crate::journal::SemanticRecord::BackendBindingClosed(binding) => binding_closed(binding),
-        crate::journal::SemanticRecord::BackendExchangeObserved(exchange) => {
-            exchange_observed(exchange)
-        },
-        crate::journal::SemanticRecord::BackendRequestAccepted(request) => {
-            request_accepted(request)
-        },
-        crate::journal::SemanticRecord::ModelReplayDelta(_) => return None,
-        crate::journal::SemanticRecord::BackendResumableOutcome(outcome) => {
-            resumable_outcome(outcome)
-        },
-        crate::journal::SemanticRecord::ContinuationAnchor(anchor) => continuation_anchor(anchor),
-        crate::journal::SemanticRecord::ContextPolicyChanged(_)
-        | crate::journal::SemanticRecord::ContextCheckpoint(_) => return None,
-        crate::journal::SemanticRecord::CommandCommitted(_)
-        | crate::journal::SemanticRecord::EventCommitted(_) => return None,
+        SemanticRecord::BackendBindingOpened(binding) => binding_opened(binding),
+        SemanticRecord::BackendBindingClosed(binding) => binding_closed(binding),
+        SemanticRecord::BackendExchangeObserved(exchange) => exchange_observed(exchange),
+        SemanticRecord::BackendRequestAccepted(request) => request_accepted(request),
+        SemanticRecord::ModelReplayDelta(_) => return None,
+        SemanticRecord::BackendResumableOutcome(outcome) => resumable_outcome(outcome),
+        SemanticRecord::ContinuationAnchor(anchor) => continuation_anchor(anchor),
+        SemanticRecord::ContextPolicyChanged(_)
+        | SemanticRecord::ContextCheckpoint(_)
+        | SemanticRecord::InitialForkSeed(_) => return None,
+        SemanticRecord::CommandCommitted(_) | SemanticRecord::EventCommitted(_) => return None,
     };
     Some(RequestTraceEntry::new(sequence, record))
 }
@@ -63,6 +60,10 @@ fn binding_opened(binding: &crate::journal::codec::BackendBindingOpened) -> Requ
                 transition_mode(binding.transition().mode()),
                 cache_state(binding.transition().cache()),
                 binding.transition().source_anchor_sequence(),
+            )
+            .with_fork_coordinates(
+                binding.transition().source_initial_fork_sequence(),
+                binding.transition().fork_seed_sequence(),
             );
             match binding.transition().source_checkpoint_sequence() {
                 Some(sequence) => transition.with_source_checkpoint_sequence(sequence),
@@ -140,6 +141,7 @@ fn project_record(record: &JournalRecord) -> Option<RequestTraceRecord> {
         | JournalRecord::EventCommitted(_)
         | JournalRecord::ContextPolicyChanged(_)
         | JournalRecord::ContextCheckpoint(_)
+        | JournalRecord::InitialForkSeed(_)
         | JournalRecord::MessageReset(_)
         | JournalRecord::MessageSegment(_)
         | JournalRecord::MessageEnded(_) => None,
@@ -184,6 +186,7 @@ pub(crate) const fn detail_availability(
 pub(crate) const fn transition_mode(value: TransitionMode) -> StoredBindingTransitionMode {
     match value {
         TransitionMode::Initial => StoredBindingTransitionMode::Initial,
+        TransitionMode::InitialFork => StoredBindingTransitionMode::InitialFork,
         TransitionMode::ExactReplay => StoredBindingTransitionMode::ExactReplay,
         TransitionMode::BackendNativeModelRebind => {
             StoredBindingTransitionMode::BackendNativeModelRebind

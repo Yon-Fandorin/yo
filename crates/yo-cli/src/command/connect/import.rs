@@ -181,6 +181,8 @@ struct Profile {
     tool_capability_policy: Authored<String>,
     #[serde(default)]
     replay_profile: Authored<String>,
+    #[serde(default)]
+    image_input_profile: Authored<String>,
 }
 
 #[derive(Debug, Default)]
@@ -383,6 +385,14 @@ fn profile_layer(profile: Profile) -> Result<ModelProfileLayer, AppError> {
             .into_option()
             .map(VersionedProfileId::new)
             .transpose()
+            .map_err(&invalid)?,
+    )
+    .with_image_input_profile(
+        profile
+            .image_input_profile
+            .into_option()
+            .map(VersionedProfileId::new)
+            .transpose()
             .map_err(invalid)?,
     ))
 }
@@ -390,6 +400,39 @@ fn profile_layer(profile: Profile) -> Result<ModelProfileLayer, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 명시적 이미지 프로필을 base에서 상속하며 null·미등록 프로필·다른 provider는 import 단계에서
+    // 거절한다.
+    #[test]
+    fn imports_reviewed_image_profile_without_losing_base_inheritance() {
+        let source = "provider: kimi\naccount: default\nbase_url: https://api.kimi.com/coding/v1\nprofile:\n  api_dialect: kimi-chat-completions\n  tokenizer_profile: utf8-bytes/v1\n  input_token_limit: 262144\n  max_output_tokens: 131072\n  reasoning_parameters: {effort: high}\n  optional_request_parameters: {thinking: {type: enabled, keep: all}}\n  tool_capability_policy: no-tools/v1\n  replay_profile: kimi-private-local-plaintext/v1\n  image_input_profile: kimi-code-png-advisory/v1\nmodels:\n  - model: k3\n  - model: k3-256k\n";
+        let definition = parse(source).unwrap();
+        assert_eq!(definition.bindings.len(), 2);
+        for binding in definition.bindings {
+            assert_eq!(
+                binding
+                    .complete()
+                    .profile()
+                    .image_input_profile()
+                    .unwrap()
+                    .as_str(),
+                "kimi-code-png-advisory/v1"
+            );
+        }
+        for invalid in [
+            source.replace(
+                "image_input_profile: kimi-code-png-advisory/v1",
+                "image_input_profile: null",
+            ),
+            source.replace(
+                "image_input_profile: kimi-code-png-advisory/v1",
+                "image_input_profile: other/v1",
+            ),
+            source.replace("provider: kimi", "provider: other"),
+        ] {
+            assert!(parse(&invalid).is_err());
+        }
+    }
 
     const PROFILE: &str = "api_dialect: openai-chat-completions\ntokenizer_profile: utf8-bytes/v1\ninput_token_limit: 1000\nmax_output_tokens: 100\nreasoning_parameters: {}\noptional_request_parameters: {}\ntool_capability_policy: local-tools/v1";
 

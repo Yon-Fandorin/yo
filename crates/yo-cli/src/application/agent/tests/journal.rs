@@ -32,6 +32,10 @@ fn drain_frontend_until_turn_finished<E: std::fmt::Display>(
         let observation = poll().map_err(|error| error.to_string())?;
         let last_poll = match &observation {
             AgentPoll::Pending => "pending",
+            AgentPoll::Notice(_) => "notice",
+            AgentPoll::StatusLine(_) => "status_line",
+            AgentPoll::Links(_) => "links",
+            AgentPoll::Document(_) => "document",
             AgentPoll::Submission(_) => "submission",
             AgentPoll::Record(_) => "record",
             AgentPoll::RequestTrace(_) => "request-trace",
@@ -329,6 +333,10 @@ fn exposes_initial_storage_pressure_to_the_connected_frontend() {
                 cause: DurabilityGapCause::Capacity,
             }) => break,
             AgentPoll::Pending
+            | AgentPoll::Notice(_)
+            | AgentPoll::StatusLine(_)
+            | AgentPoll::Links(_)
+            | AgentPoll::Document(_)
             | AgentPoll::Record(_)
             | AgentPoll::RequestTrace(_)
             | AgentPoll::Durability(_)
@@ -525,4 +533,218 @@ fn drains_more_than_one_bounded_page_from_one_coalesced_wake() {
         UPDATE_COUNT
     );
     connection.shutdown().unwrap();
+}
+
+// disk에 저장한 seed-only child를 새 worker로 재개하면 core의 authoritative Durable 상태와
+// observation이 CLI poll_ready/poll 경계를 넘어 전달되어야 합니다.
+#[test]
+fn fresh_seed_only_disk_resume_delivers_authoritative_durability() {
+    use std::{
+        fs,
+        task::{Context, Waker},
+    };
+
+    use yo_core::{
+        AgentSession, BackendBindingEvidence, BackendIdentity, BackendOutcomeEvidence,
+        BackendRequestEvidence, ContextPolicyChanged, ContextStrategy, ContinuationStrategy,
+        HostWorkspacePath, InputSubmission, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+        ModelReplayRole, ReplayExecutor, ReplayProfile, SessionDescriptor, SubmissionId,
+        TranscriptObservation, WorkspaceHostId,
+        session_repository::{
+            LocalSessionReader, LocalSessionRepository, read_stored_session_continuation,
+        },
+    };
+    let root =
+        std::env::temp_dir().join(format!("yo-cli-seed-resume-{}", SessionId::new().unwrap()));
+    fs::create_dir(&root).unwrap();
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(root.clone());
+    let host: WorkspaceHostId = "10000000-0000-4000-8000-000000000001".parse().unwrap();
+    let workspace = HostWorkspacePath::normalize_local(&root).unwrap();
+    let binding = |id: SessionId| {
+        BackendBindingEvidence::new(
+            "managed",
+            "1",
+            BackendIdentity::new("binding/v1", "account"),
+            BackendIdentity::new("model/v1", "model"),
+            BackendIdentity::new("locator/v1", id.to_string()),
+            ContinuationStrategy::ExactReplay {
+                executor: ReplayExecutor::LocalClient,
+                replay_profile: ReplayProfile::SemanticOnly,
+            },
+        )
+    };
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: AgentCommand::CreateSession {
+                session_id: session_id(),
+            },
+            evidence: BackendCommandEvidence::BindingOpened(binding(session_id())),
+        },
+        BackendScriptStep::Emit(BackendEvent::ContextPolicyChanged {
+            policy: ContextPolicyChanged::try_new(
+                1,
+                true,
+                ContextStrategy::PortableSummaryV1Alpha1,
+                85,
+                90,
+                Some(10),
+                Some(65536),
+            )
+            .unwrap(),
+        }),
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: AgentCommand::StartTurn {
+                turn: turn(),
+                input: "question".into(),
+            },
+            evidence: BackendCommandEvidence::RequestAccepted(BackendRequestEvidence::new(
+                "request/v1",
+                BackendIdentity::new("exchange/v1", "1"),
+                BackendIdentity::new("accepted/v1", "1"),
+            )),
+        },
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn: turn(),
+            evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
+                "outcome/v1",
+                "1",
+            ))
+            .with_replay(ModelReplayDelta::new(
+                Some(ModelReplayContract::new("system", vec![])),
+                vec![
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::User,
+                        content: "question".into(),
+                        refusal: None,
+                    },
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::Assistant,
+                        content: "answer".into(),
+                        refusal: None,
+                    },
+                ],
+            )),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let descriptor = SessionDescriptor::for_session(session_id(), host, workspace.clone());
+    let mut parent = TuiAgentConnection::start_persistent(
+        backend,
+        descriptor,
+        LocalSessionRepository::open(&root, 1024 * 1024).unwrap(),
+        &mut NeverTerminated,
+    )
+    .unwrap()
+    .unwrap();
+    dispatch_until_queued(
+        &mut parent,
+        AgentIntent::Submit(InputSubmission::new(
+            SubmissionId::new().unwrap(),
+            "question".into(),
+        )),
+    )
+    .unwrap();
+    drain_frontend_until_turn_finished(TEST_DEADLOCK_GUARD, || parent.poll()).unwrap();
+    parent.shutdown().unwrap();
+    drop(parent);
+    let reader = LocalSessionReader::open(&root).unwrap();
+    let source = read_stored_session_continuation(&reader, session_id()).unwrap();
+    let child_id = SessionId::new().unwrap();
+    let prepared = source
+        .prepare_exact_fork(
+            SessionDescriptor::for_session(child_id, host, workspace),
+            binding(child_id),
+        )
+        .unwrap();
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::Resume {
+            target: Box::new(prepared.target().clone()),
+            evidence: binding(child_id),
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut child = AgentSession::start_cancellable_with_continuation(
+        backend,
+        prepared,
+        LocalSessionRepository::open(&root, 1024 * 1024).unwrap(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    child.shutdown().unwrap();
+    drop(child);
+    drop(reader);
+    fs::remove_file(root.join(format!("{}.jsonl", session_id()))).unwrap();
+    let reader = LocalSessionReader::open(&root).unwrap();
+    let prepared = read_stored_session_continuation(&reader, child_id).unwrap();
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::Resume {
+            target: Box::new(prepared.target().clone()),
+            evidence: binding(child_id),
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let fresh = AgentSession::start_cancellable_with_continuation(
+        backend,
+        prepared,
+        LocalSessionRepository::open(&root, 1024 * 1024).unwrap(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    let expected = fresh.transcript_reader().durability();
+    assert!(matches!(
+        expected,
+        JournalDurability::Durable {
+            journal_sequence: Some(_),
+            ..
+        }
+    ));
+    assert!(
+        fresh
+            .transcript_reader()
+            .read_observations_after(None)
+            .into_entries()
+            .iter()
+            .any(|entry| matches!(
+                entry.observation(),
+                TranscriptObservation::Durability(value) if *value == expected
+            )),
+        "core did not publish authoritative durability observation"
+    );
+    let mut connection = TuiAgentConnection::from_session(fresh);
+    let mut context = Context::from_waker(Waker::noop());
+    let deadline = Instant::now() + TEST_DEADLOCK_GUARD;
+    while connection.poll_ready(&mut context).is_pending() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        connection.poll_ready(&mut context).is_ready(),
+        "probing readiness consumed the unread startup durability update"
+    );
+    let mut delivered = false;
+    while Instant::now() < deadline {
+        if connection.poll_ready(&mut context).is_ready() {
+            match connection.poll().unwrap() {
+                AgentPoll::Durability(value) if value == expected => {
+                    delivered = true;
+                    break;
+                },
+                AgentPoll::Closed => break,
+                _ => {},
+            }
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    connection.shutdown().unwrap();
+    assert!(
+        delivered,
+        "CLI readiness/poll lost the core Durable observation"
+    );
 }

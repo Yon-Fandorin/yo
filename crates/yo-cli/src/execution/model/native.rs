@@ -7,14 +7,14 @@ use yo_connector_kimi::KimiChatCompletionsConnector;
 use yo_connector_openai_chat_completions::OpenAiChatCompletionsConnector;
 use yo_connector_openai_responses::OpenAiResponsesConnector;
 use yo_core::{
-    AgentBackend, ApiCredential, ApiDialect, ConnectorId, CredentialSnapshot,
+    AgentBackend, ApiCredential, ApiDialect, BackendAdapter, ConnectorId, CredentialSnapshot,
     LocalConnectionOperationRepositories, LocalCredentialRepository, LocalModelRequestObservation,
     ModelConnector, ModelConnectorLimits, ModelRequestFailureKind, ModelRequestOutcome,
-    ToolRegistry,
+    SessionDescriptor, ToolRegistry, session_repository::StoredSessionContinuation,
 };
 
 use super::{
-    StartupBackend,
+    PreparedNativeFork, StartupBackend,
     tokenizer::{TokenizerRegistry, require_supported_tokenizer},
 };
 use crate::{AppError, execution::tools as local_tools, state::config::Config};
@@ -24,12 +24,51 @@ pub(super) fn start_native(
     credentials: &CredentialSnapshot,
     selection: &StartupBackend,
     workspace: &Path,
-) -> Result<Box<dyn AgentBackend + Send>, AppError> {
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<(Box<dyn AgentBackend + Send>, Option<String>), AppError> {
+    create_native(config, credentials, selection, workspace, cancelled)
+        .map(|(backend, digest)| (Box::new(backend) as Box<dyn AgentBackend + Send>, digest))
+}
+
+pub(super) fn start_native_for_fork(
+    config: &Config,
+    credentials: &CredentialSnapshot,
+    selection: &StartupBackend,
+    workspace: &Path,
+    parent: &StoredSessionContinuation,
+    child: SessionDescriptor,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<PreparedNativeFork, AppError> {
+    let (mut backend, digest) =
+        create_native(config, credentials, selection, workspace, cancelled)?;
+    match backend.prepare_exact_fork(parent, child) {
+        Ok(prepared) => Ok((Box::new(backend), prepared, digest)),
+        Err(error) => {
+            let primary = AppError::single("preparing exact native fork", error);
+            match backend.shutdown() {
+                Ok(()) => Err(primary),
+                Err(cleanup) => Err(AppError::many([
+                    primary.to_string(),
+                    format!("fork candidate cleanup failed: {cleanup}"),
+                ])),
+            }
+        },
+    }
+}
+
+fn create_native(
+    config: &Config,
+    credentials: &CredentialSnapshot,
+    selection: &StartupBackend,
+    workspace: &Path,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<(NativeModelBackend, Option<String>), AppError> {
     let StartupBackend::Native {
         provider,
         account,
         model,
         registry_revision,
+        execution_manifest_digest: expected_digest,
         ..
     } = selection
     else {
@@ -72,12 +111,51 @@ pub(super) fn start_native(
             ));
         },
     };
-    let registry = runtime_registry(entry, *registry_revision)
-        .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))?;
+    let commands = if *registry_revision == local_tools::LocalToolRegistryRevision::CommandTools {
+        if entry
+            .explicit_profile()
+            .is_some_and(|profile| profile.tool_capability_policy().as_str() == "no-tools/v1")
+        {
+            return Err(AppError::message(
+                "saved command tools cannot be replaced by no-tools",
+            ));
+        }
+        Some(
+            local_tools::PreparedCommandTools::prepare(
+                config.command_tools(),
+                workspace,
+                &credential_path,
+                cancelled,
+            )
+            .map_err(|error| AppError::single("preparing command tools", error))?
+            .ok_or_else(|| {
+                AppError::message("saved command tools require explicit configuration")
+            })?,
+        )
+    } else {
+        None
+    };
+    let digest = commands
+        .as_ref()
+        .map(|commands| commands.digest().to_owned());
+    if expected_digest
+        .as_ref()
+        .is_some_and(|expected| Some(expected) != digest.as_ref())
+    {
+        return Err(AppError::message(
+            "configured command execution manifest does not match the saved Session",
+        ));
+    }
+    let registry = match &commands {
+        Some(commands) => commands.registry().clone(),
+        None => runtime_registry(entry, *registry_revision)
+            .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))?,
+    };
     let semantic_admission =
         local_tools::LocalSemanticAdmission::new(credentials.credentials().clone());
     let tool_host = local_tools::LocalToolHost::new(workspace, &credential_path)
-        .map_err(|error| AppError::single("starting local workspace tools", error))?;
+        .map_err(|error| AppError::single("starting local workspace tools", error))?
+        .with_commands(commands);
     let mut services = NativeModelBackendServices::new(
         Box::new(super::NativeBindingAdmission),
         Some(Box::new(semantic_admission)),
@@ -96,14 +174,18 @@ pub(super) fn start_native(
     }
     let backend_config = NativeModelBackendConfig {
         maximum_tool_argument_bytes: registry_revision.maximum_argument_bytes(),
+        execution_manifest_digest: digest.clone(),
         ..NativeModelBackendConfig::default()
     };
+    if cancelled() {
+        return Err(AppError::message("native backend preparation cancelled"));
+    }
     let connector = native_connector(entry, credential, ModelConnectorLimits::default())
         .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))?;
     let backend = NativeModelBackend::new(entry, connector, registry, services, backend_config)
         .map_err(|error| AppError::single("starting native model backend", error));
     backend
-        .map(|backend| Box::new(backend) as Box<dyn AgentBackend + Send>)
+        .map(|backend| (backend, digest))
         .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))
 }
 
@@ -347,6 +429,7 @@ mod tests {
             &credentials,
             &StartupBackend::Host(yo_core::HostId::codex()),
             Path::new("."),
+            &mut || false,
         ) {
             Ok(_) => panic!("host backend must be rejected before native startup"),
             Err(error) => error,
@@ -402,9 +485,10 @@ mod tests {
             model: complete.binding().model_id().clone(),
             replace_binding: false,
             registry_revision: local_tools::LocalToolRegistryRevision::BasicFiles,
+            execution_manifest_digest: None,
         };
 
-        let error = match start_native(&config, &credentials, &selection, &root) {
+        let error = match start_native(&config, &credentials, &selection, &root, &mut || false) {
             Ok(_) => panic!("a missing credential must stop native startup"),
             Err(error) => error,
         };

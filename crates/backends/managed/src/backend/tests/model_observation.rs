@@ -274,3 +274,39 @@ fn persistence_failure_is_a_separate_warning_activity() {
         Some(BackendEvent::ResumableTurnFinished { .. })
     ));
 }
+
+// 인수 생성 도중 출력 제한이 와도 계정 관측은 Protocol 대신 connector의 ResponseLimit을 한 번
+// 보고한다.
+#[test]
+fn partial_tool_length_stop_preserves_request_failure_classification() {
+    let outcomes = Arc::new(Mutex::new(Vec::new()));
+    run_turn(&mut backend(
+        vec![vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "partial".into(),
+            },
+            ModelConnectorEvent::FunctionCallStarted {
+                output_index: 0,
+                item_id: "call".into(),
+                call_id: "call-1".into(),
+                name: "read_file".into(),
+            },
+            ModelConnectorEvent::Terminal {
+                response_id: "partial".into(),
+                status: ModelConnectorTerminal::Incomplete {
+                    reason: Some("length".into()),
+                    request_failure: ModelRequestFailureKind::ResponseLimit,
+                },
+                usage: ResponsesUsage::default(),
+            },
+        ]],
+        outcomes.clone(),
+        None,
+    ));
+    assert_eq!(
+        *outcomes.lock().unwrap(),
+        [ModelRequestOutcome::Failed(
+            ModelRequestFailureKind::ResponseLimit
+        )]
+    );
+}

@@ -81,6 +81,17 @@ impl OpenAiResponsesConnector {
     }
 
     fn wire_body(&self, request: &ModelConnectorRequest) -> Result<Value, ConnectorError> {
+        if request.input().iter().any(|item| {
+            matches!(
+                item,
+                ModelConnectorInputItem::MultimodalUser { .. }
+                    | ModelConnectorInputItem::ImageSummarySource { .. }
+            )
+        }) {
+            return Err(configuration_failure(
+                "image input requires a reviewed connector image profile",
+            ));
+        }
         if request.contains_provider_private_input() {
             return Err(configuration_failure(
                 "provider-private assistant replay requires its provider-specific connector",
@@ -115,6 +126,10 @@ impl OpenAiResponsesConnector {
                 ModelConnectorInputItem::ProviderPrivateAssistant { .. } => unreachable!(
                     "provider-private input was rejected before Responses serialization"
                 ),
+                ModelConnectorInputItem::MultimodalUser { .. }
+                | ModelConnectorInputItem::ImageSummarySource { .. } => {
+                    unreachable!("multimodal input was rejected before Responses serialization")
+                },
             })
             .collect::<Vec<_>>();
         let mut body = json!({"model": self.model, "input": input, "stream": true});

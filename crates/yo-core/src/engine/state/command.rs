@@ -202,6 +202,8 @@ impl EngineState {
 fn response_kind(response: &ActivityResponse) -> ResponseKind {
     match response {
         ActivityResponse::Approval(_) => ResponseKind::Approval,
-        ActivityResponse::UserInput(_) => ResponseKind::UserInput,
+        ActivityResponse::UserInput(_)
+        | ActivityResponse::QuestionAnswer { .. }
+        | ActivityResponse::PreviousQuestion { .. } => ResponseKind::UserInput,
     }
 }

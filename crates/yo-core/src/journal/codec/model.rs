@@ -1,7 +1,7 @@
 use super::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
     BackendResumableOutcome, ContextCheckpoint, ContextPolicyChanged, ContinuationAnchor,
-    ModelReplayDeltaRecord,
+    InitialForkSeed, ModelReplayDeltaRecord,
 };
 use crate::{
     ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionDescriptor,
@@ -205,6 +205,7 @@ impl From<JournalSequence> for ReplaySequence {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum JournalRecord {
     SessionDescriptor(SessionDescriptor),
+    InitialForkSeed(Box<InitialForkSeed>),
     CommandCommitted(CommittedCommand),
     EventCommitted(AgentEvent),
     BackendExchangeObserved(BackendExchangeObserved),
@@ -225,6 +226,7 @@ impl JournalRecord {
     pub(crate) fn semantic_record(&self) -> Option<crate::journal::SemanticRecord> {
         use crate::journal::SemanticRecord;
         match self {
+            Self::InitialForkSeed(record) => Some(SemanticRecord::InitialForkSeed(record.clone())),
             Self::CommandCommitted(record) => {
                 Some(SemanticRecord::CommandCommitted(record.clone()))
             },
@@ -288,7 +290,8 @@ impl JournalRecord {
             Self::MessageReset(reset) => Some(reset.activity().session_id()),
             Self::MessageSegment(segment) => Some(segment.activity().session_id()),
             Self::MessageEnded(terminal) => Some(terminal.ended().activity().session_id()),
-            Self::BackendExchangeObserved(_)
+            Self::InitialForkSeed(_)
+            | Self::BackendExchangeObserved(_)
             | Self::BackendBindingOpened(_)
             | Self::BackendBindingClosed(_)
             | Self::BackendRequestAccepted(_)

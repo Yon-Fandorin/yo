@@ -378,3 +378,46 @@ fn hidden_refresh_remains_unpresented_and_yields_input() {
         OverlayInputEffect::Unhandled
     );
 }
+
+// tree의 PgUp/PgDown은 overlay 내부 줄 탐색으로 소비하고 disabled focus의 Enter는
+// acceptance를 만들지 않습니다. 일반 picker는 이 키를 기존 소유자에게 넘깁니다.
+#[test]
+fn wrapped_tree_page_keys_and_disabled_acceptance_stay_inside_overlay() {
+    let mut slot = PromptOverlaySlot::default();
+    slot.open(
+        snapshot(vec![
+            enabled("one", "One"),
+            SelectionEntry::status("limit", "Query limit reached"),
+        ])
+        .with_wrapped_entries(),
+    )
+    .unwrap();
+    slot.set_presented(true);
+    assert_eq!(
+        slot.handle(&key(KeyCode::PageDown, KeyModifiers::NONE)),
+        OverlayInputEffect::Redraw
+    );
+    assert_eq!(
+        slot.handle(&key(KeyCode::PageUp, KeyModifiers::NONE)),
+        OverlayInputEffect::Redraw
+    );
+    assert_eq!(
+        slot.handle(&key(KeyCode::Down, KeyModifiers::NONE)),
+        OverlayInputEffect::Redraw
+    );
+    assert!(slot.panel().unwrap().selected_identity().is_none());
+    assert_eq!(
+        slot.handle(&key(KeyCode::Enter, KeyModifiers::NONE)),
+        OverlayInputEffect::Consumed
+    );
+    assert!(slot.is_open());
+    let mut ordinary = PromptOverlaySlot::default();
+    ordinary
+        .open(snapshot(vec![enabled("one", "One")]))
+        .unwrap();
+    ordinary.set_presented(true);
+    assert_eq!(
+        ordinary.handle(&key(KeyCode::PageDown, KeyModifiers::NONE)),
+        OverlayInputEffect::Unhandled
+    );
+}

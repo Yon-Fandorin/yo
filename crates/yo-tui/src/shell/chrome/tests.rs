@@ -29,10 +29,50 @@ fn row(surface: &Surface) -> String {
 
 fn snapshot<'a>(backend: &'a str, workspace: &'a str) -> ShellChromeSnapshot<'a> {
     ShellChromeSnapshot {
+        image_thumbnail: None,
         turn_active: true,
+        queued_messages: 0,
+        queue_paused: false,
+        request: None,
         backend: Some(backend),
+        usage: None,
+        status: None,
+        storage_warning: None,
         workspace,
         mode: PresentationMode::Inline,
+    }
+}
+
+// 좁은 화면에서는 표시 모드보다 전송 키가 우선하고 draft가 있으면 종료 키를 숨긴다.
+#[test]
+fn narrow_idle_footer_keeps_send_before_mode_and_secondary_actions() {
+    let styles = ShellChromeStyles {
+        activity: ActivityStyles::default(),
+        metrics: Style::default(),
+        mode: Style::default(),
+        key_hint: Style::default(),
+    };
+    for width in [10, 19, 20, 30, 40] {
+        let mut surface = Surface::new(Size::new(width, 1)).unwrap();
+        let mut idle = snapshot("codex", "~/yo");
+        idle.turn_active = false;
+        idle.mode = PresentationMode::Fullscreen;
+        paint_mode(
+            &mut surface
+                .view(Rect::new(Point::new(0, 0), Size::new(width, 1)))
+                .unwrap(),
+            idle,
+            styles,
+            NewlineBinding::default(),
+            false,
+        )
+        .unwrap();
+        assert!(
+            row(&surface).contains("Enter send"),
+            "width {width}: {}",
+            row(&surface)
+        );
+        assert!(!row(&surface).contains("exit"));
     }
 }
 
@@ -43,6 +83,7 @@ fn full_layout_reserves_the_complete_prompt_chrome_stack() {
         Rect::new(Point::new(0, 0), Size::new(80, 12)),
         NonZeroU16::new(3).unwrap(),
         true,
+        false,
     );
 
     assert_eq!(layout.transcript.size.height, 5);
@@ -65,6 +106,7 @@ fn compact_layout_keeps_prompt_and_interrupt_before_footer_detail() {
         Rect::new(Point::new(0, 0), Size::new(40, 4)),
         NonZeroU16::new(4).unwrap(),
         true,
+        false,
     );
 
     assert_eq!(layout.transcript.size.height, 2);
@@ -80,8 +122,8 @@ fn idle_and_active_layouts_keep_the_same_prompt_origin() {
     for height in 2..=12 {
         let area = Rect::new(Point::new(0, 0), Size::new(40, height));
         let prompt = NonZeroU16::new(3).unwrap();
-        let idle = layout(area, prompt, false);
-        let active = layout(area, prompt, true);
+        let idle = layout(area, prompt, false, false);
+        let active = layout(area, prompt, true, false);
 
         assert_eq!(idle, active, "height {height} changed shell geometry");
     }
@@ -315,7 +357,7 @@ fn heterogeneous_marker_frames_keep_the_working_column_stable() {
     ));
 }
 
-// 충분한 폭의 하단 도움말은 실제 newline binding과 종료·중단 키를 관례 표기로 보여주고,
+// 충분한 폭의 하단 도움말은 예약·중단 키를 공통 관례 표기로 보여주고,
 // 현재 presentation mode는 같은 행 오른쪽에 남겨 입력창 아래 정보를 한눈에 읽게 한다.
 #[test]
 fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
@@ -337,14 +379,13 @@ fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
     )
     .unwrap();
 
-    assert_eq!(
-        row(&surface),
-        "Esc/^C interrupt  ·  S-Enter newline  ·  ^D exit                  inline"
-    );
+    let footer = row(&surface);
+    assert!(footer.starts_with("M-Enter queue  ·  Esc/^C interrupt"));
+    assert!(footer.ends_with("inline"));
 }
 
 // 입력 초안이 비어 있지 않으면 Ctrl+D는 종료 명령이 아니므로 하단 도움말에서 exit를
-// 광고하지 않고, 실제로 유효한 newline binding과 mode만 남긴다.
+// 광고하지 않고, 예약·중단 키와 mode를 보여준다.
 #[test]
 fn footer_omits_ctrl_d_exit_while_the_prompt_has_a_draft() {
     let styles = ShellChromeStyles {
@@ -365,10 +406,10 @@ fn footer_omits_ctrl_d_exit_while_the_prompt_has_a_draft() {
     )
     .unwrap();
 
-    assert_eq!(
-        row(&surface),
-        "Esc/^C interrupt  ·  S-Enter newline      inline"
-    );
+    let footer = row(&surface);
+    assert!(footer.contains("M-Enter queue"));
+    assert!(!footer.contains("exit"));
+    assert!(footer.ends_with("inline"));
 }
 
 // metrics는 전체 작업 경로가 한 줄에 맞지 않으면 backend만 남겨 경로를 중간에서 잘라 오해시키지
@@ -435,5 +476,65 @@ fn unrenderable_status_segments_are_omitted_instead_of_failing_the_frame() {
         )
         .unwrap();
         assert_eq!(row(&surface), "x");
+    }
+}
+
+// 상태 행은 여유 높이에서만 예약하며 작은 창의 대화 바닥·입력·기존 안내를 빼앗지 않는다.
+#[test]
+fn host_status_row_uses_only_optional_height() {
+    for height in 0..=30 {
+        let area = Rect::new(Point::new(0, 0), Size::new(24, height));
+        let baseline = layout(area, NonZeroU16::new(3).unwrap(), true, false);
+        let status = layout(area, NonZeroU16::new(3).unwrap(), true, true);
+        assert_eq!(baseline.prompt.size.height, status.prompt.size.height);
+        assert_eq!(baseline.mode.size.height, status.mode.size.height);
+        assert_eq!(baseline.metrics.size.height, status.metrics.size.height);
+        assert_eq!(
+            baseline.transcript.size.height,
+            status.transcript.size.height + status.status.size.height
+        );
+        assert!(status.transcript.size.height >= baseline.transcript.size.height.min(2));
+        assert_eq!(
+            status.status.size.height,
+            u16::from(baseline.transcript.size.height > 2)
+        );
+        assert_eq!(status.mode.origin.y + status.mode.size.height, height);
+    }
+}
+
+// 예약 개수와 일시정지는 좁은 폭에서도 표시하며 Alt+Enter가 개행이면 충돌 없는 Alt+Q를 안내한다.
+#[test]
+fn queued_footer_preserves_count_pause_and_newline_binding() {
+    let styles = ShellChromeStyles {
+        activity: ActivityStyles::default(),
+        metrics: Style::default(),
+        mode: Style::default(),
+        key_hint: Style::default(),
+    };
+    for width in [12, 24, 88] {
+        let mut surface = Surface::new(Size::new(width, 1)).unwrap();
+        let mut queued = snapshot("grok", "~/yo");
+        queued.queued_messages = 2;
+        queued.queue_paused = true;
+        paint_mode(
+            &mut surface
+                .view(Rect::new(Point::new(0, 0), Size::new(width, 1)))
+                .unwrap(),
+            queued,
+            styles,
+            NewlineBinding::new(crate::input::event::KeyModifiers::ALT).unwrap(),
+            false,
+        )
+        .unwrap();
+        let footer = row(&surface);
+        assert!(
+            footer.contains("Queued 2 paused") || footer.contains("Q:2!"),
+            "{footer}"
+        );
+        if width == 88 {
+            assert!(footer.contains("M-q queue/resume"), "{footer}");
+            assert!(footer.contains("M-r edit/pause"), "{footer}");
+            assert!(!footer.contains("M-Enter"));
+        }
     }
 }

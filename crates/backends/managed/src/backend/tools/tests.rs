@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use yo_core::ToolApprovalRequirement;
+use yo_core::{ToolApprovalRequirement, ToolOutput, admit_standard_complete_binding};
 
 use super::{
     super::{
@@ -25,27 +25,38 @@ fn bounded_tool_output_includes_its_marker_inside_the_limit() {
     assert!(tiny.len() <= 5);
     assert!(tiny.is_char_boundary(tiny.len()));
 
-    let invalid = NativeModelBackendConfig {
-        maximum_tool_output_bytes: TOOL_TRUNCATION_MARKER.len() - 1,
-        ..NativeModelBackendConfig::default()
-    };
-    assert!(
-        NativeModelBackend::with_connector(
-            Box::new(MockConnector {
-                rounds: event_rounds(Vec::new()),
-                requests: Arc::new(Mutex::new(Vec::new())),
-            }),
-            binding(),
-            registry(ToolApprovalRequirement::Automatic),
-            NativeModelBackendServices::new(
-                Box::new(yo_core::admit_standard_complete_binding),
-                Some(Box::new(ExactAdmission)),
-                Box::new(MockHost::default()),
-                Box::new(FixedTokenCounter(1)),
-            ),
-            context_profile(),
-            invalid,
-        )
-        .is_err()
-    );
+    for invalid in [
+        NativeModelBackendConfig {
+            maximum_tool_output_bytes: TOOL_TRUNCATION_MARKER.len() - 1,
+            ..NativeModelBackendConfig::default()
+        },
+        NativeModelBackendConfig {
+            maximum_retained_tool_output_bytes: Some(0),
+            ..NativeModelBackendConfig::default()
+        },
+        NativeModelBackendConfig {
+            maximum_retained_tool_output_bytes: Some(ToolOutput::MAX_SNAPSHOT_BYTES + 1),
+            ..NativeModelBackendConfig::default()
+        },
+    ] {
+        assert!(
+            NativeModelBackend::with_connector(
+                Box::new(MockConnector {
+                    rounds: event_rounds(Vec::new()),
+                    requests: Arc::new(Mutex::new(Vec::new())),
+                }),
+                binding(),
+                registry(ToolApprovalRequirement::Automatic),
+                NativeModelBackendServices::new(
+                    Box::new(admit_standard_complete_binding),
+                    Some(Box::new(ExactAdmission)),
+                    Box::new(MockHost::default()),
+                    Box::new(FixedTokenCounter(1)),
+                ),
+                context_profile(),
+                invalid,
+            )
+            .is_err()
+        );
+    }
 }

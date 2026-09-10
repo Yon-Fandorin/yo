@@ -30,6 +30,7 @@ pub struct StdioJsonlConfig {
     thread_name: &'static str,
     shutdown_timeout: Duration,
     maximum_message_bytes: usize,
+    stderr_diagnostic: Option<fn(&str) -> Option<&'static str>>,
 }
 
 impl StdioJsonlConfig {
@@ -47,6 +48,7 @@ impl StdioJsonlConfig {
             thread_name,
             shutdown_timeout: Duration::from_secs(2),
             maximum_message_bytes: DEFAULT_MAX_JSONL_MESSAGE_BYTES,
+            stderr_diagnostic: None,
         }
     }
 
@@ -69,6 +71,14 @@ impl StdioJsonlConfig {
     #[must_use]
     pub const fn with_maximum_message_bytes(mut self, bytes: usize) -> Self {
         self.maximum_message_bytes = bytes;
+        self
+    }
+
+    /// Restricts captured stderr to a backend-owned fixed diagnostic. Returning None
+    /// suppresses the raw output. Without this hook, existing stderr behavior is retained.
+    #[must_use]
+    pub fn with_stderr_diagnostic(mut self, diagnostic: fn(&str) -> Option<&'static str>) -> Self {
+        self.stderr_diagnostic = Some(diagnostic);
         self
     }
 
@@ -137,6 +147,7 @@ pub struct StdioJsonlPeer {
     reader: Option<JoinHandle<()>>,
     stderr_reader: Option<JoinHandle<()>>,
     stderr_tail: Arc<Mutex<String>>,
+    stderr_diagnostic: Option<fn(&str) -> Option<&'static str>>,
     shutdown_timeout: Duration,
     shutdown_result: Option<Result<(), BackendFailure>>,
 }
@@ -241,6 +252,7 @@ impl StdioJsonlPeer {
             reader: Some(reader),
             stderr_reader: Some(stderr_reader),
             stderr_tail,
+            stderr_diagnostic: config.stderr_diagnostic,
             shutdown_timeout: config.shutdown_timeout,
             shutdown_result: None,
         })
@@ -265,15 +277,13 @@ impl StdioJsonlPeer {
             )
         })?;
         line.push(b'\n');
-        stdin
-            .write_all(&line)
-            .and_then(|()| stdin.flush())
-            .map_err(|error| {
-                BackendFailure::new(
-                    BackendFailureKind::ProcessExit,
-                    format!("failed writing {} stdin: {error}", self.process_name),
-                )
-            })
+        let write_result = stdin.write_all(&line).and_then(|()| stdin.flush());
+        write_result.map_err(|error| {
+            self.with_failure_diagnostic(BackendFailure::new(
+                BackendFailureKind::ProcessExit,
+                format!("failed writing {} stdin: {error}", self.process_name),
+            ))
+        })
     }
 
     pub fn receive(&mut self, timeout: Duration) -> Result<JsonlPoll, BackendFailure> {
@@ -300,7 +310,11 @@ impl StdioJsonlPeer {
             return result.clone();
         }
         self.stdin.take();
-        let result = self.shutdown_once();
+        // shutdown_once drains and joins stderr before enriching the failure. This
+        // retains diagnostics even when the first stdin write raced an early exit.
+        let result = self
+            .shutdown_once()
+            .map_err(|failure| self.with_failure_diagnostic(failure));
         self.shutdown_result = Some(result.clone());
         result
     }
@@ -319,12 +333,7 @@ impl StdioJsonlPeer {
         if self.shutdown_result.is_some() {
             return Ok(JsonlPoll::Closed);
         }
-        let detail = self
-            .stderr_tail
-            .lock()
-            .ok()
-            .map(|tail| tail.trim().to_owned())
-            .filter(|tail| !tail.is_empty());
+        let detail = self.stderr_detail();
         let message = detail.map_or_else(
             || format!("{} exited unexpectedly", self.process_name),
             |detail| format!("{} exited unexpectedly: {detail}", self.process_name),
@@ -333,6 +342,27 @@ impl StdioJsonlPeer {
             BackendFailureKind::ProcessExit,
             message,
         ))
+    }
+
+    fn stderr_detail(&self) -> Option<String> {
+        let tail = self.stderr_tail.lock().ok()?;
+        match self.stderr_diagnostic {
+            Some(diagnostic) => diagnostic(&tail).map(str::to_owned),
+            None => (!tail.trim().is_empty()).then(|| tail.trim().to_owned()),
+        }
+    }
+
+    fn with_failure_diagnostic(&self, failure: BackendFailure) -> BackendFailure {
+        // Preserve the behavior of adapters that have not opted into safe diagnostics.
+        if self.stderr_diagnostic.is_none() {
+            return failure;
+        }
+        match self.stderr_detail() {
+            Some(detail) => {
+                BackendFailure::new(failure.kind(), format!("{}; {detail}", failure.message()))
+            },
+            None => failure,
+        }
     }
 
     fn shutdown_once(&mut self) -> Result<(), BackendFailure> {
@@ -687,6 +717,35 @@ mod tests {
             assert_eq!(failure.kind(), BackendFailureKind::ProcessExit);
             assert!(failure.message().contains("clean-exit-diagnostic"));
             peer.shutdown().unwrap();
+            remove_fixture(&directory);
+        }
+
+        // 첫 write 전에 종료한 child의 안전한 진단은 shutdown이 stderr를 join한 뒤에도
+        // 보존되며, 임의로 캡처한 내용은 오류 메시지에 노출하지 않는다.
+        #[test]
+        fn safe_stderr_diagnostics_survive_a_deterministic_broken_pipe() {
+            let (directory, mut peer) = spawn_fixture(
+                "safe-broken-pipe",
+                "printf '%s\\n' 'known-cause credential-canary /private/secret-path' >&2\nexit 1\n",
+            );
+            peer.stderr_diagnostic =
+                Some(|tail| tail.contains("known-cause").then_some("safe startup cause"));
+            peer.process.child.lock().unwrap().wait().unwrap();
+
+            let write_failure = peer
+                .send(&serde_json::json!({"method": "initialize"}))
+                .unwrap_err();
+            assert_eq!(write_failure.kind(), BackendFailureKind::ProcessExit);
+            let cleanup_failure = peer.shutdown().unwrap_err();
+            assert!(cleanup_failure.message().contains("safe startup cause"));
+            for failure in [&write_failure, &cleanup_failure] {
+                assert!(!failure.message().contains("credential-canary"));
+                assert!(!failure.message().contains("/private/secret-path"));
+            }
+            assert_eq!(
+                peer.shutdown().unwrap_err().message(),
+                cleanup_failure.message()
+            );
             remove_fixture(&directory);
         }
 

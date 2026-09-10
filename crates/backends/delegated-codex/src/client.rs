@@ -6,7 +6,7 @@ use yo_core::{BackendFailure, BackendFailureKind, BackendStopHandle};
 
 use super::{
     CodexWarningObserver,
-    protocol::{self, Incoming},
+    protocol::{self, CodexWarning, Incoming},
     transport::PeerPoll,
 };
 
@@ -21,6 +21,7 @@ pub(super) struct AppServerClient<P> {
     request_timeout: Duration,
     mailbox: JsonRpcMailbox<Incoming>,
     warning_observer: Option<CodexWarningObserver>,
+    notice_thread: Option<String>,
 }
 
 pub(super) struct CallResult {
@@ -35,6 +36,7 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             request_timeout,
             mailbox: JsonRpcMailbox::new("Codex app-server"),
             warning_observer: None,
+            notice_thread: None,
         }
     }
 
@@ -44,6 +46,33 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
     ) -> Self {
         self.warning_observer = warning_observer;
         self
+    }
+
+    pub(super) fn bind_notice_thread(&mut self, thread: &str) {
+        self.notice_thread = Some(thread.to_owned());
+    }
+
+    fn observe_warning(&self, incoming: &Incoming, discard_other_threads: bool) -> bool {
+        let Incoming::Notification { method, params } = incoming else {
+            return false;
+        };
+        let Some(warning) = CodexWarning::from_notification(method, params) else {
+            return false;
+        };
+        if let Some(target) = warning.thread_id() {
+            let Some(bound) = self.notice_thread.as_deref() else {
+                return false;
+            };
+            if target != bound {
+                return discard_other_threads;
+            }
+        }
+        if let Some(observer) = &self.warning_observer {
+            observer(warning);
+            true
+        } else {
+            false
+        }
     }
 
     pub(super) fn stop_handle(&self) -> BackendStopHandle {
@@ -101,6 +130,9 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
                 },
                 PeerPoll::Pending => continue,
             };
+            if self.observe_warning(&message, false) {
+                continue;
+            }
             match message {
                 Incoming::Response {
                     id: response_id,
@@ -150,25 +182,30 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
     }
 
     pub(super) fn poll(&mut self) -> Result<ClientPoll, BackendFailure> {
-        if let Some(message) = self.mailbox.pop() {
+        for _ in 0..32 {
+            let message = if let Some(message) = self.mailbox.pop() {
+                message
+            } else {
+                match self.peer.try_receive()? {
+                    PeerPoll::Pending => return Ok(ClientPoll::Pending),
+                    PeerPoll::Closed => return Ok(ClientPoll::Closed),
+                    PeerPoll::Message(value) => protocol::classify(value)?,
+                }
+            };
+            if matches!(
+                message,
+                Incoming::Response { .. } | Incoming::ResponseError { .. }
+            ) {
+                return Err(protocol::protocol_failure(
+                    "Codex response arrived without an active request",
+                ));
+            }
+            if self.observe_warning(&message, true) {
+                continue;
+            }
             return Ok(ClientPoll::Message(message));
         }
-        match self.peer.try_receive()? {
-            PeerPoll::Pending => Ok(ClientPoll::Pending),
-            PeerPoll::Closed => Ok(ClientPoll::Closed),
-            PeerPoll::Message(value) => {
-                let message = protocol::classify(value)?;
-                if matches!(
-                    message,
-                    Incoming::Response { .. } | Incoming::ResponseError { .. }
-                ) {
-                    return Err(protocol::protocol_failure(
-                        "Codex response arrived without an active request",
-                    ));
-                }
-                Ok(ClientPoll::Message(message))
-            },
-        }
+        Ok(ClientPoll::Pending)
     }
 
     pub(super) fn shutdown(&mut self) -> Result<(), BackendFailure> {

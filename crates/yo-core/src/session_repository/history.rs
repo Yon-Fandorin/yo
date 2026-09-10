@@ -4,7 +4,7 @@ mod normalizer;
 mod request_trace;
 mod session_usage;
 
-use std::fmt;
+use std::{collections::HashMap, fmt, sync::Arc};
 
 use normalizer::normalize;
 pub use request_trace::{
@@ -24,10 +24,142 @@ use super::{
     RepositoryEntry, RepositoryError, RepositorySequence, StoredSessionReader,
     StoredSessionSnapshot, journal::recover_entries,
 };
-use crate::{JournalSequence, SessionDescriptor, SessionId, TranscriptRecord};
+use crate::{
+    JournalSequence, SessionDescriptor, SessionId, TranscriptRecord,
+    journal::codec::{ForkHistoryCoordinate, ForkSource, JournalRecord, RecoveredJournal},
+};
+
+/// Exact captured source coordinates, independent of the last visible archival record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InheritedHistorySource {
+    Empty,
+    Anchor {
+        record_sequence: JournalSequence,
+        journal_boundary: JournalSequence,
+    },
+    Checkpoint {
+        record_sequence: JournalSequence,
+        journal_boundary: JournalSequence,
+    },
+    InitialFork {
+        record_sequence: JournalSequence,
+        journal_boundary: JournalSequence,
+    },
+}
+
+/// Archival records retaining one original source Session's identities and order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InheritedHistorySection {
+    source_session_id: SessionId,
+    last_visible_journal_sequence: Option<JournalSequence>,
+    records: Vec<TranscriptRecord>,
+}
+
+impl InheritedHistorySection {
+    #[must_use]
+    pub const fn source_session_id(&self) -> SessionId {
+        self.source_session_id
+    }
+
+    /// Last visible semantic coordinate; this is not the exact captured source boundary.
+    #[must_use]
+    pub const fn last_visible_journal_sequence(&self) -> Option<JournalSequence> {
+        self.last_visible_journal_sequence
+    }
+
+    #[must_use]
+    pub fn records(&self) -> &[TranscriptRecord] {
+        &self.records
+    }
+}
+
+/// Validated child-owned archive, separate from child execution, requests, and usage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InheritedSessionHistory {
+    parent_session_id: SessionId,
+    source: InheritedHistorySource,
+    sections: Arc<[InheritedHistorySection]>,
+}
+
+impl InheritedSessionHistory {
+    #[must_use]
+    pub const fn parent_session_id(&self) -> SessionId {
+        self.parent_session_id
+    }
+
+    #[must_use]
+    pub const fn source(&self) -> InheritedHistorySource {
+        self.source
+    }
+
+    /// Original source sections in first appearance order.
+    #[must_use]
+    pub fn sections(&self) -> &[InheritedHistorySection] {
+        &self.sections
+    }
+}
+
+pub(super) fn project_inherited(
+    recovered: &RecoveredJournal,
+) -> Result<Option<Arc<InheritedSessionHistory>>, String> {
+    let Some(seed) = recovered
+        .records()
+        .iter()
+        .find_map(|entry| match entry.record() {
+            JournalRecord::InitialForkSeed(seed) => Some(seed),
+            _ => None,
+        })
+    else {
+        return Ok(None);
+    };
+    let source = match seed.source() {
+        ForkSource::Empty => InheritedHistorySource::Empty,
+        ForkSource::Anchor(point) => InheritedHistorySource::Anchor {
+            record_sequence: point.record_sequence(),
+            journal_boundary: point.journal_boundary(),
+        },
+        ForkSource::Checkpoint(point) => InheritedHistorySource::Checkpoint {
+            record_sequence: point.record_sequence(),
+            journal_boundary: point.journal_boundary(),
+        },
+        ForkSource::InitialFork(point) => InheritedHistorySource::InitialFork {
+            record_sequence: point.record_sequence(),
+            journal_boundary: point.journal_boundary(),
+        },
+    };
+    let mut source_indices = HashMap::new();
+    let mut sections: Vec<InheritedHistorySection> = Vec::new();
+    let mut records_by_source: Vec<Vec<&JournalRecord>> = Vec::new();
+    for entry in seed.history() {
+        let index = *source_indices
+            .entry(entry.source_session_id())
+            .or_insert_with(|| {
+                let index = sections.len();
+                sections.push(InheritedHistorySection {
+                    source_session_id: entry.source_session_id(),
+                    last_visible_journal_sequence: None,
+                    records: Vec::new(),
+                });
+                records_by_source.push(Vec::new());
+                index
+            });
+        if let ForkHistoryCoordinate::Journal { sequence } = entry.source_coordinate() {
+            sections[index].last_visible_journal_sequence = Some(sequence);
+        }
+        records_by_source[index].push(entry.record().record());
+    }
+    for (section, records) in sections.iter_mut().zip(records_by_source) {
+        section.records = normalizer::normalize_inherited(records)?;
+    }
+    Ok(Some(Arc::new(InheritedSessionHistory {
+        parent_session_id: seed.parent_session_id(),
+        source,
+        sections: sections.into(),
+    })))
+}
 
 pub(super) fn normalize_recovered(
-    recovered: &crate::journal::codec::RecoveredJournal,
+    recovered: &RecoveredJournal,
 ) -> Result<Vec<TranscriptRecord>, String> {
     normalize(recovered)
 }
@@ -42,6 +174,7 @@ pub struct StoredSessionHistory {
     discovery_validation: StoredDiscoveryValidation,
     records: Vec<TranscriptRecord>,
     request_trace: Vec<StoredRequestTraceEntry>,
+    inherited_history: Option<Arc<InheritedSessionHistory>>,
 }
 
 impl StoredSessionHistory {
@@ -84,6 +217,12 @@ impl StoredSessionHistory {
     #[must_use]
     pub fn records(&self) -> &[TranscriptRecord] {
         &self.records
+    }
+
+    /// Source-qualified archival history, excluded from this Session's records and usage.
+    #[must_use]
+    pub fn inherited_history(&self) -> Option<&InheritedSessionHistory> {
+        self.inherited_history.as_deref()
     }
 
     /// Returns every payload-free Request correlation fact in durable Journal order.
@@ -169,6 +308,16 @@ impl fmt::Display for StoredDiscoveryMismatch {
                 "Continuation Anchor Journal sequence {} at repository sequence {repository_sequence} has no semantic Journal anchor evidence",
                 referenced.get()
             ),
+            StoredDiscoveryMismatchKind::InitialForkSeed { referenced } => write!(
+                formatter,
+                "Initial fork seed Journal sequence {} at repository sequence {repository_sequence} has no semantic Journal seed evidence",
+                referenced.get()
+            ),
+            StoredDiscoveryMismatchKind::MissingInitialForkSeed { expected } => write!(
+                formatter,
+                "Initial fork seed Journal sequence {} is missing at repository sequence {repository_sequence}",
+                expected.get()
+            ),
             StoredDiscoveryMismatchKind::BindingEpochDisagreement { expected, claimed } => write!(
                 formatter,
                 "binding epoch {claimed} disagrees with semantic Journal epoch {expected} at repository sequence {repository_sequence}"
@@ -204,6 +353,14 @@ pub enum StoredDiscoveryMismatchKind {
     },
     ContinuationAnchor {
         referenced: JournalSequence,
+    },
+    /// The physical hint has no validated initial child seed behind it.
+    InitialForkSeed {
+        referenced: JournalSequence,
+    },
+    /// A validated executable initial seed is omitted from physical discovery.
+    MissingInitialForkSeed {
+        expected: JournalSequence,
     },
     BindingEpochDisagreement {
         expected: u64,
@@ -288,6 +445,7 @@ pub fn read_stored_session(
     };
     let records = normalize(&recovered).map_err(invalid_stored)?;
     let request_trace = request_trace::project(&recovered);
+    let inherited_history = project_inherited(&recovered).map_err(invalid_stored)?;
     Ok(StoredSessionHistory {
         descriptor,
         journal_cutoff: recovered.journal_cutoff(),
@@ -296,13 +454,14 @@ pub fn read_stored_session(
         discovery_validation,
         records,
         request_trace,
+        inherited_history,
     })
 }
 
-fn validate_discovery(
+pub(super) fn validate_discovery(
     entries: &[RepositoryEntry],
     descriptor: &SessionDescriptor,
-    recovered: &crate::journal::codec::RecoveredJournal,
+    recovered: &RecoveredJournal,
 ) -> StoredDiscoveryValidation {
     for (entry, expected) in entries.iter().zip(recovered.discovery_states()) {
         let repository_sequence = entry.sequence();
@@ -314,6 +473,17 @@ fn validate_discovery(
         };
         let kind = if discovery.descriptor() != descriptor {
             Some(StoredDiscoveryMismatchKind::Descriptor)
+        } else if expected.initial_fork_seed() != discovery.initial_fork_seed() {
+            match discovery.initial_fork_seed() {
+                Some(referenced) => {
+                    Some(StoredDiscoveryMismatchKind::InitialForkSeed { referenced })
+                },
+                None => Some(StoredDiscoveryMismatchKind::MissingInitialForkSeed {
+                    expected: expected
+                        .initial_fork_seed()
+                        .expect("different hints have an expected seed"),
+                }),
+            }
         } else {
             discovery_coordinates_mismatch(
                 expected.binding_epoch(),

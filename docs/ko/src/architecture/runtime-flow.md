@@ -163,12 +163,22 @@ JSON을 model work처럼 노출하지 않고 간결한 사람이 읽을 수 있�
 exact-replay-only policy도 압축 대신 거부하며 malformed output, 불완전한 usage 귀속, 줄지
 않은 결과, trigger에 계속 걸리는 successor payload에는 retry나 fallback이 없다.
 
-새 local-tools Session의 startup은 `list_files`, `read_files`, `edit_file`,
+명령 도구를 설정하지 않은 새 local-tools Session의 startup은 `list_files`, `read_files`, `edit_file`,
 `write_file`, `run_command` 순서인 5개 basic registry를 고정한다. Resume은 durable
 replay Projection을 exact basic manifest, 직전 3개 legacy manifest, empty manifest와
 비교하고 unknown 또는 mixed Projection은 기존 read-only 실패 경로로 보낸다. 이후 model
 binding replacement도 이미 선택한 registry revision을 전달하므로 Session의 tool history를
 조용히 upgrade하지 않는다.
+
+CLI state/config는 명시적 `tools.commands` 정의를 artifact I/O 없이 해석한다.
+execution/tools의 command owner는 실행 파일과 선택적 스크립트를 캡처하고 basic registry
+뒤에 정의를 추가한 뒤 실행 manifest를 고정한다. Managed binding은 엄격한 버전별 command
+wrapper에 digest를 보존한다. startup·resume·fork·model replacement는 후보를 설치하기 전에
+저장된 projection과 manifest를 검증한다. legacy·no-tools 세션은 기존 identity를 유지한다.
+위임 호스트는 artifact 준비를 건너뛰고 자체 도구를 관리한다는 안내를 표시한다.
+요청 승인 뒤 실행 경로는 artifact를 다시 검증하고 정규화된 JSON과 개행 하나를 child의
+stdin에 쓴다. 고정 argv는 리터럴을 유지한다. nonblocking stdin은 기존 출력·취소·deadline·
+유한 cleanup 수명주기에 참여하며 입력을 일부만 전달한 실행은 성공으로 처리하지 않는다.
 
 File host는 execution attempt 전에 semantic-admission 경로에서 구체적인 item·number·path·
 content bound를 검증하고 path를 열기 전에 방어적으로 다시 parse한다. `read_files`는 유지한
@@ -284,6 +294,17 @@ delegated Session을 닫지 않는다.
 Turn이 보이는 동안 제출한 일반 prompt는 정확히 그 `TurnRef`를 `yo-core`까지 전달한다.
 worker가 이미 해당 Turn을 끝냈다면 core는 같은 text를 새 Turn으로 재해석하지 않고 steer를
 거절한다. backpressure와 retry도 같은 immutable intent를 보존한다.
+
+후속 메시지는 Alt+Enter 또는 Alt+Q로 예약한다. Alt+Enter를 개행으로 설정했다면
+개행 의미를 유지하고 Alt+Q를 사용한다. TuiState는 일반 입력 snapshot을 최대 16개,
+총 64 KiB까지 보관하고 첫 초과 초안을 보존한다. 명령은 예약하지 않는다.
+선택한 참조의 신원과 span은 예약·회수 중 보존하고 실제 전송 시 admission에서 다시 검증한다. runner는 활성 작업·응답 요청·시작 확인·모델 전환·접수 대기가 없을 때 하나씩
+전송하며 기존 retry 경로로 backpressure를 처리한다. Accepted는 예약 snapshot만 제거하고
+새 편집 초안을 지우지 않는다. 다음 전송은 TurnStarted 관찰 이후까지 기다린다.
+거절·실패·중단은 예약을 일시정지한다. Alt+R은 예약을 멈추고 빈 입력창으로 가장 오래된
+미전송 메시지를 회수한다. 빈 입력창에서 Alt+Enter/Alt+Q로 재개한다. 예약은 TUI 세션
+메모리에 속해 터미널 일시중단 동안 유지되지만 Journal에 영속 기록하지 않는다.
+중첩된 오프라인 preview도 같은 queue와 접수 상태를 사용한다.
 
 편집 가능한 TUI에서 `/model`은 account section으로 나눈 selection panel 하나를 연다. 저장된
 managed model은 `Provider 표시 이름 · Account 표시 이름` 아래에 묶인다. 편집 가능한 모든
@@ -470,6 +491,13 @@ TuiState prompt overlay
 소유한다. `yo-core::LocalWorkspaceReferenceProvider`가 local 실행 탐색
 의미와 background Git·filesystem 작업을 소유하고, `yo-cli`는 이 capability를
 생성해 연결만 한다.
+디렉터리 열거와 tracked 파일 검증은 고정한 루트 descriptor 기준으로 각 경로 요소를
+해석하며 symlink를 따르지 않는다. inventory 공개 전 루트 신원을 다시 확인한다.
+filesystem과 tracked 경로 검색은 조사 경로 32,768개·경로 byte 16 MiB 예산을 공유하며,
+순회 중 30초 기한을 검사한다. 한도에 도달하면 수집한 후보와 `Incomplete` 상태를 반환한다.
+Git 명령에는 별도로 5초 기한, stdout 16 MiB·stderr 64 KiB·구성된 입력 32 MiB 한도를 둔다.
+비차단 stdin/stdout/stderr 처리로 pipe 역압 교착을 피하며 소유한 process group을
+종료·회수한다. Git 오류나 프로세스 한도 초과는 ignore 규칙을 끄지 않고 검색 실패로 알린다.
 candidate와 request/update type은 `yo-core`에 있으므로 remote 실행
 provider를 연결해도 filesystem 권한이 frontend로 이동하지 않는다.
 inventory는 보이는 파일과 디렉터리를 포함하고 nested Git ignore,
@@ -483,11 +511,60 @@ panel title은 `Files`이며 header hint는 활성 binding에서 도출해 key�
 caption은 dim 처리한다. Rich glyph는 이동에 `↑↓`, ASCII는 `Up/Down`을 쓰고,
 익숙한 terminal 표기인 `Enter`, `Esc`, `^C`는 문자 그대로 유지한다.
 
-이 Slice는 structured submission admission 직전에서 의도적으로 멈춘다.
-항목을 고르면 token은 눈에 보이게 치환되고 typed reference가 남지만,
-그 뒤 Enter를 누르면 draft를 보존하고 아직 structured submission이
-연결되지 않았다고 알린다. 승인한 identity를 몰래 plain text로 낮추지
-않는다.
+Enter는 텍스트와 선택한 참조 신원 및 정확한 byte span을 `UserInput`으로 고정한다.
+같은 immutable input이 제출·예약·회수·Journal 경계를 지난다. 수락 시 의미가 같은
+초안만 지우며 annotation도 제거한다. 나중에 같은 문자열을 붙여 넣어도 선택 권위가
+다시 생기지 않는다.
+
+`InputAdmissionHost`는 live `AgentSession`의 첫 입력 전에 한 번만 설정한다. 재개한
+세션도 저장된 기록과 별도로 현재 실행 호스트를 연결한다. runtime은 backend command
+전송 전에 전체 입력을 검증하며, host가 없으면 구조화 입력을 거절한다. CLI는 로컬
+workspace에 `LocalWorkspaceInputAdmission`을 연결한다. 루트 신원에는 canonical 경로와
+디렉터리 device/inode가 포함되며 파일 내용 변경은 경로 신원을 바꾸지 않는다.
+고정한 descriptor 기준으로 symlink를 따르지 않고 환경·workspace·루트·경로·종류·경계와
+읽기 권한을 다시 확인한다. ignore 변경은 선택을 취소하지 않지만 Git 내부 경로,
+symlink 치환, 루트·종류 변경, 권한 거절은 실패한다. 로컬 profile은 참조 128개와
+상대 경로당 4096 byte까지 허용하며 내용을 읽거나 디렉터리를 재귀 첨부하지 않는다.
+typed 거절은 초안과 Session의 사용 가능 상태를 보존한다. 이 host는 아직 skill 참조를
+지원하지 않아 workspace 조회나 asset 로딩 전에 전체 요청을 거절한다. 현재 backend
+adapter는 보이는 경로 형식을 사용하며 semantic input과 Journal에는 구조화 참조를 남긴다.
+
+## 명시적 이미지 첨부
+
+`/attach PATH`는 Turn을 제출하지 않고 로컬 정적 PNG/JPEG를 준비한다.
+결과의 요청 식별자, 편집기 revision, 선택한 Session/model 대상이 여전히 일치할 때만
+마지막 명령 행을 주석이 있는 `[image]`로 바꾼다. 일반 마커, Markdown 이미지,
+파일 참조는 이미지 첨부 권한을 얻지 않는다.
+
+소유 경로는 `yo-core::ImagePreparationHost` → CLI `execution/image/host.rs` →
+`execution/image.rs`다. 마지막 구현이 제한된 원본 읽기, 방향 적용,
+RGBA8/Triangle 정규화와 썸네일 준비를 맡는다. worker는 한 번에 작업 하나를 실행한다.
+TUI `runner/state/image.rs`는 초안·큐의 PNG 소유량과 대기 예약량을 계산하고,
+`prompt/image.rs`는 편집 중 occurrence span을 보존한다. layout은 준비된 썸네일만
+받으며, 제출·큐·recall·journal은 전체 불변 snapshot과 원본 바이트 사용량을 유지한다.
+취소되거나 오래된 결과가 새 초안을 지울 수 없다.
+
+`InputAdmissionHost::validate_images`는 skill 본문을 읽기 전에 준비 증거를 확인한다.
+CLI wrapper는 검증된 원래 입력 이력에서만 과거 증거를 복원하며, replay 전용 snapshot이나
+다시 연 원본 파일에서 만들지 않는다. runtime admission은 정확히 선택된 backend/model의
+`BackendCapabilities::image_input()`을 별도로 검사한다. 지원 여부 미확인과 명시적 미지원은
+서로 다른 typed rejection이다. 관리형 지원은 complete binding에 검토된
+`image_input_profile`이 명시되어 있어야 한다. catalog 갱신은 기존 binding에 이 필드를
+추가하지 않는다. 위임형 protocol은 자체 model/protocol 협상 증거가 필요하다.
+
+Foundation `image.rs`와 `image/png.rs`는 불변 canonical PNG 식별자와 제한된 구조·픽셀
+stream 검증을 소유한다. core input/image는 편집 가능한 occurrence를 소유하며,
+v3 입력과 multimodal replay는 text/image part 순서를 유지한다. Kimi connector는 typed
+PNG data URL을 내보내고 tokenizer projection에서는 해당 image URL만 제거한다.
+관리형 `backend/accounting.rs`는 최종 output-cap 재계산을 포함한 완전한 요청마다 선택된
+advisory 추정값과 여유분 하나를 적용한다. 실제 provider 사용량은 별도 telemetry로 유지한다.
+
+`model_connector/image_summary.rs`는 별도 summary 한도 아래 tools를 끈 summary 요청
+하나의 순서 있는 manifest와 정확한 이미지를 구성한다. core의 v2 checkpoint는 이전·이후
+accounting과 정확한 로컬 이미지 손실 출처를 기록하며, 남겨진 snapshot이 권위를 유지한다.
+이미지가 남지 않아도 소유 binding이 v2를 선택한다. 텍스트 전용 binding은 기존
+pressure/checkpoint 형식을 유지한다. 승인된 계약은 `agent.input.image-attachment`,
+`agent.persistence.format-compatibility`, `agent.backend.yo-managed-model-loop`다.
 
 ## 명시적 skill 지원
 
@@ -519,9 +596,86 @@ Right는 이미 받은 후보만 좁히므로 discovery를 다시 실행하거�
 
 V1은 accept된 명시적 skill을 최대 하나만 보존한다. 선택은 skill 본문을
 읽거나 실행하거나 model context에 주입하거나 draft를 제출하지 않는다.
-제출 시점 admission이 정확한 항목을 다시 읽고 검증할 수 있을 때까지 Enter는
-draft를 보존하고 실패-폐쇄하며, 보이는 `$name`만으로 충분한 권위라고
-간주하지 않는다.
+Codex 실행 host의 `CodexSkillInputAdmission`은 모든 workspace reference를 먼저
+검증하고, `skills/list`로 authoritative descriptor를 갱신하여 선택한 정확한 항목과
+enabled policy를 확인한다. 이후 크기가 제한된 일반 파일 snapshot 하나를 읽고 digest를
+검증한 뒤 `InputAdmissionHost::prepare`로 고정 지침을 반환한다. Codex skill profile의
+지원 reference는 필요한 시점에 읽는다. Start/Steer는 snapshot을 nested input v2로
+저장하며, Activity 응답은 live admission과 journal 변환에서 이를 거절한다.
+managed 실행과 로컬 Grok host는 기존 core skill-reference owner의
+`LocalSkillReferenceProvider`와 `LocalSkillInputAdmission`을 사용한다.
+명시적 `skills.roots` 설정이 workspace/user 출처를 지정하며 상대 경로는 선택한
+Session에 기록된 workspace 기준으로 해석한다. CLI는 이 port를 조립하고 Codex의
+자체 catalog authority는 별도로 유지한다. discovery worker는 파일·항목 수·전체
+용량을 제한하며 잘못되거나 비활성·비지원인 항목은 이유와 함께 unavailable로 표시한다.
+제출 시 workspace reference부터 검증한 다음 선택된 일반 파일 snapshot 하나의
+metadata policy와 digest를 검사하고 같은 bytes를 고정한다. 연결된 자산은 필요한
+시점에 읽는다. 접근할 수 없는 설정 경로는 새 discovery/admission에만 영향을 주고,
+이미 저장된 지침의 replay는 막지 않는다. 빈 roots와 print mode는 discovery worker를
+만들지 않는다. 보이는 `$name` 문자열만으로 권한을 부여하지 않으며 스킬 지침은
+도구나 sandbox 권한을 늘릴 수 없다.
+
+`/new`는 durable history가 있고 활성 작업·제출 중 입력·대기 입력·compaction이 없을 때만
+독립 Session을 요청한다. CLI는 새 backend와 writer를 준비한 뒤 기존 Session을 교체한다.
+현재 target과 tool profile을 유지하며, Codex에는 정확한 account/model의 새 세션 target을
+전달하고 반환된 model을 검증한다. fork 경로를 사용하지 않는다. 시작 실패 시 기존
+Session을 유지하고, 재현할 수 없는 과거 tool profile은 교체 전에 거절한다.
+
+`/resume`은 같은 idle 전환 guard를 사용하며 현재 workspace host/path의 bounded discovery
+목록을 제공한다. 전체 UUID를 지정하면 저장 Session을 직접 선택한다. CLI는 저장된
+continuation을 재검증하고 현재 Session의 launch override와 저장 startup preference를
+제외한 뒤 대상의 기록된 binding과 workspace를 준비하고 live instance를 교체한다.
+continuation unavailable 항목은 선택할 수 없고 unknown 항목은 재개 시점에 검사한다.
+실패하면 현재 Session을 유지하고 저장 기록 조회 방법을 안내한다.
+
+`/fork`는 같은 idle·durable 전환 guard를 사용하며 현재 커밋 경계를 캡처한 뒤
+live 상태와 durable cutoff를 다시 확인한다. managed exact-replay 경로는 저장된 모델,
+도구 registry, workspace와 고정된 입력·private replay snapshot을 보존한다. 준비는
+모델 요청 없이 별도의 child identity를 만들고 전체 bootstrap을 검증한다. child startup은
+Ready를 보고하기 전에 bootstrap을 하나의 durable snapshot으로 저장한다. 그 뒤에만
+CLI가 child를 선택하고 이전 live instance를 정리한다. 준비 또는 startup 실패 시 선택된
+부모를 유지하고 원인을 표시한다.
+
+`/fork at`은 `AgentSession::capture_fork_catalog`로 과거 지점 목록을 캡처한다.
+로컬 reader는 한도가 있는 물리 기록 하나를 고정한다(기본 32 MiB·4096개 record).
+recovery와 모든 discovery envelope를 검증한 뒤 별도 제한에 따라 최신 경계 128개를
+반환한다. 항목에는 기록된 모델과 길이를 제한한 공개 사용자 입력을 표시한다.
+TUI는 picker token을 소유하고 CLI는 해당 token과 불변 catalog를 함께 유지한다.
+선택 index는 일치하는 캡처에서만 해석한다. `prepare_historical_fork_source`는 live 부모를
+다시 확인하고 선택한 prefix의 binding·context epoch에 따라 복원한다. 이후에는 `/fork`와
+같은 child 준비 경로를 사용한다. 오래된 picker나 변경된 부모에서 최신 source로 조용히
+바꾸지 않는다. 취소하거나 실패하면 부모와 작성 중 입력을 유지한다.
+
+검증된 상속 기록은 별도의 불변 표시 projection을 사용한다. 저장 history와 continuation은
+원래 source별 기록과 정확한 부모 캡처 경계를 제공하며, child의 실행·Request·Usage
+stream에 기록을 추가하지 않는다. 분할된 메시지는 최종 archive text snapshot 하나로
+구성한다. live·archive Chat은 기존 typed presentation을 재사용한 뒤 최종 표시 항목만
+복사하며, activity/request map과 최신 사용량 상태를 상속하지 않는다. Transcript에도
+source를 표시하고, archive의 content·tail 제한은 상속 기록에도 적용한다. 표시 준비가
+실패하면 선택을 바꾸기 전에 candidate를 정리한다.
+
+정확한 source 경계의 지원된 verifier가 없는 delegated/native host fork는 사용할 수 없다.
+모델 rebind 지원만으로는 충분하지 않다.
+
+`/tree`는 현재 workspace host/path의 Session 트리를 별도 읽기 전용 화면으로 연다.
+`StoredSessionReader::read_tree`가 제한된 물리 기록 조회를 소유하고 durable fork
+provenance를 검증한 뒤 계보를 부여한다. 일반 `/resume`은 tail discovery를 유지한다.
+기본 트리 조회는 디렉터리 항목 4096개, Session 후보 64개, 32 MiB, 물리 기록 4096개까지
+검사하고 한도에 도달하면 조회가 불완전함을 표시한다. legacy의 계보는 unknown으로
+유지한다. missing·unavailable·uninspected·workspace 밖 ancestor는 상태를 명시한
+비활성 행이며, 부모가 없다는 이유로 독립적으로 재개 가능한 child를 비활성화하지 않는다.
+현재 Session도 비활성화한다. 다른 사용 가능한 행을 선택하면 기존 resume 전환과 최신
+continuation 검사를 거친다. 조회는 backend를 시작하거나 저장소를 생성하거나 Session
+writer lease를 취득하지 않는다. 실패하면 live Session을 유지하고 로컬 안내를 표시한다.
+트리만 패널 항목 줄바꿈을 사용한다. 화살표 키는 비활성 ancestor를 포함한 모든 행을
+탐색하며, 재개 가능한 선택지만 resume identity를 전달한다. Page 키로 긴 항목 내부를
+스크롤하므로 좁거나 낮은 화면에서도 전체 내용을 읽을 수 있다.
+
+사용자 설정의 `prompts`는 `PromptTemplates`가 한 번 검증한다. `/prompt`는 이름 목록을,
+`/prompt NAME`은 명령 draft를 정확한 원문으로 교체하는 동작을 제공한다. 이때 Turn을
+제출하거나 typed skill/workspace reference를 만들지 않는다. 별도 Enter는 기존
+idle/active-Turn 경로로 제출하며, 수정하지 않은 slash 모양 본문도 원문으로 유지한다.
+같은 템플릿을 오프라인 preview에서도 사용할 수 있다.
 
 ## 활성 Turn 하나
 
@@ -591,9 +745,13 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
    실행되기 전에 거절된다.
 4. [`AgentWorker`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs)만
    runtime을 실행하고 polling할 수 있다. runtime과 backend 수락이 성공한 뒤
-   정확한 ID의 `SubmissionOutcome::Accepted`를 공개한다. typed rejection
-   channel은 다음 reference-admission Slice를 위해 준비되어 있다. 그전까지
-   structured `@`, `$` draft는 실패-폐쇄 상태를 유지한다. 터미널을 소유한
+   정확한 ID의 `SubmissionOutcome::Accepted`를 공개한다. core command 거절과
+   비종료 backend `CommandRejected`는 Session을 종료하지 않고
+   `SubmissionOutcome::Rejected`를 공개한다. 시작 입력 거절은 Turn 예약을
+   해제하고, steer 거절은 활성 Turn을 보존한다. 거절되었거나 이미 완료된
+   Turn을 대상으로 대기 중인 interrupt는 새 작업을 중단하지 않는다. 전송·프로토콜·
+   종료 오류는 여전히 worker 실패로 전달한다. structured `@`, `$` draft는
+   reference admission이 연결될 때까지 실패-폐쇄 상태를 유지한다. 터미널을 소유한
    thread는 provider I/O를 기다리지 않는다.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime.rs)은
    command 검증, backend 수락, semantic commit, Journal publication 순서를
@@ -605,6 +763,9 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
    durable한 segment를 수정하지 않고 새 message revision을 시작한다. 아직 segment를
    내보내지 않은 연속 replacement는 같은 unpublished revision을 공유하고, 빈 최종
    replacement는 zero-byte terminal seal로 표현한다.
+   command 경계에서는 버퍼의 message storage record를 같은 atomic commit 안에서
+   command보다 먼저 저장한다. codec은 이 storage-only prefix를 허용하되, 앞선
+   semantic event나 두 번째 command는 거절한다.
    provider 관찰 결과도 semantic engine을 통해 변환한 뒤 변경 알림을
    공개한다. 거절된
    command와 잘못된 backend event는 commit된 의미로 기록하지 않지만,
@@ -623,9 +784,15 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
    승인하지 않은 backend-specific Request Audit payload는 이 semantic 경로 밖에 남는다. 공유 observation stream은 각 typed
    durability 전환을 영향을 받는 semantic record보다 먼저 정렬하므로 coalesced worker
    wake-up도 Gap-to-Durable 전환을 지우지 못한다. 같은 level-triggered readiness가
-   주기적인 agent poll을 기다리지 않고 terminal owner를 깨운다. CLI adapter는 이 순서를 정확한 cutoff
-   종류와 함께 TUI 상태에 전달한다. Chat·status 행·banner 중 어떤 방식으로 표현할지는
-   별도 product 계약으로 남긴다. 저장된 Session 검사는 아래의 별도 read-only
+   주기적인 agent poll을 기다리지 않고 terminal owner를 깨운다. `AgentSession`은 host
+   상태나 경고를 먼저 표시하더라도 반복된 readiness 조회 사이에 미소비 worker 신호를
+   보존한다. 따라서 seed-only 재개 뒤 idle backend가 추가 사건을 내보내지 않아도
+   authoritative durability observation이 전달된다. CLI adapter는 이 순서를 정확한 cutoff
+   종류와 함께 TUI 상태에 전달한다. TUI는 원인과 확인된 저장 경계를 Chat 알림으로
+   표시하며, gap이 유지되는 동안 Chat 상태 행이나 다른 화면의 header에
+   `History not saved`를 유지한다. 같은 관찰이 반복되어도 알림을 중복하지 않는다.
+   authoritative Durable 복구를 관찰하면 원래 상태 표시를 복원하고 복구 알림을 더한다.
+   저장된 Session 검사는 아래의 별도 read-only
    경로를 따른다. 실행 가능한 continuation은 frontend history Projection에서
    상태를 만들지 않고, 아래의 별도 검증된 recovery 경로를 사용한다.
 6. [`runner` source scheduling과 redraw](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
@@ -637,14 +804,18 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
    사용자 입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난
    뒤에만 표시된다. terminal `EventStream` readiness와 agent·workspace·skill
    producer readiness가 owner thread를 깨운다. 각 live-source trait가 이 계약을
-   필수로 요구하며 주기적인 관찰 fallback은 없다. Unix 종료 handler는 durable signal
+   필수로 요구하며 producer 관찰에는 주기적인 fallback이 없다. Unix 종료 handler는 durable signal
    bit를 공개하고 nonblocking async-signal-safe write만 수행한다. 일반 notifier thread가
    이 byte를 같은 frontend wake로 바꾼 뒤 host가 정리하고 선택한 원래 signal을 재생한다.
    상태 변경은 event마다 동기적으로
    그리지 않고 frame을 요청한다. `FrameScheduler`는 첫 frame과 resize frame을 즉시
    공개하고, 일반 요청은 `TuiSession` 제한에 맞춰 합친다. 기본은 120fps이고 host가
-   `FrameRateLimit::Fps60`을 선택하면 60fps다. readiness나 예약된 frame·motion·활성
-   backpressure 마감이 없으면 owner는 무기한 잠들 수 있다. 10ms backpressure 재시도는
+   `FrameRateLimit::Fps60`을 선택하면 60fps다. 예약된 frame·motion·활성
+   backpressure 마감과 별도로 250ms마다 실제 터미널 크기를 확인해 producer가 쉬는 동안에도
+   누락된 resize 알림을 복구한다. 크기가 바뀌면 geometry epoch를 올리고 viewport를
+   무효화한 뒤 즉시 frame을 요청하며, 같은 크기는 다시 그리지 않는다. 이 마감은
+   owner의 대기 시간을 제한하며 producer readiness나 publication 뒤 geometry 검증을
+   대체하지 않는다. 10ms backpressure 재시도는
    작업이 실제로 보존된 동안에만 deadline으로 남는다. `@`나 `$` discovery를 dispatch하는 editor mutation은 provider
    결과보다 먼저 frame을 요청하고, 이전 usable panel은 pending snapshot gate 뒤에
    계속 보인다. elapsed로 선택한 Rich Braille 또는 ASCII 작업 marker frame을 고정된
@@ -772,6 +943,7 @@ session:
     date_format: "%Y-%m-%d %H:%M %:z"
 tui:
   max_fps: 120
+  theme: default
 ```
 
 `config.yaml`은 일반 Session·TUI 설정만 소유한다. 최상위 `model` field는 알 수 없는
@@ -849,7 +1021,10 @@ capture·mutation 전에 provider seed를 검증하며 입력, 재시도 조립,
 
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
-한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. Whole-field
+한 번 읽어 보존되는 TUI 세대에 적용한다. `tui.theme`는 `default`, `light`, `mono`를
+받고 기본값은 `default`다. 대화형 `--theme`를 명시하면 해당 실행에서 설정 파일보다
+우선한다. 파일에서 다른 팔레트를 선택했더라도 `--theme default`로 덮어쓸 수 있다.
+색상 능력과 ASCII 선택은 독립적으로 유지된다. 실행 중 reload는 지원하지 않는다. Whole-field
 YAML null, 알 수 없거나 중복된 field, 중복 ModelId, 불완전한 profile, relative `--from`
 경로는 credential capture나 mutation 전에 실패한다. `{}`는 구조화 field를 빈 mapping으로
 교체하고 그 아래의 null은 구조화 값으로 유지한다. Plain YAML 1.1

@@ -69,7 +69,7 @@ impl TextBuffer {
             return false;
         }
         if self.text[range.clone()] == *replacement {
-            self.cursor = range.start + replacement.len();
+            self.cursor = boundary_at_or_after(&self.text, range.start + replacement.len());
             return false;
         }
         self.text.replace_range(range.clone(), replacement);
@@ -97,6 +97,105 @@ impl TextBuffer {
 
         self.cursor = next;
         true
+    }
+
+    pub(crate) fn move_word_start(&mut self) -> bool {
+        let start = self.word_start();
+        let changed = self.cursor != start;
+        self.cursor = start;
+        changed
+    }
+
+    pub(crate) fn move_word_end(&mut self) -> bool {
+        let mut end = self.cursor;
+        let mut found_word = false;
+        for (offset, grapheme) in self.text[self.cursor..].grapheme_indices(true) {
+            let whitespace = grapheme.chars().all(char::is_whitespace);
+            if found_word && whitespace {
+                break;
+            }
+            found_word |= !whitespace;
+            end = self.cursor + offset + grapheme.len();
+        }
+        let changed = self.cursor != end;
+        self.cursor = end;
+        changed
+    }
+
+    pub(crate) fn kill_word_start(&mut self) -> Option<String> {
+        let start = self.word_start();
+        (start != self.cursor).then(|| self.kill_range(start..self.cursor))
+    }
+
+    fn word_start(&self) -> usize {
+        let mut start = self.cursor;
+        let mut found_word = false;
+        for (offset, grapheme) in self.text[..self.cursor].grapheme_indices(true).rev() {
+            let whitespace = grapheme.chars().all(char::is_whitespace);
+            if found_word && whitespace {
+                break;
+            }
+            found_word |= !whitespace;
+            start = offset;
+        }
+        start
+    }
+
+    pub(crate) fn move_line_start(&mut self) -> bool {
+        let start = self.line_start();
+        let changed = self.cursor != start;
+        self.cursor = start;
+        changed
+    }
+
+    pub(crate) fn move_line_end(&mut self) -> bool {
+        let end = self.line_end();
+        let changed = self.cursor != end;
+        self.cursor = end;
+        changed
+    }
+
+    pub(crate) fn kill_line_start(&mut self) -> Option<String> {
+        let start = self.line_start();
+        let start = if start == self.cursor {
+            self.text[..self.cursor]
+                .grapheme_indices(true)
+                .next_back()?
+                .0
+        } else {
+            start
+        };
+        Some(self.kill_range(start..self.cursor))
+    }
+
+    pub(crate) fn kill_line_end(&mut self) -> Option<String> {
+        let end = self.line_end();
+        let end = if end == self.cursor {
+            next_boundary(&self.text, self.cursor)?
+        } else {
+            end
+        };
+        Some(self.kill_range(self.cursor..end))
+    }
+
+    fn line_start(&self) -> usize {
+        self.text[..self.cursor]
+            .rfind('\n')
+            .map_or(0, |index| index + 1)
+    }
+
+    fn line_end(&self) -> usize {
+        self.text[self.cursor..]
+            .grapheme_indices(true)
+            .find(|(_, grapheme)| grapheme.contains('\n'))
+            .map_or(self.text.len(), |(index, _)| self.cursor + index)
+    }
+
+    fn kill_range(&mut self, range: std::ops::Range<usize>) -> String {
+        let start = range.start;
+        let removed = self.text.drain(range).collect();
+        self.cursor = boundary_at_or_after(&self.text, start);
+        removed
     }
 
     pub(crate) fn delete_backward(&mut self) -> bool {

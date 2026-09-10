@@ -6,7 +6,7 @@ use serde_json::json;
 use yo_core::{
     ActivityOutcome, ApiDialect, BackendCommandEvidence, BackendEvent, BackendFailure,
     BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, Failure, ModelReplayDelta,
-    ModelReplayItem, ModelReplayRole, TurnOutcome, TurnRef,
+    ModelReplayItem, TurnOutcome, TurnRef,
 };
 
 use super::{
@@ -18,7 +18,7 @@ impl NativeModelBackend {
     pub(super) fn start_turn(
         &mut self,
         turn: TurnRef,
-        input: String,
+        input: ModelReplayItem,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
         if self.context_exhausted {
             return Err(failure(
@@ -35,11 +35,7 @@ impl NativeModelBackend {
                 "native backend requires its bound idle Session before starting a Turn",
             ));
         }
-        let delta = vec![ModelReplayItem::Message {
-            role: ModelReplayRole::User,
-            content: input,
-            refusal: None,
-        }];
+        let delta = vec![input];
         let mut state = TurnState {
             turn,
             round: 0,

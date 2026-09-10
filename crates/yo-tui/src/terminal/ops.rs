@@ -1,6 +1,6 @@
 use std::num::NonZeroU16;
 
-use crate::surface::{Cell, CellContent, FrameDiff, Point, Size, Style};
+use crate::surface::{Cell, CellContent, FrameDiff, Hyperlink, Point, Size, Style};
 
 /// One terminal effect whose meaning is independent of its byte encoding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -12,6 +12,8 @@ pub enum TerminalOp<'frame> {
     },
     MoveTo(Point),
     SetStyle(Style),
+    /// Selects a validated OSC 8 destination; None closes the current link.
+    SetHyperlink(Option<&'frame Hyperlink>),
     WriteGrapheme {
         text: &'frame str,
         width: NonZeroU16,
@@ -55,6 +57,7 @@ impl<'frame> TerminalOps<'frame> {
                 span.row(),
             )));
             compiler.compile_cells(span.cells());
+            compiler.select_hyperlink(None);
         }
         Self {
             operations: compiler.operations,
@@ -76,6 +79,7 @@ impl<'frame> TerminalOps<'frame> {
 struct Compiler<'frame> {
     operations: Vec<TerminalOp<'frame>>,
     selected_style: Option<Style>,
+    selected_hyperlink: Option<&'frame Hyperlink>,
 }
 
 impl<'frame> Compiler<'frame> {
@@ -83,6 +87,7 @@ impl<'frame> Compiler<'frame> {
         let mut offset = 0;
         while offset < cells.len() {
             let cell = &cells[offset];
+            self.select_hyperlink(cell.hyperlink());
             match cell.content() {
                 CellContent::Blank => {
                     self.select_style(cell.style());
@@ -105,6 +110,13 @@ impl<'frame> Compiler<'frame> {
                     panic!("FrameDiff invariant: a row span cannot begin inside a grapheme");
                 },
             }
+        }
+    }
+
+    fn select_hyperlink(&mut self, hyperlink: Option<&'frame Hyperlink>) {
+        if self.selected_hyperlink != hyperlink {
+            self.operations.push(TerminalOp::SetHyperlink(hyperlink));
+            self.selected_hyperlink = hyperlink;
         }
     }
 

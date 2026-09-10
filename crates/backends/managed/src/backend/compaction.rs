@@ -3,22 +3,22 @@
 use serde_json::json;
 use yo_core::{
     ActivityKind, ActivityOutcome, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendResumeTarget, CacheReadInputTokens, ContextCheckpointProposal, ContextStrategy,
-    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
-    ModelConnectorInputRole, ModelConnectorTerminal, ModelReplay, ModelReplayItem, ModelReplayRole,
-    RequestToolExposure,
+    BackendResumeTarget, CacheReadInputTokens, ContextCheckpointProposal, ContextPressureDecision,
+    ContextPressureObservation, ContextStrategy, ImageSummarySource, ModelConnectorCancellation,
+    ModelConnectorEvent, ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorTerminal,
+    ModelReplay, ModelReplayItem, ModelReplayRole, RequestToolExposure,
 };
 
 use super::{
-    CompactionState, IdleCompactionState, NativeModelBackend, TurnState, context, failure,
-    map_connector_cleanup, map_connector_turn, replay::replay_input,
+    CompactionState, IdleCompactionState, InputCount, NativeModelBackend, TurnState, context,
+    failure, map_connector_cleanup, map_connector_turn, replay::replay_input,
 };
 
 impl NativeModelBackend {
     pub(super) fn admit_or_start_compaction(
         &mut self,
         state: &mut TurnState,
-        input_tokens: u64,
+        input_count: InputCount,
     ) -> Result<bool, BackendFailure> {
         use context::PressureAdmission;
 
@@ -26,6 +26,7 @@ impl NativeModelBackend {
             return Ok(false);
         }
 
+        let input_tokens = input_count.planning_tokens();
         let decision = context::admit_pressure(
             &self.config.context_policy,
             input_tokens,
@@ -38,18 +39,23 @@ impl NativeModelBackend {
             | PressureAdmission::Reject { warning } => warning,
         };
         if warning {
-            let observation = yo_core::ContextPressureObservation::new(
+            let mut observation = ContextPressureObservation::new(
                 input_tokens,
                 self.model_context.input_token_limit(),
                 self.config.context_policy.warning_percent(),
                 self.config.context_policy.trigger_percent(),
                 match decision {
-                    PressureAdmission::Admit { .. } => yo_core::ContextPressureDecision::Admit,
-                    PressureAdmission::Compact { .. } => yo_core::ContextPressureDecision::Compact,
-                    PressureAdmission::Reject { .. } => yo_core::ContextPressureDecision::Reject,
+                    PressureAdmission::Admit { .. } => ContextPressureDecision::Admit,
+                    PressureAdmission::Compact { .. } => ContextPressureDecision::Compact,
+                    PressureAdmission::Reject { .. } => ContextPressureDecision::Reject,
                 },
             )
             .expect("an admitted context policy produces a valid pressure observation");
+            if let Some(accounting) = input_count.accounting() {
+                observation = observation
+                    .with_accounting(accounting.clone())
+                    .map_err(|detail| failure(BackendFailureKind::Protocol, detail))?;
+            }
             let activity = self.next_activity(state.turn)?;
             self.queue_activity_text(
                 activity,
@@ -61,7 +67,7 @@ impl NativeModelBackend {
         match decision {
             PressureAdmission::Admit { .. } => Ok(false),
             PressureAdmission::Compact { .. } => {
-                self.start_compaction_summary(state, input_tokens)?;
+                self.start_compaction_summary(state, input_count)?;
                 Ok(true)
             },
             PressureAdmission::Reject { .. } => Err(failure(
@@ -74,15 +80,17 @@ impl NativeModelBackend {
     fn start_compaction_summary(
         &mut self,
         state: &mut TurnState,
-        input_tokens_before: u64,
+        input_tokens_before: InputCount,
     ) -> Result<(), BackendFailure> {
         let starts_with_current_input = matches!(
             state.delta.first(),
-            Some(ModelReplayItem::Message {
-                role: ModelReplayRole::User,
-                refusal: None,
-                ..
-            })
+            Some(
+                ModelReplayItem::Message {
+                    role: ModelReplayRole::User,
+                    refusal: None,
+                    ..
+                } | ModelReplayItem::MultimodalUser { .. }
+            )
         );
         let completed_tool_boundary = state.round > 0
             && state
@@ -120,24 +128,18 @@ impl NativeModelBackend {
         }
         let summarized_groups = self.replay_groups[..summarized_count].to_vec();
         let retained_groups = self.replay_groups[summarized_count..].to_vec();
-        let visible_prefix = summarized_groups
-            .iter()
-            .flatten()
-            .filter(|item| !matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }))
-            .map(replay_input)
-            .collect::<Vec<_>>();
-        if visible_prefix.is_empty() {
+        let Some(visible_prefix) = summary_source(&summarized_groups)? else {
             return Err(failure(
                 BackendFailureKind::ContextExhausted,
                 "context_exhausted: the compactable prefix has no visible semantic history",
             ));
-        }
+        };
         let mut items = vec![ModelConnectorInputItem::Message {
             role: ModelConnectorInputRole::System,
             content: context::PORTABLE_SUMMARY_INSTRUCTION.to_owned(),
             refusal: None,
         }];
-        items.extend(visible_prefix);
+        items.push(visible_prefix);
         let (request, _) = self.admitted_request(
             items,
             RequestToolExposure::disabled(),
@@ -233,18 +235,12 @@ impl NativeModelBackend {
                 .clone(),
         ];
         let summarized_groups = self.replay_groups[..self.replay_groups.len() - 1].to_vec();
-        let visible_prefix = summarized_groups
-            .iter()
-            .flatten()
-            .filter(|item| !matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }))
-            .map(replay_input)
-            .collect::<Vec<_>>();
-        if visible_prefix.is_empty() {
+        let Some(visible_prefix) = summary_source(&summarized_groups)? else {
             return Err(failure(
                 BackendFailureKind::CommandRejected,
                 "the compactable prefix has no visible semantic history",
             ));
-        }
+        };
         let mut instruction = context::PORTABLE_SUMMARY_INSTRUCTION.to_owned();
         if let Some(guidance) = guidance {
             instruction.push_str("\n\nUser guidance for this checkpoint:\n");
@@ -255,7 +251,7 @@ impl NativeModelBackend {
             content: instruction,
             refusal: None,
         }];
-        summary_items.extend(visible_prefix);
+        summary_items.push(visible_prefix);
         let (request, _) =
             self.admitted_request(summary_items, RequestToolExposure::disabled(), session_id)?;
         let cancellation = ModelConnectorCancellation::new();
@@ -437,7 +433,7 @@ impl NativeModelBackend {
                 if !matches!(
                     context::admit_pressure(
                         &self.config.context_policy,
-                        input_tokens_after,
+                        input_tokens_after.planning_tokens(),
                         self.model_context.input_token_limit(),
                         true,
                     ),
@@ -452,8 +448,8 @@ impl NativeModelBackend {
                     Some(state.turn),
                     self.config.context_policy.policy_revision(),
                     self.model_context.input_token_limit(),
-                    input_tokens_before,
-                    input_tokens_after,
+                    input_tokens_before.planning_tokens(),
+                    input_tokens_after.planning_tokens(),
                     self.contract.clone(),
                     body,
                     summarized_groups,
@@ -463,6 +459,8 @@ impl NativeModelBackend {
                 )
                 .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
                 self.observe_model_request(state.turn, yo_core::ModelRequestOutcome::Succeeded);
+                let proposal =
+                    input_tokens_before.bind_checkpoint(proposal, &input_tokens_after)?;
                 self.events
                     .push_back(BackendEvent::ContextCheckpointPrepared { proposal });
                 state.compaction = Some(CompactionState::AwaitingCheckpoint { replay });
@@ -635,13 +633,13 @@ impl NativeModelBackend {
                         "context_exhausted: idle context summary did not complete exactly once",
                     ));
                 }
-                context::validate_portable_summary(&body).map_err(|detail| {
+                let summary_usage = self.context_summary_usage(&response_id, 1, &usage)?;
+                context::validate_portable_summary(&body).map_err(|_| {
                     failure(
-                        BackendFailureKind::ContextExhausted,
-                        format!("context_exhausted: {detail}"),
+                        BackendFailureKind::CommandRejected,
+                        "Context compaction did not match the required summary format; the original context was preserved.",
                     )
                 })?;
-                let summary_usage = self.context_summary_usage(&response_id, 1, &usage)?;
                 let mut checkpoint_items = vec![ModelReplayItem::Message {
                     role: ModelReplayRole::User,
                     content: body.clone(),
@@ -666,28 +664,32 @@ impl NativeModelBackend {
                 let session_id = self.session.expect("idle compaction has an open Session");
                 let (_, input_tokens_after) =
                     self.admitted_request(successor_items, tool_exposure, session_id)?;
-                if input_tokens_after >= input_tokens_before
-                    || !matches!(
-                        context::admit_pressure(
-                            &self.config.context_policy,
-                            input_tokens_after,
-                            self.model_context.input_token_limit(),
-                            true,
-                        ),
-                        context::PressureAdmission::Admit { .. }
-                    )
-                {
+                if !matches!(
+                    context::admit_pressure(
+                        &self.config.context_policy,
+                        input_tokens_after.planning_tokens(),
+                        self.model_context.input_token_limit(),
+                        true,
+                    ),
+                    context::PressureAdmission::Admit { .. }
+                ) {
                     return Err(failure(
                         BackendFailureKind::ContextExhausted,
-                        "context_exhausted: idle compacted context did not reduce and admit the payload",
+                        "context_exhausted: idle compacted context did not admit the payload",
+                    ));
+                }
+                if input_tokens_after.planning_tokens() >= input_tokens_before.planning_tokens() {
+                    return Err(failure(
+                        BackendFailureKind::CommandRejected,
+                        "Context compaction did not reduce the input size; the original context was preserved.",
                     ));
                 }
                 let proposal = ContextCheckpointProposal::new(
                     None,
                     self.config.context_policy.policy_revision(),
                     self.model_context.input_token_limit(),
-                    input_tokens_before,
-                    input_tokens_after,
+                    input_tokens_before.planning_tokens(),
+                    input_tokens_after.planning_tokens(),
                     self.contract.clone(),
                     body,
                     summarized_groups,
@@ -699,6 +701,8 @@ impl NativeModelBackend {
                 if let Some(observer) = self.request_observer.as_mut() {
                     let _ = observer.observe(yo_core::ModelRequestOutcome::Succeeded);
                 }
+                let proposal =
+                    input_tokens_before.bind_checkpoint(proposal, &input_tokens_after)?;
                 self.events
                     .push_back(BackendEvent::ContextCheckpointPrepared { proposal });
                 self.idle_compaction = Some(IdleCompactionState::AwaitingCheckpoint { replay });
@@ -762,4 +766,80 @@ impl NativeModelBackend {
             *response = None;
         }
     }
+}
+
+// Summary source is inert data, not provider-native assistant/tool replay. In particular,
+// private assistant envelopes must never be required or forwarded by this projection.
+fn summary_source(
+    groups: &[Vec<ModelReplayItem>],
+) -> Result<Option<ModelConnectorInputItem>, BackendFailure> {
+    if groups
+        .iter()
+        .flatten()
+        .any(|item| matches!(item, ModelReplayItem::MultimodalUser { .. }))
+    {
+        return ImageSummarySource::from_replay_groups(groups)
+            .map(|source| Some(ModelConnectorInputItem::ImageSummarySource { source }))
+            .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail));
+    }
+    const MAX_SOURCE_BYTES: usize = 16 * 1024 * 1024;
+    let mut content = String::from("{\"history\":[");
+    let mut count = 0;
+    for item in groups.iter().flatten() {
+        let record = match item {
+            ModelReplayItem::Message {
+                role,
+                content,
+                refusal,
+            } => {
+                let role = match role {
+                    ModelReplayRole::System => "system",
+                    ModelReplayRole::Developer => "developer",
+                    ModelReplayRole::User => "user",
+                    ModelReplayRole::Assistant => "assistant",
+                };
+                json!({"type":"message", "role":role, "content":content, "refusal":refusal})
+            },
+            ModelReplayItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => {
+                json!({"type":"function_call", "call_id":call_id, "name":name, "arguments":arguments})
+            },
+            ModelReplayItem::FunctionCallOutput { call_id, output } => {
+                json!({"type":"function_call_output", "call_id":call_id, "output":output})
+            },
+            ModelReplayItem::ProviderPrivateAssistant { .. } => continue,
+            ModelReplayItem::MultimodalUser { .. } => {
+                unreachable!("image summaries use the typed source")
+            },
+        };
+        let encoded = record.to_string();
+        if content
+            .len()
+            .saturating_add(encoded.len())
+            .saturating_add(2 + usize::from(count > 0))
+            > MAX_SOURCE_BYTES
+        {
+            return Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "context_exhausted: encoded visible summary source exceeds the 16-MiB message limit",
+            ));
+        }
+        if count > 0 {
+            content.push(',');
+        }
+        content.push_str(&encoded);
+        count += 1;
+    }
+    if count == 0 {
+        return Ok(None);
+    }
+    content.push_str("]}");
+    Ok(Some(ModelConnectorInputItem::Message {
+        role: ModelConnectorInputRole::User,
+        content,
+        refusal: None,
+    }))
 }

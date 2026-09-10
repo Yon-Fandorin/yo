@@ -4,6 +4,12 @@ Make the requested change, verify its affected behavior, report the result.
 This page selects the workflow; detailed protocol references do not expand an
 ordinary task. No branch, plan file, Slice contract, packet, or metrics required.
 
+For user-facing features, compare the actual interaction with representative
+commercial products and the user's named references before choosing the flow.
+Use the user's operating environment, including SSH and tmux, in that comparison.
+Verify the complete user journey; a backend capability or fallback command alone
+does not establish equivalent usability. Reuse relevant current comparisons.
+
 ## Starting work
 
 Read the relevant AGENTS routes once. Inspect the branch and
@@ -25,6 +31,18 @@ Ask once for a missing product/contract choice with concrete effects; preserve
 earlier authorization across continuations. Authorization for external effects,
 push, or destructive recovery comes from the user, not workflow prose.
 
+Before asking, check the conversation and handoff. A short affirmative reply
+approves the concrete proposal's scope, including its stated integration and
+activation. Compaction, continuation, a worktree or approval record does not
+expire authorization. Replace stale approval-wait notes with the approved scope
+and next action. Ask again only for a material effect outside that scope or an
+actual revocation, and identify the delta.
+
+Goal tracking is not permission. Continue approved work without recreating the
+goal, marking unfinished work complete, or restarting approval on continuation.
+If an additional effect needs approval, finish independent authorized work and
+make that effect concrete before asking only about the delta.
+
 Code and tests own actual behavior; Methexis owns accepted design; Developer
 Docs own navigation and checks; this page owns work practices. Update the
 existing owner instead of copying its facts. Read the active Checkpoint and
@@ -35,6 +53,13 @@ paths, decisions, checks, unresolved work, next action. Retain a reusable lesson
 only if it prevents rediscovery, with a code/command anchor and a condition that
 would invalidate it. No daily log, transcript, mandatory retrospective, or
 separate governance task for an in-scope lesson.
+
+When parallel work is authorized, assign a cohesive batch, owned files and
+contract pointers to each agent. Agree on interfaces before editing. Collect
+batches before shared compilation; serialize shared checks and review the stable
+patch once. Avoid tiny followups, unrelated reassignments and repeated source
+or packet dumps. If coordination dominates, reduce concurrency and finish the
+current batch; authorization remains valid.
 `python3 tools/context.py impact --changed` finds documentation references to
 changed files; `check` detects broken local references. These are navigation
 hints, not semantic freshness or contract-approval proofs.

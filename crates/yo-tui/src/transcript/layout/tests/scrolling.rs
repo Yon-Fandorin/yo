@@ -296,3 +296,225 @@ fn resize_reflows_following_and_clamps_detached_state() {
     assert_eq!(frame.first_visible_row, 0);
     assert_eq!(detached.mode(), TranscriptViewMode::Detached);
 }
+
+// 누적 높이의 u16 마지막 값·첫 초과·9만 행에서도 각 메시지 경계와 사용자 배경을 유지하고
+// Home/End가 논리 위치를 화면의 작은 좌표로 변환한다.
+#[test]
+fn accumulated_rows_cross_u16_without_wrapping_content_or_scroll_positions() {
+    use super::styles;
+    use crate::{
+        surface::{Color, Point, Rect, Surface},
+        transcript::{paint_prepared, prepare},
+    };
+    for total in [65_535_usize, 65_536, 98_308] {
+        let mut transcript = TranscriptState::new();
+        for (index, rows) in [22_000, 22_000, total - 44_004].into_iter().enumerate() {
+            transcript
+                .push_user(
+                    id(index as u64 + 1),
+                    format!("{}last{index}", "x\n".repeat(rows - 1)),
+                )
+                .unwrap();
+        }
+        let prepared = prepare(&transcript, 12, &TranscriptLayoutConfig::default()).unwrap();
+        assert_eq!(prepared.content_height(), total);
+        let mut palette = styles();
+        palette.user_body.background = Color::Indexed(236);
+        let mut state = TranscriptViewState::default();
+        for command in [
+            None,
+            Some(TranscriptScrollCommand::JumpToStart),
+            Some(TranscriptScrollCommand::JumpToTail),
+        ] {
+            let size = Size::new(12, 3);
+            let mut surface = Surface::new(size).unwrap();
+            let frame = paint_prepared(
+                prepared.clone(),
+                &mut surface.view(Rect::new(Point::new(0, 0), size)).unwrap(),
+                palette,
+                &mut state,
+                command,
+            )
+            .unwrap();
+            assert_eq!(frame.content_height, total);
+            if command == Some(TranscriptScrollCommand::JumpToStart) {
+                assert_eq!(frame.first_visible_row, 0);
+                assert_eq!(frame.context_item, Some(id(1)));
+                assert!(rendered_row(&surface, 0).contains("❯ x"));
+            } else {
+                assert_eq!(frame.first_visible_row, total - 3);
+                assert_eq!(frame.context_item, Some(id(3)));
+                assert_eq!(rendered_row(&surface, 2), "  last2");
+            }
+            assert_eq!(
+                surface.cell(Point::new(11, 2)).unwrap().style().background,
+                Color::Indexed(236)
+            );
+        }
+    }
+}
+
+// 실제 viewport 크기는 u16 범위에 두고 usize 끝 근처의 문서 위치도 감기지 않게 변환한다.
+#[test]
+fn document_positions_near_usize_limit_translate_only_visible_rows() {
+    use std::num::NonZeroU16;
+
+    use super::super::VisibleRows;
+    use crate::surface::Point;
+    let visible = VisibleRows::resolve_commands(
+        usize::MAX,
+        NonZeroU16::new(3).unwrap(),
+        TranscriptViewState::default(),
+        &[TranscriptScrollCommand::JumpToTail],
+        &[],
+    );
+    assert_eq!(visible.first(), usize::MAX - 3);
+    assert_eq!(visible.translate(7, usize::MAX - 1), Point::new(7, 2));
+    let scrolled = VisibleRows::resolve_commands(
+        usize::MAX,
+        NonZeroU16::new(3).unwrap(),
+        visible.next_state(),
+        &[
+            TranscriptScrollCommand::LineDown,
+            TranscriptScrollCommand::PageUp,
+        ],
+        &[],
+    );
+    assert_eq!(scrolled.first(), usize::MAX - 5);
+}
+
+// 65,535행 이후의 코드 배경·메타 행·원본 이미지도 같은 논리 offset을 거쳐 viewport에 놓인다.
+#[test]
+fn diff_bands_and_rasters_after_large_history_use_local_surface_coordinates() {
+    use std::io::Cursor;
+
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use image::{ImageFormat, RgbImage};
+
+    use super::styles;
+    use crate::{
+        surface::{CellContent, Color, Point, Rect, Surface},
+        transcript::{paint_prepared, prepare},
+    };
+    let mut encoded = Cursor::new(Vec::new());
+    RgbImage::new(2, 2)
+        .write_to(&mut encoded, ImageFormat::Png)
+        .unwrap();
+    let mut transcript = TranscriptState::new();
+    for index in 1..=2 {
+        transcript
+            .push_user(id(index), "x\n".repeat(32_767))
+            .unwrap();
+    }
+    transcript.start_markdown_assistant(id(3)).unwrap();
+    transcript
+        .append_text(
+            id(3),
+            &format!(
+                "```diff\n+green\n-red\n@@ hunk\n```\n\n![pixel](data:image/png;base64,{})",
+                STANDARD.encode(encoded.into_inner())
+            ),
+        )
+        .unwrap();
+    let prepared = prepare(&transcript, 32, &TranscriptLayoutConfig::default()).unwrap();
+    assert_eq!(prepared.layout.rasters.len(), 1);
+    let image_row = prepared.layout.rasters[0].0;
+    assert!(image_row > usize::from(u16::MAX));
+    let mut palette = styles();
+    palette.markdown.rich_media = true;
+    palette.markdown.code.foreground = Color::Indexed(7);
+    palette.markdown.pixel_color_capability = Color::Indexed(7);
+    palette.markdown.diff_added.background = Color::Indexed(22);
+    palette.markdown.diff_removed.background = Color::Indexed(52);
+    palette.markdown.diff_meta.background = Color::Indexed(17);
+    let size = Size::new(32, 40);
+    let mut surface = Surface::new(size).unwrap();
+    let frame = paint_prepared(
+        prepared,
+        &mut surface.view(Rect::new(Point::new(0, 0), size)).unwrap(),
+        palette,
+        &mut TranscriptViewState::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(frame.context_item, Some(id(3)));
+    for (marker, background) in [
+        ("+", Color::Indexed(22)),
+        ("-", Color::Indexed(52)),
+        ("@", Color::Indexed(17)),
+    ] {
+        let row = (0..40).find(|row| (0..32).any(|column| matches!(surface.cell(Point::new(column,*row)).unwrap().content(), CellContent::Grapheme {text,..} if text.as_ref() == marker))).unwrap();
+        assert_eq!(
+            surface
+                .cell(Point::new(31, row))
+                .unwrap()
+                .style()
+                .background,
+            background
+        );
+    }
+    assert_eq!(surface.rasters.len(), 1);
+    assert_eq!(
+        usize::from(surface.rasters[0].area.origin.y),
+        image_row - frame.first_visible_row
+    );
+}
+
+// 항목 이동은 줄 수 대신 현재 폭의 실제 시작 행을 사용하고 마지막에서 tail 추적을 재개한다.
+#[test]
+fn item_navigation_uses_reflowed_boundaries_and_resumes_tail() {
+    let mut transcript = TranscriptState::new();
+    for index in 1..=3 {
+        transcript
+            .push_user(
+                id(index),
+                format!("ITEM{index} 한글 text\nsecond\nthird\nfourth\nfifth"),
+            )
+            .unwrap();
+    }
+    let config = TranscriptLayoutConfig::default();
+    for width in [30, 12, 30] {
+        let mut state = TranscriptViewState::default();
+        let size = Size::new(width, 3);
+        let (_, frame) = render_into(
+            &transcript,
+            size,
+            &config,
+            &mut state,
+            Some(TranscriptScrollCommand::JumpToStart),
+        );
+        assert_eq!(frame.context_item, Some(id(1)));
+        for index in [2, 3] {
+            let (surface, frame) = render_into(
+                &transcript,
+                size,
+                &config,
+                &mut state,
+                Some(TranscriptScrollCommand::NextItem),
+            );
+            assert_eq!(frame.context_item, Some(id(index)));
+            assert!(rendered_row(&surface, 0).contains(&format!("ITEM{index}")));
+        }
+        let (_, frame) = render_into(
+            &transcript,
+            size,
+            &config,
+            &mut state,
+            Some(TranscriptScrollCommand::NextItem),
+        );
+        assert_eq!(frame.context_item, Some(id(3)));
+        assert_eq!(state.mode(), TranscriptViewMode::FollowTail);
+        for index in [3, 2, 1, 1] {
+            let (surface, frame) = render_into(
+                &transcript,
+                size,
+                &config,
+                &mut state,
+                Some(TranscriptScrollCommand::PreviousItem),
+            );
+            assert_eq!(frame.context_item, Some(id(index)));
+            assert!(rendered_row(&surface, 0).contains(&format!("ITEM{index}")));
+            assert_eq!(state.mode(), TranscriptViewMode::Detached);
+        }
+    }
+}

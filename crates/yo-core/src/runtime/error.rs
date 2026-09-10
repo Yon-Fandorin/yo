@@ -1,6 +1,8 @@
 use std::fmt;
 
-use crate::{AgentEvent, AgentRejection, BackendEvent, BackendFailure, SubmissionId};
+use crate::{
+    AgentEvent, AgentRejection, BackendEvent, BackendFailure, SubmissionId, SubmissionRejection,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeError {
@@ -8,6 +10,7 @@ pub enum RuntimeError {
     SubmissionIdentityUnexpected,
     DuplicateSubmissionIdentity(SubmissionId),
     CommandRejected(AgentRejection),
+    InputRejected(SubmissionRejection),
     Backend {
         failure: BackendFailure,
         terminal_events: Vec<AgentEvent>,
@@ -39,6 +42,7 @@ impl RuntimeError {
             Self::SubmissionIdentityRequired
             | Self::SubmissionIdentityUnexpected
             | Self::DuplicateSubmissionIdentity(_)
+            | Self::InputRejected(_)
             | Self::CommandRejected(_)
             | Self::StateDiverged(_) => &[],
         }
@@ -59,6 +63,9 @@ impl fmt::Display for RuntimeError {
                     formatter,
                     "SubmissionId {id} was already committed by this runtime"
                 )
+            },
+            Self::InputRejected(rejection) => {
+                write!(formatter, "input rejected: {}", rejection.message())
             },
             Self::CommandRejected(rejection) => write!(formatter, "command rejected: {rejection}"),
             Self::Backend { failure, .. } => write!(formatter, "backend: {failure}"),

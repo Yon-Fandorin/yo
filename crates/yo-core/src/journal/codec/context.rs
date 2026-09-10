@@ -1,9 +1,14 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{JournalSequence, ModelReplay, ModelReplayContract, ModelReplayItem, ModelReplayRole};
+use crate::{
+    ContextAccounting, InputImageSnapshot, JournalSequence, ModelInputPart, ModelReplay,
+    ModelReplayContract, ModelReplayItem, ModelReplayRole,
+};
 
 pub(crate) const CONTEXT_POLICY_PROFILE: &str = "yo.context-policy/v1alpha1";
 pub(crate) const CONTEXT_CHECKPOINT_PROFILE: &str = "yo.context-checkpoint/v1alpha1";
+pub(crate) const IMAGE_CONTEXT_CHECKPOINT_PROFILE: &str = "yo.context-checkpoint/v2alpha1";
 pub(crate) const CONTEXT_ARTIFACT_PROFILE: &str = "yo.context-artifact-receipt/v1alpha1";
 const MAX_CONTEXT_ITEMS: usize = 4_096;
 const MAX_CONTEXT_TEXT_BYTES: usize = 16 * 1024 * 1024;
@@ -127,6 +132,8 @@ pub(crate) struct ContextRetainedGroup {
     first_sequence: JournalSequence,
     last_sequence: JournalSequence,
     items: Vec<ModelReplayItem>,
+    fork_import: Option<(JournalSequence, usize)>,
+    private_epochs: Vec<u64>,
 }
 
 impl ContextRetainedGroup {
@@ -142,7 +149,47 @@ impl ContextRetainedGroup {
             first_sequence,
             last_sequence,
             items,
+            fork_import: None,
+            private_epochs: Vec::new(),
         })
+    }
+
+    pub(crate) fn try_imported(
+        seed_sequence: JournalSequence,
+        group_index: usize,
+        items: Vec<ModelReplayItem>,
+        private_epochs: Vec<u64>,
+    ) -> Result<Self, &'static str> {
+        let private_count = items
+            .iter()
+            .filter(|item| matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }))
+            .count();
+        if seed_sequence.get() == 0
+            || group_index >= MAX_CONTEXT_ITEMS
+            || items.is_empty()
+            || items.len() > MAX_CONTEXT_ITEMS
+            || private_count != private_epochs.len()
+            || private_epochs.contains(&0)
+        {
+            return Err(
+                "imported retained group has invalid coordinates, items, or private epochs",
+            );
+        }
+        Ok(Self {
+            first_sequence: seed_sequence,
+            last_sequence: seed_sequence,
+            items,
+            fork_import: Some((seed_sequence, group_index)),
+            private_epochs,
+        })
+    }
+
+    pub(crate) const fn fork_import(&self) -> Option<(JournalSequence, usize)> {
+        self.fork_import
+    }
+
+    pub(crate) fn private_epochs(&self) -> &[u64] {
+        &self.private_epochs
     }
 
     pub(crate) const fn first_sequence(&self) -> JournalSequence {
@@ -213,8 +260,180 @@ impl ContextArtifactReceipt {
     }
 }
 
+/// Local immutable source coordinates; ancestor qualifications remain fork provenance.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ContextImageSource {
+    ReplayDelta {
+        sequence: u64,
+        item_index: u32,
+        part_index: u32,
+    },
+    RetainedCheckpoint {
+        sequence: u64,
+        group_index: u32,
+        item_index: u32,
+        part_index: u32,
+    },
+    InitialForkSeed {
+        sequence: u64,
+        group_index: u32,
+        item_index: u32,
+        part_index: u32,
+    },
+}
+
+impl ContextImageSource {
+    pub(crate) fn sequence(&self) -> u64 {
+        match self {
+            Self::ReplayDelta { sequence, .. }
+            | Self::RetainedCheckpoint { sequence, .. }
+            | Self::InitialForkSeed { sequence, .. } => *sequence,
+        }
+    }
+    fn valid(&self) -> bool {
+        let (sequence, group, item, part) = match self {
+            Self::ReplayDelta {
+                sequence,
+                item_index,
+                part_index,
+            } => (*sequence, 0, *item_index, *part_index),
+            Self::RetainedCheckpoint {
+                sequence,
+                group_index,
+                item_index,
+                part_index,
+            }
+            | Self::InitialForkSeed {
+                sequence,
+                group_index,
+                item_index,
+                part_index,
+            } => (*sequence, *group_index, *item_index, *part_index),
+        };
+        sequence > 0 && group < 4096 && item < 4096 && part < 33
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ContextImageLoss {
+    content_hash: String,
+    byte_count: u64,
+    width: u32,
+    height: u32,
+    source_context_epoch: u64,
+    source: ContextImageSource,
+}
+
+impl ContextImageLoss {
+    pub(crate) fn from_snapshot(
+        snapshot: &InputImageSnapshot,
+        source_context_epoch: u64,
+        source: ContextImageSource,
+    ) -> Result<Self, &'static str> {
+        let loss = Self {
+            content_hash: snapshot.sha256().to_owned(),
+            byte_count: snapshot.png().len() as u64,
+            width: snapshot.width(),
+            height: snapshot.height(),
+            source_context_epoch,
+            source,
+        };
+        loss.validate()?;
+        Ok(loss)
+    }
+    fn validate(&self) -> Result<(), &'static str> {
+        if !valid_sha256(&self.content_hash)
+            || self.byte_count == 0
+            || self.byte_count > InputImageSnapshot::MAX_BYTES as u64
+            || self.width == 0
+            || self.height == 0
+            || self.width > InputImageSnapshot::MAX_SIDE
+            || self.height > InputImageSnapshot::MAX_SIDE
+            || u64::from(self.width) * u64::from(self.height) > InputImageSnapshot::MAX_PIXELS
+            || self.source_context_epoch == 0
+            || !self.source.valid()
+        {
+            return Err("input image loss has invalid identity or source bounds");
+        }
+        Ok(())
+    }
+    pub(crate) fn source(&self) -> &ContextImageSource {
+        &self.source
+    }
+    /// Derives runtime-owned receipts in flattened occurrence order, never from model prose.
+    pub(crate) fn for_items(
+        items: &[ModelReplayItem],
+        source_epoch: u64,
+        mut source: impl FnMut(u32, u32) -> ContextImageSource,
+    ) -> Result<Vec<Self>, &'static str> {
+        let mut losses = Vec::new();
+        for (item_index, item) in items.iter().enumerate() {
+            if let ModelReplayItem::MultimodalUser { parts } = item {
+                for (part_index, part) in parts.iter().enumerate() {
+                    if let ModelInputPart::Image { snapshot } = part {
+                        losses.push(Self::from_snapshot(
+                            snapshot,
+                            source_epoch,
+                            source(
+                                u32::try_from(item_index)
+                                    .map_err(|_| "image item index overflow")?,
+                                u32::try_from(part_index)
+                                    .map_err(|_| "image part index overflow")?,
+                            ),
+                        )?);
+                    }
+                }
+            }
+        }
+        Ok(losses)
+    }
+}
+
+pub(crate) fn validate_image_losses(losses: &[ContextImageLoss]) -> Result<(), &'static str> {
+    if losses.len() > 64 {
+        return Err("checkpoint image loss count exceeds 64");
+    }
+    #[derive(Serialize)]
+    struct Loss<'a> {
+        kind: &'static str,
+        #[serde(flatten)]
+        loss: &'a ContextImageLoss,
+    }
+    struct Budget(usize);
+    impl std::io::Write for Budget {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self
+                .0
+                .checked_add(bytes.len())
+                .filter(|len| *len <= 64 * 1024)
+                .ok_or_else(|| std::io::Error::other("image loss array exceeds 64 KiB"))?;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    for loss in losses {
+        loss.validate()?;
+    }
+    serde_json::to_writer(
+        Budget(0),
+        &losses
+            .iter()
+            .map(|loss| Loss {
+                kind: "image_input_summarized",
+                loss,
+            })
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|_| "image loss array exceeds 64 KiB")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ContextLoss {
+    ImageInputSummarized(ContextImageLoss),
     VisiblePrefixSummarized {
         first_sequence: JournalSequence,
         last_sequence: JournalSequence,
@@ -290,6 +509,7 @@ pub(crate) struct ContextCheckpoint {
     artifact_receipts: Vec<ContextArtifactReceipt>,
     losses: Vec<ContextLoss>,
     summary_usage: ContextSummaryUsage,
+    accounting: Option<(ContextAccounting, ContextAccounting)>,
 }
 
 impl ContextCheckpoint {
@@ -331,6 +551,7 @@ impl ContextCheckpoint {
             artifact_receipts,
             losses,
             summary_usage,
+            accounting: None,
         };
         record.validate()?;
         Ok(record)
@@ -369,6 +590,8 @@ impl ContextCheckpoint {
             return Err("context checkpoint first retained sequence is inconsistent");
         }
         let mut previous_last = None;
+        let mut previous_import = None;
+        let mut local_seen = false;
         let mut item_count = 1_usize;
         let mut replay_items = vec![ModelReplayItem::Message {
             role: ModelReplayRole::User,
@@ -376,12 +599,29 @@ impl ContextCheckpoint {
             refusal: None,
         }];
         for group in &self.retained_groups {
-            if group.last_sequence() > self.source_journal_boundary
-                || previous_last.is_some_and(|last| group.first_sequence() <= last)
-            {
+            if group.last_sequence() > self.source_journal_boundary {
                 return Err(
                     "context checkpoint retained ranges overlap or exceed the source boundary",
                 );
+            }
+            if let Some((seed, index)) = group.fork_import() {
+                if local_seen
+                    || previous_import.is_some_and(|(previous_seed, previous_index)| {
+                        seed != previous_seed || index <= previous_index
+                    })
+                {
+                    return Err(
+                        "imported checkpoint groups must precede local groups with increasing indexes from one seed",
+                    );
+                }
+                previous_import = Some((seed, index));
+            } else {
+                if previous_last.is_some_and(|last| group.first_sequence() <= last) {
+                    return Err(
+                        "context checkpoint retained ranges overlap or exceed the source boundary",
+                    );
+                }
+                local_seen = true;
             }
             item_count = item_count.saturating_add(group.items().len());
             if item_count > MAX_CONTEXT_ITEMS {
@@ -416,6 +656,103 @@ impl ContextCheckpoint {
                     return Err("provider-private loss is outside the checkpoint source boundary");
                 },
                 _ => {},
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn with_accounting(
+        mut self,
+        before: ContextAccounting,
+        after: ContextAccounting,
+    ) -> Result<Self, &'static str> {
+        if before.policy() != after.policy()
+            || before.planning_tokens() != self.input_tokens_before
+            || after.planning_tokens() != self.input_tokens_after
+            || self.input_tokens_after >= self.input_tokens_before
+        {
+            return Err("checkpoint accounting does not match its planning totals");
+        }
+        self.accounting = Some((before, after));
+        self.validate_profile()?;
+        Ok(self)
+    }
+    pub(crate) const fn accounting(&self) -> Option<&(ContextAccounting, ContextAccounting)> {
+        self.accounting.as_ref()
+    }
+    pub(crate) fn validate_binding_accounting(
+        &self,
+        binding_value: &str,
+    ) -> Result<(), &'static str> {
+        let binding = crate::CompleteModelBinding::from_durable_json(binding_value).ok();
+        let image_profile = binding
+            .as_ref()
+            .and_then(|binding| binding.profile().image_input_profile());
+        match (image_profile, self.accounting()) {
+            (None, None) => Ok(()),
+            (Some(profile), Some((before, after)))
+                if profile.as_str() == crate::KIMI_CODE_IMAGE_INPUT_PROFILE
+                    && before.policy() == crate::KIMI_CODE_IMAGE_ACCOUNTING_PROFILE
+                    && before.policy() == after.policy()
+                    && binding.as_ref().is_some_and(|binding| {
+                        binding.profile().context().input_token_limit() == self.input_token_limit
+                    }) =>
+            {
+                Ok(())
+            },
+            _ => Err("checkpoint accounting profile differs from its owning binding epoch"),
+        }
+    }
+    pub(crate) fn profile(&self) -> &'static str {
+        if self.accounting.is_some() {
+            IMAGE_CONTEXT_CHECKPOINT_PROFILE
+        } else {
+            CONTEXT_CHECKPOINT_PROFILE
+        }
+    }
+    pub(crate) fn validate_profile(&self) -> Result<(), &'static str> {
+        let image_losses = self
+            .losses
+            .iter()
+            .filter_map(|loss| match loss {
+                ContextLoss::ImageInputSummarized(loss) => Some(loss.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if self.accounting.is_none()
+            && (!image_losses.is_empty()
+                || self
+                    .retained_groups
+                    .iter()
+                    .flat_map(|group| group.items())
+                    .any(|item| matches!(item, ModelReplayItem::MultimodalUser { .. })))
+        {
+            return Err("legacy checkpoint profile cannot carry image snapshots or losses");
+        }
+        if image_losses
+            .iter()
+            .any(|loss| loss.source().sequence() > self.source_journal_boundary.get())
+        {
+            return Err("image loss source is outside checkpoint boundary");
+        }
+        validate_image_losses(&image_losses)?;
+        if let Some((before, after)) = &self.accounting {
+            let retained_images = self
+                .retained_groups
+                .iter()
+                .flat_map(|group| group.items())
+                .any(|item| matches!(item, ModelReplayItem::MultimodalUser { .. }));
+            if after.reserve_tokens() != if retained_images { 1024 } else { 0 }
+                || before.reserve_tokens()
+                    != if retained_images || !image_losses.is_empty() {
+                        1024
+                    } else {
+                        0
+                    }
+            {
+                return Err(
+                    "checkpoint accounting reserve does not match complete image occurrence presence",
+                );
             }
         }
         Ok(())

@@ -80,7 +80,7 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
              transition={}\n\
              cache={}\n\
              source_anchor_sequence={}\n\
-             source_checkpoint_sequence={}",
+             source_checkpoint_sequence={}{}{}",
             identity_text("binding_identity", binding_identity),
             identity_text("model_identity", model_identity),
             identity_text("session_locator", session_locator),
@@ -89,6 +89,16 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
             cache_state_text(transition.cache()),
             sequence_text(transition.source_anchor_sequence()),
             sequence_text(transition.source_checkpoint_sequence()),
+            transition
+                .source_initial_fork_sequence()
+                .map_or_else(String::new, |sequence| {
+                    format!("\nsource_initial_fork_sequence={}", sequence.get())
+                }),
+            transition
+                .fork_seed_sequence()
+                .map_or_else(String::new, |sequence| {
+                    format!("\nfork_seed_sequence={}", sequence.get())
+                }),
         ),
         StoredRequestTraceRecord::BindingClosed { epoch, reason } => format!(
             "{prefix} binding.closed\n\
@@ -244,6 +254,7 @@ pub(super) const fn detail_availability_text(
 pub(super) const fn transition_mode_text(mode: StoredBindingTransitionMode) -> &'static str {
     match mode {
         StoredBindingTransitionMode::Initial => "initial",
+        StoredBindingTransitionMode::InitialFork => "initial-fork",
         StoredBindingTransitionMode::ExactReplay => "exact-replay",
         StoredBindingTransitionMode::BackendNativeModelRebind => "backend-native-model-rebind",
         StoredBindingTransitionMode::LossyHandoff => "lossy-handoff",

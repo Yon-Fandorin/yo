@@ -3,19 +3,20 @@ mod events;
 mod tests;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     num::NonZeroU64,
     sync::Arc,
 };
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use yo_backend::{BackendAdapter, transport::JsonMessagePeer};
 use yo_core::{
-    AccountId, ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef,
-    ActivityResponse, AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
-    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
-    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
-    ContinuationStrategy, HostId, ModelId, RequestId, SessionId, TurnRef,
+    AccountId, ActivityApproval, ActivityId, ActivityKind, ActivityOutcome, ActivityRef,
+    ActivityRequestRef, ActivityResponse, ActivityUpdate, AgentCommand, ApprovalDecision,
+    BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
+    BackendFailure, BackendFailureKind, BackendIdentity, BackendPoll, BackendRequestEvidence,
+    BackendResumeTarget, BackendStopHandle, ContinuationStrategy, HostId, ModelId, QuestionChoice,
+    RequestId, SessionId, TurnRef,
 };
 
 use crate::{
@@ -29,7 +30,7 @@ use crate::{
     transport::StdioPeer,
 };
 
-/// Receives bounded Codex app-server compatibility observations without owning process output.
+/// Receives Codex compatibility and server warnings without owning process output.
 pub type CodexWarningObserver = Arc<dyn Fn(CodexCompatibilityWarning) + Send + Sync + 'static>;
 
 /// Local stdio adapter for a compatible `codex app-server` process.
@@ -68,14 +69,10 @@ impl CodexBackend {
         let model_rebind_target = config
             .model_rebind_target()
             .map(|(account, model)| (account.clone(), model.clone()));
-        Ok(Self {
-            inner: Backend::new_uninitialized(
-                client,
-                cwd,
-                config.read_only_review(),
-                model_rebind_target,
-            ),
-        })
+        let mut inner =
+            Backend::new_uninitialized(client, cwd, config.read_only_review(), model_rebind_target);
+        inner.new_session_target = config.new_session_target().cloned();
+        Ok(Self { inner })
     }
 
     /// Verifies the local app-server handshake without creating a backend Session.
@@ -157,17 +154,51 @@ struct SessionBinding {
 
 struct ItemBinding {
     activity: ActivityRef,
+    public_summary: Option<BTreeMap<u64, String>>,
+    proposed_plan: Option<String>,
+    command: Option<Value>,
 }
 
-struct ApprovalBinding {
+struct RequestBinding {
+    file_approval: Option<(String, ActivityApproval)>,
     wire_id: Value,
     request_activity: ActivityRef,
+    kind: RequestKind,
+    responded: bool,
+}
+
+#[derive(Clone)]
+enum RequestKind {
+    Approval {
+        offered: Vec<Value>,
+        explicit: bool,
+        command: bool,
+    },
+    Input(InputQuestions),
+}
+
+#[derive(Clone)]
+struct InputQuestions {
+    questions: Vec<InputQuestion>,
+    current: usize,
+    answers: Map<String, Value>,
+    drafts: HashMap<String, (Option<u32>, String)>,
+}
+
+#[derive(Clone)]
+struct InputQuestion {
+    id: String,
+    prompt: String,
+    question: String,
+    options: Vec<String>,
+    choices: Vec<QuestionChoice>,
 }
 
 #[derive(Clone, Copy)]
 struct WireTurnBinding {
     turn: TurnRef,
     interrupted: bool,
+    finished: bool,
 }
 
 struct Backend<P> {
@@ -178,14 +209,20 @@ struct Backend<P> {
     cwd: String,
     read_only_review: bool,
     model_rebind_target: Option<(AccountId, ModelId)>,
+    new_session_target: Option<(AccountId, ModelId)>,
     session: Option<SessionBinding>,
     turns: HashMap<TurnRef, String>,
     wire_turns: HashMap<String, WireTurnBinding>,
     items: HashMap<String, ItemBinding>,
-    approvals: HashMap<ActivityRequestRef, ApprovalBinding>,
-    wire_approvals: HashMap<String, ActivityRequestRef>,
+    file_changes: HashMap<(TurnRef, String), ActivityRef>,
+    terminal_commands: HashMap<String, (TurnRef, Option<String>)>,
+    plans: HashMap<TurnRef, ActivityRef>,
+    turn_diffs: HashMap<TurnRef, ActivityRef>,
+    requests: HashMap<ActivityRequestRef, RequestBinding>,
+    wire_requests: HashMap<String, ActivityRequestRef>,
     turn_errors: HashMap<String, String>,
     pending_events: VecDeque<BackendEvent>,
+    terminal_poll: Option<Result<(), BackendFailure>>,
     next_activity_id: u64,
     next_request_id: u64,
 }
@@ -205,14 +242,20 @@ impl<P: JsonMessagePeer> Backend<P> {
             cwd,
             read_only_review,
             model_rebind_target,
+            new_session_target: None,
             session: None,
             turns: HashMap::new(),
             wire_turns: HashMap::new(),
             items: HashMap::new(),
-            approvals: HashMap::new(),
-            wire_approvals: HashMap::new(),
+            file_changes: HashMap::new(),
+            terminal_commands: HashMap::new(),
+            plans: HashMap::new(),
+            turn_diffs: HashMap::new(),
+            requests: HashMap::new(),
+            wire_requests: HashMap::new(),
             turn_errors: HashMap::new(),
             pending_events: VecDeque::new(),
+            terminal_poll: None,
             next_activity_id: 1,
             next_request_id: 1,
         }
@@ -228,13 +271,22 @@ impl<P: JsonMessagePeer> Backend<P> {
         &mut self,
         command: AgentCommand,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
+        if let AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. } =
+            &command
+            && !input.images().is_empty()
+        {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "Codex image input requires negotiated protocol and selected-model capability",
+            ));
+        }
         match command {
             AgentCommand::CreateSession { session_id } => self.create_session(session_id),
             AgentCommand::StartTurn { turn, input } => {
                 let thread_id = self.thread_id(turn.session_id())?.to_owned();
                 let mut params = json!({
                     "threadId": thread_id,
-                    "input": [{ "type": "text", "text": input.into_string() }],
+                    "input": [{ "type": "text", "text": input.into_model_input() }],
                     "cwd": self.cwd,
                 });
                 self.apply_turn_policy(&mut params);
@@ -246,6 +298,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                     WireTurnBinding {
                         turn,
                         interrupted: false,
+                        finished: false,
                     },
                 );
                 Ok(BackendCommandEvidence::RequestAccepted(
@@ -264,7 +317,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                     json!({
                         "threadId": thread_id,
                         "expectedTurnId": &turn_id,
-                        "input": [{ "type": "text", "text": input.into_string() }],
+                        "input": [{ "type": "text", "text": input.into_model_input() }],
                     }),
                 )?;
                 let accepted = protocol::string_at(&call.result, &["turnId"])?;
@@ -309,11 +362,29 @@ impl<P: JsonMessagePeer> Backend<P> {
             "cwd": self.cwd,
             "serviceName": "yo",
         });
+        if let Some((account, model)) = &self.new_session_target {
+            if self.model_rebind_target.is_some() || self.account.as_ref() != Some(account) {
+                return Err(BackendFailure::new(
+                    BackendFailureKind::Session,
+                    "new Session requires the selected authenticated account and no rebind target",
+                ));
+            }
+            params["model"] = json!(model.as_str());
+        }
         self.apply_thread_policy(&mut params);
         let result = self.client.call("thread/start", params)?.result;
         let thread_id = protocol::string_at(&result, &["thread", "id"])?.to_owned();
         let backend_session_id = protocol::string_at(&result, &["thread", "sessionId"])?;
         let model = protocol::string_at(&result, &["model"])?;
+        if self
+            .new_session_target
+            .as_ref()
+            .is_some_and(|(_, expected)| model != expected.as_str())
+        {
+            return Err(protocol::protocol_failure(
+                "new Session returned a different model",
+            ));
+        }
         let model_provider = protocol::string_at(&result, &["modelProvider"])?;
         let backend_version = self.backend_version.clone().ok_or_else(|| {
             protocol::protocol_failure("Codex backend version was not retained after initialize")
@@ -323,6 +394,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             "provider": model_provider,
         })
         .to_string();
+        self.client.bind_notice_thread(&thread_id);
         self.session = Some(SessionBinding {
             yo: session_id,
             codex: thread_id.clone(),
@@ -361,6 +433,12 @@ impl<P: JsonMessagePeer> Backend<P> {
         &mut self,
         target: &BackendResumeTarget,
     ) -> Result<BackendBindingEvidence, BackendFailure> {
+        if self.new_session_target.is_some() {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "a new-session target cannot be used to resume or fork a Session",
+            ));
+        }
         self.resume_binding(target.session_id(), target.binding())
     }
 
@@ -419,6 +497,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                 "Codex resumed a binding whose thread, Session, model, or provider identity differs from the durable Continuation Anchor",
             ));
         }
+        self.client.bind_notice_thread(resumed_thread);
         self.session = Some(SessionBinding {
             yo: session_id,
             codex: resumed_thread.to_owned(),
@@ -518,6 +597,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
             ContinuationStrategy::BackendManagedState,
         );
+        self.client.bind_notice_thread(thread_id);
         self.session = Some(SessionBinding {
             yo: session_id,
             codex: thread_id.to_owned(),
@@ -665,41 +745,275 @@ impl<P: JsonMessagePeer> Backend<P> {
         request: ActivityRequestRef,
         response: ActivityResponse,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
-        let approval = self.approvals.get(&request).ok_or_else(|| {
-            protocol::protocol_failure("approval response has no matching Codex request")
-        })?;
-        let decision = match response {
-            ActivityResponse::Approval(ApprovalDecision::Approved) => "accept",
-            ActivityResponse::Approval(ApprovalDecision::Declined) => "decline",
-            ActivityResponse::UserInput(_) => {
-                return Err(BackendFailure::new(
-                    BackendFailureKind::Unsupported,
-                    "Codex user-input responses are not enabled in the initial adapter",
+        let binding = self
+            .requests
+            .get(&request)
+            .filter(|binding| !binding.responded)
+            .ok_or_else(|| {
+                protocol::protocol_failure("response has no unanswered Codex request")
+            })?;
+        let wire_id = binding.wire_id.clone();
+        let mut next = None;
+        let response_text;
+        let navigating = matches!(response, ActivityResponse::PreviousQuestion { .. });
+        let (payload, response_kind) = match (&binding.kind, response) {
+            (
+                RequestKind::Approval {
+                    offered,
+                    explicit,
+                    command,
+                },
+                ActivityResponse::Approval(decision),
+            ) => {
+                let wire_decision = match decision {
+                    ApprovalDecision::Approved => json!("accept"),
+                    ApprovalDecision::Declined => json!("decline"),
+                    ApprovalDecision::Offered(choice) => choice
+                        .checked_sub(1)
+                        .and_then(|index| offered.get(index as usize))
+                        .filter(|value| events::approval_choice(value, *command).is_some())
+                        .cloned()
+                        .ok_or_else(|| {
+                            protocol::protocol_failure(
+                                "approval choice is outside the supported outstanding decisions",
+                            )
+                        })?,
+                };
+                // Native default menus do not remove protocol-level accept/decline support
+                // from legacy clients; only an explicit server list constrains those replies.
+                if *explicit && !offered.contains(&wire_decision) {
+                    return Err(protocol::protocol_failure(
+                        "approval decision was not offered by the outstanding Codex request",
+                    ));
+                }
+                response_text = match decision {
+                    ApprovalDecision::Approved => "Decision: approved".to_owned(),
+                    ApprovalDecision::Declined => "Decision: declined".to_owned(),
+                    ApprovalDecision::Offered(_) => {
+                        let choice = events::approval_choice(&wire_decision, *command)
+                            .expect("validated offered decision");
+                        format!("Decision: {}\n{}", choice.label, choice.description)
+                    },
+                };
+                (
+                    Some(json!({"decision": wire_decision})),
+                    ActivityKind::ApprovalResponse {
+                        request_id: request.request_id(),
+                    },
+                )
+            },
+            (
+                RequestKind::Input(questions),
+                ActivityResponse::PreviousQuestion { choice, draft },
+            ) => {
+                if questions.current == 0
+                    || choice.is_some_and(|choice| {
+                        choice == 0
+                            || choice as usize
+                                > questions.questions[questions.current].options.len()
+                    })
+                {
+                    return Err(protocol::protocol_failure(
+                        "previous question is unavailable or draft choice is invalid",
+                    ));
+                }
+                let mut questions = questions.clone();
+                questions.drafts.insert(
+                    questions.questions[questions.current].id.clone(),
+                    (choice, draft.as_str().to_owned()),
+                );
+                if questions
+                    .question_profile(questions.current)
+                    .to_snapshot()
+                    .is_none()
+                    || questions
+                        .question_profile(questions.current - 1)
+                        .to_snapshot()
+                        .is_none()
+                {
+                    return Err(protocol::protocol_failure(
+                        "question draft exceeds the presentation limit",
+                    ));
+                }
+                questions.current -= 1;
+                next = Some(questions);
+                response_text = String::new();
+                (
+                    None,
+                    ActivityKind::UserInputResponse {
+                        request_id: request.request_id(),
+                    },
+                )
+            },
+            (
+                RequestKind::Input(questions),
+                response @ (ActivityResponse::UserInput(_)
+                | ActivityResponse::QuestionAnswer { .. }),
+            ) => {
+                let mut questions = questions.clone();
+                let question = &questions.questions[questions.current];
+                let draft = match &response {
+                    ActivityResponse::UserInput(input) => (None, input.as_str().to_owned()),
+                    ActivityResponse::QuestionAnswer { choice, notes } => {
+                        (Some(*choice), notes.as_str().to_owned())
+                    },
+                    _ => unreachable!("input response matched above"),
+                };
+                let (answers, receipt) = match response {
+                    ActivityResponse::UserInput(answer) => {
+                        let selected = answer
+                            .as_str()
+                            .trim()
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|index| index.checked_sub(1))
+                            .and_then(|index| question.options.get(index));
+                        let answer = selected.map_or(answer.as_str(), String::as_str);
+                        (vec![answer.to_owned()], questions.receipt(answer, None))
+                    },
+                    ActivityResponse::QuestionAnswer { choice, notes } => {
+                        let selected = usize::try_from(choice)
+                            .ok()
+                            .and_then(|index| index.checked_sub(1))
+                            .and_then(|index| question.options.get(index))
+                            .ok_or_else(|| {
+                                protocol::protocol_failure(
+                                    "question choice is outside the outstanding options",
+                                )
+                            })?;
+                        let mut answers = vec![selected.clone()];
+                        if !notes.as_str().trim().is_empty() {
+                            answers.push(format!("user_note: {}", notes.as_str().trim()));
+                        }
+                        let receipt = questions.receipt(
+                            selected,
+                            Some(notes.as_str().trim()).filter(|notes| !notes.is_empty()),
+                        );
+                        (answers, receipt)
+                    },
+                    ActivityResponse::Approval(_) | ActivityResponse::PreviousQuestion { .. } => {
+                        unreachable!("input response matched above")
+                    },
+                };
+                questions.drafts.insert(question.id.clone(), draft);
+                response_text = receipt;
+                questions
+                    .answers
+                    .insert(question.id.clone(), json!({"answers": answers}));
+                questions.current += 1;
+                let payload = if questions.current == questions.questions.len() {
+                    Some(json!({"answers": questions.answers}))
+                } else {
+                    next = Some(questions);
+                    None
+                };
+                (
+                    payload,
+                    ActivityKind::UserInputResponse {
+                        request_id: request.request_id(),
+                    },
+                )
+            },
+            _ => {
+                return Err(protocol::protocol_failure(
+                    "response kind does not match the Codex request",
                 ));
             },
         };
-        let wire_id = approval.wire_id.clone();
+        let interview_progress = match &binding.kind {
+            RequestKind::Input(questions) => {
+                Some((questions.answers.len(), questions.questions.len()))
+            },
+            RequestKind::Approval { .. } => None,
+        };
         let response_activity = self.next_activity(request.activity().turn())?;
-        self.client
-            .respond(wire_id, json!({ "decision": decision }))?;
-        self.pending_events
-            .push_back(BackendEvent::ActivityStarted {
-                activity: response_activity,
-                kind: ActivityKind::ApprovalResponse {
-                    request_id: request.request_id(),
+        let next = next
+            .map(|questions| {
+                let activity = self.next_activity(request.activity().turn())?;
+                let request_id = self.next_request()?;
+                Ok::<_, BackendFailure>((
+                    questions,
+                    ActivityRequestRef::new(activity, request_id),
+                    events::wire_key(&wire_id)?,
+                ))
+            })
+            .transpose()?;
+        if let Some(payload) = payload {
+            self.client.respond(wire_id.clone(), payload).map_err(|failure| {
+                if let Some((recorded, total)) = interview_progress {
+                    BackendFailure::new(
+                        failure.kind(),
+                        format!(
+                            "{}\nInterview incomplete: {recorded}/{total} earlier answers recorded. Final submission was not confirmed.",
+                            failure.message()
+                        ),
+                    )
+                } else {
+                    failure
+                }
+            })?;
+            self.requests
+                .get_mut(&request)
+                .expect("validated request")
+                .responded = true;
+        }
+        if !navigating {
+            self.pending_events
+                .push_back(BackendEvent::ActivityStarted {
+                    activity: response_activity,
+                    kind: response_kind,
+                });
+            self.pending_events
+                .push_back(BackendEvent::ActivityUpdated {
+                    activity: response_activity,
+                    update: ActivityUpdate::TextSnapshot(response_text),
+                });
+            self.pending_events
+                .push_back(BackendEvent::ActivityFinished {
+                    activity: response_activity,
+                    outcome: ActivityOutcome::Completed,
+                });
+        }
+        if let Some((questions, successor, wire_key)) = next {
+            let activity = successor.activity();
+            let request_id = successor.request_id();
+            self.requests.remove(&request);
+            self.wire_requests.insert(wire_key, successor);
+            self.pending_events
+                .push_back(BackendEvent::ActivityFinished {
+                    activity: request.activity(),
+                    outcome: ActivityOutcome::Completed,
+                });
+            self.pending_events
+                .push_back(BackendEvent::ActivityStarted {
+                    activity,
+                    kind: ActivityKind::UserInputRequest { request_id },
+                });
+            self.pending_events
+                .push_back(BackendEvent::ActivityUpdated {
+                    activity,
+                    update: ActivityUpdate::TextSnapshot(questions.prompt()),
+                });
+            self.requests.insert(
+                successor,
+                RequestBinding {
+                    file_approval: None,
+                    wire_id,
+                    request_activity: activity,
+                    kind: RequestKind::Input(questions),
+                    responded: false,
                 },
-            });
-        self.pending_events
-            .push_back(BackendEvent::ActivityFinished {
-                activity: response_activity,
-                outcome: ActivityOutcome::Completed,
-            });
+            );
+        }
         Ok(BackendCommandEvidence::None)
     }
 
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
         if let Some(event) = self.pending_events.pop_front() {
             return Ok(BackendPoll::Event(event));
+        }
+        if let Some(terminal) = &self.terminal_poll {
+            return terminal.clone().map(|()| BackendPoll::Closed);
         }
         self.poll_client_message()
     }

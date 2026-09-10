@@ -222,3 +222,177 @@ fn interruption_waits_for_backend_terminal_events() {
     );
     assert_eq!(engine.active_turn(), None);
 }
+
+// 실제 fork bootstrap을 codec으로 복구한 뒤에도 parent의 Turn이나 합성 명령 없이 child의
+// 첫 실제 입력을 실행하며, 원본 Journal은 그대로 유지합니다.
+#[test]
+fn restores_fork_bootstrap_and_starts_a_real_child_turn() {
+    let recovered = fork_bootstrap();
+    let entries = recovered.semantic_entries();
+    let before = entries.clone();
+    let child = recovered.descriptor().unwrap().session_id();
+    let mut engine = AgentEngine::from_journal(&entries, false).unwrap();
+    assert_eq!(engine.session_id(), Some(child));
+    assert_eq!(engine.turn_count(), 0);
+    assert_eq!(engine.active_turn(), None);
+    assert!(entries.iter().all(|entry| !matches!(
+        entry.record(),
+        crate::journal::SemanticRecord::CommandCommitted(_)
+    )));
+
+    let first = turn(child, 1);
+    let events = engine
+        .handle_command(AgentCommand::StartTurn {
+            turn: first,
+            input: UserInput::from("continue in the child"),
+        })
+        .unwrap();
+    assert_eq!(events, vec![AgentEvent::TurnStarted { turn: first }]);
+    assert_eq!(engine.active_turn(), Some(first));
+    assert_eq!(engine.turn_count(), 1);
+    assert_eq!(
+        engine.active_turn_input().map(UserInput::as_str),
+        Some("continue in the child")
+    );
+    assert_eq!(entries, before);
+}
+
+// seed나 initial binding이 빠진 SessionCreated, 또는 seed의 parent를 child로 가장한 이벤트는
+// 일반 lifecycle 명령 없이 엔진 상태를 생성할 수 없습니다.
+#[test]
+fn rejects_unmatched_or_incomplete_fork_session_creation() {
+    let recovered = fork_bootstrap();
+    let entries = recovered.semantic_entries();
+    for incomplete in [&entries[..1], &entries[..2]] {
+        assert!(
+            AgentEngine::from_journal(incomplete, false)
+                .unwrap_err()
+                .contains("unexpected lifecycle event")
+        );
+    }
+    let mut foreign = crate::journal::SessionJournal::new();
+    foreign.append_events(&[AgentEvent::SessionCreated {
+        session_id: session(81),
+    }]);
+    let mut foreign_entries = foreign.semantic_entries();
+    foreign_entries.extend_from_slice(&entries[1..]);
+    assert!(
+        AgentEngine::from_journal(&foreign_entries, false)
+            .unwrap_err()
+            .contains("unexpected lifecycle event")
+    );
+
+    let mut ordinary = crate::journal::SessionJournal::new();
+    ordinary.append_committed_command(
+        AgentCommand::CreateSession {
+            session_id: session(82),
+        },
+        &[AgentEvent::SessionCreated {
+            session_id: session(82),
+        }],
+    );
+    let engine = AgentEngine::from_journal(&ordinary.semantic_entries(), false).unwrap();
+    assert_eq!(engine.session_id(), Some(session(82)));
+    assert_eq!(engine.turn_count(), 0);
+}
+
+fn fork_bootstrap() -> crate::journal::codec::RecoveredJournal {
+    use crate::{
+        BackendBindingEvidence, BackendIdentity, ContinuationStrategy, JournalSequence,
+        ModelReplayContract, ModelReplayItem, ModelReplayRole, ReplayExecutor, ReplayProfile,
+        journal::codec::{
+            BackendBindingOpened, BindingTransition, ContextPolicyChanged, ContextStrategy,
+            ForkExactReplay, ForkGroup, ForkItemCoordinate, ForkItemOrigin, ForkSeed, ForkSource,
+            ForkSourcePoint, InitialForkSeed, JournalCommit, JournalRecord, ReplaySequence,
+            SequencedJournalRecord, VersionedIdentity, decode, encode, recover,
+        },
+    };
+    let parent = session(81);
+    let child = session(82);
+    let source = BackendBindingEvidence::new(
+        "managed",
+        "1.0.0",
+        BackendIdentity::new("binding/v1", "account"),
+        BackendIdentity::new("model/v1", "model"),
+        BackendIdentity::new("locator/v1", "parent"),
+        ContinuationStrategy::ExactReplay {
+            executor: ReplayExecutor::LocalClient,
+            replay_profile: ReplayProfile::SemanticOnly,
+        },
+    );
+    let origin = ForkItemCoordinate::new(parent, 3, 2, JournalSequence::new(7), 0).unwrap();
+    let exact = ForkExactReplay::new(
+        ModelReplayContract::new("system", vec![]),
+        vec![ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "inherited context".into(),
+            refusal: None,
+        }],
+        vec![ForkItemOrigin::new(origin, origin, source.clone()).unwrap()],
+        vec![ForkGroup::new(0, 1).unwrap()],
+    )
+    .unwrap();
+    let seed = InitialForkSeed::new(
+        child,
+        parent,
+        ForkSource::Anchor(
+            ForkSourcePoint::new(
+                3,
+                2,
+                JournalSequence::new(9),
+                JournalSequence::new(8),
+                source.clone(),
+            )
+            .unwrap(),
+        ),
+        ForkSeed::ExactReplay(exact),
+        vec![],
+        2,
+    )
+    .unwrap();
+    let records = vec![
+        JournalRecord::SessionDescriptor(crate::fixture_descriptor(child)),
+        JournalRecord::EventCommitted(AgentEvent::SessionCreated { session_id: child }),
+        JournalRecord::InitialForkSeed(Box::new(seed)),
+        JournalRecord::BackendBindingOpened(BackendBindingOpened::new(
+            1,
+            source.backend_kind(),
+            source.backend_version(),
+            VersionedIdentity::new("binding/v1", "account"),
+            VersionedIdentity::new("model/v1", "model"),
+            VersionedIdentity::new("locator/v1", "child"),
+            BindingTransition::initial_fork(JournalSequence::new(2)),
+            source.continuation_strategy(),
+        )),
+        JournalRecord::ContextPolicyChanged(
+            ContextPolicyChanged::try_new(
+                1,
+                true,
+                ContextStrategy::PortableSummaryV1Alpha1,
+                85,
+                90,
+                Some(10),
+                Some(65_536),
+            )
+            .unwrap(),
+        ),
+    ];
+    let records = records
+        .into_iter()
+        .enumerate()
+        .map(|(index, record)| {
+            let replay_sequence = ReplaySequence::new(index as u64 + 1);
+            if index == 0 {
+                SequencedJournalRecord::storage(replay_sequence, record)
+            } else {
+                SequencedJournalRecord::with_journal_sequence(
+                    replay_sequence,
+                    JournalSequence::new(index as u64),
+                    record,
+                )
+            }
+        })
+        .collect();
+    let commit = JournalCommit::incremental_through(JournalSequence::new(4), records);
+    recover(&[decode(&encode(&commit).unwrap()).unwrap()]).unwrap()
+}

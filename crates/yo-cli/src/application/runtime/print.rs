@@ -9,8 +9,9 @@ use super::{
         },
         output::write_command_output,
     },
-    PreparedAgent, StartupFrontend, StartupOutcome, StartupSnapshots, shutdown_live_session,
-    startup,
+    PreparedAgent, StartupFrontend, StartupOutcome, StartupSnapshots,
+    session::termination_requested,
+    shutdown_live_session, startup,
 };
 use crate::{
     application::live_selection as live,
@@ -38,6 +39,7 @@ pub(in crate::application) fn run_print_session(
     let startup = command::LiveOptions {
         mode: yo_tui::PresentationMode::Inline,
         glyph_profile: yo_tui::GlyphProfile::Rich,
+        theme: None,
         selection: options.selection,
         model: options.model,
         no_tools: options.no_tools,
@@ -137,14 +139,6 @@ fn finish_print_output(
         AppError::message("print session completed without buffered final-response output")
     })?;
     publish(output)
-}
-
-fn termination_requested(termination: &mut impl yo_tui::TerminationSource) -> bool {
-    use std::task::{Context, Poll};
-
-    let waker = std::task::Waker::noop();
-    let mut context = Context::from_waker(waker);
-    termination.poll_termination(&mut context) == Poll::Ready(yo_tui::TerminationEvent::Requested)
 }
 
 #[cfg(test)]

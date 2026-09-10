@@ -7,6 +7,9 @@ use std::{
 use super::{TerminalOp, TerminalOps};
 use crate::surface::{Attributes, Color, Size, Style};
 
+// End an interrupted control string, then close any hyperlink it may have opened.
+pub(crate) const RESET_HYPERLINK: &[u8] = b"\x1b\\\x1b]8;;\x1b\\";
+
 /// Encodes validated terminal operations into deterministic ANSI bytes.
 pub struct AnsiEncoder<Writer> {
     writer: Writer,
@@ -54,6 +57,13 @@ impl<Writer: Write> AnsiEncoder<Writer> {
     pub(crate) fn encode_content_operation(&mut self, operation: TerminalOp<'_>) -> io::Result<()> {
         match operation {
             TerminalOp::SetStyle(style) => self.encode_style(style),
+            TerminalOp::SetHyperlink(link) => {
+                self.writer.write_all(b"\x1b]8;;")?;
+                if let Some(link) = link {
+                    self.writer.write_all(link.destination().as_bytes())?;
+                }
+                self.writer.write_all(b"\x1b\\")
+            },
             TerminalOp::WriteGrapheme { text, .. } => self.writer.write_all(text.as_bytes()),
             TerminalOp::WriteBlank { count } => self.encode_blanks(count.get()),
             TerminalOp::FrameSizeChanged { .. }
@@ -85,6 +95,7 @@ impl<Writer: Write> AnsiEncoder<Writer> {
                 )
             },
             TerminalOp::SetStyle(_)
+            | TerminalOp::SetHyperlink(_)
             | TerminalOp::WriteGrapheme { .. }
             | TerminalOp::WriteBlank { .. } => self.encode_content_operation(operation),
             TerminalOp::SetCursorVisible(visible) => {

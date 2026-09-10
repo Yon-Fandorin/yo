@@ -163,3 +163,90 @@ fn turn_outcomes_distinguish_completion_interruption_and_failure() {
     assert_eq!(observed_turn, turn);
     assert_eq!(observed_outcome, TurnOutcome::Failed(failure));
 }
+
+// 승인 표시 프로필은 64개 경계와 거절 위치를 검증하고 잘못된 스키마·비활성 기본값을 받지 않는다.
+#[test]
+fn approval_profile_bounds_choices_and_decline_identity() {
+    use crate::{ActivityApproval, ApprovalChoice, ToolOutput};
+    let choice = ApprovalChoice {
+        label: "Decline".into(),
+        description: "No grant".into(),
+        enabled: true,
+    };
+    let mut profile = ActivityApproval {
+        related_change: None,
+        plain_text: "Review".into(),
+        choices: vec![choice; 64],
+        decline_choice: Some(64),
+    };
+    profile.related_change = Some(0);
+    assert!(profile.to_snapshot().is_none());
+    profile.related_change = Some(12);
+    let linked = profile.to_snapshot().unwrap();
+    assert_eq!(
+        ActivityApproval::from_snapshot(&linked),
+        Some(profile.clone())
+    );
+    profile.related_change = None;
+    let snapshot = profile.to_snapshot().unwrap();
+    assert!(!snapshot.contains("related_change"));
+    assert_eq!(
+        ActivityApproval::from_snapshot(&snapshot),
+        Some(profile.clone())
+    );
+    assert!(
+        ActivityApproval::from_snapshot(
+            &snapshot.replace(ActivityApproval::SCHEMA, "yo.activity-approval/v2")
+        )
+        .is_none()
+    );
+    profile.choices.push(profile.choices[0].clone());
+    assert!(profile.to_snapshot().is_none());
+    profile.choices.pop();
+    for invalid in [0, 65, u32::MAX] {
+        profile.decline_choice = Some(invalid);
+        assert!(profile.to_snapshot().is_none());
+    }
+    profile.decline_choice = Some(1);
+    profile.choices[0].enabled = false;
+    assert!(profile.to_snapshot().is_none());
+    profile.decline_choice = None;
+    profile.choices.clear();
+    assert!(profile.to_snapshot().is_some());
+    let overhead = profile.to_snapshot().unwrap().len() - profile.plain_text.len();
+    profile.plain_text = "x".repeat(ToolOutput::MAX_SNAPSHOT_BYTES - overhead);
+    let exact = profile.to_snapshot().unwrap();
+    assert_eq!(exact.len(), ToolOutput::MAX_SNAPSHOT_BYTES);
+    assert_eq!(
+        ActivityApproval::from_snapshot(&exact),
+        Some(profile.clone())
+    );
+    profile.plain_text.push('x');
+    assert!(profile.to_snapshot().is_none());
+}
+
+// 메시지 콘텐츠는 알 수 없는 필드까지 보존하며 정확한 크기 상한만 허용한다.
+#[test]
+fn message_content_round_trip_and_first_excess() {
+    use serde_json::json;
+
+    use crate::{MessageContent, ToolOutput};
+    let mut content = MessageContent {
+        block: json!({"type":"future","data":"","_meta":{"revision":3}}),
+    };
+    let small = content.to_snapshot().unwrap();
+    assert_eq!(MessageContent::from_snapshot(&small), Some(content.clone()));
+    assert!(
+        MessageContent::from_snapshot(&small.replace(MessageContent::SCHEMA, "other")).is_none()
+    );
+    content.block["data"] = "x"
+        .repeat(ToolOutput::MAX_SNAPSHOT_BYTES - small.len())
+        .into();
+    let exact = content.to_snapshot().unwrap();
+    assert_eq!(exact.len(), ToolOutput::MAX_SNAPSHOT_BYTES);
+    assert_eq!(MessageContent::from_snapshot(&exact), Some(content.clone()));
+    let data = content.block["data"].as_str().unwrap().to_owned() + "x";
+    content.block["data"] = data.into();
+    assert!(content.to_snapshot().is_none());
+    assert!(MessageContent::from_snapshot(&(exact + " ")).is_none());
+}

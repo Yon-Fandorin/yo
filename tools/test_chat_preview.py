@@ -26,7 +26,7 @@ class PreviewTests(unittest.TestCase):
         directory = Path(kwargs["env"]["YO_TUI_PREVIEW_DIR"])
         for scenario in preview.SCENARIOS:
             for width in preview.WIDTHS:
-                for palette in ("color", "plain"):
+                for palette in preview.PALETTES:
                     for extension in ("ansi", "html"):
                         (directory / f"{scenario}-{palette}-{width}.{extension}").write_text(scenario)
         return subprocess.CompletedProcess(command, 0)

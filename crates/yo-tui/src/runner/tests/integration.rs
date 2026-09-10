@@ -134,6 +134,6 @@ fn projects_fake_backend_coding_activities_through_core_into_tui() {
         .join("\n");
     assert!(rows.contains("Tool completed"));
     assert!(rows.contains("$ cargo test"));
-    assert!(rows.contains("File change observed"));
+    assert!(rows.contains("Changes completed"));
     assert!(rows.contains("update: src/lib.rs"));
 }

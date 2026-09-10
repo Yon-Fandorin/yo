@@ -365,3 +365,129 @@ fn crossing_destination_footprint_preserves_surface_atomically() {
     assert_eq!(error, PanelPaintError::SurfaceConflict);
     assert_eq!(surface, before);
 }
+
+// 요청 선택지 설명은 선택 이동과 좁은 폭에 맞춰 다시 흐르고 부족한 높이는 명시한다.
+#[test]
+fn request_selection_wraps_description_and_marks_hidden_detail() {
+    let mut panel = SelectionPanel::new(
+        snapshot(vec![
+            SelectionEntry::enabled_with_context(
+                "once",
+                "Allow once",
+                None,
+                Some("Run only this command; future commands need approval.".into()),
+            ),
+            SelectionEntry::enabled_with_context(
+                "session",
+                "Allow this session",
+                None,
+                Some("이 세션의 이후 명령에도 적용합니다".into()),
+            ),
+        ])
+        .for_request(true),
+    );
+    let (surface, size) = render(&panel, Size::new(32, 14)).unwrap();
+    let text = (3..size.height - 1)
+        .map(|y| row(&surface, y))
+        .collect::<String>();
+    assert!(text.contains("Run only this command;"), "{text}");
+    assert!(text.contains("future commands need"), "{text}");
+    panel.next();
+    let (surface, size) = render(&panel, Size::new(24, 14)).unwrap();
+    let text = (3..size.height - 1)
+        .map(|y| row(&surface, y))
+        .collect::<String>();
+    assert!(text.contains("이 세션의 이후"), "{text}");
+    assert!(!text.contains("future commands"), "{text}");
+    let (surface, size) = render(&panel, Size::new(24, 5)).unwrap();
+    assert_eq!(size.height, 5);
+    assert!(row(&surface, 3).contains("… PgUp:"));
+    assert_eq!(panel.selected_identity().unwrap().as_str(), "session");
+    assert!(render(&panel, Size::new(24, 4)).is_some());
+}
+
+// tree opt-in의 긴 설명은 20x10에서 한 줄 겹치는 page 단위로 끝까지 읽히고 resize 뒤 offset을
+// 새 높이에 맞춰 제한합니다. 일반 picker의 한 줄 렌더링은 변경하지 않습니다.
+#[test]
+fn wrapped_tree_lines_are_reachable_and_resize_clamps_scroll() {
+    let id = "01890f00-0000-7000-8000-000000000001";
+    let parent = "01890f00-0000-7000-8000-000000000002";
+    let lines = (0..24)
+        .map(|index| format!("source-line-{index:02}"))
+        .collect::<Vec<_>>();
+    let detail = format!("Parent {parent} {} ancestor missing", lines.join(" "));
+    let mut panel = SelectionPanel::new(
+        snapshot(vec![SelectionEntry::enabled(id, id, Some(detail))]).with_wrapped_entries(),
+    );
+    let mut frames = Vec::new();
+    for _ in 0..40 {
+        let (surface, size) = render(&panel, Size::new(20, 10)).unwrap();
+        assert_eq!(size.height, 10);
+        assert!(row(&surface, size.height - 1).contains("PgUp/Dn"));
+        frames.push(
+            (1..size.height - 1)
+                .map(|y| row(&surface, y))
+                .collect::<String>()
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect::<String>(),
+        );
+        assert!(panel.scroll_wrapped(true));
+    }
+    for expected in lines
+        .iter()
+        .map(String::as_str)
+        .chain([id, parent, "ancestormissing"])
+    {
+        assert!(
+            frames.iter().any(|frame| frame.contains(expected)),
+            "unreachable {expected}"
+        );
+    }
+    let (surface, size) = render(&panel, Size::new(80, 40)).unwrap();
+    let expanded = (1..size.height - 1)
+        .map(|y| row(&surface, y))
+        .collect::<String>()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect::<String>();
+    assert!(expanded.contains(id));
+    assert!(expanded.contains("ancestormissing"));
+    let (surface, _) = render(&panel, Size::new(20, 10)).unwrap();
+    assert!(row(&surface, 1).contains("01890"));
+}
+
+// tree의 enabled/disabled 혼합 목록은 모든 노드를 읽을 수 있지만 placeholder와 제한 안내는
+// 선택 identity를 갖지 않아 Enter로 재개되지 않습니다.
+#[test]
+fn wrapped_tree_browses_disabled_nodes_and_truncation_without_acceptance() {
+    let mut panel = SelectionPanel::new(
+        snapshot(vec![
+            enabled("first", "first session"),
+            SelectionEntry::status("missing", "Ancestor missing"),
+            SelectionEntry::status("current", "Current session"),
+            enabled("last", "last session"),
+            SelectionEntry::status("limit", "Query limit reached"),
+        ])
+        .with_wrapped_entries(),
+    );
+    for (expected, selectable) in [
+        ("firstsession", true),
+        ("Ancestormissing", false),
+        ("Currentsession", false),
+        ("lastsession", true),
+        ("Querylimitreached", false),
+    ] {
+        let (surface, size) = render(&panel, Size::new(20, 10)).unwrap();
+        let text = (1..size.height - 1)
+            .map(|y| row(&surface, y))
+            .collect::<String>()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect::<String>();
+        assert!(text.contains(expected));
+        assert_eq!(panel.selected_identity().is_some(), selectable);
+        panel.next();
+    }
+    assert_eq!(panel.selected_identity().unwrap().as_str(), "first");
+}

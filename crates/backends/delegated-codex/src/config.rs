@@ -15,6 +15,7 @@ pub struct CodexBackendConfig {
     shutdown_timeout: Duration,
     read_only_review: bool,
     model_rebind_target: Option<(AccountId, ModelId)>,
+    new_session_target: Option<(AccountId, ModelId)>,
 }
 
 impl CodexBackendConfig {
@@ -26,6 +27,7 @@ impl CodexBackendConfig {
             shutdown_timeout: Duration::from_secs(2),
             read_only_review: false,
             model_rebind_target: None,
+            new_session_target: None,
         }
     }
 
@@ -88,6 +90,17 @@ impl CodexBackendConfig {
     pub fn with_read_only_review(mut self, enabled: bool) -> Self {
         self.read_only_review = enabled;
         self
+    }
+
+    /// Pins the authenticated account and model for a new independent thread.
+    /// This does not fork or resume an existing conversation.
+    pub fn with_new_session_target(mut self, account: AccountId, model: ModelId) -> Self {
+        self.new_session_target = Some((account, model));
+        self
+    }
+
+    pub(crate) fn new_session_target(&self) -> Option<&(AccountId, ModelId)> {
+        self.new_session_target.as_ref()
     }
 
     pub fn with_model_rebind_target(mut self, account: AccountId, model: ModelId) -> Self {

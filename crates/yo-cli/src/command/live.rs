@@ -1,9 +1,10 @@
 use clap::ValueEnum;
-use yo_tui::{GlyphProfile, PresentationMode};
+use yo_tui::{GlyphProfile, PresentationMode, Theme};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LiveOptions {
     pub(crate) mode: PresentationMode,
+    pub(crate) theme: Option<Theme>,
     pub(crate) glyph_profile: GlyphProfile,
     pub(crate) selection: LiveSelection,
     pub(crate) model: Option<String>,
@@ -42,6 +43,7 @@ pub(super) fn from_cli(
     };
     Ok(LiveOptions {
         mode,
+        theme: None,
         glyph_profile: output.glyph_profile,
         selection,
         model,

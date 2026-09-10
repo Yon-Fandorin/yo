@@ -44,6 +44,7 @@ pub(super) fn request(
     arguments: &str,
 ) -> ToolExecutionRequest {
     ToolExecutionRequest {
+        maximum_retained_output_bytes: None,
         turn: TurnRef::new(
             SessionId::new().unwrap(),
             TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
@@ -331,4 +332,90 @@ fn mutation_failures_preserve_targets_and_credential_identity() {
         r#"{"path":"alias.txt","status":"error","error":"unavailable"}"#
     );
     assert_eq!(fs::read_to_string(&credential).unwrap(), "secret");
+}
+
+// 진행 중 두 스트림을 각각 승인하고 JSON framing 앞에 숨은 미완성 credential도 먼저 내보내지
+// 않는다.
+#[test]
+fn command_progress_admission_withholds_incomplete_credentials() {
+    use serde_json::{Value, json};
+    use yo_core::{AccountId, ApiCredential, CredentialStore, ProviderId};
+    let admission = LocalSemanticAdmission::new(
+        CredentialStore::new([(
+            (
+                ProviderId::new("provider").unwrap(),
+                AccountId::new("account").unwrap(),
+            ),
+            ApiCredential::new("sk-sensitive").unwrap(),
+        )])
+        .unwrap(),
+    );
+    let registry = registry(LocalToolRegistryRevision::BasicFiles)
+        .unwrap()
+        .freeze();
+    let definition = registry
+        .definitions()
+        .iter()
+        .find(|definition| definition.wire_name() == "run_command")
+        .unwrap();
+    let admitted = admission
+        .admit_progress(
+            definition,
+            &json!({"stdout":"ready sk-sens","stderr":"warning s"}).to_string(),
+        )
+        .unwrap()
+        .unwrap();
+    let value: Value = serde_json::from_str(&admitted).unwrap();
+    assert_eq!(value, json!({"stdout":"ready ","stderr":"warning "}));
+    assert!(
+        admission
+            .admit_progress(
+                definition,
+                &json!({"stdout":"ready sk-sensitive","stderr":""}).to_string()
+            )
+            .is_err()
+    );
+    assert!(admission.admit_progress(definition, "{broken").is_err());
+}
+
+// 실제 host에서 모델용 결과에 남지 않은 중간 credential도 보존용 출력의 admission이 거절한다.
+#[test]
+fn retained_command_output_cannot_bypass_local_credential_admission() {
+    use serde_json::json;
+    use yo_core::{AccountId, ApiCredential, CredentialStore, ProviderId};
+
+    let directory = TestDirectory::new();
+    fs::write(
+        directory.0.join("output.txt"),
+        format!("{}sk-sensitive{}", "x".repeat(512), "y".repeat(512)),
+    )
+    .unwrap();
+    let mut host = LocalToolHost::new(&directory.0, &directory.0.join("credentials.yaml")).unwrap();
+    let registry = registry(LocalToolRegistryRevision::BasicFiles).unwrap();
+    let mut execution_request = request(
+        &registry,
+        "run_command",
+        &json!({"command":"cat output.txt"}).to_string(),
+    );
+    execution_request.maximum_output_bytes = 256;
+    execution_request.maximum_retained_output_bytes = Some(4096);
+    let definition = execution_request.call.definition().clone();
+    let mut execution = host.start(execution_request).unwrap();
+    let result = finish(execution.as_mut());
+    let admission = LocalSemanticAdmission::new(
+        CredentialStore::new([(
+            (
+                ProviderId::new("provider").unwrap(),
+                AccountId::new("account").unwrap(),
+            ),
+            ApiCredential::new("sk-sensitive").unwrap(),
+        )])
+        .unwrap(),
+    );
+    assert!(!result.output().contains("sk-sensitive"));
+    assert!(admission.admit_output(&definition, result.output()).is_ok());
+    let (retained, truncated) = result.retained_output().unwrap();
+    assert!(!truncated);
+    assert!(retained.contains("sk-sensitive"));
+    assert!(admission.admit_output(&definition, retained).is_err());
 }

@@ -20,7 +20,7 @@ use nix::{
 use yo_core::{ToolExecution, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionResult};
 
 use super::{
-    CommandExecution, ProcessGroupLease,
+    CommandExecution, OUTPUT_FRAMING_RESERVE, ProcessGroupLease,
     limits::{CommandExecutionLimits, OUTPUT_INACTIVITY_TIMEOUT},
     process::WaiterTestHooks,
     shell_command,
@@ -105,6 +105,7 @@ fn spawn_with_waiter_hooks(
         maximum_output_bytes,
         limits,
         waiter_hooks,
+        None,
     )
     .unwrap()
 }
@@ -568,4 +569,120 @@ fn delayed_exit_observation_returns_on_time_and_eventually_reaps_once() {
 
     assert_eq!(reap_count.load(Ordering::Acquire), 1);
     assert_eq!(probe, Err(Errno::ECHILD));
+}
+
+// 명령이 종료 신호를 기다리는 동안 실제 stdout/stderr snapshot이 보이고 최종 결과로 교체된다.
+#[test]
+fn command_progress_is_visible_before_process_exit_and_closes_afterwards() {
+    let release = unique_pid_path("progress-release");
+    let command = format!(
+        "printf 'ready\n'; printf 'warning\n' >&2; while [ ! -f {} ]; do sleep 0.02; done; printf 'done\n'",
+        shell_quote(release.to_str().unwrap())
+    );
+    let mut execution = spawn(
+        &command,
+        limits(Duration::from_secs(3), Some(Duration::from_secs(5))),
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut observed = false;
+    while Instant::now() < deadline {
+        assert_eq!(execution.poll().unwrap(), ToolExecutionPoll::Pending);
+        if let Some(progress) = execution.take_progress() {
+            let value: serde_json::Value = serde_json::from_str(&progress.output).unwrap();
+            if value["stdout"] == "ready\n" && value["stderr"] == "warning\n" {
+                assert!(!progress.truncated);
+                observed = true;
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    fs::write(&release, b"release").unwrap();
+    let result = finish(&mut execution);
+    fs::remove_file(&release).unwrap();
+    assert!(
+        observed,
+        "output must arrive while the process is still waiting"
+    );
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
+    assert!(result.output().contains("ready\ndone\n"));
+    assert!(result.output().contains("warning\n"));
+    assert!(execution.take_progress().is_none());
+}
+
+// 모델용 head·tail에서 사라진 중간 출력도 별도 보존 예산 안에서는 원문 그대로 남는다.
+// stdout 보존 한도의 마지막 byte와 첫 초과에서 생략 관측이 정확히 전환된다.
+#[test]
+fn command_retention_preserves_the_middle_and_reports_its_own_limit() {
+    for length in [1024, 1025] {
+        let command = format!(
+            "printf BEGIN; head -c {} /dev/zero | tr '\\000' x; printf END",
+            length - 8
+        );
+        let mut execution = CommandExecution::spawn_with_limits_and_hooks(
+            PathBuf::from("/tmp"),
+            command,
+            256,
+            CommandExecutionLimits::for_agent(Some(Duration::from_secs(3))),
+            WaiterTestHooks::default(),
+            Some(2 * 1024 + OUTPUT_FRAMING_RESERVE),
+        )
+        .unwrap();
+        let result = finish(&mut execution);
+        assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
+        assert!(result.truncated());
+        assert!(result.output().contains("bytes omitted"));
+        let (retained, truncated) = result.retained_output().expect("retained command output");
+        assert_eq!(truncated, length > 1024);
+        if length == 1024 {
+            assert_eq!(
+                retained,
+                format!(
+                    "status: 0\nstdout:\nBEGIN{}END\nstderr:\n",
+                    "x".repeat(length - 8)
+                )
+            );
+        } else {
+            assert!(retained.contains("bytes omitted"));
+            assert!(retained.contains("BEGIN"));
+            assert!(retained.contains("END"));
+        }
+    }
+}
+
+// deadline·signal·비정상 종료의 구체적인 상태와 그 전의 출력을 보존용 원문에서 읽는다.
+#[test]
+fn retained_command_output_preserves_interruption_reason_and_capture() {
+    for (command, outcome, status) in [
+        (
+            "printf before-timeout; sleep 2",
+            ToolExecutionOutcome::Interrupted,
+            "run_command absolute execution deadline expired",
+        ),
+        (
+            "printf before-timeout; kill -TERM $$",
+            ToolExecutionOutcome::Failed,
+            "status: signal",
+        ),
+        (
+            "printf before-timeout; exit 7",
+            ToolExecutionOutcome::Failed,
+            "status: 7",
+        ),
+    ] {
+        let mut execution = CommandExecution::spawn_with_limits_and_hooks(
+            PathBuf::from("/tmp"),
+            command.to_owned(),
+            256,
+            CommandExecutionLimits::for_agent(Some(Duration::from_millis(100))),
+            WaiterTestHooks::default(),
+            Some(4096),
+        )
+        .unwrap();
+        let result = finish(&mut execution);
+        assert_eq!(result.outcome(), outcome);
+        let (retained, _) = result.retained_output().unwrap();
+        assert!(retained.contains(status), "{retained}");
+        assert!(retained.contains("before-timeout"));
+    }
 }

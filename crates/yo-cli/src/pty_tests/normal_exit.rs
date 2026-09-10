@@ -1,4 +1,5 @@
 use std::{
+    env::var_os,
     error::Error,
     io::Write,
     panic::AssertUnwindSafe,
@@ -12,7 +13,10 @@ use std::{
 };
 
 use nix::sys::signal::Signal;
-use yo_tui::{PresentationMode, TerminationEvent, TerminationSource};
+use yo_tui::{
+    ColorCapability, MotionPreference, PresentationMode, TerminalOutcome, TerminationEvent,
+    TerminationSource, Theme, TuiSession, run_session_with_mode,
+};
 
 use super::support::{
     CHILD_MARKER, ChildReapReceipt, ENTER_ALTERNATE_SCREEN, PtyChild, ReadinessWaitFailure,
@@ -25,6 +29,45 @@ type ConsumingReadinessWait =
     fn(PtyChild, usize, Duration) -> Result<(PtyChild, usize), ReadinessWaitFailure>;
 
 struct PendingTermination;
+
+// 실제 PTY에서 테마·오프라인 preview·긴 로그 펼치기·resize·종료 복원을 함께 확인한다.
+#[test]
+fn themed_preview_expands_tools_and_restores_real_pty() {
+    let mut child = PtyChild::spawn_with_ready_markers(
+        "pty_tests::normal_exit::child_themed_preview",
+        &[
+            b"Ask anything",
+            b"PREVIEW",
+            b"Ctrl+O expand",
+            b"Check 03",
+            b"Let's build something.",
+        ],
+    );
+    child.wait_until_ready();
+    child.input().write_all(b"/preview\r").unwrap();
+    child.input().flush().unwrap();
+    child.wait_until_ready_marker(1);
+    child.input().write_all(b"long-tools\r").unwrap();
+    child.input().flush().unwrap();
+    let folded = child.wait_until_ready_marker(2);
+    child.resize(100, 30);
+    child.input().write_all(&[0x0f]).unwrap();
+    child.input().flush().unwrap();
+    let expanded = child.wait_until_ready_marker_after(3, folded);
+    child.input().write_all(&[0x04]).unwrap();
+    child.input().flush().unwrap();
+    child.wait_until_ready_marker_after(4, expanded);
+    child.input().write_all(&[0x04]).unwrap();
+    child.input().flush().unwrap();
+    let (status, output) = child.finish();
+    assert!(status.success(), "{}", String::from_utf8_lossy(&output));
+    assert_fullscreen_pair(&output);
+    assert!(
+        output
+            .windows(b"38;2;25;105;109".len())
+            .any(|part| part == b"38;2;25;105;109")
+    );
+}
 
 impl TerminationSource for PendingTermination {
     fn poll_termination(&mut self, _context: &mut Context<'_>) -> Poll<TerminationEvent> {
@@ -47,16 +90,16 @@ fn run_inline_with_retained_chat(
         termination,
         agent,
         PresentationMode::Inline,
-        yo_tui::ColorCapability::Unknown,
-        yo_tui::MotionPreference::Standard,
+        ColorCapability::Unknown,
+        MotionPreference::Standard,
     )?;
     match outcome {
-        yo_tui::TerminalOutcome::Exited(outcome) => {
+        TerminalOutcome::Exited(outcome) => {
             if let Some(output) = outcome.output() {
                 super::super::write_session_output(output)?;
             }
         },
-        yo_tui::TerminalOutcome::SuspendRequested => {
+        TerminalOutcome::SuspendRequested => {
             return Err("unexpected suspension in retained-chat PTY helper".into());
         },
         _ => return Err("unsupported terminal outcome in retained-chat PTY helper".into()),
@@ -357,23 +400,59 @@ fn fullscreen_normal_exit_restores_real_pty() {
         String::from_utf8_lossy(&output)
     );
     assert_fullscreen_pair(&output);
+    let mouse_on = b"\x1b[?1006h\x1b[?1000h";
+    let mouse_off = b"\x1b[?1000l\x1b[?1006l";
+    let enter = output
+        .windows(mouse_on.len())
+        .position(|bytes| bytes == mouse_on)
+        .expect("fullscreen captures wheel events");
+    let leave = output
+        .windows(mouse_off.len())
+        .position(|bytes| bytes == mouse_off)
+        .expect("exit releases mouse tracking and encoding");
+    assert!(enter < leave);
 }
 
 // 부모 테스트가 마련한 PTY 안에서 정상 Ctrl+D 종료 경로만 실행하는 자식 진입점이다.
 #[test]
 #[ignore]
 fn child_fullscreen_normal_exit() {
-    if std::env::var_os(CHILD_MARKER).is_none() {
+    if var_os(CHILD_MARKER).is_none() {
         return;
     }
     run_fullscreen(&mut PendingTermination).unwrap();
+}
+
+// 실제 model 없이 production Session runner와 light palette를 실행하는 자식이다.
+#[test]
+#[ignore]
+fn child_themed_preview() {
+    if var_os(CHILD_MARKER).is_none() {
+        return;
+    }
+    let mut session = TuiSession::new(ColorCapability::TrueColor, MotionPreference::Reduced)
+        .with_theme(Theme::Light);
+    let outcome = run_session_with_mode(
+        &mut PendingTermination,
+        &mut PendingAgent,
+        &mut session,
+        PresentationMode::Fullscreen,
+    )
+    .unwrap();
+    let TerminalOutcome::Exited(outcome) = outcome else {
+        panic!("preview should exit normally");
+    };
+    assert!(
+        outcome.output().is_none(),
+        "preview must not enter the real conversation"
+    );
 }
 
 // 부모 테스트가 마련한 PTY에서 deterministic 일반 대화를 그린 뒤 Inline 정상 종료한다.
 #[test]
 #[ignore]
 fn child_inline_retains_chat() {
-    if std::env::var_os(CHILD_MARKER).is_none() {
+    if var_os(CHILD_MARKER).is_none() {
         return;
     }
     let mut agent = RetainedChatAgent::new();
@@ -385,7 +464,7 @@ fn child_inline_retains_chat() {
 #[test]
 #[ignore]
 fn child_inline_retains_large_chat() {
-    if std::env::var_os(CHILD_MARKER).is_none() {
+    if var_os(CHILD_MARKER).is_none() {
         return;
     }
     let mut agent = RetainedChatAgent::new_with_large_publication();
@@ -396,7 +475,7 @@ fn child_inline_retains_large_chat() {
 #[test]
 #[ignore]
 fn child_inline_empty_prompt() {
-    if std::env::var_os(CHILD_MARKER).is_none() {
+    if var_os(CHILD_MARKER).is_none() {
         return;
     }
     let mut agent = PendingAgent;
@@ -404,8 +483,8 @@ fn child_inline_empty_prompt() {
         &mut PendingTermination,
         &mut agent,
         PresentationMode::Inline,
-        yo_tui::ColorCapability::Unknown,
-        yo_tui::MotionPreference::Standard,
+        ColorCapability::Unknown,
+        MotionPreference::Standard,
     )
     .unwrap();
 }

@@ -194,3 +194,97 @@ fn missing_reference_identity_metadata_fails_closed() {
 
     assert_eq!(error, UserInputError::InvalidReferenceMetadata { index: 0 });
 }
+
+// 표시용 text/span은 그대로 두고 검증한 지침만 모델 입력에 포함한다. 이름·경로·제어문자도
+// JSON 값으로 보존하며 명시적 스킬이 없는 입력은 기존 byte를 바꾸지 않는다.
+#[test]
+fn resolved_skill_preserves_visible_text_and_exact_model_instructions() {
+    use super::ResolvedSkill;
+    let selected = skill("review");
+    let input = UserInput::with_references(
+        "use $review",
+        vec![InputReference::skill(4..11, selected.clone())],
+    )
+    .unwrap();
+    let instructions = "# Review\nKeep \"quotes\" and 한글\u{0} intact";
+    let resolved = input
+        .clone()
+        .with_resolved_skill(ResolvedSkill::new(selected, instructions).unwrap())
+        .unwrap();
+    assert_eq!(resolved.as_str(), input.as_str());
+    assert_eq!(resolved.references(), input.references());
+    assert_eq!(input.model_input(), input.as_str());
+    let (visible, json) = resolved
+        .model_input()
+        .split_once("\n\nExplicit skill instructions (yo.skill-instructions/v1):\n")
+        .unwrap();
+    assert_eq!(visible, "use $review");
+    assert_eq!(
+        json,
+        r##"{"instructions":"# Review\nKeep \"quotes\" and 한글\u0000 intact","name":"review","source":"/skills/review/SKILL.md"}"##
+    );
+    let snapshot: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(snapshot["instructions"], instructions);
+    assert_eq!(snapshot["source"], "/skills/review/SKILL.md");
+    assert_eq!(resolved.clone().into_string(), input.as_str());
+    assert_eq!(resolved.clone().into_model_input(), resolved.model_input());
+    assert_eq!(UserInput::new("plain\r\n").model_input(), "plain\r\n");
+}
+
+// 지침은 256 KiB까지 온전히 보존하고 첫 초과 byte·빈 본문·다른 스킬·중복 snapshot은 거절한다.
+#[test]
+fn resolved_skill_rejects_first_excess_and_wrong_selected_identity() {
+    use super::ResolvedSkill;
+    let selected = skill("review");
+    let full = ResolvedSkill::new(
+        selected.clone(),
+        "x".repeat(ResolvedSkill::MAX_INSTRUCTION_BYTES),
+    )
+    .unwrap();
+    assert_eq!(
+        full.instructions().len(),
+        ResolvedSkill::MAX_INSTRUCTION_BYTES
+    );
+    for text in [
+        "x".repeat(ResolvedSkill::MAX_INSTRUCTION_BYTES + 1),
+        " \n".to_owned(),
+    ] {
+        assert_eq!(
+            ResolvedSkill::new(selected.clone(), text).unwrap_err(),
+            UserInputError::InvalidSkillInstructions
+        );
+    }
+    let input = UserInput::with_references(
+        "$review",
+        vec![InputReference::skill(0..7, selected.clone())],
+    )
+    .unwrap();
+    let other = ResolvedSkill::new(skill("other"), "other instructions").unwrap();
+    assert_eq!(
+        input.clone().with_resolved_skill(other).unwrap_err(),
+        UserInputError::SkillSnapshotMismatch
+    );
+    let resolved = input.with_resolved_skill(full.clone()).unwrap();
+    assert_eq!(
+        resolved.with_resolved_skill(full).unwrap_err(),
+        UserInputError::SkillSnapshotMismatch
+    );
+}
+
+// 저장 규약의 공백 집합 전체는 빈 지침으로 거절하며, 경계 밖의 zero-width space는
+// 지침 원문으로 보존한다. Unicode 라이브러리의 공백 분류 변화에 의존하지 않는다.
+#[test]
+fn resolved_skill_uses_the_frozen_whitespace_profile() {
+    use super::ResolvedSkill;
+    let blank = "\u{9}\u{a}\u{b}\u{c}\u{d}\u{20}\u{85}\u{a0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}";
+    assert_eq!(
+        ResolvedSkill::new(skill("review"), blank).unwrap_err(),
+        UserInputError::InvalidSkillInstructions
+    );
+    assert_eq!(
+        ResolvedSkill::new(skill("review"), "\u{200b}")
+            .unwrap()
+            .instructions(),
+        "\u{200b}"
+    );
+}

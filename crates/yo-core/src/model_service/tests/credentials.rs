@@ -223,3 +223,27 @@ fn redacts_secret_material_from_invalid_credential_diagnostics() {
     assert!(!diagnostic.contains("sk-first-secret"));
     assert!(!diagnostic.contains("sk-second-secret"));
 }
+
+// 여러 credential과 겹치는 미완성 suffix는 보류하고 완전한 secret 거절은 별도 검사에 남긴다.
+#[test]
+fn streaming_prefix_withholds_partial_credential_suffixes() {
+    let mut store = CredentialStore::new([(
+        (
+            ProviderId::new("provider").unwrap(),
+            AccountId::new("account").unwrap(),
+        ),
+        ApiCredential::new("sk-sensitive").unwrap(),
+    )])
+    .unwrap();
+    store.retain_auxiliary_secret_material([ApiCredential::new("한글-secret").unwrap()]);
+    for (source, expected) in [
+        ("ready s", "ready "),
+        ("ready sk-sens", "ready "),
+        ("ready sk-safe", "ready sk-safe"),
+        ("ready 한글-", "ready "),
+        ("ready\n", "ready\n"),
+    ] {
+        assert_eq!(store.without_incomplete_secret_suffix(source), expected);
+    }
+    assert!(store.contains_secret_material("ready sk-sensitive"));
+}

@@ -660,7 +660,9 @@ fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
         .into_entries()
         .into_iter()
         .find_map(|entry| match entry.record() {
-            crate::TranscriptRecord::ContextCheckpointCommitted(observation) => Some(*observation),
+            crate::TranscriptRecord::ContextCheckpointCommitted(observation) => {
+                Some(observation.clone())
+            },
             _ => None,
         })
         .expect("the committed lossy boundary must be visible to operators");

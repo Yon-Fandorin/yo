@@ -2,8 +2,9 @@ use serde_json::{Value, json};
 use yo_core::{
     AdmittedCompleteBinding, AdmittedModelProfile, AdmittedReplayProfile, AdmittedToolPolicy,
     ApiDialect, CompleteModelBinding, ConnectorError, ConnectorFailureKind, ConnectorId,
-    FunctionTool, KIMI_PRIVATE_REPLAY_PROFILE, ModelConnectorInputItem, ModelConnectorInputRole,
-    ModelConnectorRequest, ReasoningEffort, SEMANTIC_REPLAY_PROFILE,
+    FunctionTool, KIMI_CODE_IMAGE_INPUT_PROFILE, KIMI_PRIVATE_REPLAY_PROFILE,
+    ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorRequest, ReasoningEffort,
+    SEMANTIC_REPLAY_PROFILE,
 };
 
 mod replay;
@@ -13,6 +14,13 @@ mod tools;
 pub(super) struct KimiWireProfile {
     pub(super) kind: KimiWireKind,
     local_tools: bool,
+    images: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ImageProjection {
+    Transport,
+    Tokenization,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -145,9 +153,18 @@ pub(super) fn admit_binding(
             "complete binding is not an admitted Kimi model profile",
         )),
     }?;
+    if profile.image_input_profile().is_some_and(|image| {
+        image.as_str() != KIMI_CODE_IMAGE_INPUT_PROFILE
+            || !matches!(kind, KimiWireKind::CodeK3 { .. } | KimiWireKind::CodeK27)
+    }) {
+        return Err(configuration_failure(
+            "image_input_profile is outside the reviewed Kimi Code envelope",
+        ));
+    }
     Ok(KimiWireProfile {
         kind,
         local_tools: profile.tool_capability_policy().as_str() == "local-tools/v1",
+        images: profile.image_input_profile().is_some(),
     })
 }
 
@@ -171,6 +188,23 @@ pub(super) fn wire_body(
     model: &str,
     profile: KimiWireProfile,
 ) -> Result<Value, ConnectorError> {
+    projected_body(request, model, profile, ImageProjection::Transport)
+}
+
+pub(super) fn tokenization_body(
+    request: &ModelConnectorRequest,
+    model: &str,
+    profile: KimiWireProfile,
+) -> Result<Value, ConnectorError> {
+    projected_body(request, model, profile, ImageProjection::Tokenization)
+}
+
+fn projected_body(
+    request: &ModelConnectorRequest,
+    model: &str,
+    profile: KimiWireProfile,
+    images: ImageProjection,
+) -> Result<Value, ConnectorError> {
     let hard_max = match profile.kind {
         KimiWireKind::PlatformK3 { .. } | KimiWireKind::CodeK3 { .. } => 131_072,
         KimiWireKind::PlatformK27Code | KimiWireKind::PlatformK26 | KimiWireKind::CodeK27 => 32_768,
@@ -185,7 +219,7 @@ pub(super) fn wire_body(
             "Kimi request output cap exceeds its complete profile hard maximum",
         ));
     }
-    let messages = replay::messages(request, profile)?;
+    let messages = replay::messages(request, profile, images)?;
     let mut body = json!({
         "model": model,
         "messages": messages,

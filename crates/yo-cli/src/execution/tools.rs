@@ -10,5 +10,6 @@ mod registry;
 mod tests;
 
 pub(crate) use admission::LocalSemanticAdmission;
+pub(crate) use command::PreparedCommandTools;
 pub(crate) use filesystem::{LocalToolHost, initialize_process_file_mode};
 pub(crate) use registry::{LocalToolRegistryRevision, registry, revision_for_replay_contract};

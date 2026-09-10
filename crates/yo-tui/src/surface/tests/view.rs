@@ -281,3 +281,126 @@ fn nested_view_rejects_invalid_relative_geometry() {
         Err(super::super::GeometryError::OutOfBounds)
     ));
 }
+
+// 링크는 넓은 grapheme 전체에 붙고 부분 view 실패는 원자적이며 덮어쓰기·지우기로 제거된다.
+#[test]
+fn hyperlink_ownership_follows_the_complete_grapheme_footprint() {
+    use super::super::Hyperlink;
+    let link = Hyperlink::new("https://example.com/docs").unwrap();
+    let mut surface = Surface::new(Size::new(3, 1)).unwrap();
+    assert_eq!(
+        full_view(&mut surface).write_linked(
+            Point::new(0, 0),
+            Grapheme::try_from("한").unwrap(),
+            style(1),
+            Some(link.clone())
+        ),
+        WriteOutcome::Written
+    );
+    assert_eq!(
+        surface.cell(Point::new(0, 0)).unwrap().hyperlink(),
+        Some(&link)
+    );
+    assert_eq!(
+        surface.cell(Point::new(1, 0)).unwrap().hyperlink(),
+        Some(&link)
+    );
+    let original = surface.clone();
+    let mut partial = surface
+        .view(Rect::new(Point::new(1, 0), Size::new(2, 1)))
+        .unwrap();
+    assert_eq!(
+        partial.write(Point::new(0, 0), Grapheme::try_from("x").unwrap(), style(2)),
+        WriteOutcome::Clipped
+    );
+    assert_eq!(surface, original);
+    assert_eq!(
+        full_view(&mut surface).write(Point::new(1, 0), Grapheme::try_from("x").unwrap(), style(2)),
+        WriteOutcome::Written
+    );
+    assert!(!surface.has_hyperlinks());
+    full_view(&mut surface).write_linked(
+        Point::new(0, 0),
+        Grapheme::try_from("한").unwrap(),
+        style(1),
+        Some(link),
+    );
+    assert_eq!(
+        full_view(&mut surface).clear(style(0)),
+        WriteOutcome::Written
+    );
+    assert!(!surface.has_hyperlinks());
+}
+
+// 외부 실행 스킴·제어 문자와 주소 길이 첫 초과는 링크화하지 않고 HTTP(S)만 받아들인다.
+#[test]
+fn hyperlink_destinations_are_bounded_web_urls_without_controls() {
+    use super::super::Hyperlink;
+    for destination in [
+        "https://example.com/한글?q=a#b",
+        "http://localhost:8080/a",
+        "HTTPS://example.com/a",
+    ] {
+        assert_eq!(
+            Hyperlink::new(destination).unwrap().destination(),
+            destination
+        );
+    }
+    for destination in [
+        "",
+        "relative/path",
+        "file:///tmp/file",
+        "javascript:alert(1)",
+        "mailto:a@example.com",
+        "https://",
+        "https://example.com/\u{1b}]52;c;secret\u{7}",
+        "https://example.com/\u{9c}",
+        "https://example.com/\nspoof",
+    ] {
+        assert!(Hyperlink::new(destination).is_none(), "{destination:?}");
+    }
+    let prefix = "https://example.com/";
+    let exact = format!("{prefix}{}", "x".repeat(8192 - prefix.len()));
+    assert!(Hyperlink::new(&exact).is_some());
+    assert!(Hyperlink::new(&(exact + "x")).is_none());
+}
+
+// 파일 목적지는 호스트 전용 절대 경로 생성자로만 만들며 URL 메타 문자는 경로 데이터로 인코딩한다.
+// 상대·부모 경로·제어 문자를 거부하고 인코딩 후 8 KiB의 정확한 한도와 첫 초과를 검사한다.
+#[test]
+fn trusted_file_hyperlinks_keep_web_constructor_closed() {
+    use std::path::Path;
+
+    use url::Url;
+
+    use super::super::Hyperlink;
+    let path = Path::new("/tmp/yo 한글#?.rs");
+    let link = Hyperlink::from_file_path(path).unwrap();
+    let parsed = Url::parse(link.destination()).unwrap();
+    assert_eq!(parsed.scheme(), "file");
+    assert_eq!(parsed.to_file_path().unwrap(), path);
+    assert!(parsed.query().is_none());
+    assert!(parsed.fragment().is_none());
+    assert!(Hyperlink::new(link.destination()).is_none());
+    for value in [
+        "relative.rs",
+        "file:///tmp/a",
+        "/tmp/../a",
+        "/tmp/line\nname",
+        "/tmp/\u{1b}name",
+    ] {
+        assert!(
+            Hyperlink::from_file_path(Path::new(value)).is_none(),
+            "{value:?}"
+        );
+    }
+    let exact = format!("/{}", " ".repeat(2728));
+    assert_eq!(
+        Hyperlink::from_file_path(Path::new(&exact))
+            .unwrap()
+            .destination()
+            .len(),
+        8 * 1024
+    );
+    assert!(Hyperlink::from_file_path(Path::new(&(exact + "x"))).is_none());
+}

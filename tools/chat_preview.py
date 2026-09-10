@@ -15,8 +15,9 @@ import tty
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 DEFAULT_DIRECTORY = REPOSITORY / "target" / "chat-preview"
-SCENARIOS = ("welcome", "conversation", "working")
+SCENARIOS = ("welcome", "conversation", "working", "markdown", "tables", "diff", "tools", "error", "interrupted", "draft", "history", "commands", "long-tools", "multi-turn", "approval", "interview", "syntax", "charts", "images", "media-errors")
 WIDTHS = (20, 40, 88)
+PALETTES = ("color", "light", "mono", "light-indexed", "plain")
 
 
 def build(directory):
@@ -32,7 +33,7 @@ def build(directory):
         raise RuntimeError(f"Build failed; previous preview retained. Log: {generation / 'build.log'}")
     for scenario in SCENARIOS:
         for width in WIDTHS:
-            for palette in ("color", "plain"):
+            for palette in PALETTES:
                 for extension in ("ansi", "html"):
                     if not (generation / f"{scenario}-{palette}-{width}.{extension}").is_file():
                         raise RuntimeError(f"Incomplete preview: {generation}")
@@ -72,7 +73,7 @@ def paint(directory, manifest, scenario, palette, width, notice):
         stem = f"{scenario}-{palette}-{width}"
         payload = (directory / manifest["generation"] / f"{stem}.ansi").read_bytes()
         status = f"yo preview | {scenario} | {width} cols | {palette} | built {manifest['built_at']}"
-        keys = "1/2/3 scene  w width  c color  b build  r reload  s snapshot  q exit"
+        keys = "[/] scene  1–9 jump  w width  c theme  b build  r reload  s snapshot  q exit"
         # Viewer chrome is outside the 22-row product frame. No embedded shell or model.
         payload += (f"\x1b[0m\x1b[25;1H{status[:size.columns]}\r\n"
                     f"{keys[:size.columns]}\r\n{notice[:size.columns]}").encode()
@@ -108,12 +109,15 @@ def view(directory):
             key = os.read(fd, 1)
             if key in (b"q", b"\x03", b"\x04", b""):
                 break
-            if key in (b"1", b"2", b"3"):
+            if key in (b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9"):
                 scenario = SCENARIOS[int(key) - 1]
+            elif key in (b"[", b"]"):
+                step = 1 if key == b"]" else -1
+                scenario = SCENARIOS[(SCENARIOS.index(scenario) + step) % len(SCENARIOS)]
             elif key == b"w":
                 width = {88: 40, 40: 20, 20: 88}[width]
             elif key == b"c":
-                palette = "plain" if palette == "color" else "color"
+                palette = PALETTES[(PALETTES.index(palette) + 1) % len(PALETTES)]
             elif key == b"r":
                 previous = None
             elif key == b"s":

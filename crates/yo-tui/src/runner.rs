@@ -24,11 +24,14 @@ pub use archival::{
 pub use error::RunError;
 pub use frame::FrameRateLimit;
 pub use session::{
-    PublicationRecoveryEvidence, PublicationRecoveryKind, TuiSession, TuiSessionInfo,
+    PublicationRecoveryEvidence, PublicationRecoveryKind, ResumeSessionEntry, TuiDocument,
+    TuiSession, TuiSessionInfo, TuiStatusError, TuiStatusLine,
 };
 pub use skill::{SkillReferenceConnection, SkillReferencePoll};
 pub use unix::{run, run_session_with_mode, run_with_mode};
 pub use workspace::{WorkspaceReferenceConnection, WorkspaceReferencePoll};
+
+use crate::overlay::OverlayInstanceToken;
 
 /// Terminal presentation selected before the live session acquires terminal state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -86,6 +89,10 @@ pub struct RunOutcome {
     output: Option<String>,
 }
 
+/// Identifies one displayed historical-fork catalog without exposing its overlay internals.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ForkPickerToken(OverlayInstanceToken);
+
 /// The result of one terminal ownership generation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -96,6 +103,23 @@ pub enum TerminalOutcome {
     SuspendRequested,
     /// The frontend selected a fully qualified model binding for this Session.
     ModelSelectionRequested(yo_core::ModelPickerTarget),
+    /// The idle frontend requested a new independent session after terminal restoration.
+    NewSessionRequested,
+    /// Requests an exact branch of the current durable conversation after terminal restoration.
+    ForkSessionRequested,
+    /// Requests a frozen catalog of historical boundaries for the current idle Session.
+    ForkPickerRequested,
+    /// Requests one row from the host's catalog bound to this exact picker token.
+    ForkBoundaryRequested {
+        /// Exact picker generation bound to the host's frozen catalog.
+        picker: ForkPickerToken,
+        /// Zero-based row in that catalog, never a journal sequence or authority claim.
+        index: usize,
+    },
+    /// Requests a bounded read-only Session tree after terminal restoration.
+    SessionTreeRequested,
+    /// Requests a saved session, or a host-owned picker when no identity was supplied.
+    ResumeSessionRequested(Option<yo_core::SessionId>),
 }
 
 impl RunOutcome {

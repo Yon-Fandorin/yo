@@ -2,7 +2,7 @@ use super::{
     binding::{OverlayAction, OverlayBindings},
     selection::{EntryIdentity, PanelSnapshot, PanelValidationError, SelectionPanel},
 };
-use crate::input::event::{InputEvent, KeyAction};
+use crate::input::event::{InputEvent, KeyAction, KeyCode, KeyModifiers};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct OverlayInstanceToken(u64);
@@ -63,19 +63,27 @@ impl PromptOverlaySlot {
         &mut self,
         snapshot: PanelSnapshot,
     ) -> Result<OverlayInstanceToken, SlotError> {
-        self.open_inner(snapshot, false)
+        self.open_inner(SelectionPanel::new(snapshot), false)
     }
 
     pub(crate) fn open_accepting_empty(
         &mut self,
         snapshot: PanelSnapshot,
     ) -> Result<OverlayInstanceToken, SlotError> {
-        self.open_inner(snapshot, true)
+        self.open_inner(SelectionPanel::new(snapshot), true)
+    }
+
+    /// Reopens presentation state with a new token and no prior frame acceptance.
+    pub(crate) fn reopen(
+        &mut self,
+        panel: SelectionPanel,
+    ) -> Result<OverlayInstanceToken, SlotError> {
+        self.open_inner(panel, false)
     }
 
     fn open_inner(
         &mut self,
-        snapshot: PanelSnapshot,
+        panel: SelectionPanel,
         accepts_empty: bool,
     ) -> Result<OverlayInstanceToken, SlotError> {
         self.generation = self
@@ -85,7 +93,7 @@ impl PromptOverlaySlot {
         let token = OverlayInstanceToken(self.generation);
         self.current = Some(OverlayInstance {
             token,
-            panel: SelectionPanel::new(snapshot),
+            panel,
             presentation_revision: 0,
             presented: false,
             presentation_pending: false,
@@ -147,6 +155,17 @@ impl PromptOverlaySlot {
             .is_some_and(|current| current.presented)
         {
             return OverlayInputEffect::Unhandled;
+        }
+        if let InputEvent::Key(key) = input
+            && key.modifiers == KeyModifiers::NONE
+            && matches!(key.action, KeyAction::Press | KeyAction::Repeat)
+            && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+            && self
+                .current_mut()
+                .panel
+                .scroll_wrapped(key.code == KeyCode::PageDown)
+        {
+            return OverlayInputEffect::Redraw;
         }
         let Some(binding) = self.bindings.classify(input) else {
             return OverlayInputEffect::Unhandled;
@@ -213,6 +232,12 @@ impl PromptOverlaySlot {
             },
             OverlayAction::Interrupt => OverlayInputEffect::Unhandled,
         }
+    }
+
+    pub(crate) fn can_submit_current(&self) -> bool {
+        self.current.as_ref().is_some_and(|current| {
+            current.presented && !current.presentation_pending && current.panel.is_fresh()
+        })
     }
 
     pub(crate) fn wants_input(&self, input: &InputEvent) -> bool {

@@ -108,7 +108,7 @@ impl ModelConnector for KimiChatCompletionsConnector {
         &self,
         request: &ModelConnectorRequest,
     ) -> Result<Value, ConnectorError> {
-        request::wire_body(request, &self.model, self.profile)
+        request::tokenization_body(request, &self.model, self.profile)
     }
 
     fn start(

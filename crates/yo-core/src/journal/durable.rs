@@ -311,6 +311,13 @@ impl DurableJournal {
                     JournalRecord::ContextCheckpoint(checkpoint.clone()),
                 ));
             },
+            SemanticRecord::InitialForkSeed(seed) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::InitialForkSeed(seed.clone()),
+                ));
+            },
         }
     }
 

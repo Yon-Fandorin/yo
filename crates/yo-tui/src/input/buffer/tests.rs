@@ -1,5 +1,19 @@
 use super::TextBuffer;
 
+// 같은 바이트로 치환해도 커서를 결합 문자 내부에 남겨 다음 삭제가 글자를 쪼개면 안 된다.
+#[test]
+fn unchanged_replacement_keeps_cursor_on_a_grapheme_boundary() {
+    for (text, end) in [("e\u{301}x", 1), ("👨‍👩‍👧x", "👨".len())] {
+        let mut buffer = TextBuffer::new();
+        buffer.insert(text);
+        assert!(!buffer.replace_range(0..end, &text[..end]));
+        assert_eq!(buffer.cursor_byte_index(), text.len() - 1);
+        assert!(buffer.delete_backward());
+        assert_eq!(buffer.as_str(), "x");
+        assert_eq!(buffer.cursor_byte_index(), 0);
+    }
+}
+
 // ASCII와 한글을 넣으면 입력 순서와 커서 위치를 그대로 보존한다.
 #[test]
 fn inserts_text_at_the_cursor() {

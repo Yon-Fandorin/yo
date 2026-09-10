@@ -1,7 +1,13 @@
-use std::task::{Context, Poll};
+use std::{
+    fmt::Debug,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use super::LoopError;
 use crate::{
+    appearance::AppearanceState,
+    input::event::InputEvent,
     runner::{
         AgentConnection, AgentPoll, SkillReferenceConnection, SkillReferencePoll,
         TerminationSource, WorkspaceReferenceConnection, WorkspaceReferencePoll,
@@ -12,7 +18,7 @@ use crate::{
 };
 
 pub(in crate::runner) enum OrdinaryObservation {
-    Input(crate::input::event::InputEvent),
+    Input(InputEvent),
     Agent(AgentPoll),
     Workspace(Result<WorkspaceReferencePoll, String>),
     Skill(Result<SkillReferencePoll, String>),
@@ -47,7 +53,7 @@ pub(in crate::runner) fn poll_ordinary<E, T, A>(
 ) -> Result<OrdinaryPoll, LoopError>
 where
     E: EventSource,
-    E::Error: std::fmt::Debug,
+    E::Error: Debug,
     T: TerminationSource,
     A: AgentConnection,
 {
@@ -205,19 +211,34 @@ where
 
 pub(in crate::runner) fn handle_backpressured_input(
     state: &mut TuiState,
-    input: crate::input::event::InputEvent,
-    now: std::time::Duration,
+    input: InputEvent,
+    now: Duration,
     allow_pending_request: bool,
 ) -> Result<StateEffect, StateError> {
     if (allow_pending_request && state.has_pending_request())
         || state.wants_global_input(&input)
         || state.wants_overlay_input(&input)
         || input.is_control_flow_key()
-        || matches!(input, crate::input::event::InputEvent::Resize(_))
+        || matches!(input, InputEvent::Resize(_) | InputEvent::MouseScroll(_))
     {
         state.handle(input, now)
     } else {
         Ok(StateEffect::Unchanged)
+    }
+}
+
+pub(in crate::runner) fn apply_host_poll(
+    state: &mut TuiState,
+    appearance: &mut AppearanceState,
+    observation: AgentPoll,
+) -> Result<bool, LoopError> {
+    if let AgentPoll::Links(resolver) = observation {
+        appearance
+            .select_link_resolver(resolver)
+            .map_err(|error| LoopError::Input(format!("updating host links failed: {error:?}")))?;
+        Ok(true)
+    } else {
+        apply_agent_poll(state, observation)
     }
 }
 
@@ -227,8 +248,20 @@ pub(in crate::runner) fn apply_agent_poll(
 ) -> Result<bool, LoopError> {
     match observation {
         AgentPoll::Pending => return Ok(false),
+        AgentPoll::Links(_) => {
+            return Err(LoopError::Input(
+                "host links require appearance routing".into(),
+            ));
+        },
         AgentPoll::Record(record) => {
             state.observe_record(record).map_err(LoopError::State)?;
+        },
+        AgentPoll::StatusLine(status) => return Ok(state.set_status_line(status)),
+        AgentPoll::Document(document) => {
+            state.observe_document(document).map_err(LoopError::State)?;
+        },
+        AgentPoll::Notice(notice) => {
+            state.observe_notice(notice).map_err(LoopError::State)?;
         },
         AgentPoll::RequestTrace(entry) => {
             state.observe_request_trace(entry);

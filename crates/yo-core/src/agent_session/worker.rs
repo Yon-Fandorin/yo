@@ -14,9 +14,9 @@ use super::{
     WORKER_POLL_INTERVAL, WORKER_STOPPING,
 };
 use crate::{
-    ActivityKind, ActivityRequestRef, AgentBackend, AgentCommand, AgentEvent, AgentRuntime,
-    RuntimeError, RuntimePoll, SessionId, SubmissionOutcome, SubmissionRejection,
-    SubmissionRejectionKind, TurnRef, journal::SessionJournal,
+    ActivityKind, ActivityRequestRef, AgentBackend, AgentCommand, AgentEvent, AgentRejection,
+    AgentRuntime, BackendFailureKind, RuntimeError, RuntimePoll, SessionId, SubmissionOutcome,
+    SubmissionRejection, SubmissionRejectionKind, TurnRef, journal::SessionJournal,
 };
 
 pub(super) enum WorkerSignal {
@@ -353,6 +353,19 @@ impl AgentWorker {
                             }
                         },
                         Err(error) => {
+                            if let Some(id) = submission_id
+                                && let AgentSessionError::Runtime(runtime_error) = &error
+                                && let Some(rejection) = submission_rejection(runtime_error)
+                            {
+                                self.record_submission_outcome(SubmissionOutcome::Rejected {
+                                    id,
+                                    rejection,
+                                });
+                                if !changes.changed() || stopping {
+                                    return WorkerExit::from_cleanup(self.runtime.shutdown());
+                                }
+                                continue;
+                            }
                             if is_context_compaction
                                 && let Some(detail) = context_compaction_rejection(&error)
                             {
@@ -364,7 +377,7 @@ impl AgentWorker {
                                     .push_back(AgentControlOutcome::ContextCompactionRejected {
                                         detail,
                                     });
-                                if !changes.changed() {
+                                if !changes.changed() || stopping {
                                     return WorkerExit::from_cleanup(self.runtime.shutdown());
                                 }
                                 continue;
@@ -411,6 +424,22 @@ impl AgentWorker {
                 },
                 Err(error) => {
                     let primary = AgentSessionError::Runtime(error);
+                    if context_compaction_in_flight
+                        && !self.runtime.idle_context_compaction_pending()
+                        && let Some(detail) = context_compaction_rejection(&primary)
+                    {
+                        context_compaction_in_flight = false;
+                        self.context_compaction_pending
+                            .store(false, Ordering::Release);
+                        self.control_outcomes
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push_back(AgentControlOutcome::ContextCompactionRejected { detail });
+                        if !changes.changed() {
+                            return WorkerExit::from_cleanup(self.runtime.shutdown());
+                        }
+                        continue;
+                    }
                     return self.finish_after_failure(primary, changes);
                 },
             }
@@ -450,8 +479,38 @@ impl AgentWorker {
         submission_id: Option<crate::SubmissionId>,
     ) -> Result<Vec<AgentEvent>, RuntimeError> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if let AgentCommand::InterruptTurn { turn } = &command
+            && self.runtime.active_turn() != Some(*turn)
+        {
+            // A queued interrupt can outlive a rejected or already completed Turn.
+            // It must neither fail the Session nor interrupt a newer Turn.
+            if state.active_turn == Some(*turn) && !state.turn_started {
+                state.active_turn = None;
+                self.active_turn_id.store(0, Ordering::Release);
+            }
+            state.interrupted_turns.remove(turn);
+            return Ok(Vec::new());
+        }
         let events = if let Some(submission_id) = submission_id {
-            self.runtime.execute_submission(command, submission_id)?
+            let target = command_turn(&command);
+            match self.runtime.execute_submission(command, submission_id) {
+                Ok(events) => events,
+                Err(error) => {
+                    // Rejection cannot leave an unstarted Turn reserved. A rejected steer
+                    // must keep the already committed Turn and its requests intact.
+                    if submission_rejection(&error).is_some()
+                        && !state.turn_started
+                        && state.active_turn == target
+                    {
+                        if let Some(turn) = target {
+                            state.interrupted_turns.remove(&turn);
+                        }
+                        state.active_turn = None;
+                        self.active_turn_id.store(0, Ordering::Release);
+                    }
+                    return Err(error);
+                },
+            }
         } else {
             self.runtime.execute_command(command)?
         };
@@ -490,6 +549,34 @@ impl AgentWorker {
     }
 }
 
+fn submission_rejection(error: &RuntimeError) -> Option<SubmissionRejection> {
+    let (kind, detail) = match error {
+        RuntimeError::InputRejected(rejection) => return Some(rejection.clone()),
+        RuntimeError::CommandRejected(rejection) => (
+            match rejection {
+                AgentRejection::TurnNotActive { .. } | AgentRejection::SessionMismatch { .. } => {
+                    SubmissionRejectionKind::StaleReference
+                },
+                _ => SubmissionRejectionKind::Incompatible,
+            },
+            rejection.to_string(),
+        ),
+        RuntimeError::Backend {
+            failure,
+            terminal_events,
+        } if failure.kind() == BackendFailureKind::CommandRejected
+            && terminal_events.is_empty() =>
+        {
+            (
+                SubmissionRejectionKind::Incompatible,
+                failure.message().to_owned(),
+            )
+        },
+        _ => return None,
+    };
+    Some(SubmissionRejection::new(kind, detail))
+}
+
 fn context_compaction_rejection(error: &AgentSessionError) -> Option<String> {
     match error {
         AgentSessionError::Runtime(RuntimeError::CommandRejected(rejection)) => {
@@ -498,7 +585,7 @@ fn context_compaction_rejection(error: &AgentSessionError) -> Option<String> {
         AgentSessionError::Runtime(RuntimeError::Backend {
             failure,
             terminal_events,
-        }) if failure.kind() == crate::BackendFailureKind::CommandRejected
+        }) if failure.kind() == BackendFailureKind::CommandRejected
             && terminal_events.is_empty() =>
         {
             Some(failure.message().to_owned())

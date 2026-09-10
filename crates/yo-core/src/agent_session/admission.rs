@@ -105,6 +105,42 @@ impl AgentSession {
                     },
                 ))
             },
+            AgentIntent::PreviousQuestion {
+                request,
+                choice,
+                draft,
+            } => {
+                if !state.outstanding_requests.contains(&request) {
+                    return Err(AgentSessionError::NoOutstandingRequest);
+                }
+                Ok(PendingCommand::from_command(
+                    AgentCommand::RespondToActivity {
+                        request,
+                        response: ActivityResponse::PreviousQuestion {
+                            choice,
+                            draft: UserInput::new(draft),
+                        },
+                    },
+                ))
+            },
+            AgentIntent::RespondToQuestion {
+                request,
+                choice,
+                notes,
+            } => {
+                if !state.outstanding_requests.contains(&request) {
+                    return Err(AgentSessionError::NoOutstandingRequest);
+                }
+                Ok(PendingCommand::from_command(
+                    AgentCommand::RespondToActivity {
+                        request,
+                        response: ActivityResponse::QuestionAnswer {
+                            choice,
+                            notes: UserInput::new(notes),
+                        },
+                    },
+                ))
+            },
             AgentIntent::RespondToUserInput { request, input } => {
                 if !state.outstanding_requests.contains(&request) {
                     return Err(AgentSessionError::NoOutstandingRequest);
@@ -227,6 +263,7 @@ impl AgentSession {
     }
 
     fn reserve_submission(&mut self, id: SubmissionId) -> Result<(), AgentSessionError> {
+        self.input_admission_sealed = true;
         if !self.submission_ids.insert(id) {
             return Err(AgentSessionError::DuplicateSubmissionId(id));
         }
@@ -297,6 +334,32 @@ impl AgentSession {
                     response: ActivityResponse::Approval(decision),
                 }),
             ),
+            AgentIntent::PreviousQuestion {
+                request,
+                choice,
+                draft,
+            } => Ok(PendingCommand::from_command(
+                AgentCommand::RespondToActivity {
+                    request,
+                    response: ActivityResponse::PreviousQuestion {
+                        choice,
+                        draft: UserInput::new(draft),
+                    },
+                },
+            )),
+            AgentIntent::RespondToQuestion {
+                request,
+                choice,
+                notes,
+            } => Ok(PendingCommand::from_command(
+                AgentCommand::RespondToActivity {
+                    request,
+                    response: ActivityResponse::QuestionAnswer {
+                        choice,
+                        notes: UserInput::new(notes),
+                    },
+                },
+            )),
             AgentIntent::RespondToUserInput { request, input } => Ok(PendingCommand::from_command(
                 AgentCommand::RespondToActivity {
                     request,

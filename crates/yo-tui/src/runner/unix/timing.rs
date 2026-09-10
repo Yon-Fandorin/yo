@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use crate::runner::frame::{FrameRequest, FrameScheduler};
 
 pub(super) const WORKER_RETRY_INTERVAL: Duration = Duration::from_millis(10);
+pub(super) const GEOMETRY_CHECK_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(super) struct TurnMotionClock {
     turn: Option<(bool, yo_core::TurnRef)>,

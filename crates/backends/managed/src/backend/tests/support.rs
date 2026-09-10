@@ -12,10 +12,10 @@ use yo_core::{
     AccountId, ApiDialect, BackendEvent, BackendPoll, EffectiveModelBinding, FrozenToolRegistry,
     ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort, ModelConnectorTerminal,
-    ModelId, NormalizedEndpoint, ProviderId, ToolApprovalRequirement, ToolDefinition, ToolEffect,
-    ToolExecution, ToolExecutionError, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
-    ToolExecutionRequest, ToolExecutionResult, ToolId, ToolRegistry, ToolSemanticAdmission,
-    TurnRef,
+    ModelId, ModelInputPart, NormalizedEndpoint, ProviderId, ToolApprovalRequirement,
+    ToolDefinition, ToolEffect, ToolExecution, ToolExecutionError, ToolExecutionHost,
+    ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest, ToolExecutionResult, ToolId,
+    ToolRegistry, ToolSemanticAdmission, TurnRef,
 };
 
 use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
@@ -61,6 +61,10 @@ pub(in crate::backend) fn mock_tokenization_payload(
         .input()
         .iter()
         .map(|item| match item {
+            ModelConnectorInputItem::MultimodalUser { parts } => mock_image_parts(parts),
+            ModelConnectorInputItem::ImageSummarySource { source } => {
+                mock_image_parts(source.parts())
+            },
             ModelConnectorInputItem::Message {
                 role,
                 content,
@@ -318,4 +322,11 @@ pub(in crate::backend) fn fixture_session(value: u64) -> yo_core::SessionId {
     format!("01890f00-0000-7000-8000-{value:012x}")
         .parse()
         .expect("the test Session fixture is a UUIDv7")
+}
+
+fn mock_image_parts(parts: &[ModelInputPart]) -> serde_json::Value {
+    json!({"role":"user", "content":parts.iter().map(|part| match part {
+        ModelInputPart::Text { text } => json!({"type":"text", "text":text}),
+        ModelInputPart::Image { .. } => json!({"type":"image_url", "image_url":{"url":""}}),
+    }).collect::<Vec<_>>()})
 }

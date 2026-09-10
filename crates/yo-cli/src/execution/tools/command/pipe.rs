@@ -5,9 +5,70 @@ use std::{
         fd::{AsRawFd, RawFd},
         unix::net::UnixStream,
     },
-    sync::mpsc::{SyncSender, TrySendError},
+    sync::{
+        Arc, Mutex,
+        mpsc::{SyncSender, TrySendError},
+    },
     thread::{self, JoinHandle},
 };
+
+use serde_json::json;
+use yo_core::ToolExecutionProgress;
+
+#[derive(Default)]
+pub(super) struct ProgressSnapshot {
+    stdout: Option<Arc<Mutex<BoundedPipeOutput>>>,
+    stderr: Option<Arc<Mutex<BoundedPipeOutput>>>,
+    dirty: bool,
+    closed: bool,
+}
+
+impl ProgressSnapshot {
+    pub(super) fn close(&mut self) {
+        self.closed = true;
+        self.dirty = false;
+        self.stdout = None;
+        self.stderr = None;
+    }
+
+    pub(super) fn take(&mut self) -> Option<ToolExecutionProgress> {
+        if !std::mem::take(&mut self.dirty) {
+            return None;
+        }
+        fn text(bytes: &[u8]) -> String {
+            let mut end = bytes.len();
+            let mut cursor = 0;
+            while cursor < bytes.len() {
+                match std::str::from_utf8(&bytes[cursor..]) {
+                    Ok(_) => break,
+                    Err(error) => match error.error_len() {
+                        Some(invalid) => cursor += error.valid_up_to() + invalid,
+                        None => {
+                            end = cursor + error.valid_up_to();
+                            break;
+                        },
+                    },
+                }
+            }
+            String::from_utf8_lossy(&bytes[..end]).into_owned()
+        }
+        let mut truncated = false;
+        let mut render = |stream: &Option<Arc<Mutex<BoundedPipeOutput>>>| -> Option<String> {
+            let Some(stream) = stream else {
+                return Some(String::new());
+            };
+            let stream = stream.lock().ok()?;
+            truncated |= stream.truncated();
+            Some(text(&stream.clone().render()))
+        };
+        let stdout = render(&self.stdout)?;
+        let stderr = render(&self.stderr)?;
+        Some(ToolExecutionProgress {
+            output: json!({"stdout":stdout,"stderr":stderr}).to_string(),
+            truncated,
+        })
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PipeKind {
@@ -18,6 +79,7 @@ pub(super) enum PipeKind {
 pub(super) struct PipeDrain {
     pub(super) kind: PipeKind,
     pub(super) output: BoundedPipeOutput,
+    pub(super) retained_output: Option<BoundedPipeOutput>,
     pub(super) failed: bool,
 }
 
@@ -64,16 +126,28 @@ pub(super) fn spawn_pipe_reader(
     limit: usize,
     progress_sender: SyncSender<()>,
     drain_sender: SyncSender<PipeDrain>,
+    snapshot: Option<Arc<Mutex<ProgressSnapshot>>>,
+    retained_limit: Option<usize>,
 ) -> Result<PipeReader, ()> {
     let thread_name = match kind {
         PipeKind::Stdout => "yo-command-stdout",
         PipeKind::Stderr => "yo-command-stderr",
     };
+    let output = Arc::new(Mutex::new(BoundedPipeOutput::new(limit)));
+    if let Some(snapshot) = &snapshot {
+        let mut snapshot = snapshot.lock().map_err(|_| ())?;
+        if !snapshot.closed {
+            match kind {
+                PipeKind::Stdout => snapshot.stdout = Some(Arc::clone(&output)),
+                PipeKind::Stderr => snapshot.stderr = Some(Arc::clone(&output)),
+            }
+        }
+    }
     let (shutdown_reader, shutdown_writer) = UnixStream::pair().map_err(|_| ())?;
     let thread = thread::Builder::new()
         .name(thread_name.to_owned())
         .spawn(move || {
-            let mut output = BoundedPipeOutput::new(limit);
+            let mut retained_output = retained_limit.map(BoundedPipeOutput::new);
             let mut chunk = [0_u8; 8 * 1024];
             let failed = loop {
                 match wait_for_input_or_shutdown(reader.as_raw_fd(), shutdown_reader.as_raw_fd()) {
@@ -84,7 +158,20 @@ pub(super) fn spawn_pipe_reader(
                 match reader.read(&mut chunk) {
                     Ok(0) => break false,
                     Ok(count) => {
-                        output.push(&chunk[..count]);
+                        let Ok(mut buffer) = output.lock() else {
+                            break true;
+                        };
+                        buffer.push(&chunk[..count]);
+                        if let Some(retained) = &mut retained_output {
+                            retained.push(&chunk[..count]);
+                        }
+                        drop(buffer);
+                        if let Some(snapshot) = &snapshot
+                            && let Ok(mut snapshot) = snapshot.lock()
+                            && !snapshot.closed
+                        {
+                            snapshot.dirty = true;
+                        }
                         match progress_sender.try_send(()) {
                             Ok(()) | Err(TrySendError::Full(())) => {},
                             Err(TrySendError::Disconnected(())) => {},
@@ -95,9 +182,14 @@ pub(super) fn spawn_pipe_reader(
                     Err(_) => break true,
                 }
             };
+            let (output, failed) = match output.lock() {
+                Ok(output) => (output.clone(), failed),
+                Err(_) => (BoundedPipeOutput::new(0), true),
+            };
             let _ = drain_sender.send(PipeDrain {
                 kind,
                 output,
+                retained_output,
                 failed,
             });
         })
@@ -158,6 +250,7 @@ fn wait_for_input_or_shutdown(reader: RawFd, shutdown: RawFd) -> Result<bool, ()
     }
 }
 
+#[derive(Clone)]
 pub(super) struct BoundedPipeOutput {
     limit: usize,
     head: Vec<u8>,
@@ -312,8 +405,16 @@ mod tests {
         let mut writer = File::from(writer);
         let (progress_sender, progress_receiver) = mpsc::sync_channel(1);
         let (drain_sender, drain_receiver) = mpsc::sync_channel(1);
-        let mut pipe_reader =
-            spawn_pipe_reader(PipeKind::Stdout, reader, 32, progress_sender, drain_sender).unwrap();
+        let mut pipe_reader = spawn_pipe_reader(
+            PipeKind::Stdout,
+            reader,
+            32,
+            progress_sender,
+            drain_sender,
+            None,
+            None,
+        )
+        .unwrap();
         writer.write_all(b"prefix").unwrap();
         progress_receiver
             .recv_timeout(Duration::from_secs(1))
@@ -342,8 +443,16 @@ mod tests {
         };
         let (progress_sender, _progress_receiver) = mpsc::sync_channel(1);
         let (drain_sender, drain_receiver) = mpsc::sync_channel(1);
-        let mut pipe_reader =
-            spawn_pipe_reader(PipeKind::Stdout, reader, 32, progress_sender, drain_sender).unwrap();
+        let mut pipe_reader = spawn_pipe_reader(
+            PipeKind::Stdout,
+            reader,
+            32,
+            progress_sender,
+            drain_sender,
+            None,
+            None,
+        )
+        .unwrap();
 
         let drain = drain_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         pipe_reader.join().unwrap();
@@ -387,5 +496,31 @@ mod tests {
             &input[input.len() - (80 - marker_end)..]
         );
         assert_eq!(omitted, input.len() - marker_start - (80 - marker_end));
+    }
+    // UTF-8 문자가 read 경계에서 끊겨도 가짜 대체 문자를 보내지 않고 완료·취소 뒤 snapshot을
+    // 닫는다.
+    #[test]
+    fn progress_preserves_split_utf8_and_discards_closed_snapshots() {
+        use std::sync::Mutex;
+
+        use super::{BoundedPipeOutput, ProgressSnapshot};
+        let mut snapshot = ProgressSnapshot::default();
+        let mut buffer = BoundedPipeOutput::new(100);
+        buffer.push(b"\xffready \xed\x95");
+        let buffer = Arc::new(Mutex::new(buffer));
+        snapshot.stdout = Some(Arc::clone(&buffer));
+        snapshot.dirty = true;
+        let first = snapshot.take().unwrap();
+        let first: serde_json::Value = serde_json::from_str(&first.output).unwrap();
+        assert_eq!(first["stdout"], "\u{fffd}ready ");
+        assert!(snapshot.take().is_none());
+        buffer.lock().unwrap().push(&[0x9c]);
+        snapshot.dirty = true;
+        let second = snapshot.take().unwrap();
+        let second: serde_json::Value = serde_json::from_str(&second.output).unwrap();
+        assert_eq!(second["stdout"], "\u{fffd}ready 한");
+        snapshot.dirty = true;
+        snapshot.close();
+        assert!(snapshot.take().is_none());
     }
 }

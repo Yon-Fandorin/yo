@@ -23,7 +23,7 @@ pub(crate) use connect::{Command as ConnectCommand, run as run_connect};
 pub(crate) use default::{Command as DefaultCommand, run as run_default};
 pub(crate) use disconnect::{Command as DisconnectCommand, run as run_disconnect};
 use error::raw_command_error;
-pub(crate) use live::{LiveOptions, LiveSelection};
+pub(crate) use live::{LiveOptions, LiveSelection, SandboxMode};
 pub(crate) use model::{Command as ModelCommand, run as run_model_activation};
 pub(crate) use output::OutputFormat;
 #[cfg(test)]

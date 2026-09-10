@@ -50,7 +50,7 @@ impl ResumeFailureStage {
             Self::Revalidation => "revalidation failed",
             Self::RecordedWorkspace => "the recorded workspace is unavailable",
             Self::WorkspaceReferences => "starting workspace reference discovery failed",
-            Self::SkillReferences => "starting Codex skill discovery failed",
+            Self::SkillReferences => "starting skill discovery failed",
             Self::BackendSpawn => "starting the selected agent backend failed",
             Self::NativeResume => "resuming the selected agent backend failed",
         }

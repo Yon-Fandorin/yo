@@ -10,6 +10,7 @@ struct HistoryNormalizer {
     output: Vec<TranscriptRecord>,
     messages: BTreeMap<ActivityRef, RecoveredMessage>,
     dirty_order: Vec<ActivityRef>,
+    terminal_snapshots_only: bool,
 }
 
 #[derive(Debug, Default)]
@@ -29,6 +30,19 @@ pub(super) fn normalize(recovered: &RecoveredJournal) -> Result<Vec<TranscriptRe
         for entry in commit.records() {
             normalizer.observe_recovery(entry.record())?;
         }
+    }
+    normalizer.finish()
+}
+
+pub(super) fn normalize_inherited<'a>(
+    records: impl IntoIterator<Item = &'a JournalRecord>,
+) -> Result<Vec<TranscriptRecord>, String> {
+    let mut normalizer = HistoryNormalizer {
+        terminal_snapshots_only: true,
+        ..HistoryNormalizer::default()
+    };
+    for record in records {
+        normalizer.observe(record)?;
     }
     normalizer.finish()
 }
@@ -54,7 +68,8 @@ impl HistoryNormalizer {
 
     fn observe(&mut self, record: &JournalRecord) -> Result<(), String> {
         match record {
-            JournalRecord::SessionDescriptor(_) => Ok(()),
+            // Imported identities must not enter the child's command/event stream.
+            JournalRecord::SessionDescriptor(_) | JournalRecord::InitialForkSeed(_) => Ok(()),
             JournalRecord::CommandCommitted(command) => {
                 self.flush_dirty();
                 self.output.push(TranscriptRecord::CommandCommitted(
@@ -73,13 +88,19 @@ impl HistoryNormalizer {
                 let message = self.messages.remove(activity).ok_or_else(|| {
                     format!("stored activity {activity:?} finished before it started")
                 })?;
-                let terminal = message.terminal.ok_or_else(|| {
-                    format!("stored activity {activity:?} has no durable message terminal")
-                })?;
-                if !outcomes_match(&terminal, outcome) {
-                    return Err(format!(
-                        "stored activity {activity:?} has conflicting message and activity outcomes"
-                    ));
+                match message.terminal {
+                    Some(terminal) if outcomes_match(&terminal, outcome) => {},
+                    None if self.terminal_snapshots_only && message.revision == 0 => {},
+                    None => {
+                        return Err(format!(
+                            "stored activity {activity:?} has no durable message terminal"
+                        ));
+                    },
+                    Some(_) => {
+                        return Err(format!(
+                            "stored activity {activity:?} has conflicting message and activity outcomes"
+                        ));
+                    },
                 }
                 self.push_event(record);
                 Ok(())
@@ -130,6 +151,16 @@ impl HistoryNormalizer {
                     self.mark_dirty(ended.activity());
                 }
                 self.message_mut(ended.activity())?.terminal = Some(ended.outcome().clone());
+                if self.terminal_snapshots_only {
+                    let message = self.message_mut(ended.activity())?;
+                    let text = std::mem::take(&mut message.text);
+                    self.output.push(TranscriptRecord::EventCommitted(
+                        AgentEvent::ActivityUpdated {
+                            activity: ended.activity(),
+                            update: ActivityUpdate::TextSnapshot(text),
+                        },
+                    ));
+                }
                 Ok(())
             },
         }
@@ -170,6 +201,9 @@ impl HistoryNormalizer {
     }
 
     fn mark_dirty(&mut self, activity: ActivityRef) {
+        if self.terminal_snapshots_only {
+            return;
+        }
         let message = self
             .messages
             .get_mut(&activity)

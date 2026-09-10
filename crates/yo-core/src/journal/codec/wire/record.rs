@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod fork;
+use fork::WireForkRecord;
+
 use super::{
     JournalCodecError,
     command::WireCommand,
@@ -17,21 +20,23 @@ use super::{
 use crate::{
     AgentEvent, JournalSequence, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
     ModelReplayRole, ModelReplayTool, ProviderPrivateReplayEnvelope, ProviderPrivateReplayPayload,
-    SessionDescriptor,
+    SessionDescriptor, SessionId,
     journal::codec::{
         BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved,
-        BackendRequestAccepted, BackendResumableOutcome, BindingTransition,
-        CONTEXT_ARTIFACT_PROFILE, CONTEXT_CHECKPOINT_PROFILE, CONTEXT_POLICY_PROFILE,
-        ContextArtifactReceipt, ContextCheckpoint, ContextLoss, ContextPolicyChanged,
+        BackendRequestAccepted, BackendResumableOutcome, CONTEXT_ARTIFACT_PROFILE,
+        CONTEXT_CHECKPOINT_PROFILE, CONTEXT_POLICY_PROFILE, ContextArtifactReceipt,
+        ContextCheckpoint, ContextImageLoss, ContextLoss, ContextPolicyChanged,
         ContextRetainedGroup, ContextStrategy, ContextSummaryUsage, ContinuationAnchor,
-        JournalRecord, MessageEnded, MessageReset, MessageSegment, MessageTerminal,
-        ModelReplayDeltaRecord, SequencedJournalRecord,
+        ForkHistoryCoordinate, ForkSeed, ForkSource, IMAGE_CONTEXT_CHECKPOINT_PROFILE,
+        InitialForkSeed, JournalRecord, MessageEnded, MessageReset, MessageSegment,
+        MessageTerminal, ModelReplayDeltaRecord, SequencedJournalRecord,
     },
 };
 
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireRecord {
+    InitialForkSeed(Box<WireForkRecord>),
     SessionDescriptor {
         descriptor: WireSessionDescriptor,
     },
@@ -138,14 +143,37 @@ pub(super) enum WireRecord {
         policy_revision: u64,
         strategy: String,
         input_token_limit: u64,
-        input_tokens_before: u64,
-        input_tokens_after: u64,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "non_null_accounting_field"
+        )]
+        input_tokens_before: Option<u64>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "non_null_accounting_field"
+        )]
+        input_tokens_after: Option<u64>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "non_null_accounting_field"
+        )]
+        accounting_before: Option<crate::ContextAccounting>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "non_null_accounting_field"
+        )]
+        accounting_after: Option<crate::ContextAccounting>,
         replay_contract: WireModelReplayContract,
         portable_body: String,
         retained_groups: Vec<WireContextRetainedGroup>,
         #[serde(skip_serializing_if = "Option::is_none")]
         first_retained_sequence: Option<u64>,
         artifact_receipts: Vec<WireContextArtifactReceipt>,
+        #[serde(deserialize_with = "deserialize_context_losses")]
         losses: Vec<WireContextLoss>,
         summary_usage: Value,
     },
@@ -187,11 +215,104 @@ struct WireModelReplayTool {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+pub(super) enum WireContextRetainedGroup {
+    Local(WireLocalRetainedGroup),
+    Imported(WireImportedRetainedGroup),
+}
+
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WireContextRetainedGroup {
+pub(super) struct WireLocalRetainedGroup {
     first_sequence: u64,
     last_sequence: u64,
     items: Vec<WireModelReplayItem>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WireImportedRetainedGroup {
+    profile: String,
+    fork_seed_sequence: u64,
+    group_index: usize,
+    items: Vec<WireModelReplayItem>,
+}
+
+impl WireContextRetainedGroup {
+    fn encode(group: &ContextRetainedGroup, epoch: u64) -> Self {
+        if let Some((seed, group_index)) = group.fork_import() {
+            let mut private_epochs = group.private_epochs().iter();
+            let items = group
+                .items()
+                .iter()
+                .map(|item| {
+                    let source_epoch =
+                        if matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }) {
+                            *private_epochs
+                                .next()
+                                .expect("validated private epoch cardinality")
+                        } else {
+                            epoch
+                        };
+                    encode_model_replay_item(item, source_epoch)
+                })
+                .collect();
+            Self::Imported(WireImportedRetainedGroup {
+                profile: "yo.fork-retained-group/v1".into(),
+                fork_seed_sequence: seed.get(),
+                group_index,
+                items,
+            })
+        } else {
+            Self::Local(WireLocalRetainedGroup {
+                first_sequence: group.first_sequence().get(),
+                last_sequence: group.last_sequence().get(),
+                items: group
+                    .items()
+                    .iter()
+                    .map(|item| encode_model_replay_item(item, epoch))
+                    .collect(),
+            })
+        }
+    }
+
+    fn decode(self, epoch: u64) -> Result<ContextRetainedGroup, JournalCodecError> {
+        match self {
+            Self::Local(group) => ContextRetainedGroup::try_new(
+                correlation::sequence(group.first_sequence, "first_sequence")?,
+                correlation::sequence(group.last_sequence, "last_sequence")?,
+                decode_model_replay_items(group.items, epoch)?,
+            )
+            .map_err(JournalCodecError::new),
+            Self::Imported(group) => {
+                if group.profile != "yo.fork-retained-group/v1" || group.items.len() > 4096 {
+                    return Err(JournalCodecError::new(
+                        "invalid imported checkpoint group profile or item bound",
+                    ));
+                }
+                let mut private_epochs = Vec::new();
+                let mut items = Vec::with_capacity(group.items.len());
+                for item in group.items {
+                    let source_epoch = match &item {
+                        WireModelReplayItem::ProviderPrivateAssistant { binding_epoch, .. } => {
+                            correlation::positive(*binding_epoch, "imported private epoch")?;
+                            private_epochs.push(*binding_epoch);
+                            *binding_epoch
+                        },
+                        _ => epoch,
+                    };
+                    items.extend(decode_model_replay_items(vec![item], source_epoch)?);
+                }
+                ContextRetainedGroup::try_imported(
+                    correlation::sequence(group.fork_seed_sequence, "fork_seed_sequence")?,
+                    group.group_index,
+                    items,
+                    private_epochs,
+                )
+                .map_err(JournalCodecError::new)
+            },
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -208,6 +329,7 @@ pub(super) struct WireContextArtifactReceipt {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireContextLoss {
+    ImageInputSummarized(ContextImageLoss),
     VisiblePrefixSummarized {
         first_sequence: u64,
         last_sequence: u64,
@@ -223,6 +345,10 @@ pub(super) enum WireContextLoss {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum WireModelReplayItem {
+    MultimodalUser {
+        #[serde(deserialize_with = "deserialize_multimodal_parts")]
+        parts: Vec<crate::ModelInputPart>,
+    },
     Message {
         role: WireModelReplayRole,
         content: String,
@@ -249,6 +375,63 @@ enum WireModelReplayItem {
     },
 }
 
+fn deserialize_multimodal_parts<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Vec<crate::ModelInputPart>, D::Error> {
+    struct PartsVisitor;
+    impl<'de> serde::de::Visitor<'de> for PartsVisitor {
+        type Value = Vec<crate::ModelInputPart>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("one to thirty-three ordered multimodal user parts")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut sequence: A,
+        ) -> Result<Self::Value, A::Error> {
+            use serde::de::Error as _;
+            let mut parts = Vec::new();
+            let mut images = 0_usize;
+            let mut png_bytes = 0_usize;
+            while parts.len() < 33 {
+                let Some(part) = sequence.next_element::<crate::ModelInputPart>()? else {
+                    crate::ModelInputPart::validate_user_parts(&parts).map_err(A::Error::custom)?;
+                    return Ok(parts);
+                };
+                match &part {
+                    crate::ModelInputPart::Text { text } => {
+                        if text.is_empty()
+                            || text.len() > 16 * 1024 * 1024
+                            || matches!(parts.last(), Some(crate::ModelInputPart::Text { .. }))
+                        {
+                            return Err(A::Error::custom(
+                                "invalid empty, adjacent or over-bound multimodal text",
+                            ));
+                        }
+                    },
+                    crate::ModelInputPart::Image { snapshot } => {
+                        images += 1;
+                        png_bytes = png_bytes
+                            .checked_add(snapshot.png().len())
+                            .ok_or_else(|| A::Error::custom("multimodal image byte overflow"))?;
+                        if images > 16 || png_bytes > crate::InputImageSnapshot::MAX_BYTES {
+                            return Err(A::Error::custom(
+                                "multimodal image count or byte limit exceeded",
+                            ));
+                        }
+                    },
+                }
+                parts.push(part);
+            }
+            if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                return Err(A::Error::custom("multimodal part limit exceeded"));
+            }
+            crate::ModelInputPart::validate_user_parts(&parts).map_err(A::Error::custom)?;
+            Ok(parts)
+        }
+    }
+    decoder.deserialize_seq(PartsVisitor)
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum WireModelReplayRole {
@@ -271,6 +454,9 @@ impl TryFrom<&SequencedJournalRecord> for WireRecord {
     fn try_from(entry: &SequencedJournalRecord) -> Result<Self, Self::Error> {
         let record = entry.record();
         Ok(match record {
+            JournalRecord::InitialForkSeed(seed) => Self::InitialForkSeed(Box::new(
+                WireForkRecord::encode(required_journal_sequence(entry)?, seed)?,
+            )),
             JournalRecord::SessionDescriptor(descriptor) => Self::SessionDescriptor {
                 descriptor: WireSessionDescriptor::from(descriptor),
             },
@@ -313,18 +499,7 @@ impl TryFrom<&SequencedJournalRecord> for WireRecord {
                 binding_identity: correlation::encode_identity(binding.binding_identity())?,
                 model_identity: correlation::encode_identity(binding.model_identity())?,
                 session_locator: correlation::encode_identity(binding.session_locator())?,
-                transition: WireBindingTransition {
-                    mode: binding.transition().mode().into(),
-                    cache: binding.transition().cache().into(),
-                    source_anchor_sequence: binding
-                        .transition()
-                        .source_anchor_sequence()
-                        .map(JournalSequence::get),
-                    source_checkpoint_sequence: binding
-                        .transition()
-                        .source_checkpoint_sequence()
-                        .map(JournalSequence::get),
-                },
+                transition: WireBindingTransition::encode(binding.transition())?,
                 continuation_strategy: binding.continuation_strategy().into(),
             },
             JournalRecord::BackendBindingClosed(binding) => Self::BackendBindingClosed {
@@ -381,55 +556,60 @@ impl TryFrom<&SequencedJournalRecord> for WireRecord {
                 retained_raw_percent: policy.retained_raw_percent(),
                 retained_raw_max_tokens: policy.retained_raw_max_tokens(),
             },
-            JournalRecord::ContextCheckpoint(checkpoint) => Self::ContextCheckpoint {
-                journal_sequence: required_journal_sequence(entry)?.get(),
-                profile: CONTEXT_CHECKPOINT_PROFILE.to_owned(),
-                epoch: checkpoint.epoch(),
-                previous_context_epoch: checkpoint.previous_context_epoch(),
-                successor_context_epoch: checkpoint.successor_context_epoch(),
-                source_anchor_sequence: checkpoint.source_anchor_sequence().get(),
-                source_journal_boundary: checkpoint.source_journal_boundary().get(),
-                policy_revision: checkpoint.policy_revision(),
-                strategy: checkpoint.strategy().as_str().to_owned(),
-                input_token_limit: checkpoint.input_token_limit(),
-                input_tokens_before: checkpoint.input_tokens_before(),
-                input_tokens_after: checkpoint.input_tokens_after(),
-                replay_contract: encode_model_replay_contract(checkpoint.replay_contract()),
-                portable_body: checkpoint.portable_body().to_owned(),
-                retained_groups: checkpoint
-                    .retained_groups()
-                    .iter()
-                    .map(|group| WireContextRetainedGroup {
-                        first_sequence: group.first_sequence().get(),
-                        last_sequence: group.last_sequence().get(),
-                        items: group
-                            .items()
-                            .iter()
-                            .map(|item| encode_model_replay_item(item, checkpoint.epoch()))
-                            .collect(),
-                    })
-                    .collect(),
-                first_retained_sequence: checkpoint
-                    .first_retained_sequence()
-                    .map(JournalSequence::get),
-                artifact_receipts: checkpoint
-                    .artifact_receipts()
-                    .iter()
-                    .map(|receipt| WireContextArtifactReceipt {
-                        profile: CONTEXT_ARTIFACT_PROFILE.to_owned(),
-                        content_hash: receipt.content_hash().to_owned(),
-                        byte_count: receipt.byte_count(),
-                        media_kind: receipt.media_kind().to_owned(),
-                        source_context_epoch: receipt.source_context_epoch(),
-                        source_journal_sequence: receipt.source_journal_sequence().get(),
-                    })
-                    .collect(),
-                losses: checkpoint
-                    .losses()
-                    .iter()
-                    .map(encode_context_loss)
-                    .collect(),
-                summary_usage: checkpoint.summary_usage().value().clone(),
+            JournalRecord::ContextCheckpoint(checkpoint) => {
+                checkpoint
+                    .validate_profile()
+                    .map_err(JournalCodecError::new)?;
+                Self::ContextCheckpoint {
+                    journal_sequence: required_journal_sequence(entry)?.get(),
+                    profile: checkpoint.profile().to_owned(),
+                    epoch: checkpoint.epoch(),
+                    previous_context_epoch: checkpoint.previous_context_epoch(),
+                    successor_context_epoch: checkpoint.successor_context_epoch(),
+                    source_anchor_sequence: checkpoint.source_anchor_sequence().get(),
+                    source_journal_boundary: checkpoint.source_journal_boundary().get(),
+                    policy_revision: checkpoint.policy_revision(),
+                    strategy: checkpoint.strategy().as_str().to_owned(),
+                    input_token_limit: checkpoint.input_token_limit(),
+                    input_tokens_before: checkpoint
+                        .accounting()
+                        .is_none()
+                        .then_some(checkpoint.input_tokens_before()),
+                    input_tokens_after: checkpoint
+                        .accounting()
+                        .is_none()
+                        .then_some(checkpoint.input_tokens_after()),
+                    accounting_before: checkpoint.accounting().map(|(before, _)| before.clone()),
+                    accounting_after: checkpoint.accounting().map(|(_, after)| after.clone()),
+                    replay_contract: encode_model_replay_contract(checkpoint.replay_contract()),
+                    portable_body: checkpoint.portable_body().to_owned(),
+                    retained_groups: checkpoint
+                        .retained_groups()
+                        .iter()
+                        .map(|group| WireContextRetainedGroup::encode(group, checkpoint.epoch()))
+                        .collect(),
+                    first_retained_sequence: checkpoint
+                        .first_retained_sequence()
+                        .map(JournalSequence::get),
+                    artifact_receipts: checkpoint
+                        .artifact_receipts()
+                        .iter()
+                        .map(|receipt| WireContextArtifactReceipt {
+                            profile: CONTEXT_ARTIFACT_PROFILE.to_owned(),
+                            content_hash: receipt.content_hash().to_owned(),
+                            byte_count: receipt.byte_count(),
+                            media_kind: receipt.media_kind().to_owned(),
+                            source_context_epoch: receipt.source_context_epoch(),
+                            source_journal_sequence: receipt.source_journal_sequence().get(),
+                        })
+                        .collect(),
+                    losses: checkpoint
+                        .losses()
+                        .iter()
+                        .map(encode_context_loss)
+                        .collect(),
+                    summary_usage: checkpoint.summary_usage().value().clone(),
+                }
             },
             JournalRecord::MessageReset(reset) => Self::MessageReset {
                 reset: WireMessageReset::from(reset),
@@ -450,6 +630,9 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
 
     fn try_from(record: WireRecord) -> Result<Self, Self::Error> {
         match record {
+            WireRecord::InitialForkSeed(_) => Err(JournalCodecError::new(
+                "initial fork seed requires its preceding child descriptor",
+            )),
             WireRecord::SessionDescriptor { descriptor } => Ok((
                 None,
                 JournalRecord::SessionDescriptor(SessionDescriptor::try_from(descriptor)?),
@@ -522,25 +705,7 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                         correlation::decode_identity(binding_identity)?,
                         correlation::decode_identity(model_identity)?,
                         correlation::decode_identity(session_locator)?,
-                        {
-                            let source_checkpoint_sequence = transition.source_checkpoint_sequence;
-                            let transition = BindingTransition::new(
-                                transition.mode.into(),
-                                transition.cache.into(),
-                                transition
-                                    .source_anchor_sequence
-                                    .map(|value| {
-                                        correlation::sequence(value, "source_anchor_sequence")
-                                    })
-                                    .transpose()?,
-                            );
-                            match source_checkpoint_sequence {
-                                Some(value) => transition.with_source_checkpoint_sequence(
-                                    correlation::sequence(value, "source_checkpoint_sequence")?,
-                                ),
-                                None => transition,
-                            }
-                        },
+                        transition.decode()?,
                         continuation_strategy.try_into()?,
                     )),
                 ))
@@ -715,6 +880,8 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                 input_token_limit,
                 input_tokens_before,
                 input_tokens_after,
+                accounting_before,
+                accounting_after,
                 replay_contract,
                 portable_body,
                 retained_groups,
@@ -723,22 +890,38 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                 losses,
                 summary_usage,
             } => {
-                if profile != CONTEXT_CHECKPOINT_PROFILE {
+                if profile != CONTEXT_CHECKPOINT_PROFILE
+                    && profile != IMAGE_CONTEXT_CHECKPOINT_PROFILE
+                {
                     return Err(JournalCodecError::new(
                         "unsupported context checkpoint profile",
                     ));
                 }
+                let (before, after, accounting) = match (
+                    profile.as_str(),
+                    input_tokens_before,
+                    input_tokens_after,
+                    accounting_before,
+                    accounting_after,
+                ) {
+                    (CONTEXT_CHECKPOINT_PROFILE, Some(before), Some(after), None, None) => {
+                        (before, after, None)
+                    },
+                    (IMAGE_CONTEXT_CHECKPOINT_PROFILE, None, None, Some(before), Some(after)) => (
+                        before.planning_tokens(),
+                        after.planning_tokens(),
+                        Some((before, after)),
+                    ),
+                    _ => {
+                        return Err(JournalCodecError::new(
+                            "checkpoint profile has missing or mixed accounting fields",
+                        ));
+                    },
+                };
                 correlation::positive(epoch, "epoch")?;
                 let retained_groups = retained_groups
                     .into_iter()
-                    .map(|group| {
-                        ContextRetainedGroup::try_new(
-                            correlation::sequence(group.first_sequence, "first_sequence")?,
-                            correlation::sequence(group.last_sequence, "last_sequence")?,
-                            decode_model_replay_items(group.items, epoch)?,
-                        )
-                        .map_err(JournalCodecError::new)
-                    })
+                    .map(|group| group.decode(epoch))
                     .collect::<Result<Vec<_>, JournalCodecError>>()?;
                 let artifact_receipts = artifact_receipts
                     .into_iter()
@@ -765,41 +948,39 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                     .into_iter()
                     .map(decode_context_loss)
                     .collect::<Result<Vec<_>, JournalCodecError>>()?;
+                let mut checkpoint = ContextCheckpoint::try_new(
+                    epoch,
+                    previous_context_epoch,
+                    successor_context_epoch,
+                    correlation::sequence(source_anchor_sequence, "source_anchor_sequence")?,
+                    correlation::sequence(source_journal_boundary, "source_journal_boundary")?,
+                    policy_revision,
+                    ContextStrategy::parse(&strategy).map_err(JournalCodecError::new)?,
+                    input_token_limit,
+                    before,
+                    after,
+                    decode_model_replay_contract(replay_contract),
+                    portable_body,
+                    retained_groups,
+                    first_retained_sequence
+                        .map(|value| correlation::sequence(value, "first_retained_sequence"))
+                        .transpose()?,
+                    artifact_receipts,
+                    losses,
+                    ContextSummaryUsage::try_new(summary_usage).map_err(JournalCodecError::new)?,
+                )
+                .map_err(JournalCodecError::new)?;
+                if let Some((before, after)) = accounting {
+                    checkpoint = checkpoint
+                        .with_accounting(before, after)
+                        .map_err(JournalCodecError::new)?;
+                }
+                checkpoint
+                    .validate_profile()
+                    .map_err(JournalCodecError::new)?;
                 Ok((
                     Some(correlation::sequence(journal_sequence, "journal_sequence")?),
-                    JournalRecord::ContextCheckpoint(
-                        ContextCheckpoint::try_new(
-                            epoch,
-                            previous_context_epoch,
-                            successor_context_epoch,
-                            correlation::sequence(
-                                source_anchor_sequence,
-                                "source_anchor_sequence",
-                            )?,
-                            correlation::sequence(
-                                source_journal_boundary,
-                                "source_journal_boundary",
-                            )?,
-                            policy_revision,
-                            ContextStrategy::parse(&strategy).map_err(JournalCodecError::new)?,
-                            input_token_limit,
-                            input_tokens_before,
-                            input_tokens_after,
-                            decode_model_replay_contract(replay_contract),
-                            portable_body,
-                            retained_groups,
-                            first_retained_sequence
-                                .map(|value| {
-                                    correlation::sequence(value, "first_retained_sequence")
-                                })
-                                .transpose()?,
-                            artifact_receipts,
-                            losses,
-                            ContextSummaryUsage::try_new(summary_usage)
-                                .map_err(JournalCodecError::new)?,
-                        )
-                        .map_err(JournalCodecError::new)?,
-                    ),
+                    JournalRecord::ContextCheckpoint(checkpoint),
                 ))
             },
             WireRecord::MessageReset { reset } => Ok((
@@ -821,6 +1002,39 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                 )),
             )),
         }
+    }
+}
+
+impl WireRecord {
+    pub(super) fn decode_in_session(
+        self,
+        child: Option<SessionId>,
+    ) -> Result<(Option<JournalSequence>, JournalRecord), JournalCodecError> {
+        match self {
+            Self::InitialForkSeed(seed) => seed.decode(child.ok_or_else(|| {
+                JournalCodecError::new(
+                    "initial fork seed requires a preceding descriptor in the same commit",
+                )
+            })?),
+            other => other.try_into(),
+        }
+    }
+
+    pub(super) fn validate_fork_child(
+        child: SessionId,
+        seed: &InitialForkSeed,
+    ) -> Result<(), JournalCodecError> {
+        fork::validate_child(child, seed)
+    }
+
+    pub(super) fn prepare_initial_fork_seed(
+        child: SessionId,
+        parent: SessionId,
+        source: ForkSource,
+        seed: ForkSeed,
+        history: Vec<(SessionId, ForkHistoryCoordinate, &SequencedJournalRecord)>,
+    ) -> Result<InitialForkSeed, JournalCodecError> {
+        fork::prepare_seed(child, parent, source, seed, history)
     }
 }
 
@@ -853,6 +1067,9 @@ fn encode_model_replay_contract(contract: &ModelReplayContract) -> WireModelRepl
 
 fn encode_model_replay_item(item: &ModelReplayItem, epoch: u64) -> WireModelReplayItem {
     match item {
+        ModelReplayItem::MultimodalUser { parts } => WireModelReplayItem::MultimodalUser {
+            parts: parts.clone(),
+        },
         ModelReplayItem::Message {
             role,
             content,
@@ -924,6 +1141,11 @@ fn decode_model_replay_items(
         .into_iter()
         .map(|item| {
             Ok(match item {
+                WireModelReplayItem::MultimodalUser { parts } => {
+                    crate::ModelInputPart::validate_user_parts(&parts)
+                        .map_err(JournalCodecError::new)?;
+                    ModelReplayItem::MultimodalUser { parts }
+                },
                 WireModelReplayItem::Message {
                     role,
                     content,
@@ -971,6 +1193,9 @@ fn decode_model_replay_items(
 
 fn encode_context_loss(loss: &ContextLoss) -> WireContextLoss {
     match loss {
+        ContextLoss::ImageInputSummarized(loss) => {
+            WireContextLoss::ImageInputSummarized(loss.clone())
+        },
         ContextLoss::VisiblePrefixSummarized {
             first_sequence,
             last_sequence,
@@ -993,6 +1218,7 @@ fn encode_context_loss(loss: &ContextLoss) -> WireContextLoss {
 
 fn decode_context_loss(loss: WireContextLoss) -> Result<ContextLoss, JournalCodecError> {
     match loss {
+        WireContextLoss::ImageInputSummarized(loss) => Ok(ContextLoss::ImageInputSummarized(loss)),
         WireContextLoss::VisiblePrefixSummarized {
             first_sequence,
             last_sequence,
@@ -1058,4 +1284,46 @@ fn required_journal_sequence(
     entry.journal_sequence().ok_or_else(|| {
         JournalCodecError::new("semantic Journal record is missing journal_sequence")
     })
+}
+
+fn non_null_accounting_field<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    decoder: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(decoder).map(Some)
+}
+
+fn deserialize_context_losses<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Vec<WireContextLoss>, D::Error> {
+    struct LossVisitor;
+    impl<'de> serde::de::Visitor<'de> for LossVisitor {
+        type Value = Vec<WireContextLoss>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("bounded checkpoint losses with at most 64 image entries")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut sequence: A,
+        ) -> Result<Self::Value, A::Error> {
+            use serde::de::Error as _;
+            let mut losses = Vec::new();
+            let mut images = Vec::new();
+            while let Some(loss) = sequence.next_element::<WireContextLoss>()? {
+                if losses.len() == 4096 {
+                    return Err(A::Error::custom("checkpoint loss count exceeds its bound"));
+                }
+                if let WireContextLoss::ImageInputSummarized(image) = &loss {
+                    if images.len() == 64 {
+                        return Err(A::Error::custom("checkpoint image loss count exceeds 64"));
+                    }
+                    images.push(image.clone());
+                    crate::journal::codec::validate_image_losses(&images)
+                        .map_err(A::Error::custom)?;
+                }
+                losses.push(loss);
+            }
+            Ok(losses)
+        }
+    }
+    decoder.deserialize_seq(LossVisitor)
 }

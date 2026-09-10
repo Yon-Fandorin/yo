@@ -12,6 +12,12 @@ pub(super) fn wire_body(
     let mut index = 0;
     while index < request.input().len() {
         match &request.input()[index] {
+            ModelConnectorInputItem::MultimodalUser { .. }
+            | ModelConnectorInputItem::ImageSummarySource { .. } => {
+                return Err(configuration_failure(
+                    "image input requires a reviewed connector image profile",
+                ));
+            },
             ModelConnectorInputItem::Message {
                 role: ModelConnectorInputRole::Assistant,
                 content,

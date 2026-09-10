@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     surface::{Point, Size, Surface},
-    terminal::{AnsiEncoder, TerminalOp, TerminalOps},
+    terminal::{AnsiEncoder, RESET_HYPERLINK, TerminalOp, TerminalOps},
 };
 
 const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
@@ -86,6 +86,7 @@ impl From<io::Error> for InlineRenderError {
 
 pub(crate) struct InlineRenderer<Writer> {
     ansi: AnsiEncoder<Writer>,
+    hyperlink_dirty: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,10 +113,34 @@ impl<Writer: Write> InlineRenderer<Writer> {
     pub(crate) const fn new(writer: Writer) -> Self {
         Self {
             ansi: AnsiEncoder::new(writer),
+            hyperlink_dirty: false,
         }
     }
 
     pub(crate) fn render(
+        &mut self,
+        pending: PendingFrame<'_>,
+        previous: Option<&Surface>,
+        current: &Surface,
+        publication: Option<&Surface>,
+        terminal_size: Size,
+    ) -> Result<InlineRenderReceipt, InlineRenderError> {
+        if self.hyperlink_dirty {
+            self.ansi.writer_mut().write_all(RESET_HYPERLINK)?;
+        }
+        self.hyperlink_dirty = false;
+        let result = self.render_frame(pending, previous, current, publication, terminal_size);
+        if result.is_ok() {
+            self.hyperlink_dirty = false;
+        } else if self.hyperlink_dirty {
+            let _ = self.ansi.writer_mut().write_all(RESET_HYPERLINK);
+            let _ = self.ansi.writer_mut().write_all(SHOW_CURSOR);
+            let _ = self.ansi.writer_mut().flush();
+        }
+        result
+    }
+
+    fn render_frame(
         &mut self,
         pending: PendingFrame<'_>,
         previous: Option<&Surface>,
@@ -150,6 +175,7 @@ impl<Writer: Write> InlineRenderer<Writer> {
         let operations = TerminalOps::from_diff(&pending.redraw_diff(previous, current)?);
         let transaction =
             PublicationTransaction::compile(plan, terminal_size, publication, &operations);
+        self.hyperlink_dirty = current.has_hyperlinks() || publication.has_hyperlinks();
         let first = transaction.execute_from(self.ansi.writer_mut(), 0);
         let recovery = match first {
             Ok(()) => None,
@@ -205,6 +231,7 @@ impl<Writer: Write> InlineRenderer<Writer> {
     ) -> Result<(), InlineRenderError> {
         let plan = pending.plan();
         let operations = TerminalOps::from_diff(&pending.diff(previous, current)?);
+        self.hyperlink_dirty = current.has_hyperlinks();
         let output = (|| {
             self.ansi.writer_mut().write_all(HIDE_CURSOR)?;
             let mut cursor = Cursor::prepare(self.ansi.writer_mut(), plan)?;

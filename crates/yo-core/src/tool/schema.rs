@@ -48,6 +48,7 @@ pub struct ToolDefinition {
     input_schema: Value,
     effect: ToolEffect,
     approval: ToolApprovalRequirement,
+    argument_byte_limit: Option<usize>,
 }
 
 impl ToolDefinition {
@@ -94,7 +95,26 @@ impl ToolDefinition {
             input_schema,
             effect,
             approval,
+            argument_byte_limit: None,
         })
+    }
+
+    /// Limits raw JSON and normalized JSON plus one trailing LF before execution.
+    /// The caller's argument bound may lower this limit; definitions without one
+    /// retain the existing caller-bounded raw JSON admission.
+    pub fn with_argument_byte_limit(mut self, limit: usize) -> Result<Self, ToolRegistryError> {
+        if limit == 0 {
+            return Err(ToolRegistryError::new(
+                "tool argument byte limit must be non-zero",
+            ));
+        }
+        self.argument_byte_limit = Some(limit);
+        Ok(self)
+    }
+
+    /// Optional raw JSON and normalized JSON-plus-LF admission limit.
+    pub const fn argument_byte_limit(&self) -> Option<usize> {
+        self.argument_byte_limit
     }
 
     pub const fn id(&self) -> &ToolId {

@@ -179,13 +179,25 @@ exact-replay-only policy also rejects instead of compacting, and malformed
 output, failed usage attribution, a non-reducing result, or a successor payload
 still at the trigger permits no retry or fallback.
 
-For a new local-tools Session, startup freezes the five-tool basic registry in
+For a new local-tools Session without configured commands, startup freezes the five-tool basic registry in
 the order `list_files`, `read_files`, `edit_file`, `write_file`, and
 `run_command`. Resume compares the durable replay projection with the exact
 basic, preceding three-tool legacy, and empty manifests; an unknown or mixed
 projection goes to the existing read-only failure path. A later model-binding
 replacement carries the already selected registry revision instead of silently
 upgrading the Session's tool history.
+
+Explicit `tools.commands` definitions are parsed by CLI state/config without artifact
+I/O. The execution/tools command owner captures the configured executable and optional
+script, appends definitions after the basic registry, and freezes an execution manifest.
+Managed bindings retain its digest in the strict versioned command wrapper; startup,
+resume, fork and model replacement validate the saved projection and manifest before
+installing a candidate. Legacy and no-tools sessions keep their original identities.
+Delegated hosts skip artifact preparation and report that they manage their own tools.
+After request approval, execution revalidates artifacts and writes normalized JSON plus
+one newline to the child stdin. Fixed argv stays literal. Nonblocking stdin participates
+in the existing output, cancellation, deadline and finite cleanup lifecycle; partial
+input delivery never becomes a successful result.
 
 The file host validates concrete item, numeric, path, and content bounds in the
 semantic-admission path before an execution attempt and repeats defensive
@@ -319,6 +331,20 @@ An ordinary prompt submitted while a Turn is visible carries that exact
 `TurnRef` into `yo-core`. If the worker has already finished it, core rejects
 the steer instead of reinterpreting the same text as a new Turn. Backpressure
 and retry retain the same immutable intent.
+
+Follow-up messages use Alt+Enter (Alt+Q also works; Alt+Enter keeps an explicitly
+configured newline binding). TuiState retains at most 16 immutable inputs,
+64 KiB combined, and preserves the first excess draft. Commands are not queued.
+Selected references retain their typed identity and spans through queue and recall;
+admission revalidates them at actual dispatch. The runner admits one input only when idle,
+with no outstanding request, start acknowledgement, model transition, or retained
+admission. The same retry lane handles backpressure. Accepted removes the queued
+snapshot without clearing a newer editor draft; the runner waits for TurnStarted
+before admitting more input. Rejection, failed/interrupted completion, or explicit
+interrupt pauses the queue. Alt+R pauses and recalls the oldest unsent message only
+into an empty draft; Alt+Enter/Alt+Q with an empty draft resumes. Queues belong to the
+live TUI session, survive terminal suspension, and are not durable journal records.
+The nested offline preview uses the same queue and admission state.
 
 In an editable TUI, `/model` opens one account-sectioned selection panel. Stored
 managed models are grouped under `Provider display · Account display`. Every
@@ -521,6 +547,15 @@ replace the exact @query span and retain its typed identity
 transforms. `yo-core::LocalWorkspaceReferenceProvider` owns local execution
 discovery semantics and performs Git and filesystem work on its worker thread;
 `yo-cli` only constructs and connects that capability.
+Directory enumeration and tracked-file validation resolve components against pinned
+root descriptors without following symlinks. Inventory publication rechecks the
+root identity. Filesystem and tracked-path passes share a budget of 32,768 examined
+paths and 16 MiB of path bytes; traversal checks a 30-second deadline. Reaching a
+bound reports `Incomplete` while preserving collected candidates. Git commands
+have a separate five-second deadline, 16 MiB stdout and 64 KiB stderr bounds, and
+32 MiB of framed input. Nonblocking stdin/stdout/stderr processing avoids pipe
+backpressure deadlocks; cleanup terminates and reaps the owned process group.
+Git errors and process limits fail the search rather than disabling ignore rules.
 The candidate and request/update types live in `yo-core`, so a remote execution
 provider can replace the local connection without moving filesystem authority
 into the frontend. The inventory includes visible files and directories,
@@ -536,10 +571,68 @@ bindings, emphasizing keys while dimming captions. Rich glyphs use `↑↓` for
 movement, ASCII uses `Up/Down`, and familiar terminal names such as `Enter`,
 `Esc`, and `^C` remain literal.
 
-This Slice deliberately stops before structured submission admission. Selecting
-a row visibly replaces the token and retains the typed reference, but a later
-Enter preserves the draft and reports that structured submission is not yet
-connected. It never silently degrades an accepted identity into plain text.
+Enter snapshots the text and accepted reference identities with exact byte spans
+into `UserInput`. The same immutable input crosses submission, queue/recall, and
+Journal boundaries. An accepted submission clears only a semantically matching
+draft, and clearing removes its annotations; pasting the same text later does not
+recreate authority.
+
+`InputAdmissionHost` is configured once on the live `AgentSession` before its first
+input; resumed sessions bind their current execution host independently of stored
+history. The runtime validates the whole input before backend command dispatch.
+An unconfigured host rejects structured input. The CLI wires
+`LocalWorkspaceInputAdmission` for its local workspace: root identity includes the
+canonical path and directory device/inode, while file content changes preserve
+path identity. Descriptor-relative, no-follow resolution rechecks environment,
+workspace, root, path, kind, containment, and read access. Ignore changes do not
+revoke a selected path; Git internals, symlink replacements, changed roots/kinds,
+and permission denials do. The local profile allows at most 128 references and
+4096 bytes per relative path. It neither reads contents nor recursively attaches
+directories. Typed rejection preserves the draft and keeps the Session usable.
+Skill references remain unsupported by this admission host and reject the whole
+request before workspace lookup or asset loading. Backend adapters currently use
+the visible path form; semantic input and Journal retain structured references.
+
+## Explicit image attachments
+
+`/attach PATH` prepares a local static PNG/JPEG without submitting a Turn. The
+last command line becomes an annotated `[image]` only when the result still
+matches the request identity, editor revision and selected Session/model target.
+Plain markers, Markdown images and file references never acquire attachment authority.
+
+The ownership route is `yo-core::ImagePreparationHost` → CLI
+`execution/image/host.rs` → `execution/image.rs` for bounded source reading,
+orientation, RGBA8/Triangle normalization and thumbnail preparation. The worker
+has one active job. TUI `runner/state/image.rs` accounts for draft/queue PNG
+ownership and pending reservations, and `prompt/image.rs` preserves occurrence
+spans through editing. Layout receives only the prepared thumbnail; submission,
+queue, recall and journal retain the full immutable snapshot and original source
+byte charge. Cancellation or a stale result cannot clear a newer draft.
+
+`InputAdmissionHost::validate_images` checks preparation evidence before skill
+body loading. The CLI wrapper seeds old evidence only from validated original
+input history, not replay-only snapshots or reopened files. Runtime admission
+separately checks `BackendCapabilities::image_input()` for the exact selected
+backend/model; unknown support and explicit non-support have distinct typed
+rejections. Managed support additionally requires the explicit complete binding's
+reviewed `image_input_profile`. Catalog refresh does not add that field to old
+bindings. Delegated protocols need their own negotiated model/protocol evidence.
+
+Foundation `image.rs` and `image/png.rs` own the immutable canonical PNG identity
+and bounded structural pixel-stream verification. Core input/image owns editable
+occurrences; v3 input and multimodal replay preserve ordered text/image parts.
+Kimi's connector emits typed PNG data URLs and removes only those image URLs from
+its tokenizer projection. Managed `backend/accounting.rs` applies the selected
+advisory estimate and one reserve per complete request, including final output-cap
+recount. Actual provider usage remains separate telemetry.
+
+`model_connector/image_summary.rs` derives the ordered manifest and exact images
+for one tools-disabled summary request under separate summary limits. Core's v2
+checkpoint records before/after accounting and exact local image-loss provenance;
+retained snapshots remain authoritative. The owning binding selects v2 even when
+no images remain. Text-only bindings keep their old pressure/checkpoint shapes.
+The accepted contracts are `agent.input.image-attachment`,
+`agent.persistence.format-compatibility` and `agent.backend.yo-managed-model-loop`.
 
 ## Explicit skill assistance
 
@@ -573,9 +666,95 @@ reflows the prompt.
 
 V1 retains at most one accepted explicit skill. Selection does not read the
 skill body, execute it, inject it into model context, or submit the draft.
-Until submission-time admission can reload and revalidate the exact selected
-entry, Enter preserves the draft and fails closed rather than treating the
-visible `$name` as sufficient authority.
+For the Codex execution host, `CodexSkillInputAdmission` first validates all
+workspace references, refreshes authoritative descriptors with `skills/list`,
+and checks the exact selected entry and its enabled policy. It then reads one
+bounded regular-file snapshot and checks its digest before returning frozen
+instructions through `InputAdmissionHost::prepare`. Supporting references remain
+lazy under the Codex skill profile. Start/Steer persist the snapshot as nested
+input v2; Activity answers reject it during live admission and journal conversion.
+Managed execution and the local Grok host use `LocalSkillReferenceProvider` and
+`LocalSkillInputAdmission`, implemented under the existing core skill-reference
+owner. Explicit `skills.roots` configuration supplies workspace/user provenance;
+relative roots resolve against the selected Session's recorded workspace. The CLI
+only assembles these ports and keeps Codex's authoritative catalog separate.
+Discovery runs on a worker with file/count/aggregate bounds; malformed, disabled or
+unsupported entries remain unavailable with reasons. Submission validates workspace
+references before reading the exact selected regular-file snapshot, then checks its
+metadata policy and digest and freezes those same bytes. Linked assets stay lazy.
+Unavailable configured roots affect new discovery/admission, not replay of already
+persisted instructions. Empty roots and print mode do not create a discovery worker.
+Visible `$name` text alone is never authority, and skill instructions cannot grant
+tool or sandbox capabilities.
+
+`/new` requests an independent Session only when durable history is available and
+no active work, pending submission, queued input, or compaction remains. The CLI
+prepares the new backend and writer before replacing the current Session. It
+retains the active target and tool profile; Codex receives an exact account/model
+new-session target and checks the returned model, without using the fork path.
+Startup failure leaves the previous Session available. A historical tool profile
+that cannot be recreated fails before replacement.
+
+`/resume` shares the idle transition guard and offers bounded discovery for the
+current workspace host/path; an explicit full UUID selects a saved Session directly.
+The CLI revalidates the saved continuation, removes current-session launch overrides
+and stored startup preference, then prepares that Session's recorded binding and
+workspace before replacing the live instance. Picker entries with unavailable
+continuation cannot be selected; unknown entries require continuation-time checking.
+Failures preserve the current Session and provide archival inspection guidance.
+
+`/fork` uses the same idle and durable transition guard and captures the current
+committed boundary, with the live state and durable cutoff checked again after the
+read. The managed exact-replay path preserves the saved model, tool registry,
+workspace, and immutable input/private replay snapshots. Preparation creates a
+separate child identity and validates its complete bootstrap without a model request.
+The child startup publishes that bootstrap as one durable snapshot before reporting
+Ready; only then does the CLI select the child and clean up the previous live instance.
+Preparation or startup failure preserves the selected parent and reports the cause.
+
+`/fork at` captures a historical catalog through `AgentSession::capture_fork_catalog`.
+The local reader pins one bounded physical capture (by default 32 MiB and 4096 records);
+recovery and every discovery envelope are validated before the separately capped list
+of 128 newest boundary rows is returned. Rows show the recorded model and a bounded
+visible user-input excerpt. The TUI owns the picker token; the CLI retains that token
+with the immutable catalog and resolves a selected index only in that matching capture.
+`prepare_historical_fork_source` rechecks the live parent and reconstructs the selected
+prefix with its own binding and context epochs. It then uses the same child preparation
+path as `/fork`. A stale picker or changed parent cannot silently select a newer source.
+Cancellation or failure preserves the parent and draft.
+
+Validated inherited history has a separate, immutable presentation projection. The
+stored history and continuation expose original source sections and the exact captured
+parent boundary without adding records to the child's execution, Request or Usage
+streams. Segmented messages produce one final archival text snapshot. Live and archived
+Chat reuse the existing typed presentation for these records, then copy final display
+items without inheriting activity/request maps or the latest-usage state. Transcript
+shows the source qualifications; archived content and tail limits cover inherited
+records as well. A presentation failure cleans up the candidate before selection.
+
+Delegated/native host forks remain unavailable without a supported verifier for the
+exact source boundary; model-rebind support alone is insufficient.
+
+`/tree` opens a separate read-only Session tree for the current workspace host/path.
+`StoredSessionReader::read_tree` owns bounded physical inspection and validates durable
+fork provenance before assigning ancestry. Ordinary `/resume` retains tail discovery.
+The default tree query inspects at most 4096 directory entries, 64 Session candidates,
+32 MiB and 4096 physical records; reaching a bound is shown as incomplete inspection.
+Legacy ancestry remains unknown. Missing, unavailable, uninspected and outside-workspace
+ancestors are explicit disabled rows; a missing parent does not disable an independently
+resumable child. The current Session is disabled. Selecting another available row uses
+the existing resume transition and its fresh continuation checks. Viewing starts no
+backend, creates no storage and acquires no Session writer lease. Failures preserve
+the live Session and show a local notice.
+The tree alone opts into wrapped panel entries. Arrow keys browse all rows, including
+disabled ancestors; only eligible choices yield a resume identity. Page keys scroll
+within a long entry, so narrow or short viewports preserve access to its complete text.
+
+User-configured `prompts` are validated once by `PromptTemplates`. `/prompt` lists
+names, while `/prompt NAME` replaces the command draft with the exact literal body.
+It neither dispatches a Turn nor creates typed skill/workspace references. A separate
+Enter submits through the existing idle/active-Turn routing; an unchanged slash-shaped
+body remains literal. The same templates are available in the offline preview.
 
 ## One active turn
 
@@ -647,8 +826,13 @@ The useful inspection points are:
 4. [`AgentWorker`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs)
    is the only owner that executes and polls the runtime. After runtime and
    backend acceptance succeed, it publishes `SubmissionOutcome::Accepted` for
-   the exact ID. The typed rejection channel exists for the next reference-
-   admission Slice; structured `@` and `$` drafts remain fail-closed until then.
+   the exact ID. Core command rejection and a nonterminal backend
+   `CommandRejected` publish `SubmissionOutcome::Rejected` without ending the
+   Session. A rejected start releases its Turn reservation; a rejected steer
+   preserves the active Turn. A queued interrupt targeting a rejected or already
+   completed Turn does not interrupt newer work. Transport, protocol, and terminal
+   failures still fail the worker. Structured `@` and `$` drafts remain
+   fail-closed pending reference admission.
    The terminal-owning thread does not wait on provider I/O.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime.rs)
    orders command validation, backend acceptance, semantic commit, and Journal
@@ -660,7 +844,10 @@ The useful inspection points are:
    message revision instead of mutating an already durable segment. Consecutive
    replacements that have emitted no segment share that unpublished revision;
    an empty replacement is represented by `MessageReset` when a time or ordering
-   boundary makes it durable, or by its zero-byte terminal seal at termination. It also
+   boundary makes it durable, or by its zero-byte terminal seal at termination.
+   A command boundary flushes buffered message storage records before the command
+   in the same atomic commit. The codec permits that storage-only prefix while
+   rejecting a preceding semantic event or a second command. It also
    translates provider observations through the semantic engine before
    publishing a change notification. Rejected commands and invalid backend events are not
    recorded as committed semantics; terminal events created while closing a
@@ -680,9 +867,16 @@ The useful inspection points are:
    durability transition before the semantic records affected by it, so a
    coalesced worker wake-up cannot erase a Gap-to-Durable transition. The same
    level-triggered readiness also wakes the terminal owner instead of waiting
-   for a periodic agent poll. The CLI
-   adapter forwards that order to TUI state with the exact cutoff class. Chat, status-row, or banner presentation
-   remains a separate product contract. Stored-Session inspection follows the
+   for a periodic agent poll. `AgentSession` retains an unread worker signal across
+   repeated readiness probes, including when a host status or warning is presented
+   first. A fresh seed-only resume therefore delivers its authoritative durability
+   observation even if the idle backend emits no later events. The CLI
+   adapter forwards that order to TUI state with the exact cutoff class. The TUI
+   adds a Chat notice with the cause and verified saved boundary, and keeps
+   `History not saved` in the Chat status row or other views' header while the
+   gap remains. Repeated identical observations do not duplicate notices.
+   Authoritative Durable recovery restores the usual status and adds a recovery
+   notice. Stored-Session inspection follows the
    separate read-only path below. Executable continuation uses the separately
    validated recovery path below rather than deriving state from that frontend
    history projection.
@@ -695,7 +889,7 @@ The useful inspection points are:
    user input only when its `StartTurn` or `SteerTurn` command appears in that
    sequence. Terminal `EventStream` readiness and the agent, workspace, and
    skill producer readiness wake the owner thread. Their live-source traits
-   require this contract; there is no periodic observation fallback. Unix
+   require this contract; producer observation has no periodic fallback. Unix
    termination handlers publish the durable signal bit and perform only a
    nonblocking, async-signal-safe write. A normal notifier thread converts that
    byte into the same frontend wake before the host cleans up and replays the
@@ -703,8 +897,11 @@ The useful inspection points are:
    instead of drawing synchronously for every event. `FrameScheduler` publishes
    the first and resize frames immediately, then coalesces ordinary requests at
    the `TuiSession` limit: 120fps by default, or 60fps when the host selects
-   `FrameRateLimit::Fps60`. With no readiness or scheduled frame, motion, or
-   active-backpressure deadline, the owner may sleep indefinitely. The 10ms
+   `FrameRateLimit::Fps60`. A separate 250ms terminal-size check recovers missed
+   resize notifications even while producers are idle. Changed geometry advances
+   the geometry epoch, invalidates the viewport, and requests an immediate frame;
+   unchanged geometry causes no redraw. This deadline bounds the owner's sleep
+   without replacing producer readiness or post-publication geometry checks. The 10ms
    backpressure retry remains a deadline only while an operation is actively
    retained. An editor mutation that dispatches
    `@` or `$` discovery requests a frame before any provider result; the prior usable panel remains visible
@@ -847,6 +1044,7 @@ session:
     date_format: "%Y-%m-%d %H:%M %:z"
 tui:
   max_fps: 120
+  theme: default
 ```
 
 `config.yaml` owns only general Session and TUI settings. A top-level `model`
@@ -930,7 +1128,10 @@ select or re-export connectors.
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
 in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
 `120`; live startup reads it once and applies it to retained TUI generations.
-Runtime reload is not supported. Whole-field YAML null, unknown or duplicate
+`tui.theme` accepts `default`, `light`, or `mono` and defaults to `default`.
+An explicit interactive `--theme` overrides it for that run, including
+`--theme default` when the file chooses another palette. Color capability and
+ASCII selection remain independent. Runtime reload is not supported. Whole-field YAML null, unknown or duplicate
 fields, duplicate ModelIds, incomplete profiles, and a relative `--from` path
 fail before credential capture or mutation. `{}` is an explicit empty
 structured replacement; nested null remains a structured value. Plain YAML 1.1

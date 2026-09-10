@@ -283,6 +283,34 @@ fn format_record_body(prefix: String, record: &TranscriptRecord) -> String {
             policy.retained_raw_percent(),
             policy.retained_raw_max_tokens(),
         ),
+        TranscriptRecord::ContextCheckpointCommitted(checkpoint)
+            if checkpoint.accounting().is_some() =>
+        {
+            let (before, after) = checkpoint
+                .accounting()
+                .expect("accounting presence checked");
+            format!(
+                "{prefix}\nsource={}..{} policy_revision={} context_epoch={}..{} quality=advisory_estimate policy={} input_estimate={}..{} reserve_tokens={}..{} planning_tokens={}..{} input_token_limit={} retained_groups={} images_summarized={} artifact_receipts={} visible_prefix_losses={} provider_private_losses={}",
+                checkpoint.source_anchor_sequence().get(),
+                checkpoint.source_journal_boundary().get(),
+                checkpoint.policy_revision(),
+                checkpoint.previous_context_epoch(),
+                checkpoint.successor_context_epoch(),
+                before.policy(),
+                before.input_estimate(),
+                after.input_estimate(),
+                before.reserve_tokens(),
+                after.reserve_tokens(),
+                before.planning_tokens(),
+                after.planning_tokens(),
+                checkpoint.input_token_limit(),
+                checkpoint.retained_group_count(),
+                checkpoint.image_input_loss_count(),
+                checkpoint.artifact_receipt_count(),
+                checkpoint.visible_prefix_loss_count(),
+                checkpoint.provider_private_loss_count()
+            )
+        },
         TranscriptRecord::ContextCheckpointCommitted(checkpoint) => format!(
             "{prefix}\nsource={}..{} policy_revision={} context_epoch={}..{} input_tokens={}..{} input_token_limit={} retained_groups={} artifact_receipts={} visible_prefix_losses={} provider_private_losses={}",
             checkpoint.source_anchor_sequence().get(),
@@ -328,7 +356,10 @@ fn response_name(response: &ActivityResponse) -> &'static str {
     match response {
         ActivityResponse::Approval(ApprovalDecision::Approved) => "approval.approved",
         ActivityResponse::Approval(ApprovalDecision::Declined) => "approval.declined",
-        ActivityResponse::UserInput(_) => "user_input",
+        ActivityResponse::Approval(ApprovalDecision::Offered(_)) => "approval.offered",
+        ActivityResponse::UserInput(_)
+        | ActivityResponse::QuestionAnswer { .. }
+        | ActivityResponse::PreviousQuestion { .. } => "user_input",
     }
 }
 

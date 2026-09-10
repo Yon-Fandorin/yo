@@ -25,6 +25,7 @@ enum Mode {
     BracketedPaste,
     AlternateScreen,
     CursorVisibility,
+    MouseCapture,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +34,8 @@ enum Event {
     EnableRaw,
     EnableBracketedPaste,
     EnterAlternateScreen,
+    EnableMouse,
+    DisableMouse,
     NormalizeCursorVisibility,
     OperationPanic,
     ClearViewport,
@@ -99,6 +102,7 @@ impl TerminalBackend for RecordingBackend {
 
     fn acquire_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
+            Mode::MouseCapture => self.events.borrow_mut().push(Event::EnableMouse),
             Mode::BracketedPaste => self.events.borrow_mut().push(Event::EnableBracketedPaste),
             Mode::AlternateScreen => self.events.borrow_mut().push(Event::EnterAlternateScreen),
             Mode::CursorVisibility => self
@@ -111,6 +115,7 @@ impl TerminalBackend for RecordingBackend {
 
     fn release_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
+            Mode::MouseCapture => self.events.borrow_mut().push(Event::DisableMouse),
             Mode::BracketedPaste => self.events.borrow_mut().push(Event::DisableBracketedPaste),
             Mode::AlternateScreen => self.events.borrow_mut().push(Event::LeaveAlternateScreen),
             Mode::CursorVisibility => self
@@ -138,6 +143,10 @@ impl ScreenModeBackend for RecordingBackend {
 
     fn alternate_screen_mode() -> Self::Mode {
         Mode::AlternateScreen
+    }
+
+    fn mouse_capture_mode() -> Self::Mode {
+        Mode::MouseCapture
     }
 
     fn cursor_visibility_mode() -> Self::Mode {
@@ -464,7 +473,9 @@ fn fullscreen_boundary_restores_terminal_before_returning_the_primary_panic() {
             Event::EnableRaw,
             Event::EnableBracketedPaste,
             Event::EnterAlternateScreen,
+            Event::EnableMouse,
             Event::OperationPanic,
+            Event::DisableMouse,
             Event::LeaveAlternateScreen,
             Event::DisableBracketedPaste,
             Event::RestoreTty,

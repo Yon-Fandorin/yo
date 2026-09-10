@@ -1,6 +1,94 @@
+use serde_json::{Value, json};
+
 use super::super::CompleteModelBinding;
 
 const COMPLETE_BINDING: &str = r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"effort":"medium"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#;
+
+fn image_binding_value() -> Value {
+    json!({
+        "provider":"kimi", "account":"default", "model":"k3-256k",
+        "connector":"kimi-chat-completions", "base_url":"https://api.kimi.com/coding/v1/",
+        "api_dialect":"kimi-chat-completions", "tokenizer_profile":"utf8-bytes/v1",
+        "input_token_limit":262144, "max_output_tokens":131072,
+        "reasoning_parameters":{"effort":"max"},
+        "optional_request_parameters":{"thinking":{"type":"enabled","keep":"all"}},
+        "tool_capability_policy":"local-tools/v1", "replay_profile":"kimi-private-local-plaintext/v1",
+        "image_input_profile":"kimi-code-png-advisory/v1"
+    })
+}
+
+// 이미지 프로필 유무는 같은 연결 좌표에서도 별도 epoch 정체성이며 기존 부재는 유지한다.
+#[test]
+fn image_profile_presence_changes_complete_binding_without_reinterpreting_absence() {
+    let value = image_binding_value();
+    let image = CompleteModelBinding::from_durable_json(&value.to_string()).unwrap();
+    let mut legacy = value;
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("image_input_profile");
+    let text = CompleteModelBinding::from_durable_json(&legacy.to_string()).unwrap();
+    assert_eq!(image.binding(), text.binding());
+    assert_ne!(image, text);
+    assert!(text.profile().image_input_profile().is_none());
+    assert_eq!(
+        image.profile().image_input_profile().unwrap().as_str(),
+        "kimi-code-png-advisory/v1"
+    );
+    assert!(
+        CompleteModelBinding::from_durable_json(COMPLETE_BINDING)
+            .unwrap()
+            .profile()
+            .image_input_profile()
+            .is_none()
+    );
+}
+
+// 프로필 이름만 추가해 다른 endpoint·모델·thinking·한도·replay를 이미지 연결로 승격할 수 없다.
+#[test]
+fn image_profile_requires_the_complete_reviewed_code_envelope() {
+    for (field, value) in [
+        ("provider", json!("other")),
+        ("model", json!("kimi-k3")),
+        ("base_url", json!("https://api.moonshot.ai/v1/")),
+        ("connector", json!("openai-chat-completions")),
+        ("input_token_limit", json!(262143)),
+        ("max_output_tokens", json!(32768)),
+        ("tokenizer_profile", json!("o200k_base/v1")),
+        ("reasoning_parameters", json!({"effort":"medium"})),
+        ("optional_request_parameters", json!({})),
+        ("replay_profile", json!("semantic-only/v1")),
+        ("image_input_profile", json!("unknown/v1")),
+        ("image_input_profile", Value::Null),
+    ] {
+        let mut changed = image_binding_value();
+        changed[field] = value;
+        assert!(
+            CompleteModelBinding::from_durable_json(&changed.to_string()).is_err(),
+            "{field}"
+        );
+    }
+    let encoded = image_binding_value().to_string();
+    let duplicate = format!(
+        "{{\"image_input_profile\":\"kimi-code-png-advisory/v1\",{}",
+        &encoded[1..]
+    );
+    assert!(CompleteModelBinding::from_durable_json(&duplicate).is_err());
+    for model in [
+        "k3",
+        "k3-256k",
+        "kimi-for-coding",
+        "kimi-for-coding-highspeed",
+    ] {
+        let mut supported = image_binding_value();
+        supported["model"] = json!(model);
+        if model.starts_with("kimi-for-") {
+            supported["max_output_tokens"] = json!(32768);
+            supported["reasoning_parameters"] = json!({});
+        }
+        CompleteModelBinding::from_durable_json(&supported.to_string()).unwrap();
+    }
+}
 
 // complete binding equality는 좌표뿐 아니라 resolved profile 전부를 포함하므로 profile만
 // 달라져도 새 binding epoch로 판정합니다.

@@ -41,8 +41,20 @@ pub(super) enum WireCommand {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireActivityResponse {
-    Approval { decision: WireApprovalDecision },
-    UserInput { input: WireUserInput },
+    Approval {
+        decision: WireApprovalDecision,
+    },
+    UserInput {
+        input: WireUserInput,
+    },
+    QuestionAnswer {
+        choice: u32,
+        notes: WireUserInput,
+    },
+    PreviousQuestion {
+        choice: Option<u32>,
+        draft: WireUserInput,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -50,6 +62,7 @@ pub(super) enum WireActivityResponse {
 pub(super) enum WireApprovalDecision {
     Approved,
     Declined,
+    Offered(u32),
 }
 
 impl TryFrom<&CommittedCommand> for WireCommand {
@@ -148,12 +161,26 @@ impl TryFrom<&ActivityResponse> for WireActivityResponse {
     type Error = JournalCodecError;
 
     fn try_from(response: &ActivityResponse) -> Result<Self, Self::Error> {
+        if response.has_resolved_skill() || response_has_images(response) {
+            return Err(JournalCodecError::new(
+                "Activity responses require structured input v1",
+            ));
+        }
         Ok(match response {
             ActivityResponse::Approval(decision) => Self::Approval {
                 decision: match decision {
                     ApprovalDecision::Approved => WireApprovalDecision::Approved,
                     ApprovalDecision::Declined => WireApprovalDecision::Declined,
+                    ApprovalDecision::Offered(choice) => WireApprovalDecision::Offered(*choice),
                 },
+            },
+            ActivityResponse::QuestionAnswer { choice, notes } => Self::QuestionAnswer {
+                choice: *choice,
+                notes: WireUserInput::try_from(notes)?,
+            },
+            ActivityResponse::PreviousQuestion { choice, draft } => Self::PreviousQuestion {
+                choice: *choice,
+                draft: WireUserInput::try_from(draft)?,
             },
             ActivityResponse::UserInput(input) => Self::UserInput {
                 input: WireUserInput::try_from(input)?,
@@ -166,13 +193,28 @@ impl TryFrom<WireActivityResponse> for ActivityResponse {
     type Error = JournalCodecError;
 
     fn try_from(response: WireActivityResponse) -> Result<Self, Self::Error> {
-        Ok(match response {
+        let response = match response {
             WireActivityResponse::Approval { decision } => Self::Approval(match decision {
                 WireApprovalDecision::Approved => ApprovalDecision::Approved,
                 WireApprovalDecision::Declined => ApprovalDecision::Declined,
+                WireApprovalDecision::Offered(choice) => ApprovalDecision::Offered(choice),
             }),
+            WireActivityResponse::PreviousQuestion { choice, draft } => Self::PreviousQuestion {
+                choice,
+                draft: draft.try_into()?,
+            },
             WireActivityResponse::UserInput { input } => Self::UserInput(input.try_into()?),
-        })
+            WireActivityResponse::QuestionAnswer { choice, notes } => Self::QuestionAnswer {
+                choice,
+                notes: notes.try_into()?,
+            },
+        };
+        if response.has_resolved_skill() || response_has_images(&response) {
+            return Err(JournalCodecError::new(
+                "Activity responses require structured input v1",
+            ));
+        }
+        Ok(response)
     }
 }
 
@@ -192,4 +234,13 @@ fn parse_submission_id(value: &str) -> Result<SubmissionId, JournalCodecError> {
         ));
     }
     Ok(parsed)
+}
+
+fn response_has_images(response: &ActivityResponse) -> bool {
+    match response {
+        ActivityResponse::Approval(_) => false,
+        ActivityResponse::UserInput(input)
+        | ActivityResponse::QuestionAnswer { notes: input, .. }
+        | ActivityResponse::PreviousQuestion { draft: input, .. } => !input.images().is_empty(),
+    }
 }

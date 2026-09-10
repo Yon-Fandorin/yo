@@ -107,11 +107,32 @@ impl PromptChrome {
         glyphs: PromptGlyphs,
         styles: PromptStyles,
         first_visible_row: u16,
+        content_height: u16,
     ) {
         if viewport.framed {
             let last_row = view.size().height - 1;
             paint_rule(view, 0, glyphs.rule, styles.rule);
             paint_rule(view, last_row, glyphs.rule, styles.rule);
+            if content_height > viewport.content_size.height {
+                let end = first_visible_row
+                    .saturating_add(viewport.content_size.height)
+                    .min(content_height);
+                let position = format!(
+                    " {}-{end}/{content_height} ",
+                    first_visible_row.saturating_add(1)
+                );
+                if position.len() + 2 <= usize::from(view.size().width) {
+                    let start = view.size().width - position.len() as u16 - 1;
+                    for (offset, ch) in position.chars().enumerate() {
+                        let _ = view.write(
+                            Point::new(start + offset as u16, last_row),
+                            Grapheme::try_from(ch.to_string().as_str())
+                                .expect("position uses ASCII"),
+                            styles.rule,
+                        );
+                    }
+                }
+            }
         }
         if self.decorated && first_visible_row == 0 {
             let marker = Grapheme::try_from(glyphs.marker)

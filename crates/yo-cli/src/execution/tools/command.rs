@@ -4,7 +4,7 @@ use std::{
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::AtomicBool,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, TryRecvError},
     },
     thread,
@@ -13,17 +13,27 @@ use std::{
 
 use limits::{CommandExecutionLimits, StopReason, expired_reason};
 use nix::unistd::Pid;
-use pipe::{PipeDrain, PipeKind, spawn_pipe_reader};
+use pipe::{PipeDrain, PipeKind, ProgressSnapshot, spawn_pipe_reader};
 use process::{ChildWaiter, WaiterTestHooks, terminate_process_group_id};
 use yo_core::{
-    ToolExecution, ToolExecutionError, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionResult,
+    ToolExecution, ToolExecutionError, ToolExecutionOutcome, ToolExecutionPoll,
+    ToolExecutionProgress, ToolExecutionResult,
 };
 
 use super::execution::{ThreadExecution, failed};
 
+mod input;
 mod limits;
+mod manifest;
 mod pipe;
 mod process;
+
+pub(crate) use manifest::{PreparedCommand, PreparedCommandTools};
+
+enum CommandPlan {
+    Shell(String),
+    Prepared(Box<PreparedCommand>, Vec<u8>),
+}
 
 // Leave room for the status/stream framing and the common native-backend
 // truncation marker so both stream-local head/tail views survive publication.
@@ -32,23 +42,56 @@ const OUTPUT_FRAMING_RESERVE: usize = 96;
 pub(super) struct CommandExecution {
     inner: ThreadExecution,
     process_group: Arc<Mutex<Option<Pid>>>,
+    progress: Arc<Mutex<ProgressSnapshot>>,
+    last_progress: Option<Instant>,
 }
 
 impl CommandExecution {
+    pub(super) fn spawn_prepared(
+        workspace: PathBuf,
+        command: PreparedCommand,
+        arguments: Vec<u8>,
+        maximum_output_bytes: usize,
+        absolute_execution_timeout: Option<Duration>,
+        maximum_retained_output_bytes: Option<usize>,
+    ) -> Result<Self, ToolExecutionError> {
+        if arguments
+            .len()
+            .checked_add(1)
+            .is_none_or(|bytes| bytes > 4 * 1024 * 1024)
+        {
+            return Err(ToolExecutionError::new(
+                "command tool arguments exceed their admitted bound",
+            ));
+        }
+        Self::spawn_plan(
+            workspace,
+            CommandPlan::Prepared(Box::new(command), arguments),
+            maximum_output_bytes,
+            CommandExecutionLimits::for_agent(absolute_execution_timeout),
+            WaiterTestHooks::default(),
+            maximum_retained_output_bytes,
+        )
+    }
+
     pub(super) fn spawn(
         workspace: PathBuf,
         command: String,
         maximum_output_bytes: usize,
         absolute_execution_timeout: Option<Duration>,
+        maximum_retained_output_bytes: Option<usize>,
     ) -> Result<Self, ToolExecutionError> {
-        Self::spawn_with_limits(
+        Self::spawn_with_limits_and_hooks(
             workspace,
             command,
             maximum_output_bytes,
             CommandExecutionLimits::for_agent(absolute_execution_timeout),
+            WaiterTestHooks::default(),
+            maximum_retained_output_bytes,
         )
     }
 
+    #[cfg(test)]
     fn spawn_with_limits(
         workspace: PathBuf,
         command: String,
@@ -61,6 +104,7 @@ impl CommandExecution {
             maximum_output_bytes,
             limits,
             WaiterTestHooks::default(),
+            None,
         )
     }
 
@@ -70,12 +114,31 @@ impl CommandExecution {
         maximum_output_bytes: usize,
         limits: CommandExecutionLimits,
         waiter_hooks: WaiterTestHooks,
+        maximum_retained_output_bytes: Option<usize>,
     ) -> Result<Self, ToolExecutionError> {
         if command.is_empty() || command.chars().any(|character| character == '\0') {
             return Err(ToolExecutionError::new(
                 "run_command requires a non-empty command",
             ));
         }
+        Self::spawn_plan(
+            workspace,
+            CommandPlan::Shell(command),
+            maximum_output_bytes,
+            limits,
+            waiter_hooks,
+            maximum_retained_output_bytes,
+        )
+    }
+
+    fn spawn_plan(
+        workspace: PathBuf,
+        command: CommandPlan,
+        maximum_output_bytes: usize,
+        limits: CommandExecutionLimits,
+        waiter_hooks: WaiterTestHooks,
+        maximum_retained_output_bytes: Option<usize>,
+    ) -> Result<Self, ToolExecutionError> {
         if !limits.is_valid() {
             return Err(ToolExecutionError::new(
                 "run_command deadlines must be non-zero",
@@ -83,11 +146,17 @@ impl CommandExecution {
         }
         let process_group = Arc::new(Mutex::new(None));
         let worker_process_group = Arc::clone(&process_group);
+        let progress = Arc::new(Mutex::new(ProgressSnapshot::default()));
+        let worker_progress = Arc::clone(&progress);
         let inner = ThreadExecution::spawn(move |cancelled| {
             run_command(
                 &workspace,
                 &command,
-                maximum_output_bytes,
+                CommandOutput {
+                    maximum_output_bytes,
+                    maximum_retained_output_bytes,
+                    progress: worker_progress,
+                },
                 limits,
                 &cancelled,
                 &worker_process_group,
@@ -97,13 +166,33 @@ impl CommandExecution {
         Ok(Self {
             inner,
             process_group,
+            progress,
+            last_progress: None,
         })
     }
 }
 
 impl ToolExecution for CommandExecution {
+    fn take_progress(&mut self) -> Option<ToolExecutionProgress> {
+        if self
+            .last_progress
+            .is_some_and(|last| last.elapsed() < Duration::from_millis(100))
+        {
+            return None;
+        }
+        let progress = self.progress.lock().ok()?.take()?;
+        self.last_progress = Some(Instant::now());
+        Some(progress)
+    }
+
     fn poll(&mut self) -> Result<ToolExecutionPoll, ToolExecutionError> {
-        self.inner.poll()
+        let result = self.inner.poll();
+        if !matches!(result, Ok(ToolExecutionPoll::Pending))
+            && let Ok(mut progress) = self.progress.lock()
+        {
+            progress.close();
+        }
+        result
     }
 
     fn take_result(&mut self) -> Option<ToolExecutionResult> {
@@ -111,6 +200,9 @@ impl ToolExecution for CommandExecution {
     }
 
     fn cancel(&self) {
+        if let Ok(mut progress) = self.progress.lock() {
+            progress.close();
+        }
         self.inner.cancel();
         if let Ok(process_group) = self.process_group.lock()
             && let Some(process_group) = *process_group
@@ -125,22 +217,90 @@ impl ToolExecution for CommandExecution {
     }
 }
 
+struct CommandOutput {
+    maximum_output_bytes: usize,
+    maximum_retained_output_bytes: Option<usize>,
+    progress: Arc<Mutex<ProgressSnapshot>>,
+}
+
 fn run_command(
     workspace: &Path,
-    command: &str,
-    maximum_output_bytes: usize,
+    command: &CommandPlan,
+    output: CommandOutput,
     limits: CommandExecutionLimits,
     cancelled: &AtomicBool,
     shared_process_group: &Mutex<Option<Pid>>,
     waiter_hooks: WaiterTestHooks,
 ) -> ToolExecutionResult {
+    let CommandOutput {
+        maximum_output_bytes,
+        maximum_retained_output_bytes,
+        progress,
+    } = output;
     let attempt_started = Instant::now();
+    let (mut launch, stdin_bytes) = match command {
+        CommandPlan::Shell(command) => (shell_command(workspace, command), Vec::new()),
+        CommandPlan::Prepared(command, arguments) => {
+            let deadline = limits
+                .absolute_execution_timeout
+                .and_then(|timeout| attempt_started.checked_add(timeout));
+            let verified =
+                command.verify_for_launch(&mut || cancelled.load(Ordering::Acquire), deadline);
+            let verified = match verified {
+                Ok(verified) => verified,
+                Err(error) => {
+                    return if cancelled.load(Ordering::Acquire)
+                        || deadline.is_some_and(|deadline| Instant::now() >= deadline)
+                    {
+                        ToolExecutionResult::new(
+                            ToolExecutionOutcome::Interrupted,
+                            "command tool attempt interrupted before spawn",
+                            false,
+                        )
+                    } else {
+                        failed(&error.to_string())
+                    };
+                },
+            };
+            let mut launch = Command::new(&verified.executable);
+            launch
+                .args(&verified.args)
+                .current_dir(workspace)
+                .process_group(0)
+                .env_clear()
+                .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut bytes = arguments.clone();
+            bytes.push(b'\n');
+            (launch, bytes)
+        },
+    };
     let Ok(mut waiter) = ChildWaiter::spawn(waiter_hooks) else {
         return failed("run_command waiter is unavailable");
     };
-    let spawned = shell_command(workspace, command).spawn();
+    if let Some(reason) = expired_reason(
+        cancelled,
+        attempt_started,
+        Instant::now(),
+        limits,
+        Instant::now(),
+    ) {
+        return ToolExecutionResult::new(
+            ToolExecutionOutcome::Interrupted,
+            reason.description(),
+            false,
+        );
+    }
+    let spawned = launch.spawn();
     let Ok(mut child) = spawned else {
         return failed("run_command could not start");
+    };
+    let spawned_at = Instant::now();
+    let mut stdin = match input::CommandInput::new(child.stdin.take(), stdin_bytes) {
+        Ok(stdin) => stdin,
+        Err(()) => return fail_without_waiter(&mut child, "command tool stdin is unavailable"),
     };
     let Some(process_group) = i32::try_from(child.id()).ok().map(Pid::from_raw) else {
         return fail_without_waiter(&mut child, "run_command process identity is unavailable");
@@ -172,6 +332,8 @@ fn run_command(
         );
     };
 
+    let retained_budget =
+        maximum_retained_output_bytes.map(|limit| limit.saturating_sub(OUTPUT_FRAMING_RESERVE));
     let stream_budget = maximum_output_bytes.saturating_sub(OUTPUT_FRAMING_RESERVE);
     let stdout_limit = stream_budget / 2;
     let stderr_limit = stream_budget.saturating_sub(stdout_limit);
@@ -183,6 +345,8 @@ fn run_command(
         stdout_limit,
         progress_sender.clone(),
         drain_sender.clone(),
+        Some(Arc::clone(&progress)),
+        retained_budget.map(|limit| limit / 2),
     ) else {
         return fail_after_setup_cleanup(
             waiter,
@@ -197,6 +361,8 @@ fn run_command(
         stderr_limit,
         progress_sender,
         drain_sender.clone(),
+        Some(Arc::clone(&progress)),
+        retained_budget.map(|limit| limit - limit / 2),
     ) {
         Ok(reader) => reader,
         Err(()) => {
@@ -219,7 +385,8 @@ fn run_command(
 
     let mut stdout = None;
     let mut stderr = None;
-    let mut last_output_progress = attempt_started;
+    let mut last_output_progress = spawned_at;
+    let mut stdin_failed = false;
     let mut stop_reason = None;
     let mut leader_observed = false;
     let mut leader_observation_finished = false;
@@ -230,6 +397,10 @@ fn run_command(
     let mut cleanup_failed = false;
     let mut forced_pipe_shutdown = false;
     loop {
+        if cleanup_started.is_none() && stdin.poll().is_err() {
+            stdin_failed = true;
+            cleanup_started.get_or_insert_with(Instant::now);
+        }
         while progress_receiver.try_recv().is_ok() {
             last_output_progress = Instant::now();
         }
@@ -270,6 +441,7 @@ fn run_command(
         if !leader_observation_finished {
             match waiter.try_leader_exit() {
                 Ok(true) => {
+                    stdin_failed |= !stdin.complete();
                     leader_observed = true;
                     leader_observation_finished = true;
                     cleanup_started.get_or_insert_with(Instant::now);
@@ -283,6 +455,7 @@ fn run_command(
             }
         }
         if cleanup_started.is_some() && !termination_requested {
+            stdin.close();
             process_group_lease.terminate();
             termination_requested = true;
         }
@@ -342,25 +515,82 @@ fn run_command(
     let truncated = forced_pipe_shutdown
         || stdout.as_ref().is_some_and(PipeDrain::truncated)
         || stderr.as_ref().is_some_and(PipeDrain::truncated);
+    let retained = match (&stdout, &stderr) {
+        (Some(stdout), Some(stderr)) => stdout
+            .retained_output
+            .as_ref()
+            .zip(stderr.retained_output.as_ref())
+            .map(|(out, err)| {
+                let reported_status = if cleanup_failed {
+                    format!(
+                        "cleanup failed after {}",
+                        stop_reason.map_or("normal process exit", StopReason::description)
+                    )
+                } else if let Some(reason) = stop_reason {
+                    reason.description().to_owned()
+                } else if stdin_failed {
+                    "command tool stdin delivery failed".to_owned()
+                } else {
+                    status.as_ref().map_or_else(
+                        || "not reported".to_owned(),
+                        |status| {
+                            status
+                                .code()
+                                .map_or_else(|| "signal".to_owned(), |code| code.to_string())
+                        },
+                    )
+                };
+                let output = format!(
+                    "status: {}\nstdout:\n{}\nstderr:\n{}",
+                    reported_status,
+                    String::from_utf8_lossy(&out.clone().render()),
+                    String::from_utf8_lossy(&err.clone().render())
+                );
+                (
+                    output,
+                    forced_pipe_shutdown
+                        || stdout.failed
+                        || stderr.failed
+                        || out.truncated()
+                        || err.truncated(),
+                )
+            }),
+        _ => None,
+    };
+    let retain = |result: ToolExecutionResult| match retained {
+        Some((text, truncated)) => result.with_retained_output(text, truncated),
+        None => result,
+    };
     if cleanup_failed {
         let cause = stop_reason.map_or("normal process exit", StopReason::description);
-        return ToolExecutionResult::new(
+        return retain(ToolExecutionResult::new(
             ToolExecutionOutcome::Failed,
             format!("run_command cleanup failed after {cause}"),
             truncated,
-        );
+        ));
     }
     if let Some(reason) = stop_reason {
-        return ToolExecutionResult::new(
+        return retain(ToolExecutionResult::new(
             ToolExecutionOutcome::Interrupted,
             reason.description(),
             truncated,
-        );
+        ));
     }
     let (Some(status), Some(stdout), Some(stderr)) = (status, stdout, stderr) else {
         return failed("run_command cleanup failed after normal process exit");
     };
-    render_command_result(status, stdout, stderr, truncated)
+    if stdin_failed {
+        return retain(ToolExecutionResult::new(
+            ToolExecutionOutcome::Failed,
+            format!(
+                "status: command tool stdin delivery failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&stdout.output.render()),
+                String::from_utf8_lossy(&stderr.output.render())
+            ),
+            truncated,
+        ));
+    }
+    retain(render_command_result(status, stdout, stderr, truncated))
 }
 
 fn shell_command(workspace: &Path, command: &str) -> Command {

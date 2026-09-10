@@ -911,3 +911,239 @@ fn native_backend_requires_a_final_assistant_message_item() {
         }
     ));
 }
+
+// 미완성 답변·도구 호출 뒤의 제한/실패 terminal은 원인과 usage를 남기고 도구·replay를 실행하지
+// 않는다. 성공 terminal의 미완성 호출은 계속 protocol 오류이며 모든 시작 activity는 한 번만 닫힌다.
+#[test]
+fn failed_terminals_preserve_partial_output_without_executing_unfinished_calls() {
+    use std::collections::HashSet;
+
+    use yo_core::{ActivityNotice, ModelConnectorUsage, ModelRequestFailureKind, NoticeLevel};
+    for (status, expected, limited) in [
+        (
+            ModelConnectorTerminal::Incomplete {
+                reason: Some("length".into()),
+                request_failure: ModelRequestFailureKind::ResponseLimit,
+            },
+            "model response was incomplete: length",
+            true,
+        ),
+        (
+            ModelConnectorTerminal::Incomplete {
+                reason: Some("max_output_tokens".into()),
+                request_failure: ModelRequestFailureKind::ResponseLimit,
+            },
+            "model response was incomplete: max_output_tokens",
+            true,
+        ),
+        (
+            ModelConnectorTerminal::Failed {
+                code: Some("provider_busy".into()),
+                request_failure: ModelRequestFailureKind::RateLimited,
+            },
+            "model response failed: provider_busy",
+            false,
+        ),
+        (
+            ModelConnectorTerminal::Completed,
+            "model terminal arrived with an incomplete function call",
+            false,
+        ),
+    ] {
+        let starts = Arc::new(Mutex::new(0));
+        let completed = matches!(status, ModelConnectorTerminal::Completed);
+        let mut backend = backend(
+            vec![vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "partial".into(),
+                },
+                ModelConnectorEvent::TextDelta {
+                    output_index: 0,
+                    item_id: "message".into(),
+                    content_index: 0,
+                    delta: "partial answer retained".into(),
+                },
+                ModelConnectorEvent::FunctionCallStarted {
+                    output_index: 1,
+                    item_id: "call-item".into(),
+                    call_id: "call-1".into(),
+                    name: "read_file".into(),
+                },
+                ModelConnectorEvent::Terminal {
+                    response_id: "partial".into(),
+                    status,
+                    usage: ModelConnectorUsage::default(),
+                },
+            ]],
+            ToolApprovalRequirement::Automatic,
+            starts.clone(),
+        );
+        backend
+            .execute_command(AgentCommand::CreateSession {
+                session_id: turn().session_id(),
+            })
+            .unwrap();
+        backend
+            .execute_command(AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("partial"),
+            })
+            .unwrap();
+        let mut open = HashSet::new();
+        let mut partial = false;
+        let mut notices = 0;
+        let mut receipts = 0;
+        let mut terminal = false;
+        for _ in 0..100 {
+            match backend.poll_event().unwrap() {
+                BackendPoll::Event(BackendEvent::ActivityStarted { activity, .. }) => {
+                    assert!(open.insert(activity));
+                },
+                BackendPoll::Event(BackendEvent::ActivityUpdated { update, .. }) => {
+                    let text = match update {
+                        ActivityUpdate::TextDelta(text) | ActivityUpdate::TextSnapshot(text) => {
+                            text
+                        },
+                    };
+                    partial |= text.contains("partial answer retained");
+                    if let Some(notice) = ActivityNotice::from_snapshot(&text) {
+                        assert_eq!(notice.title, "Response limit reached");
+                        assert_eq!(notice.level, NoticeLevel::Warning);
+                        notices += 1;
+                    }
+                    receipts += usize::from(text.contains("yo.model-usage-receipt/v1"));
+                },
+                BackendPoll::Event(BackendEvent::ActivityFinished { activity, .. }) => {
+                    assert!(open.remove(&activity));
+                },
+                BackendPoll::Event(BackendEvent::ResumableTurnFinished { .. }) => {
+                    panic!("partial round must not publish replay")
+                },
+                BackendPoll::Event(BackendEvent::TurnFinished { outcome, .. }) => {
+                    let TurnOutcome::Failed(failure) = outcome else {
+                        panic!("partial round must fail")
+                    };
+                    assert!(
+                        failure.message().contains(expected),
+                        "{}",
+                        failure.message()
+                    );
+                    terminal = true;
+                    break;
+                },
+                _ => {},
+            }
+        }
+        assert!(terminal && partial);
+        assert!(open.is_empty());
+        assert_eq!(notices, usize::from(limited));
+        assert_eq!(receipts, usize::from(!completed));
+        assert_eq!(*starts.lock().unwrap(), 0);
+    }
+}
+
+// managed provider 요청과 토큰 계산은 같은 전체 스킬 지침을 포함하며 완료 replay도 이를 보존한다.
+#[test]
+fn resolved_skill_snapshot_is_counted_sent_and_retained_in_native_replay() {
+    use yo_core::{
+        InputReference, ModelConnectorInputItem, ModelTokenCounter, ModelTokenCounterError,
+        ResolvedSkill, SkillReference, SkillReferenceScope,
+    };
+
+    use super::support::binding;
+    let reference = SkillReference::new(
+        "review",
+        "host",
+        "/skills/review/SKILL.md",
+        "review",
+        SkillReferenceScope::User,
+        1,
+        "revision",
+    );
+    let input = UserInput::with_references(
+        "use $review",
+        vec![InputReference::skill(4..11, reference.clone())],
+    )
+    .unwrap()
+    .with_resolved_skill(
+        ResolvedSkill::new(reference, "# Review\nVerify the exact implementation.").unwrap(),
+    )
+    .unwrap();
+    let expected = input.model_input().to_owned();
+    struct Counter(Arc<Mutex<Vec<serde_json::Value>>>);
+    impl ModelTokenCounter for Counter {
+        fn count_input_tokens(
+            &self,
+            _: &str,
+            request: &serde_json::Value,
+        ) -> Result<u64, ModelTokenCounterError> {
+            self.0.lock().unwrap().push(request.clone());
+            Ok(1)
+        }
+    }
+    let counted = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(vec![vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "skill-response".to_owned(),
+                },
+                ModelConnectorEvent::TextDelta {
+                    output_index: 0,
+                    item_id: "answer".to_owned(),
+                    content_index: 0,
+                    delta: "done".to_owned(),
+                },
+                ModelConnectorEvent::MessageDone {
+                    output_index: 0,
+                    item_id: "answer".to_owned(),
+                },
+                completed("skill-response"),
+            ]]),
+            requests: Arc::clone(&requests),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(Counter(Arc::clone(&counted))),
+        ),
+        context_profile(),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input,
+        })
+        .unwrap();
+    let completion = drain_until_turn(&mut backend);
+    let BackendEvent::ResumableTurnFinished { evidence, .. } = completion else {
+        panic!("resumable completion: {completion:?}")
+    };
+    assert!(
+        requests.lock().unwrap()[0]
+            .input()
+            .iter()
+            .any(|item| matches!(item,
+        ModelConnectorInputItem::Message { content, .. } if content == &expected))
+    );
+    assert!(counted.lock().unwrap().iter().any(|request| {
+        request["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["content"] == expected)
+    }));
+    assert!(evidence.model_replay().unwrap().items().iter().any(|item| matches!(item,
+        ModelReplayItem::Message { role: ModelReplayRole::User, content, .. } if content == &expected)));
+}

@@ -3,15 +3,19 @@ mod error;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, OnceLock},
+};
 
 pub use error::RuntimeError;
 
 use crate::{
     AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendBindingEvidence,
-    BackendCommandEvidence, BackendEvent, BackendPoll, BackendResumeSource, BackendResumeTarget,
-    ContextPolicyChanged, ContinuationStrategy, Failure, JournalSequence, ModelReplay, SessionId,
-    SubmissionId, TurnOutcome, TurnRef,
+    BackendCommandEvidence, BackendEvent, BackendFailureKind, BackendPoll, BackendResumeSource,
+    BackendResumeTarget, ContextPolicyChanged, ContinuationStrategy, Failure, ImageInputCapability,
+    InputAdmissionConfigurationError, InputAdmissionHost, JournalSequence, ModelReplay, SessionId,
+    SubmissionId, SubmissionRejection, SubmissionRejectionKind, TurnOutcome, TurnRef,
     journal::{ContextActiveSource, SessionJournal},
 };
 
@@ -33,6 +37,8 @@ pub struct AgentRuntime<B> {
     backend: B,
     journal: SessionJournal,
     submission_ids: HashSet<SubmissionId>,
+    input_admission: Arc<OnceLock<Box<dyn InputAdmissionHost>>>,
+    input_admission_sealed: bool,
     binding_epoch: Option<u64>,
     binding: Option<BackendBindingEvidence>,
     continuation_strategy: Option<ContinuationStrategy>,
@@ -63,6 +69,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
             backend,
             journal,
             submission_ids: HashSet::new(),
+            input_admission: Arc::new(OnceLock::new()),
+            input_admission_sealed: false,
             binding_epoch: None,
             binding: None,
             continuation_strategy: None,
@@ -83,6 +91,26 @@ impl<B: AgentBackend> AgentRuntime<B> {
         }
     }
 
+    /// Binds the Session's execution authority before any new input is submitted.
+    pub fn configure_input_admission(
+        &mut self,
+        host: Box<dyn InputAdmissionHost>,
+    ) -> Result<(), InputAdmissionConfigurationError> {
+        if self.input_admission_sealed {
+            return Err(InputAdmissionConfigurationError::InputAlreadySubmitted);
+        }
+        self.input_admission
+            .set(host)
+            .map_err(|_| InputAdmissionConfigurationError::AlreadyConfigured)
+    }
+
+    pub(crate) fn bind_input_admission(
+        &mut self,
+        slot: Arc<OnceLock<Box<dyn InputAdmissionHost>>>,
+    ) {
+        self.input_admission = slot;
+    }
+
     pub(crate) fn initialize_resume(
         &mut self,
         target: &BackendResumeTarget,
@@ -95,7 +123,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         let expected = target.binding();
         if !expected.same_resume_identity(&evidence) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
-                crate::BackendFailureKind::Session,
+                BackendFailureKind::Session,
                 "native resume returned a binding identity different from the durable Continuation Anchor",
             )));
         }
@@ -113,7 +141,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             ContinuationStrategy::ExactReplay { .. }
         ) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
-                crate::BackendFailureKind::Unsupported,
+                BackendFailureKind::Unsupported,
                 "binding replacement requires an exact-replay Continuation Anchor",
             )));
         }
@@ -124,20 +152,20 @@ impl<B: AgentBackend> AgentRuntime<B> {
         let previous = target.binding();
         if !valid_replacement_binding(previous, &evidence, target.model_replay()) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
-                crate::BackendFailureKind::Session,
+                BackendFailureKind::Session,
                 "exact-replay replacement returned an incompatible target binding",
             )));
         }
         self.publish_resume_snapshot()?;
         let epoch = target.epoch().checked_add(1).ok_or_else(|| {
             RuntimeError::backend(crate::BackendFailure::new(
-                crate::BackendFailureKind::Session,
+                BackendFailureKind::Session,
                 "backend binding epoch is exhausted",
             ))
         })?;
         let source = target.source().ok_or_else(|| {
             RuntimeError::backend(crate::BackendFailure::new(
-                crate::BackendFailureKind::Session,
+                BackendFailureKind::Session,
                 "exact-replay replacement requires one durable source",
             ))
         })?;
@@ -148,7 +176,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             evidence.clone(),
         ) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
-                crate::BackendFailureKind::Session,
+                BackendFailureKind::Session,
                 "exact-replay replacement could not publish its binding transition",
             )));
         }
@@ -174,7 +202,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             AgentEngine::from_journal(&entries, self.backend.capabilities().supports_steer())
                 .map_err(|detail| {
                     RuntimeError::backend(crate::BackendFailure::new(
-                        crate::BackendFailureKind::Protocol,
+                        BackendFailureKind::Protocol,
                         detail,
                     ))
                 })?;
@@ -209,7 +237,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.journal.initialize_durability();
         if !matches!(self.durability(), crate::JournalDurability::Durable { .. }) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
-                crate::BackendFailureKind::Session,
+                BackendFailureKind::Session,
                 "native resume could not publish its required complete Journal snapshot",
             )));
         }
@@ -268,12 +296,13 @@ impl<B: AgentBackend> AgentRuntime<B> {
         if self.submission_ids.contains(&submission_id) {
             return Err(RuntimeError::DuplicateSubmissionIdentity(submission_id));
         }
+        self.input_admission_sealed = true;
         self.execute(command, Some(submission_id))
     }
 
     fn execute(
         &mut self,
-        command: AgentCommand,
+        mut command: AgentCommand,
         submission_id: Option<SubmissionId>,
     ) -> Result<Vec<AgentEvent>, RuntimeError> {
         if matches!(command, AgentCommand::StartTurn { .. })
@@ -292,7 +321,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 },
                 BackendPoll::Event(_) | BackendPoll::Pending | BackendPoll::Closed => {
                     return Err(RuntimeError::backend(crate::BackendFailure::new(
-                        crate::BackendFailureKind::Protocol,
+                        BackendFailureKind::Protocol,
                         "local-client exact replay did not publish its context policy before the first model request",
                     )));
                 },
@@ -302,6 +331,87 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.engine
             .validate_command(&command, supports_steer)
             .map_err(RuntimeError::CommandRejected)?;
+        if let AgentCommand::RespondToActivity { response, .. } = &command
+            && (response.has_resolved_skill() || response.has_images())
+        {
+            return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                SubmissionRejectionKind::InvalidReference,
+                "Activity responses cannot contain images or resolved skill instructions",
+            )));
+        }
+        if let AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. } =
+            &mut command
+            && (!input.references().is_empty() || !input.images().is_empty())
+        {
+            if !input.images().is_empty() {
+                match self.backend.capabilities().image_input() {
+                    ImageInputCapability::Unknown => {
+                        return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                            SubmissionRejectionKind::ImageCapabilityUnknown,
+                            "Image support has not been established for the selected backend and model",
+                        )));
+                    },
+                    ImageInputCapability::Unsupported => {
+                        return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                            SubmissionRejectionKind::ImageUnsupported,
+                            "The selected backend and model do not admit image input",
+                        )));
+                    },
+                    ImageInputCapability::Supported {
+                        maximum_occurrences,
+                        maximum_image_bytes,
+                        maximum_input_bytes,
+                    } => {
+                        let total = input.images().iter().try_fold(0_u64, |total, image| {
+                            total.checked_add(image.snapshot().png().len() as u64)
+                        });
+                        if input.images().len() as u64 > u64::from(maximum_occurrences)
+                            || input.images().iter().any(|image| {
+                                image.snapshot().png().len() as u64 > maximum_image_bytes
+                            })
+                            || total.is_none_or(|total| total > maximum_input_bytes)
+                        {
+                            return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                                SubmissionRejectionKind::OverBudget,
+                                "The complete image input exceeds the selected model's admitted limits",
+                            )));
+                        }
+                    },
+                }
+            }
+            let host = self.input_admission.get().ok_or_else(|| {
+                RuntimeError::InputRejected(SubmissionRejection::new(
+                    SubmissionRejectionKind::EnvironmentUnavailable,
+                    "the Session has no execution host for structured input admission",
+                ))
+            })?;
+            if input.resolved_skill().is_some() {
+                return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                    SubmissionRejectionKind::InvalidReference,
+                    "live input cannot supply pre-resolved skill instructions",
+                )));
+            }
+            host.validate_images(input)
+                .map_err(RuntimeError::InputRejected)?;
+            let resolved = host.prepare(input).map_err(RuntimeError::InputRejected)?;
+            if let Some(skill) = resolved {
+                *input = input.clone().with_resolved_skill(skill).map_err(|error| {
+                    RuntimeError::InputRejected(SubmissionRejection::new(
+                        SubmissionRejectionKind::InvalidReference,
+                        error.to_string(),
+                    ))
+                })?;
+            } else if input
+                .references()
+                .iter()
+                .any(|reference| reference.skill_reference().is_some())
+            {
+                return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                    SubmissionRejectionKind::RequiredAssetUnavailable,
+                    "the execution host did not resolve the selected skill",
+                )));
+            }
+        }
         let evidence = self
             .backend
             .execute_command(command.clone())
@@ -319,14 +429,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             matches!(&committed, AgentCommand::CompactContext { .. });
         let command_sequence = self.journal.next_sequence();
         let active_input = match &committed {
-            AgentCommand::StartTurn { turn, input } => Some((
-                *turn,
-                crate::ModelReplayItem::Message {
-                    role: crate::ModelReplayRole::User,
-                    content: input.as_str().to_owned(),
-                    refusal: None,
-                },
-            )),
+            AgentCommand::StartTurn { turn, input } => Some((*turn, input.model_replay_item())),
             _ => None,
         };
         let events = self
@@ -420,7 +523,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             return Ok(());
         }
         Err(RuntimeError::backend(crate::BackendFailure::new(
-            crate::BackendFailureKind::Protocol,
+            BackendFailureKind::Protocol,
             format!(
                 "backend returned correlation evidence incompatible with {}",
                 command_kind(command)
@@ -444,7 +547,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             },
             Ok(BackendPoll::Closed) => {
                 let failure = crate::BackendFailure::new(
-                    crate::BackendFailureKind::ProcessExit,
+                    BackendFailureKind::ProcessExit,
                     "backend closed while a Turn was active",
                 );
                 let terminal_events = self.fail_active_turn(&failure);
@@ -454,6 +557,17 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 })
             },
             Ok(BackendPoll::Event(event)) => self.apply_backend_event(event),
+            Err(failure)
+                if self.idle_context_compaction_pending
+                    && !self.idle_context_checkpoint_committed
+                    && self.engine.active_turn().is_none()
+                    && failure.kind() == BackendFailureKind::CommandRejected =>
+            {
+                // A completed, safely rejected idle summary leaves the prior binding
+                // and replay usable. The worker publishes the existing control outcome.
+                self.idle_context_compaction_pending = false;
+                Err(RuntimeError::backend(failure))
+            },
             Err(failure) => {
                 let terminal_events = self.fail_active_turn(&failure);
                 Err(RuntimeError::Backend {
@@ -682,7 +796,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 },
                 Err(rejection) => {
                     let failure = crate::BackendFailure::new(
-                        crate::BackendFailureKind::Protocol,
+                        BackendFailureKind::Protocol,
                         format!("backend event violated core state: {rejection}"),
                     );
                     let terminal_events = self.fail_active_turn(&failure);
@@ -731,7 +845,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             },
             Err(rejection) => {
                 let failure = crate::BackendFailure::new(
-                    crate::BackendFailureKind::Protocol,
+                    BackendFailureKind::Protocol,
                     format!("backend event violated core state: {rejection}"),
                 );
                 let terminal_events = self.fail_active_turn(&failure);
@@ -748,7 +862,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         &mut self,
         message: &'static str,
     ) -> Result<RuntimePoll, RuntimeError> {
-        let failure = crate::BackendFailure::new(crate::BackendFailureKind::Protocol, message);
+        let failure = crate::BackendFailure::new(BackendFailureKind::Protocol, message);
         let terminal_events = self.fail_active_turn(&failure);
         Err(RuntimeError::Backend {
             failure,
@@ -794,7 +908,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
             return Err(reject_replacement_candidate(
                 &mut candidate,
                 RuntimeError::backend(crate::BackendFailure::new(
-                    crate::BackendFailureKind::Session,
+                    BackendFailureKind::Session,
                     "binding replacement requires an idle Session",
                 )),
             ));
@@ -807,7 +921,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
             return Err(reject_replacement_candidate(
                 &mut candidate,
                 RuntimeError::backend(crate::BackendFailure::new(
-                    crate::BackendFailureKind::Session,
+                    BackendFailureKind::Session,
                     "binding replacement requires one open durable binding",
                 )),
             ));
@@ -816,7 +930,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
             return Err(reject_replacement_candidate(
                 &mut candidate,
                 RuntimeError::backend(crate::BackendFailure::new(
-                    crate::BackendFailureKind::Session,
+                    BackendFailureKind::Session,
                     "backend binding epoch is exhausted",
                 )),
             ));
@@ -828,7 +942,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                     return Err(reject_replacement_candidate(
                         &mut candidate,
                         RuntimeError::backend(crate::BackendFailure::new(
-                            crate::BackendFailureKind::Session,
+                            BackendFailureKind::Session,
                             "exact-replay replacement requires one durable continuation source",
                         )),
                     ));
@@ -845,13 +959,23 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                             sequence,
                         )
                     },
+                    BackendResumeSource::InitialFork(sequence) => {
+                        BackendResumeTarget::from_initial_fork(
+                            session_id,
+                            epoch,
+                            binding.clone(),
+                            sequence,
+                        )
+                    },
                 }
                 .with_model_replay(self.model_replay.clone())
                 .with_context_state(
                     self.context_policy.clone(),
                     self.context_epoch,
                     self.context_replay_groups.clone(),
-                );
+                )
+                .with_replay_contract_rebind_required(self.replay_contract_rebind_required)
+                .with_binding_has_accepted_request(self.binding_has_accepted_request);
                 let evidence = candidate
                     .resume_session_replacing_binding(&target)
                     .map_err(RuntimeError::backend)
@@ -860,7 +984,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                     return Err(reject_replacement_candidate(
                         &mut candidate,
                         RuntimeError::backend(crate::BackendFailure::new(
-                            crate::BackendFailureKind::Session,
+                            BackendFailureKind::Session,
                             "exact-replay replacement returned an incompatible target binding",
                         )),
                     ));
@@ -874,7 +998,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                     return Err(reject_replacement_candidate(
                         &mut candidate,
                         RuntimeError::backend(crate::BackendFailure::new(
-                            crate::BackendFailureKind::Session,
+                            BackendFailureKind::Session,
                             "exact-replay replacement could not publish its binding transition",
                         )),
                     ));
@@ -888,28 +1012,36 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                     return Err(reject_replacement_candidate(
                         &mut candidate,
                         RuntimeError::backend(crate::BackendFailure::new(
-                            crate::BackendFailureKind::Unsupported,
+                            BackendFailureKind::Unsupported,
                             "source and candidate backends must advertise native model rebinding",
                         )),
                     ));
                 }
-                let source_anchor = if self.binding_has_accepted_request {
+                let source_anchor = if self.binding_has_accepted_request
+                    || matches!(
+                        self.resume_source,
+                        Some(BackendResumeSource::InitialFork(_))
+                    ) {
                     if self.binding_has_unanchored_request {
                         return Err(reject_replacement_candidate(
                             &mut candidate,
                             RuntimeError::backend(crate::BackendFailure::new(
-                                crate::BackendFailureKind::Session,
+                                BackendFailureKind::Session,
                                 "native model rebinding requires the newest durable continuation Anchor after an accepted request",
                             )),
                         ));
                     }
                     match self.resume_source {
                         Some(BackendResumeSource::ContinuationAnchor(sequence)) => Some(sequence),
-                        Some(BackendResumeSource::ContextCheckpoint(_)) | None => {
+                        Some(
+                            BackendResumeSource::ContextCheckpoint(_)
+                            | BackendResumeSource::InitialFork(_),
+                        )
+                        | None => {
                             return Err(reject_replacement_candidate(
                                 &mut candidate,
                                 RuntimeError::backend(crate::BackendFailure::new(
-                                    crate::BackendFailureKind::Session,
+                                    BackendFailureKind::Session,
                                     "native model rebinding requires the newest durable continuation Anchor after an accepted request",
                                 )),
                             ));
@@ -932,7 +1064,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                     return Err(reject_replacement_candidate(
                         &mut candidate,
                         RuntimeError::backend(crate::BackendFailure::new(
-                            crate::BackendFailureKind::Session,
+                            BackendFailureKind::Session,
                             "native model rebind returned an incompatible target binding",
                         )),
                     ));
@@ -946,7 +1078,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                     return Err(reject_replacement_candidate(
                         &mut candidate,
                         RuntimeError::backend(crate::BackendFailure::new(
-                            crate::BackendFailureKind::Session,
+                            BackendFailureKind::Session,
                             "native model rebind could not publish its binding transition",
                         )),
                     ));

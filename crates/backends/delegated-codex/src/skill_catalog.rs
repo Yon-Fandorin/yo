@@ -2,6 +2,9 @@
 
 use std::{
     fmt::Write as _,
+    fs::OpenOptions,
+    io::Read as _,
+    os::unix::fs::OpenOptionsExt as _,
     sync::{
         Arc,
         mpsc::{self, Receiver, Sender, TryRecvError},
@@ -15,10 +18,11 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use yo_backend::transport::{Readiness, ReadyReceiver};
 use yo_core::{
+    InputAdmissionHost, InputReference, LocalWorkspaceInputAdmission, ResolvedSkill,
     SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceProvider,
     SkillReferenceProviderPoll, SkillReferenceScope, SkillReferenceSearchRequest,
-    SkillReferenceSearchStatus, SkillReferenceSearchUpdate, WorkspaceHostId,
-    search_skill_reference_candidates,
+    SkillReferenceSearchStatus, SkillReferenceSearchUpdate, SubmissionRejection,
+    SubmissionRejectionKind, UserInput, WorkspaceHostId, search_skill_reference_candidates,
 };
 
 use crate::{
@@ -29,6 +33,152 @@ pub struct CodexSkillReferenceProvider {
     requests: Option<Sender<SkillReferenceSearchRequest>>,
     updates: ReadyReceiver<SkillReferenceSearchUpdate>,
     worker: Option<JoinHandle<()>>,
+}
+
+/// Execution-host admission using Codex's authoritative explicit-skill catalog.
+/// The runtime consumes this through the provider-neutral InputAdmissionHost port.
+pub struct CodexSkillInputAdmission {
+    config: CodexBackendConfig,
+    workspace_host_id: WorkspaceHostId,
+    workspace: LocalWorkspaceInputAdmission,
+    warning_observer: Option<CodexWarningObserver>,
+}
+
+impl CodexSkillInputAdmission {
+    /// Pins workspace admission and the same host configuration used for discovery.
+    pub fn new(
+        config: CodexBackendConfig,
+        workspace_host_id: WorkspaceHostId,
+        warning_observer: Option<CodexWarningObserver>,
+    ) -> Result<Self, String> {
+        let workspace =
+            LocalWorkspaceInputAdmission::new(config.working_directory(), workspace_host_id)?;
+        Ok(Self {
+            config,
+            workspace_host_id,
+            workspace,
+            warning_observer,
+        })
+    }
+
+    fn validate_workspace(&self, input: &UserInput) -> Result<(), SubmissionRejection> {
+        if input.references().len() > 128 {
+            return Err(SubmissionRejection::new(
+                SubmissionRejectionKind::OverBudget,
+                "at most 128 input references are supported",
+            ));
+        }
+        let workspace_input = UserInput::with_references(
+            input.as_str(),
+            input
+                .references()
+                .iter()
+                .filter(|reference| reference.workspace_reference().is_some())
+                .cloned()
+                .collect(),
+        )
+        .map_err(|error| {
+            SubmissionRejection::new(SubmissionRejectionKind::InvalidReference, error.to_string())
+        })?;
+        self.workspace.validate(&workspace_input)
+    }
+
+    fn selected(&self, input: &UserInput) -> Result<Option<SkillReference>, SubmissionRejection> {
+        self.validate_workspace(input)?;
+        let Some(selected) = input
+            .references()
+            .iter()
+            .find_map(InputReference::skill_reference)
+        else {
+            return Ok(None);
+        };
+        let environment = format!("local-host:{}", self.workspace_host_id);
+        if selected.execution_environment_identity() != environment {
+            return Err(SubmissionRejection::new(
+                SubmissionRejectionKind::EnvironmentUnavailable,
+                "skill belongs to another execution host",
+            ));
+        }
+        let catalog =
+            load_skill_metadata(&self.config, self.warning_observer.clone()).map_err(|error| {
+                SubmissionRejection::new(SubmissionRejectionKind::EnvironmentUnavailable, error)
+            })?;
+        validate_selected_skill(&environment, selected, catalog.skills)?;
+        Ok(Some(selected.clone()))
+    }
+}
+
+impl InputAdmissionHost for CodexSkillInputAdmission {
+    fn validate(&self, input: &UserInput) -> Result<(), SubmissionRejection> {
+        self.selected(input).map(|_| ())
+    }
+
+    fn prepare(&self, input: &UserInput) -> Result<Option<ResolvedSkill>, SubmissionRejection> {
+        let Some(selected) = self.selected(input)? else {
+            return Ok(None);
+        };
+        resolve_selected_skill(selected).map(Some)
+    }
+}
+
+fn validate_selected_skill(
+    environment: &str,
+    selected: &SkillReference,
+    skills: Vec<SkillMetadata>,
+) -> Result<(), SubmissionRejection> {
+    let mut matching = skills
+        .into_iter()
+        .filter(|skill| skill.path == selected.locator());
+    let Some(skill) = matching.next() else {
+        return Err(SubmissionRejection::new(
+            SubmissionRejectionKind::StaleReference,
+            "selected skill was removed; select it again",
+        ));
+    };
+    if matching.next().is_some() {
+        return Err(SubmissionRejection::new(
+            SubmissionRejectionKind::InvalidReference,
+            "skill catalog contains an ambiguous locator",
+        ));
+    }
+    // Codex explicit selection uses enabled; allow_implicit_invocation is unrelated.
+    let candidate = candidate_from_wire(
+        environment,
+        skill,
+        selected.catalog_generation(),
+        Ok(selected.entry_revision().to_owned()),
+    );
+    if candidate.reference() != selected {
+        return Err(SubmissionRejection::new(
+            SubmissionRejectionKind::StaleReference,
+            "selected skill descriptor changed; select it again",
+        ));
+    }
+    if let SkillAvailability::Disabled(reason) = candidate.availability() {
+        return Err(SubmissionRejection::new(
+            SubmissionRejectionKind::Unauthorized,
+            reason,
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_selected_skill(selected: SkillReference) -> Result<ResolvedSkill, SubmissionRejection> {
+    // The authoritative catalog was checked before opening its locator. Digest and model
+    // instructions use these same bounded bytes, never a second path lookup.
+    let instructions = skill_instructions(selected.locator())?;
+    if skill_revision(&instructions) != selected.entry_revision() {
+        return Err(SubmissionRejection::new(
+            SubmissionRejectionKind::StaleReference,
+            "selected skill contents changed; select it again",
+        ));
+    }
+    ResolvedSkill::new(selected, instructions).map_err(|error| {
+        SubmissionRejection::new(
+            SubmissionRejectionKind::RequiredAssetUnavailable,
+            error.to_string(),
+        )
+    })
 }
 
 struct Inventory {
@@ -214,6 +364,28 @@ fn load_inventory(
     catalog_generation: u64,
     warning_observer: Option<CodexWarningObserver>,
 ) -> Result<Inventory, String> {
+    let entry = load_skill_metadata(config, warning_observer)?;
+    let status = if entry.errors.is_empty() {
+        SkillReferenceSearchStatus::Complete
+    } else {
+        SkillReferenceSearchStatus::Incomplete(format_catalog_errors(&entry.errors))
+    };
+    let environment = format!("local-host:{workspace_host_id}");
+    let candidates = entry
+        .skills
+        .into_iter()
+        .map(|skill| {
+            let revision = skill_digest(&skill.path);
+            candidate_from_wire(&environment, skill, catalog_generation, revision)
+        })
+        .collect();
+    Ok(Inventory { candidates, status })
+}
+
+fn load_skill_metadata(
+    config: &CodexBackendConfig,
+    warning_observer: Option<CodexWarningObserver>,
+) -> Result<SkillsListEntry, String> {
     let cwd = config
         .working_directory()
         .to_str()
@@ -237,21 +409,7 @@ fn load_inventory(
         .into_iter()
         .find(|entry| entry.cwd == cwd)
         .ok_or_else(|| "Codex skills/list omitted the requested workspace".to_owned())?;
-    let status = if entry.errors.is_empty() {
-        SkillReferenceSearchStatus::Complete
-    } else {
-        SkillReferenceSearchStatus::Incomplete(format_catalog_errors(&entry.errors))
-    };
-    let environment = format!("local-host:{workspace_host_id}");
-    let candidates = entry
-        .skills
-        .into_iter()
-        .map(|skill| {
-            let revision = skill_digest(&skill.path);
-            candidate_from_wire(&environment, skill, catalog_generation, revision)
-        })
-        .collect();
-    Ok(Inventory { candidates, status })
+    Ok(entry)
 }
 
 fn candidate_from_wire(
@@ -301,13 +459,58 @@ fn candidate_from_wire(
 }
 
 fn skill_digest(path: &str) -> Result<String, String> {
-    let bytes =
-        std::fs::read(path).map_err(|error| format!("Skill revision unavailable: {error}"))?;
+    skill_instructions(path)
+        .map(|text| skill_revision(&text))
+        .map_err(|error| error.message().to_owned())
+}
+
+fn skill_instructions(path: &str) -> Result<String, SubmissionRejection> {
+    let unavailable = |message: String| {
+        SubmissionRejection::new(SubmissionRejectionKind::RequiredAssetUnavailable, message)
+    };
+    // Open nonblocking before checking the same descriptor, so a replaced path
+    // cannot leave the catalog worker waiting for a FIFO writer.
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| unavailable(format!("Skill revision unavailable: {error}")))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| unavailable(format!("Skill revision unavailable: {error}")))?;
+    if !metadata.is_file() {
+        return Err(unavailable(
+            "Skill revision unavailable: not a regular file".to_owned(),
+        ));
+    }
+    let limit = ResolvedSkill::MAX_INSTRUCTION_BYTES;
+    if metadata.len() > limit as u64 {
+        return Err(SubmissionRejection::new(
+            SubmissionRejectionKind::OverBudget,
+            "Skill revision unavailable: instruction byte limit exceeded",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| unavailable(format!("Skill revision unavailable: {error}")))?;
+    if bytes.len() > limit {
+        return Err(SubmissionRejection::new(
+            SubmissionRejectionKind::OverBudget,
+            "Skill revision unavailable: instruction byte limit exceeded",
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        unavailable("Skill revision unavailable: instructions are not valid UTF-8".to_owned())
+    })
+}
+
+fn skill_revision(instructions: &str) -> String {
     let mut revision = String::from("sha256:");
-    for byte in Sha256::digest(bytes) {
+    for byte in Sha256::digest(instructions.as_bytes()) {
         let _ = write!(revision, "{byte:02x}");
     }
-    Ok(revision)
+    revision
 }
 
 fn semantic_key(domain: &str, fields: &[&str]) -> String {

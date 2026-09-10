@@ -1,21 +1,30 @@
 use std::{collections::TryReserveError, error::Error, fmt, ops::Range};
 
-use super::{Cell, GeometryError, Point, Rect, Size, Style, SurfaceView};
+use super::{Cell, GeometryError, Point, RasterImage, Rect, Size, Style, SurfaceView};
 
 /// Completed two-dimensional physical cell state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Surface {
     size: Size,
     cells: Vec<Cell>,
+    pub(crate) rasters: Vec<RasterImage>,
 }
 
 impl Surface {
+    pub(crate) fn has_hyperlinks(&self) -> bool {
+        self.cells.iter().any(|cell| cell.hyperlink().is_some())
+    }
+
     pub fn new(size: Size) -> Result<Self, SurfaceError> {
         let len = usize::from(size.width) * usize::from(size.height);
         let mut cells = Vec::new();
         cells.try_reserve_exact(len)?;
         cells.resize_with(len, || Cell::blank(Style::default()));
-        Ok(Self { size, cells })
+        Ok(Self {
+            size,
+            cells,
+            rasters: Vec::new(),
+        })
     }
 
     #[must_use]
@@ -51,6 +60,14 @@ impl Surface {
     }
 
     pub(crate) fn replace_by_index(&mut self, index: usize, cell: Cell) {
+        let x = (index % usize::from(self.size.width)) as u16;
+        let y = (index / usize::from(self.size.width)) as u16;
+        self.rasters.retain(|image| {
+            !(x >= image.area.origin.x
+                && x < image.area.origin.x + image.area.size.width
+                && y >= image.area.origin.y
+                && y < image.area.origin.y + image.area.size.height)
+        });
         self.cells[index] = cell;
     }
 }

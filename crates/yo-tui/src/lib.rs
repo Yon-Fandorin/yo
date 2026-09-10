@@ -17,14 +17,23 @@ pub mod terminal;
 pub(crate) mod text;
 pub(crate) mod transcript;
 
-pub use appearance::{ColorCapability, GlyphProfile, MotionPreference};
+pub use appearance::{
+    ColorCapability, GlyphProfile, MotionPreference, OutputPreferences, Theme, ThemeColor,
+    ThemeOverrides, ThemeRole,
+};
+pub use command::{PromptTemplateError, PromptTemplates};
 #[cfg(unix)]
 pub use runner::{
     AgentAction, AgentConnection, AgentPoll, ArchivedContentPolicy, ArchivedProjectionError,
-    ArchivedProjectionOptions, ArchivedSessionView, DispatchOutcome, ExitReason, FrameRateLimit,
-    PendingDispatch, PresentationMode, PublicationRecoveryEvidence, PublicationRecoveryKind,
-    RunError, RunOutcome, TerminalOutcome, TerminationEvent, TerminationSource, TuiSession,
-    TuiSessionInfo, WorkspaceReferenceConnection, WorkspaceReferencePoll, project_archived_session,
+    ArchivedProjectionOptions, ArchivedSessionView, DispatchOutcome, ExitReason, ForkPickerToken,
+    FrameRateLimit, PendingDispatch, PresentationMode, PublicationRecoveryEvidence,
+    PublicationRecoveryKind, ResumeSessionEntry, RunError, RunOutcome, TerminalOutcome,
+    TerminationEvent, TerminationSource, TuiDocument, TuiSession, TuiSessionInfo, TuiStatusError,
+    TuiStatusLine, WorkspaceReferenceConnection, WorkspaceReferencePoll, project_archived_session,
     project_archived_session_with_options, project_archived_usage, run, run_session_with_mode,
     run_with_mode,
+};
+pub use transcript::{
+    AssistantRenderInput, AssistantRenderer, DocumentRenderInput, DocumentRenderer, LinkResolver,
+    ToolRenderInput, ToolRenderer, TranscriptActivityOutcome,
 };

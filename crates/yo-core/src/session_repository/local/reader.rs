@@ -1,21 +1,167 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufReader, Read, Seek, SeekFrom},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
+use rustix::{
+    fs::{AtFlags, fstat, statat},
+    io::Errno,
+};
+
 use super::{
-    super::{RepositoryEntry, RepositoryError, RepositorySequence, SessionRecordVersion},
+    super::{
+        RepositoryEntry, RepositoryError, RepositorySequence, SessionRecordVersion,
+        SessionTreeLimits, StoredSessionSummary,
+    },
     file::{
-        legacy_writer_is_active, pending_append_is_active, reject_symlink, require_user_only_file,
-        scan_complete_entries, session_writer_is_active,
+        legacy_writer_is_active, open_readonly_regular, open_readonly_regular_at,
+        pending_append_is_active, reject_symlink, require_user_only_file, scan_complete_entries,
+        session_writer_is_active, tree_lock_is_active,
     },
     wire::WireEntry,
 };
 use crate::SessionId;
 
 const MAX_PENDING_MARKER_GENERATIONS: usize = 4;
+
+pub(super) struct TreeReadBudget {
+    bytes: u64,
+    records: usize,
+    exhausted: bool,
+}
+
+impl TreeReadBudget {
+    pub(super) fn new(limits: SessionTreeLimits) -> Self {
+        Self {
+            bytes: limits.physical_bytes(),
+            records: limits.physical_records(),
+            exhausted: false,
+        }
+    }
+
+    pub(super) fn for_fork(limits: super::super::SessionForkLimits) -> Self {
+        Self {
+            bytes: limits.physical_bytes(),
+            records: limits.physical_records(),
+            exhausted: false,
+        }
+    }
+
+    pub(super) const fn exhausted(&self) -> bool {
+        self.exhausted
+    }
+
+    fn exceeded(&mut self) -> RepositoryError {
+        self.exhausted = true;
+        RepositoryError::Unavailable {
+            message: "Session tree physical inspection budget exhausted".into(),
+        }
+    }
+}
+
+pub(super) fn read_tree_entries(
+    root: &File,
+    path: &Path,
+    session_id: SessionId,
+    budget: &mut TreeReadBudget,
+) -> Result<Option<(Vec<RepositoryEntry>, StoredSessionSummary)>, RepositoryError> {
+    read_bounded_entries(root, path, session_id, budget, false)
+}
+
+pub(super) fn read_fork_entries(
+    root: &File,
+    path: &Path,
+    session_id: SessionId,
+    budget: &mut TreeReadBudget,
+) -> Result<Option<(Vec<RepositoryEntry>, StoredSessionSummary)>, RepositoryError> {
+    read_bounded_entries(root, path, session_id, budget, true)
+}
+
+fn read_bounded_entries(
+    root: &File,
+    path: &Path,
+    session_id: SessionId,
+    budget: &mut TreeReadBudget,
+    require_stable_file: bool,
+) -> Result<Option<(Vec<RepositoryEntry>, StoredSessionSummary)>, RepositoryError> {
+    let Some(mut file) = open_readonly_regular_at(root, path)? else {
+        return Ok(None);
+    };
+    let initial_metadata = file.metadata()?;
+    let physical_len = initial_metadata.len();
+    let cutoff = guarded_tree_cutoff(root, path, session_id)?.unwrap_or(physical_len);
+    if cutoff > physical_len {
+        return Err(RepositoryError::Quarantined {
+            message: "Session append marker points beyond the physical log".into(),
+        });
+    }
+    let mut bytes = Vec::new();
+    let mut consumed = 0_u64;
+    let mut buffer = [0_u8; 8192];
+    while consumed < cutoff {
+        let count = usize::try_from(
+            (cutoff - consumed)
+                .min(budget.bytes.saturating_add(1))
+                .min(buffer.len() as u64),
+        )
+        .expect("bounded read fits memory");
+        let read = file.read(&mut buffer[..count])?;
+        if read == 0 {
+            return Err(RepositoryError::Unavailable {
+                message: "Session tree file shortened before its pinned cutoff".into(),
+            });
+        }
+        let read_bytes = read as u64;
+        consumed += read_bytes;
+        if read_bytes > budget.bytes {
+            budget.bytes = 0;
+            return Err(budget.exceeded());
+        }
+        budget.bytes -= read_bytes;
+        for byte in &buffer[..read] {
+            if *byte == b'\n' {
+                if budget.records == 0 {
+                    return Err(budget.exceeded());
+                }
+                budget.records -= 1;
+            }
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+    if require_stable_file {
+        let final_metadata = file.metadata()?;
+        let current =
+            statat(root, path, AtFlags::SYMLINK_NOFOLLOW).map_err(std::io::Error::from)?;
+        if initial_metadata.dev() != current.st_dev
+            || initial_metadata.ino() != current.st_ino
+            || initial_metadata.len() != final_metadata.len()
+            || initial_metadata.mtime() != final_metadata.mtime()
+            || initial_metadata.mtime_nsec() != final_metadata.mtime_nsec()
+            || initial_metadata.ctime() != final_metadata.ctime()
+            || initial_metadata.ctime_nsec() != final_metadata.ctime_nsec()
+        {
+            return Err(RepositoryError::Unavailable {
+                message: "historical fork file changed during its pinned capture".to_owned(),
+            });
+        }
+    }
+    let scan = scan_complete_entries(&mut Cursor::new(&bytes), session_id, 0, usize::MAX)?;
+    let Some(last) = scan.entries.last() else {
+        return Ok(None);
+    };
+    let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n') else {
+        return Ok(None);
+    };
+    let start = bytes[..end]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    let (decoded, version) = WireEntry::decode_tail(&bytes[start..=end])?.into_tail(session_id)?;
+    let summary = StoredSessionSummary::new(last.sequence(), version, decoded.discovery);
+    Ok(Some((scan.entries, summary)))
+}
 
 pub(super) fn open_existing_root(root: &Path) -> Result<PathBuf, RepositoryError> {
     reject_symlink(root)?;
@@ -94,35 +240,72 @@ pub(super) fn read_snapshot_entries(
     ))
 }
 
+fn guarded_tree_cutoff(
+    root: &File,
+    path: &Path,
+    session_id: SessionId,
+) -> Result<Option<u64>, RepositoryError> {
+    guarded_cutoff_with(
+        &pending_path(path),
+        |pending| open_readonly_regular_at(root, pending),
+        || tree_lock_is_active(root, Path::new(&format!("{session_id}.writer.lock"))),
+        || tree_lock_is_active(root, Path::new(".writer.lock")),
+        |marker, pending| {
+            let current = match statat(root, pending, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => stat,
+                Err(Errno::NOENT) => return Ok(None),
+                Err(error) => return Err(std::io::Error::from(error).into()),
+            };
+            let opened = fstat(marker).map_err(std::io::Error::from)?;
+            Ok(Some(
+                opened.st_dev == current.st_dev && opened.st_ino == current.st_ino,
+            ))
+        },
+    )
+}
+
 fn guarded_cutoff(
     root: &Path,
     path: &Path,
     session_id: SessionId,
 ) -> Result<Option<u64>, RepositoryError> {
-    let pending = pending_path(path);
+    guarded_cutoff_with(
+        &pending_path(path),
+        open_readonly_regular,
+        || session_writer_is_active(root, session_id),
+        || legacy_writer_is_active(root),
+        marker_path_matches,
+    )
+}
+
+fn guarded_cutoff_with(
+    pending: &Path,
+    open_marker: impl Fn(&Path) -> Result<Option<File>, RepositoryError>,
+    session_active: impl Fn() -> Result<bool, RepositoryError>,
+    legacy_active: impl Fn() -> Result<bool, RepositoryError>,
+    marker_matches: impl Fn(&File, &Path) -> Result<Option<bool>, RepositoryError>,
+) -> Result<Option<u64>, RepositoryError> {
     for _ in 0..MAX_PENDING_MARKER_GENERATIONS {
-        reject_symlink(&pending)?;
-        let mut marker = match OpenOptions::new().read(true).open(&pending) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+        let Some(marker) = open_marker(pending)? else {
+            return Ok(None);
         };
-        require_user_only_file(&marker)?;
         let mut value = String::new();
-        marker.read_to_string(&mut value)?;
+        (&marker).take(65).read_to_string(&mut value)?;
+        if value.len() > 64 {
+            return Err(RepositoryError::Quarantined {
+                message: "Session append marker exceeds its bounded cutoff encoding".into(),
+            });
+        }
         let cutoff = value
             .trim()
             .parse::<u64>()
             .map_err(|_| RepositoryError::Quarantined {
-                message: "active Session append marker has an invalid durable cutoff".to_owned(),
+                message: "active Session append marker has an invalid durable cutoff".into(),
             })?;
-        let marker_is_active = pending_append_is_active(&marker)?;
-        if (marker_is_active && session_writer_is_active(root, session_id)?)
-            || legacy_writer_is_active(root)?
-        {
+        if (pending_append_is_active(&marker)? && session_active()?) || legacy_active()? {
             return Ok(Some(cutoff));
         }
-        match marker_path_matches(&marker, &pending)? {
+        match marker_matches(&marker, pending)? {
             None => return Ok(None),
             Some(false) => continue,
             Some(true) => {
@@ -136,7 +319,7 @@ fn guarded_cutoff(
         }
     }
     Err(RepositoryError::Unavailable {
-        message: "Session append marker changed repeatedly while it was being observed".to_owned(),
+        message: "Session append marker changed repeatedly while it was being observed".into(),
     })
 }
 

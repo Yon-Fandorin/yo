@@ -20,8 +20,9 @@ use super::{
 use crate::{
     AgentCommand, AgentEvent, BackendAdapter, BackendCapabilities, BackendCommandEvidence,
     BackendEvent, BackendFailure, BackendFailureKind, BackendPoll, BackendResumeTarget,
-    BackendScriptStep, BackendStopHandle, RuntimeError, RuntimePoll, ScriptedBackend,
+    BackendScriptStep, BackendStopHandle, RuntimeError, RuntimePoll, ScriptedBackend, SubmissionId,
     SubmissionOutcome, SubmissionRejectionKind, TurnOutcome, UserInput, journal::SessionJournal,
+    readiness::Readiness,
 };
 
 // urgent interrupt가 normal lane에 이미 queue된 steer보다 먼저 실행되면 worker가 그
@@ -29,7 +30,7 @@ use crate::{
 #[test]
 fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
     let active_turn = turn(1);
-    let canceled_id = crate::SubmissionId::new().unwrap();
+    let canceled_id = SubmissionId::new().unwrap();
     let backend = ScriptedBackend::new([
         BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
             session_id: session(),
@@ -71,7 +72,7 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
                 turn: active_turn,
                 input: UserInput::from("start"),
             },
-            crate::SubmissionId::new().unwrap(),
+            SubmissionId::new().unwrap(),
         )
         .unwrap();
 
@@ -98,7 +99,7 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
     let mut changes = ChangeLane::new(
         changes_tx,
         Arc::new(Mutex::new(None)),
-        Arc::new(crate::readiness::Readiness::new()),
+        Arc::new(Readiness::new()),
     );
     let processed = (Mutex::new(0), Condvar::new());
     let lifecycle = AtomicU8::new(WORKER_IDLE);
@@ -124,6 +125,91 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
         })
     );
     assert!(outcomes.lock().unwrap().is_empty());
+}
+
+// 거절된 시작 입력 뒤 이미 대기 중이던 interrupt는 backend에 전달하지 않는다.
+// 다음 시작 입력을 수락하고 거절된 예약이나 늦은 interrupt가 Session을 망가뜨리지 않는다.
+#[test]
+fn queued_interrupt_after_rejected_start_does_not_kill_the_session() {
+    let rejected_id = SubmissionId::new().unwrap();
+    let accepted_id = SubmissionId::new().unwrap();
+    let rejected = AgentCommand::StartTurn {
+        turn: turn(1),
+        input: UserInput::from("reject"),
+    };
+    let accepted = AgentCommand::StartTurn {
+        turn: turn(2),
+        input: UserInput::from("next"),
+    };
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::RejectCommand {
+            command: rejected.clone(),
+            failure: BackendFailure::new(BackendFailureKind::CommandRejected, "not available"),
+        },
+        BackendScriptStep::AcceptCommand(accepted.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let state = Arc::new(Mutex::new(SessionState {
+        active_turn: Some(turn(1)),
+        ..SessionState::default()
+    }));
+    let outcomes = Arc::new(Mutex::new(VecDeque::new()));
+    let mut worker = AgentWorker::new(
+        Box::new(backend),
+        session(),
+        SessionJournal::new(),
+        WorkerSharedState::new(
+            state,
+            Arc::new(AtomicU64::new(1)),
+            Arc::clone(&outcomes),
+            Arc::new(Mutex::new(VecDeque::new())),
+            Arc::new(AtomicBool::new(false)),
+        ),
+        None,
+    );
+    worker.initialize().unwrap();
+    let (normal_tx, normal_rx) = mpsc::sync_channel(3);
+    let (_urgent_tx, urgent_rx) = mpsc::sync_channel(1);
+    let (_replacement_tx, replacement_rx) = mpsc::sync_channel(1);
+    normal_tx
+        .send(PendingCommand::from_submission(rejected, rejected_id))
+        .unwrap();
+    normal_tx
+        .send(PendingCommand::from_command(AgentCommand::InterruptTurn {
+            turn: turn(1),
+        }))
+        .unwrap();
+    normal_tx
+        .send(PendingCommand::from_submission(accepted, accepted_id))
+        .unwrap();
+    drop(normal_tx);
+    let (changes_tx, _changes_rx) = mpsc::sync_channel(1);
+    let mut changes = ChangeLane::new(
+        changes_tx,
+        Arc::new(Mutex::new(None)),
+        Arc::new(Readiness::new()),
+    );
+    let exit = worker.run(
+        normal_rx,
+        urgent_rx,
+        replacement_rx,
+        &mut changes,
+        &(Mutex::new(0), Condvar::new()),
+        &AtomicU8::new(WORKER_IDLE),
+    );
+    assert!(exit.failure.is_none(), "{:?}", exit.failure);
+    let mut outcomes = outcomes.lock().unwrap();
+    assert!(
+        matches!(outcomes.pop_front(), Some(SubmissionOutcome::Rejected { id, .. }) if id == rejected_id)
+    );
+    assert_eq!(
+        outcomes.pop_front(),
+        Some(SubmissionOutcome::Accepted { id: accepted_id })
+    );
+    assert!(outcomes.is_empty());
 }
 
 struct BlockingBackend {
@@ -505,10 +591,8 @@ fn retains_the_temporal_target_while_the_runtime_is_busy() {
         .unwrap();
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
-    let submission = crate::InputSubmission::new(
-        crate::SubmissionId::new().unwrap(),
-        UserInput::from("retain me"),
-    );
+    let submission =
+        crate::InputSubmission::new(SubmissionId::new().unwrap(), UserInput::from("retain me"));
     let submission_id = submission.id();
     let CommandAdmission::Backpressured(retained) =
         app.dispatch(AgentIntent::Submit(submission)).unwrap()
@@ -699,7 +783,7 @@ fn coalesces_journal_changes_while_one_notification_is_unread() {
     let mut lane = ChangeLane::new(
         sender,
         Arc::new(Mutex::new(None)),
-        Arc::new(crate::readiness::Readiness::new()),
+        Arc::new(Readiness::new()),
     );
 
     assert!(lane.changed());

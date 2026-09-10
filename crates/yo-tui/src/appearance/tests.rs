@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use super::{
     AppearanceCandidate, AppearanceCandidateError, AppearanceCommitError, AppearanceGlyphRole,
-    AppearanceState, ColorCapability, GlyphProfile, MotionPreference, validate_marker,
+    AppearanceRevision, AppearanceState, ColorCapability, GlyphProfile, MotionPreference, Theme,
+    validate_marker,
 };
 use crate::surface::{Attributes, Color, GraphemeError, Style};
 
@@ -408,4 +409,66 @@ fn invalid_activity_profiles_are_rejected_before_publication() {
         base.with_activity_sweep_period_for_test(Duration::ZERO),
         Err(AppearanceCandidateError::ZeroActivitySweepPeriod)
     );
+}
+
+// 테마를 왕복해도 host 능력·ASCII 글리프·motion 설정을 잃지 않고 이전 frame pin은 보존한다.
+#[test]
+fn theme_round_trip_preserves_host_preferences_and_pinned_frames() {
+    for capability in [
+        ColorCapability::TrueColor,
+        ColorCapability::Limited,
+        ColorCapability::Unknown,
+    ] {
+        for motion in [MotionPreference::Standard, MotionPreference::Reduced] {
+            let mut state =
+                AppearanceState::new(AppearanceCandidate::for_profile_with_host_preferences(
+                    GlyphProfile::Ascii,
+                    capability,
+                    motion,
+                ))
+                .unwrap();
+            let original = state.pin();
+            let elapsed = Duration::from_secs(1);
+            let original_motion = original.snapshot().activity_motion_frame(elapsed);
+            for theme in [Theme::Light, Theme::Mono, Theme::Default] {
+                state.select_theme(theme).unwrap();
+                let pin = state.pin();
+                let frame = pin.snapshot().activity_motion_frame(elapsed);
+                assert_eq!(
+                    pin.snapshot().transcript_config(),
+                    original.snapshot().transcript_config()
+                );
+                assert_eq!(frame.marker(), original_motion.marker());
+                assert_eq!(frame.marker_interval(), original_motion.marker_interval());
+                assert_eq!(frame.period(), original_motion.period());
+                if theme == Theme::Mono {
+                    assert_eq!(frame.label_period(), None);
+                    assert_eq!(
+                        frame
+                            .label_style(pin.snapshot().styles().chrome.activity)
+                            .foreground,
+                        Color::Default
+                    );
+                }
+            }
+            assert_eq!(state.pin().snapshot(), original.snapshot());
+            assert_eq!(original.revision().get(), 1);
+            assert_eq!(state.pin().revision().get(), 4);
+        }
+    }
+}
+
+// revision 한계에서 테마 변경이 실패해도 committed style과 motion은 바뀌지 않는다.
+#[test]
+fn theme_rejection_at_revision_limit_preserves_snapshot() {
+    let mut state = AppearanceState {
+        revision: AppearanceRevision(u64::MAX),
+        ..AppearanceState::default()
+    };
+    let before = state.pin();
+    assert_eq!(
+        state.select_theme(Theme::Light),
+        Err(AppearanceCommitError::RevisionOverflow)
+    );
+    assert_eq!(state.pin(), before);
 }

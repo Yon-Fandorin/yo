@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{cell::Cell, collections::HashSet};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -39,8 +39,10 @@ enum SelectionEntryKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PanelSnapshot {
+    wrapped_entries: bool,
     title: String,
     title_status: Option<PanelTitleStatus>,
+    request_is_approval: Option<bool>,
     entries: Vec<SelectionEntry>,
     owning_sections: Vec<Option<usize>>,
     filter_bar: Option<FilterBar>,
@@ -64,6 +66,10 @@ pub(crate) struct SelectionPanel {
     snapshot: PanelSnapshot,
     selected: Option<EntryIdentity>,
     selected_index: Option<usize>,
+    wrapped_focus: usize,
+    wrapped_scroll: Cell<usize>,
+    wrapped_scroll_max: Cell<usize>,
+    wrapped_page_size: Cell<usize>,
     freshness: SnapshotFreshness,
 }
 
@@ -254,6 +260,22 @@ impl SelectionEntry {
 }
 
 impl PanelSnapshot {
+    pub(crate) fn offers(&self, identity: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.is_enabled() && entry.identity.as_str() == identity)
+    }
+
+    pub(crate) fn with_wrapped_entries(mut self) -> Self {
+        self.wrapped_entries = true;
+        self
+    }
+
+    pub(crate) fn for_request(mut self, approval: bool) -> Self {
+        self.request_is_approval = Some(approval);
+        self
+    }
+
     pub(crate) fn new(
         title: impl Into<String>,
         entries: Vec<SelectionEntry>,
@@ -270,8 +292,10 @@ impl PanelSnapshot {
             })
             .collect();
         let snapshot = Self {
+            wrapped_entries: false,
             title: title.into(),
             title_status: None,
+            request_is_approval: None,
             entries,
             owning_sections,
             filter_bar: None,
@@ -374,6 +398,10 @@ impl SelectionPanel {
             snapshot,
             selected,
             selected_index,
+            wrapped_focus: selected_index.unwrap_or(0),
+            wrapped_scroll: Cell::new(0),
+            wrapped_scroll_max: Cell::new(0),
+            wrapped_page_size: Cell::new(1),
             freshness: SnapshotFreshness::Fresh,
         }
     }
@@ -391,6 +419,9 @@ impl SelectionPanel {
             .or_else(|| snapshot.entries.iter().position(SelectionEntry::is_enabled));
         self.selected = selected_index.map(|index| snapshot.entries[index].identity.clone());
         self.selected_index = selected_index;
+        self.wrapped_focus = selected_index.unwrap_or(0);
+        self.wrapped_scroll.set(0);
+        self.wrapped_scroll_max.set(0);
         self.snapshot = snapshot;
         self.freshness = SnapshotFreshness::Fresh;
     }
@@ -455,7 +486,35 @@ impl SelectionPanel {
         self.snapshot.filter_bar.is_some()
     }
 
+    pub(crate) fn scroll_wrapped(&mut self, down: bool) -> bool {
+        if !self.snapshot.wrapped_entries {
+            return false;
+        }
+        let current = self.wrapped_scroll.get().min(self.wrapped_scroll_max.get());
+        self.wrapped_scroll.set(if down {
+            current
+                .saturating_add(self.wrapped_page_size.get())
+                .min(self.wrapped_scroll_max.get())
+        } else {
+            current.saturating_sub(self.wrapped_page_size.get())
+        });
+        true
+    }
+
     fn move_selection(&mut self, direction: Direction) -> NavigationOutcome {
+        if self.snapshot.wrapped_entries {
+            let count = self.snapshot.entries.len();
+            self.wrapped_focus = match direction {
+                Direction::Next => (self.wrapped_focus + 1) % count,
+                Direction::Previous => (self.wrapped_focus + count - 1) % count,
+            };
+            let entry = &self.snapshot.entries[self.wrapped_focus];
+            self.selected_index = entry.is_enabled().then_some(self.wrapped_focus);
+            self.selected = self.selected_index.map(|_| entry.identity.clone());
+            self.wrapped_scroll.set(0);
+            self.wrapped_scroll_max.set(0);
+            return NavigationOutcome::SelectionChanged;
+        }
         let enabled = self
             .snapshot
             .entries

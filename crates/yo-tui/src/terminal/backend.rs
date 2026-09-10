@@ -20,6 +20,7 @@ pub(crate) trait TerminalBackend {
 pub(crate) trait ScreenModeBackend: TerminalBackend {
     fn bracketed_paste_mode() -> Self::Mode;
     fn alternate_screen_mode() -> Self::Mode;
+    fn mouse_capture_mode() -> Self::Mode;
     fn cursor_visibility_mode() -> Self::Mode;
 }
 

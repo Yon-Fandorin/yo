@@ -3,11 +3,16 @@ use std::{
     task::{Context, Poll},
 };
 
-use yo_core::{AgentControlOutcome, JournalDurability, RequestTraceEntry, TranscriptRecord};
+use yo_core::{
+    ActivityNotice, AgentControlOutcome, JournalDurability, RequestTraceEntry, TranscriptRecord,
+};
 pub use yo_core::{
     AgentIntent as AgentAction, CommandAdmission as DispatchOutcome,
     PendingCommand as PendingDispatch, SubmissionOutcome,
 };
+
+use super::{TuiDocument, TuiStatusLine};
+use crate::LinkResolver;
 
 /// One nonblocking observation exposed to the TUI.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,6 +21,14 @@ pub enum AgentPoll {
     Pending,
     /// One record from the Session Journal's ordered Transcript projection.
     Record(TranscriptRecord),
+    /// Session-local host diagnostic, outside the journal and without a fabricated Turn.
+    Notice(ActivityNotice),
+    /// Validated session-local Markdown, outside the journal and without a fabricated Turn.
+    Document(TuiDocument),
+    /// Complete ephemeral host status replacement; the default empty value clears it.
+    StatusLine(TuiStatusLine),
+    /// Fresh execution-host link mapping; None restores web-only links.
+    Links(Option<LinkResolver>),
     /// One payload-free correlation record from the live Session Journal.
     RequestTrace(RequestTraceEntry),
     /// A persistent durability-state transition for the visible Session.

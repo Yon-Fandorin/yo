@@ -298,6 +298,9 @@ pub(super) fn replay_input(item: &ModelReplayItem) -> ModelConnectorInputItem {
             content: content.clone(),
             refusal: refusal.clone(),
         },
+        ModelReplayItem::MultimodalUser { parts } => ModelConnectorInputItem::MultimodalUser {
+            parts: parts.clone(),
+        },
         ModelReplayItem::FunctionCall {
             call_id,
             name,

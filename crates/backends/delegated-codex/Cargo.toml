@@ -9,6 +9,7 @@ publish = false
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 sha2 = "0.11.0"
+libc = "=0.2.189"
 yo-backend = { path = "../foundation" }
 yo-core = { path = "../../yo-core" }
 

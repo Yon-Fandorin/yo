@@ -9,12 +9,13 @@ pub(crate) enum LocalToolRegistryRevision {
     BasicFiles,
     LegacyReadFile,
     NoTools,
+    CommandTools,
 }
 
 impl LocalToolRegistryRevision {
     pub(crate) const fn maximum_argument_bytes(self) -> usize {
         match self {
-            Self::BasicFiles => 101 * 1024 * 1024,
+            Self::BasicFiles | Self::CommandTools => 101 * 1024 * 1024,
             Self::LegacyReadFile | Self::NoTools => 4 * 1024 * 1024,
         }
     }
@@ -27,6 +28,9 @@ pub(crate) fn registry(
         LocalToolRegistryRevision::BasicFiles => basic_registry(),
         LocalToolRegistryRevision::LegacyReadFile => legacy_registry(),
         LocalToolRegistryRevision::NoTools => Ok(ToolRegistry::default()),
+        LocalToolRegistryRevision::CommandTools => Err(ToolExecutionError::new(
+            "command tools require a frozen execution manifest",
+        )),
     }
 }
 

@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use yo_tui::PresentationMode;
+use yo_tui::{PresentationMode, Theme};
 
 use super::{
     Command, account, connect, default, disconnect, live, model,
@@ -45,6 +45,10 @@ struct Cli {
     /// Take over the terminal screen while the session is active.
     #[arg(long, conflicts_with = "inline")]
     fullscreen: bool,
+
+    /// Override tui.theme for this session: default, light, or mono.
+    #[arg(long, value_name = "THEME", conflicts_with = "print")]
+    theme: Option<Theme>,
 
     /// Use ASCII characters instead of rich terminal glyphs.
     #[arg(long, global = true)]
@@ -111,6 +115,12 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
     reject_print_subcommand_overlap(&arguments, &subcommands)?;
     let arguments = normalize_global_output_options(arguments, &subcommands);
     let cli = Cli::try_parse_from(std::iter::once(OsString::from("yo")).chain(arguments))?;
+    if cli.theme.is_some() && (cli.command.is_some() || cli.prompt.is_some()) {
+        return Err(Cli::command().error(
+            clap::error::ErrorKind::ArgumentConflict,
+            "--theme applies only to the interactive TUI and cannot be used with a subcommand or print prompt",
+        ));
+    }
     let output = OutputOptions::from_cli(cli.format, cli.ascii);
 
     match cli.command {
@@ -155,7 +165,10 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
                 cli.no_tools,
                 cli.sandbox,
             )
-            .map(Command::Live)
+            .map(|mut options| {
+                options.theme = cli.theme;
+                Command::Live(options)
+            })
         },
     }
 }
@@ -216,7 +229,10 @@ fn top_level_subcommand_index(arguments: &[OsString], subcommands: &[String]) ->
         if argument == "--" {
             return None;
         }
-        if matches!(argument, "--model" | "--resume" | "--sandbox" | "--format") {
+        if matches!(
+            argument,
+            "--model" | "--resume" | "--sandbox" | "--format" | "--theme"
+        ) {
             skip_option_value = true;
             continue;
         }
@@ -245,7 +261,10 @@ fn reject_print_subcommand_overlap(
         if argument == "--" {
             break;
         }
-        if matches!(argument, "--model" | "--resume" | "--sandbox" | "--format") {
+        if matches!(
+            argument,
+            "--model" | "--resume" | "--sandbox" | "--format" | "--theme"
+        ) {
             skip_option_value = true;
             continue;
         }

@@ -69,3 +69,38 @@ fn operation_order_has_a_deterministic_byte_projection() {
 
     assert_eq!(encoder.into_inner(), b"\x1b[4;3H\x1b[0;39;49mA  ");
 }
+
+// 링크 제어 바이트는 글자 폭에 포함되지 않고 뒤따르는 일반 글자 전에 명시적으로 닫힌다.
+#[test]
+fn hyperlink_bytes_surround_only_the_selected_text() {
+    use std::path::Path;
+
+    use crate::surface::Hyperlink;
+    for link in [
+        Hyperlink::new("https://example.com/한글?q=a&b=c").unwrap(),
+        Hyperlink::from_file_path(Path::new("/tmp/host-confirmed.md")).unwrap(),
+    ] {
+        let mut encoder = AnsiEncoder::new(Vec::new());
+        encoder
+            .encode_operations(&[
+                TerminalOp::SetHyperlink(Some(&link)),
+                TerminalOp::WriteGrapheme {
+                    text: "한",
+                    width: NonZeroU16::new(2).unwrap(),
+                },
+                TerminalOp::SetHyperlink(None),
+                TerminalOp::WriteGrapheme {
+                    text: "x",
+                    width: NonZeroU16::new(1).unwrap(),
+                },
+            ])
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(encoder.into_inner()).unwrap(),
+            format!(
+                "\u{1b}]8;;{}\u{1b}\\한\u{1b}]8;;\u{1b}\\x",
+                link.destination()
+            )
+        );
+    }
+}

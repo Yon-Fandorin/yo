@@ -1,13 +1,16 @@
 use std::path::{Path, PathBuf};
 
-use yo_core::ModelCatalog;
+use yo_core::{ModelCatalog, SkillReferenceScope};
+use yo_tui::{FrameRateLimit, OutputPreferences, PromptTemplates, Theme, ThemeOverrides};
 
+mod commands;
 mod date;
 mod error;
 mod parse;
 mod path;
 mod snapshot;
 
+pub(crate) use commands::CommandToolConfig;
 pub(crate) use date::DateFormatter;
 pub(crate) use error::ConfigError;
 use parse::parse_snapshot;
@@ -18,9 +21,21 @@ use snapshot::{ConfigSnapshot, capture_snapshot};
 mod tests;
 
 #[derive(Clone, Debug)]
+pub(crate) struct SkillRootConfig {
+    pub(crate) path: PathBuf,
+    pub(crate) scope: SkillReferenceScope,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct Config {
+    skill_roots: Vec<SkillRootConfig>,
+    command_tools: Vec<CommandToolConfig>,
+    prompts: PromptTemplates,
     date_format: String,
-    frame_rate_limit: yo_tui::FrameRateLimit,
+    frame_rate_limit: FrameRateLimit,
+    theme: Theme,
+    theme_overrides: ThemeOverrides,
+    output_preferences: OutputPreferences,
     source_path: PathBuf,
     snapshot: ConfigSnapshot,
     // Runtime model state is injected from one ConnectionRepository snapshot. It is never
@@ -31,8 +46,14 @@ pub(crate) struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            skill_roots: Vec::new(),
+            command_tools: Vec::new(),
+            prompts: PromptTemplates::default(),
             date_format: date::DEFAULT_DATE_FORMAT.to_owned(),
-            frame_rate_limit: yo_tui::FrameRateLimit::Fps120,
+            frame_rate_limit: FrameRateLimit::Fps120,
+            theme: Theme::Default,
+            theme_overrides: ThemeOverrides::default(),
+            output_preferences: OutputPreferences::default(),
             source_path: PathBuf::new(),
             snapshot: ConfigSnapshot::absent(),
             model_catalog: ModelCatalog::default(),
@@ -41,12 +62,35 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Structurally admitted commands, without artifact resolution or file reads.
+    pub(crate) fn command_tools(&self) -> &[CommandToolConfig] {
+        &self.command_tools
+    }
+
+    pub(crate) fn skill_roots(&self) -> &[SkillRootConfig] {
+        &self.skill_roots
+    }
+
+    pub(crate) fn prompts(&self) -> &PromptTemplates {
+        &self.prompts
+    }
+
+    pub(crate) fn theme_overrides(&self) -> &ThemeOverrides {
+        &self.theme_overrides
+    }
+    pub(crate) fn output_preferences(&self) -> OutputPreferences {
+        self.output_preferences
+    }
     pub(crate) fn date_formatter(&self) -> Result<DateFormatter, ConfigError> {
         DateFormatter::new(&self.date_format)
     }
 
-    pub(crate) fn frame_rate_limit(&self) -> yo_tui::FrameRateLimit {
+    pub(crate) fn frame_rate_limit(&self) -> FrameRateLimit {
         self.frame_rate_limit
+    }
+
+    pub(crate) fn theme(&self) -> Theme {
+        self.theme
     }
 
     pub(crate) fn model_catalog(&self) -> &ModelCatalog {

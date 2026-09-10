@@ -17,17 +17,17 @@ use crate::{
         PromptFrame, PromptMeasureError, PromptPaintError, PromptStyles, PromptViewState,
         paint_prepared as paint_prompt, prepare as prepare_prompt,
     },
-    surface::{Point, Rect, SurfaceView, WriteOutcome},
+    surface::{Point, Rect, Size, SurfaceView, WriteOutcome},
     transcript::{
         TranscriptLayoutConfig, TranscriptMeasureError, TranscriptPaintError,
         TranscriptRenderFrame, TranscriptScrollCommand, TranscriptSlice, TranscriptState,
         TranscriptStyles, TranscriptViewMode, TranscriptViewState,
-        paint_prepared as paint_transcript, prepare_slice as prepare_transcript,
+        paint_prepared_commands as paint_transcript, prepare_slice as prepare_transcript,
     },
 };
 
 mod chrome;
-pub(crate) use chrome::{ShellChromeSnapshot, ShellChromeStyles};
+pub(crate) use chrome::{RequestPrompt, ShellChromeSnapshot, ShellChromeStyles};
 
 pub(crate) const MIN_FRAMED_PROMPT_HEIGHT: u16 = 9;
 
@@ -39,7 +39,7 @@ pub(crate) struct AgentShellViewState {
 
 #[cfg(test)]
 impl AgentShellViewState {
-    pub(crate) const fn transcript_first_visible_row(self) -> u16 {
+    pub(crate) const fn transcript_first_visible_row(self) -> usize {
         self.transcript.first_visible_row()
     }
 
@@ -67,7 +67,7 @@ pub(crate) struct AgentShellStyles {
 pub(crate) struct AgentShellRenderOptions<'config> {
     pub(crate) transcript_config: &'config TranscriptLayoutConfig,
     pub(crate) styles: AgentShellStyles,
-    pub(crate) scroll: Option<TranscriptScrollCommand>,
+    pub(crate) scroll: &'config [TranscriptScrollCommand],
     pub(crate) frame_prompt: bool,
     pub(crate) chrome: ShellChromeSnapshot<'config>,
     pub(crate) activity_motion: ActivityMotionFrame<'config>,
@@ -124,11 +124,18 @@ pub(crate) fn render(
         AgentShellRenderOptions {
             transcript_config,
             styles,
-            scroll,
+            scroll: scroll.as_slice(),
             frame_prompt: view.size().height >= MIN_FRAMED_PROMPT_HEIGHT,
             chrome: ShellChromeSnapshot {
+                image_thumbnail: None,
                 turn_active: false,
+                queued_messages: 0,
+                queue_paused: false,
+                request: None,
                 backend: None,
+                usage: None,
+                status: None,
+                storage_warning: None,
                 workspace: "",
                 mode: crate::runner::PresentationMode::Inline,
             },
@@ -162,6 +169,7 @@ pub(crate) fn render_with_measure_hook(
     let size = view.size();
     let prompt = prepare_prompt(editor, size.width)
         .map_err(AgentShellRenderError::PromptMeasure)?
+        .with_image_thumbnail(chrome.image_thumbnail)
         .with_frame(frame_prompt);
 
     if size.height == 0 {
@@ -173,9 +181,43 @@ pub(crate) fn render_with_measure_hook(
         ));
     }
     let shell_area = Rect::new(Point::new(0, 0), size);
-    let layout = chrome::layout(shell_area, prompt.desired_height(), chrome.turn_active);
-    let transcript_area = layout.transcript;
+    let layout = chrome::layout(
+        shell_area,
+        prompt.desired_height(),
+        chrome.turn_active,
+        chrome.storage_warning.or(chrome.status).is_some(),
+    );
+    let mut transcript_area = layout.transcript;
     let prompt_area = layout.prompt;
+    let prepared_overlay = overlay.and_then(|panel| {
+        panel.prepare_with_motion(
+            Size::new(
+                size.width,
+                if chrome.request.is_some() {
+                    layout.prompt.origin.y.saturating_sub(2)
+                } else {
+                    layout.prompt.origin.y
+                },
+            ),
+            styles.overlay,
+            overlay_bindings,
+            chrome.turn_active,
+            activity_motion,
+        )
+    });
+
+    if chrome.request.is_some()
+        && let Some(panel) = &prepared_overlay
+    {
+        transcript_area.size.height = transcript_area.size.height.min(
+            layout
+                .prompt
+                .origin
+                .y
+                .saturating_sub(panel.size().height)
+                .saturating_sub(transcript_area.origin.y),
+        );
+    }
     let prepared_transcript = if transcript_area.size.height == 0 {
         None
     } else {
@@ -184,15 +226,6 @@ pub(crate) fn render_with_measure_hook(
                 .map_err(AgentShellRenderError::TranscriptMeasure)?,
         )
     };
-    let prepared_overlay = overlay.and_then(|panel| {
-        panel.prepare_with_motion(
-            crate::surface::Size::new(size.width, layout.prompt.origin.y),
-            styles.overlay,
-            overlay_bindings,
-            chrome.turn_active,
-            activity_motion,
-        )
-    });
 
     after_measure();
 
@@ -249,6 +282,19 @@ pub(crate) fn render_with_measure_hook(
             )
             .map_err(AgentShellRenderError::Chrome)?,
         );
+        if state.transcript.mode() == TranscriptViewMode::Detached
+            && (!chrome.turn_active || layout.transient.size.height > 1)
+            && let Some(frame) = transcript_frame
+        {
+            chrome::paint_history_position(
+                &mut transient,
+                frame.first_visible_row,
+                transcript_area.size.height,
+                frame.content_height,
+                styles.chrome.metrics,
+            )
+            .map_err(AgentShellRenderError::Chrome)?;
+        }
     }
 
     let overlay_area = if let Some(prepared) = prepared_overlay {
@@ -272,6 +318,18 @@ pub(crate) fn render_with_measure_hook(
         let mut prompt_view = view
             .subview(prompt_area)
             .expect("vertical layout stays inside the shell view");
+        let prompt = match chrome.request {
+            Some(RequestPrompt::Answer | RequestPrompt::Choice) => {
+                prompt.with_placeholder("Type your answer...")
+            },
+            Some(RequestPrompt::Notes) => {
+                prompt.with_placeholder("Add optional notes for the selected answer...")
+            },
+            Some(RequestPrompt::Approval) => {
+                prompt.with_placeholder("Choose above, then press Enter")
+            },
+            None => prompt,
+        };
         paint_prompt(prompt, &mut prompt_view, styles.prompt, &mut state.prompt)
             .map_err(AgentShellRenderError::PromptPaint)?
     };
@@ -287,17 +345,39 @@ pub(crate) fn render_with_measure_hook(
         chrome::paint_metrics(&mut metrics, chrome, styles.chrome.metrics)
             .map_err(AgentShellRenderError::Chrome)?;
     }
+    if layout.status.size.height > 0 {
+        let mut status = view
+            .subview(layout.status)
+            .expect("host status stays inside the shell");
+        chrome::paint_host_status(
+            &mut status,
+            chrome.storage_warning.or(chrome.status).unwrap_or(""),
+            styles.chrome.metrics,
+        )
+        .map_err(AgentShellRenderError::Chrome)?;
+    }
     if layout.mode.size.height > 0 {
         let mut mode = view
             .subview(layout.mode)
             .expect("chrome mode area stays inside the shell view");
-        chrome::paint_mode(
-            &mut mode,
-            chrome,
-            styles.chrome,
-            editor.newline_binding(),
-            editor.text().is_empty(),
-        )
+        if let Some(request) = chrome.request {
+            chrome::paint_request(&mut mode, request, styles.chrome, editor.newline_binding())
+        } else if overlay_area.is_some() {
+            chrome::paint_overlay(
+                &mut mode,
+                overlay_bindings,
+                chrome.turn_active,
+                styles.chrome,
+            )
+        } else {
+            chrome::paint_mode(
+                &mut mode,
+                chrome,
+                styles.chrome,
+                editor.newline_binding(),
+                editor.text().is_empty(),
+            )
+        }
         .map_err(AgentShellRenderError::Chrome)?;
     }
 
@@ -320,9 +400,10 @@ pub(crate) fn natural_height(
     editor: &PromptEditor,
     width: u16,
     options: AgentShellRenderOptions<'_>,
-) -> Result<u16, AgentShellMeasureError> {
+) -> Result<usize, AgentShellMeasureError> {
     let prompt = prepare_prompt(editor, width)
         .map_err(AgentShellMeasureError::Prompt)?
+        .with_image_thumbnail(options.chrome.image_thumbnail)
         .with_frame(true);
     let transcript = prepare_transcript(transcript, width, options.transcript_config)
         .map_err(AgentShellMeasureError::Transcript)?;
@@ -330,7 +411,7 @@ pub(crate) fn natural_height(
         .overlay
         .and_then(|panel| {
             panel.prepare_with_motion(
-                crate::surface::Size::new(width, u16::MAX),
+                Size::new(width, u16::MAX),
                 options.styles.overlay,
                 options.overlay_bindings,
                 options.chrome.turn_active,
@@ -342,17 +423,24 @@ pub(crate) fn natural_height(
     let transcript_rows = transcript
         .content_height()
         .max(2)
-        .max(overlay_height.saturating_sub(2));
+        .max(usize::from(overlay_height.saturating_sub(2)));
+    let transcript_rows = if options.chrome.request.is_some() {
+        transcript_rows
+            .checked_add(usize::from(overlay_height.saturating_sub(2)))
+            .ok_or(AgentShellMeasureError::HeightOverflow)?
+    } else {
+        transcript_rows
+    };
     checked_natural_height(transcript_rows, prompt.desired_height().get())
 }
 
 fn checked_natural_height(
-    transcript_rows: u16,
+    transcript_rows: usize,
     prompt_rows: u16,
-) -> Result<u16, AgentShellMeasureError> {
+) -> Result<usize, AgentShellMeasureError> {
     transcript_rows
         .checked_add(2)
-        .and_then(|height| height.checked_add(prompt_rows))
+        .and_then(|height| height.checked_add(usize::from(prompt_rows)))
         .and_then(|height| height.checked_add(2))
         .ok_or(AgentShellMeasureError::HeightOverflow)
 }

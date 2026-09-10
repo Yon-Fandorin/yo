@@ -1,11 +1,12 @@
 //! Serial tool approval, execution, admitted output, and replay handoff.
 
-use serde_json::json;
+use serde_json::{from_str, json};
 use yo_core::{
-    ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ApprovalDecision,
-    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, Failure,
-    ModelReplayItem, ToolApprovalBinding, ToolApprovalRequirement, ToolExecutionOutcome,
-    ToolExecutionPoll, ToolExecutionRequest, ToolValidationFailure, ValidatedToolCall,
+    ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate,
+    ApprovalDecision, BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind,
+    Failure, ModelReplayItem, ToolApprovalBinding, ToolApprovalRequirement, ToolExecutionOutcome,
+    ToolExecutionPoll, ToolExecutionRequest, ToolExecutionResult, ToolOutput,
+    ToolValidationFailure, ValidatedToolCall,
 };
 
 use super::{
@@ -26,14 +27,23 @@ impl NativeModelBackend {
             let request = ActivityRequestRef::new(activity, self.next_request()?);
             let binding =
                 ToolApprovalBinding::new(state.turn, &pending.call, self.tool_host.identity());
-            let approval_text = json!({
-                "call_id": pending.call.call_id(),
-                "tool_id": pending.call.definition().id().as_str(),
-                "argument_digest": binding.argument_digest_hex(),
-                "effect": format!("{:?}", binding.effect()),
-                "execution_host": binding.execution_host(),
-            })
-            .to_string();
+            // 실행 원본 대신 이미 의미 보존 정책을 통과한 replay 인자만 표시한다.
+            let arguments = state.delta.iter().rev().find_map(|item| match item {
+                ModelReplayItem::FunctionCall {
+                    call_id, arguments, ..
+                } if call_id == pending.call.call_id() => Some(arguments.as_str()),
+                _ => None,
+            });
+            let approval_text = format!(
+                "Tool: {}\nScope: this tool call only\nEffect: {:?}\nExecution host: {}\n\nArguments (recorded view):\n{}\n\nCall: {}\nTool ID: {}\nArgument digest: {}",
+                pending.call.definition().wire_name(),
+                binding.effect(),
+                binding.execution_host(),
+                arguments.unwrap_or("(not available)"),
+                pending.call.call_id(),
+                pending.call.definition().id().as_str(),
+                binding.argument_digest_hex(),
+            );
             pending.approval = Some(binding);
             self.queue_activity_text(
                 activity,
@@ -59,7 +69,7 @@ impl NativeModelBackend {
     ) {
         self.events.push_back(BackendEvent::ActivityUpdated {
             activity,
-            update: yo_core::ActivityUpdate::TextSnapshot(
+            update: ActivityUpdate::TextSnapshot(
                 json!({
                     "call_id": call_id,
                     "name": name,
@@ -90,6 +100,7 @@ impl NativeModelBackend {
             turn: state.turn,
             call: call.clone(),
             maximum_output_bytes: self.config.maximum_tool_output_bytes,
+            maximum_retained_output_bytes: self.config.maximum_retained_tool_output_bytes,
             absolute_execution_timeout: self.config.absolute_tool_execution_timeout,
         };
         match self.tool_host.start(request) {
@@ -104,8 +115,11 @@ impl NativeModelBackend {
                 state,
                 call,
                 activity,
-                ToolExecutionOutcome::Failed,
-                "tool execution failed".to_owned(),
+                ToolExecutionResult::new(
+                    ToolExecutionOutcome::Failed,
+                    "tool execution failed",
+                    false,
+                ),
             )?,
         }
         Ok(())
@@ -148,7 +162,11 @@ impl NativeModelBackend {
             },
         };
         match poll {
-            ToolExecutionPoll::Pending => state.active_tool = Some(active),
+            ToolExecutionPoll::Pending => {
+                let result = self.publish_tool_progress(state, &mut active);
+                state.active_tool = Some(active);
+                result?;
+            },
             ToolExecutionPoll::Ready => {
                 let Some(result) = active.execution.take_result() else {
                     state.active_tool = Some(active);
@@ -161,18 +179,64 @@ impl NativeModelBackend {
                     state.active_tool = Some(active);
                     return Err(map_tool_cleanup(error));
                 }
-                self.finish_tool(
-                    state,
-                    active.call,
-                    active.activity,
-                    result.outcome(),
-                    bounded_output(
-                        result.output(),
-                        self.config.maximum_tool_output_bytes,
-                        result.truncated(),
-                    ),
-                )?;
+                self.finish_tool(state, active.call, active.activity, result)?;
             },
+        }
+        Ok(())
+    }
+
+    fn publish_tool_progress(
+        &mut self,
+        state: &TurnState,
+        active: &mut ActiveTool,
+    ) -> Result<(), BackendFailure> {
+        let Some(progress) = active.execution.take_progress() else {
+            return Ok(());
+        };
+        // Cropped snapshots can split semantic material at the retained head/tail boundaries.
+        if progress.truncated || progress.output.len() > self.config.maximum_tool_output_bytes {
+            return Ok(());
+        }
+        let admitted = self
+            .semantic_admission
+            .as_ref()
+            .expect("an executed local tool requires semantic admission")
+            .admit_progress(active.call.definition(), &progress.output)
+            .map_err(|_| {
+                failure(
+                    BackendFailureKind::Protocol,
+                    "tool progress semantic admission was rejected",
+                )
+            })?;
+        let Some(output) = admitted else {
+            return Ok(());
+        };
+        if output.len() > self.config.maximum_tool_output_bytes {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "semantic admission returned oversized tool progress",
+            ));
+        }
+        let arguments = state.delta.iter().rev().find_map(|item| match item {
+            ModelReplayItem::FunctionCall {
+                call_id, arguments, ..
+            } if call_id == active.call.call_id() => from_str(arguments).ok(),
+            _ => None,
+        });
+        let profile = ToolOutput {
+            tool: active.call.definition().wire_name().to_owned(),
+            server: None,
+            arguments,
+            result: Some(json!({"content":[{"type":"text","text":output}],"progress":true})),
+            content_items: None,
+            error: None,
+            plain_text: output,
+        };
+        if let Some(snapshot) = profile.to_snapshot() {
+            self.events.push_back(BackendEvent::ActivityUpdated {
+                activity: active.activity,
+                update: ActivityUpdate::TextSnapshot(snapshot),
+            });
         }
         Ok(())
     }
@@ -189,7 +253,12 @@ impl NativeModelBackend {
             activity,
             kind: ActivityKind::ToolResult,
         });
-        self.finish_tool(state, call, activity, outcome, output)
+        self.finish_tool(
+            state,
+            call,
+            activity,
+            ToolExecutionResult::new(outcome, output, false),
+        )
     }
 
     fn finish_tool(
@@ -197,9 +266,53 @@ impl NativeModelBackend {
         state: &mut TurnState,
         call: ValidatedToolCall,
         activity: ActivityRef,
-        outcome: ToolExecutionOutcome,
-        output: String,
+        result: ToolExecutionResult,
     ) -> Result<(), BackendFailure> {
+        let outcome = result.outcome();
+        let truncated =
+            result.truncated() || result.output().len() > self.config.maximum_tool_output_bytes;
+        let output = bounded_output(
+            result.output(),
+            self.config.maximum_tool_output_bytes,
+            result.truncated(),
+        );
+        let retained = if let Some((text, truncated)) = result.retained_output() {
+            let limit = self.config.maximum_retained_tool_output_bytes.unwrap_or(0);
+            if text.len() > limit || self.config.maximum_retained_tool_output_bytes.is_none() {
+                self.fail_tool_admission(
+                    activity,
+                    call.call_id().to_owned(),
+                    call.definition().wire_name().to_owned(),
+                    "tool retained output exceeds its configured bound",
+                );
+                return Err(failure(
+                    BackendFailureKind::Protocol,
+                    "tool retained output exceeds its configured bound",
+                ));
+            }
+            let admitted = self
+                .semantic_admission
+                .as_ref()
+                .expect("an executed local tool requires semantic admission")
+                .admit_output(call.definition(), text);
+            match admitted {
+                Ok(text) if text.len() <= limit => Some((text, truncated)),
+                _ => {
+                    self.fail_tool_admission(
+                        activity,
+                        call.call_id().to_owned(),
+                        call.definition().wire_name().to_owned(),
+                        "tool retained output semantic admission was rejected",
+                    );
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "tool retained output semantic admission was rejected",
+                    ));
+                },
+            }
+        } else {
+            None
+        };
         let output = match self
             .semantic_admission
             .as_ref()
@@ -243,11 +356,71 @@ impl NativeModelBackend {
         let ModelReplayItem::FunctionCallOutput { output, .. } = &replay_output else {
             unreachable!("the replay output was constructed as a function result")
         };
+        // Reuse admitted replay arguments, never the execution call's raw arguments.
+        let arguments = state.delta.iter().rev().find_map(|item| match item {
+            ModelReplayItem::FunctionCall {
+                call_id, arguments, ..
+            } if call_id == call.call_id() => from_str(arguments).ok(),
+            _ => None,
+        });
+        let status = match outcome {
+            ToolExecutionOutcome::Completed => "completed",
+            ToolExecutionOutcome::Failed => "failed",
+            ToolExecutionOutcome::Interrupted => "interrupted",
+        };
+        let display_output = retained
+            .as_ref()
+            .map_or(output.as_str(), |(text, _)| text.as_str());
+        let plain_text = format!(
+            "{} · {}\n{status}\nArguments:\n{}\nResult:\n{display_output}",
+            call.definition().wire_name(),
+            call.call_id(),
+            arguments.as_ref().map_or_else(
+                || "(not available)".to_owned(),
+                |value| format!("{value:#}")
+            )
+        );
+        let mut profile = ToolOutput {
+            tool: call.definition().wire_name().to_owned(),
+            server: None,
+            arguments,
+            result: Some(json!({
+                "content": [{"type": "text", "text": output}],
+                "call_id": call.call_id(),
+                "tool_id": call.definition().id().as_str(),
+                "execution_host": self.tool_host.identity(),
+                "outcome": status,
+                "truncated": truncated,
+                "isError": outcome != ToolExecutionOutcome::Completed,
+            })),
+            content_items: None,
+            error: None,
+            plain_text,
+        };
+        if let Some((_, truncated)) = &retained {
+            profile.result.as_mut().expect("native result exists")["retainedOutput"] =
+                json!({"truncated": truncated});
+        }
+        let snapshot = if let Some(snapshot) = profile.to_snapshot() {
+            snapshot
+        } else if retained.is_some() {
+            // The retained representation must never disappear into the small replay fallback.
+            self.fail_tool_admission(
+                activity,
+                call.call_id().to_owned(),
+                call.definition().wire_name().to_owned(),
+                "tool retained output exceeds presentation capacity",
+            );
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "tool retained output exceeds presentation capacity",
+            ));
+        } else {
+            json!({ "call_id": call.call_id(), "output": output }).to_string()
+        };
         self.events.push_back(BackendEvent::ActivityUpdated {
             activity,
-            update: yo_core::ActivityUpdate::TextSnapshot(
-                json!({ "call_id": call.call_id(), "output": output }).to_string(),
-            ),
+            update: ActivityUpdate::TextSnapshot(snapshot),
         });
         self.events.push_back(BackendEvent::ActivityFinished {
             activity,
@@ -272,6 +445,12 @@ impl NativeModelBackend {
         request: ActivityRequestRef,
         decision: ApprovalDecision,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
+        if matches!(decision, ApprovalDecision::Offered(_)) {
+            return Err(failure(
+                BackendFailureKind::Unsupported,
+                "offered approval choices are unsupported by the managed backend",
+            ));
+        }
         let mut state = self.turn.take().ok_or_else(|| {
             failure(
                 BackendFailureKind::Turn,
@@ -311,6 +490,9 @@ impl NativeModelBackend {
             Some(ActivityOutcome::Completed),
         );
         match decision {
+            ApprovalDecision::Offered(_) => {
+                unreachable!("offered choices rejected before state mutation")
+            },
             ApprovalDecision::Approved => state.ready_tool = Some(pending.call),
             ApprovalDecision::Declined => {
                 if let Err(error) = self.finish_tool_without_execution(
