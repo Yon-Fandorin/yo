@@ -14,6 +14,7 @@ fn command_filter_preserves_module_declared_order() {
             CommandId::Help,
             CommandId::Model,
             CommandId::Compact,
+            CommandId::Preview,
             CommandId::Exit,
         ]
     );

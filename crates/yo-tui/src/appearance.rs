@@ -155,15 +155,16 @@ impl AppearanceCandidate {
     ) -> Self {
         let (user_marker, assistant_marker, activity_frames): (&str, &str, &[&str]) = match profile
         {
-            GlyphProfile::Rich => (
-                "❯",
-                "•",
-                &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
-            ),
+            GlyphProfile::Rich => ("❯", "•", &["⠋", "⠙", "⠸", "⠴", "⠦", "⠇"]),
             GlyphProfile::Ascii => (">", "*", &["|", "/", "-", "\\"]),
         };
-        let activity_motion =
+        let mut activity_motion =
             ActivityMotionProfile::built_in(activity_frames, color_capability, motion_preference);
+        if profile == GlyphProfile::Rich {
+            // Six equal steps, preserving the former ~800ms revolution.
+            activity_motion =
+                activity_motion.with_marker_interval(Duration::from_nanos(800_000_000 / 6));
+        }
         Self {
             user_marker: user_marker.to_owned(),
             assistant_marker: assistant_marker.to_owned(),
@@ -345,17 +346,45 @@ const fn default_styles(
     color_capability: ColorCapability,
 ) -> AgentShellStyles {
     let style = Style::new(Color::Default, Color::Default, Attributes::empty());
+    let focus = resolve_focus_accent(color_capability);
+    // A contained request band stays legible on both light and dark host
+    // backgrounds because its foreground and background are resolved together.
+    let (request_foreground, request_background) = match color_capability {
+        ColorCapability::TrueColor => (
+            Color::Rgb {
+                red: 222,
+                green: 230,
+                blue: 242,
+            },
+            Color::Rgb {
+                red: 32,
+                green: 41,
+                blue: 54,
+            },
+        ),
+        ColorCapability::Limited => (Color::Indexed(254), Color::Indexed(236)),
+        ColorCapability::Unknown => (Color::Default, Color::Default),
+    };
+    let user = match color_capability {
+        ColorCapability::TrueColor => Color::Rgb {
+            red: 124,
+            green: 151,
+            blue: 199,
+        },
+        ColorCapability::Limited => Color::Indexed(110),
+        ColorCapability::Unknown => Color::Default,
+    };
     AgentShellStyles {
         transcript: TranscriptStyles {
             background: style,
-            user_marker: style,
-            user_body: style,
-            assistant_marker: style,
+            user_marker: Style::new(user, request_background, Attributes::BOLD),
+            user_body: Style::new(request_foreground, request_background, Attributes::BOLD),
+            assistant_marker: Style::new(focus, Color::Default, Attributes::empty()),
             assistant_body: style,
         },
         prompt: PromptStyles {
             body: style,
-            marker: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+            marker: Style::new(focus, Color::Default, Attributes::BOLD),
             rule: Style::new(Color::Default, Color::Default, Attributes::DIM),
             glyphs: match profile {
                 GlyphProfile::Rich => PromptGlyphs::rich(),
@@ -366,7 +395,7 @@ const fn default_styles(
             activity: default_activity_styles(),
             metrics: Style::new(Color::Default, Color::Default, Attributes::DIM),
             mode: Style::new(Color::Default, Color::Default, Attributes::DIM),
-            key_hint: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+            key_hint: Style::new(focus, Color::Default, Attributes::BOLD),
         },
         overlay: SelectionPanelAppearance {
             styles: SelectionPanelStyles {

@@ -1046,7 +1046,7 @@ fn normal_wait_coalesces_input_and_due_motion_into_one_redraw() {
     );
     assert_eq!(
         styles_for_ascii_text(&presenter.frames[1], "* Working")[0].attributes,
-        crate::surface::Attributes::BOLD
+        crate::surface::Attributes::DIM
     );
 }
 
@@ -1201,10 +1201,9 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
     assert!(surface_text(&presenter.frames[0]).contains("* Working"));
 }
 
-// terminal이 잠시 0x0이 되어 frame을 숨겨도 generation epoch는 유지한다.
-// 다시 보이는 순간에는 resize 시점부터가 아니라 원래 경과 시간의 style phase를 고른다.
+// 처음 geometry가 0x0이면 출력하지 않고, 처음 보이는 순간 고정 marker ink로 복구한다.
 #[test]
-fn zero_size_resize_preserves_the_generation_motion_epoch() {
+fn initial_zero_size_recovers_one_visible_frame_with_fixed_marker_ink() {
     let period = Duration::from_secs(1);
     let mut retained = active_motion_session(period);
     let mut agent = SimpleAgent::default();
@@ -1248,7 +1247,7 @@ fn zero_size_resize_preserves_the_generation_motion_epoch() {
     assert!(surface_text(&presenter.frames[0]).contains("* Working"));
     assert_eq!(
         styles_for_ascii_text(&presenter.frames[0], "* Working")[0].attributes,
-        crate::surface::Attributes::BOLD
+        crate::surface::Attributes::DIM
     );
 }
 
@@ -1304,12 +1303,12 @@ fn run_zero_geometry_interval(first: Size, repeated: Size) {
     assert!(surface_text(&presenter.frames[1]).contains("hidden-update"));
     assert_eq!(
         styles_for_ascii_text(&presenter.frames[1], "* Working")[0].attributes,
-        crate::surface::Attributes::BOLD
+        crate::surface::Attributes::DIM
     );
 }
 
 // width가 0인 interval에서 반복 resize와 semantic 갱신이 와도 frame deadline을
-// 남기지 않으며, 다시 보이면 최신 상태와 기존 generation epoch로 frame 하나만 그립니다.
+// 남기지 않으며, 다시 보이면 최신 상태로 frame 하나만 그립니다.
 #[test]
 fn zero_width_interval_suppresses_busy_frames_until_one_visible_recovery() {
     run_zero_geometry_interval(Size::new(0, 7), Size::new(0, 8));
@@ -1322,10 +1321,9 @@ fn zero_height_interval_suppresses_busy_frames_until_one_visible_recovery() {
     run_zero_geometry_interval(Size::new(15, 0), Size::new(16, 0));
 }
 
-// 같은 semantic turn을 재진입해도 terminal ownership generation마다 motion epoch는
-// 새로 시작하므로 고정 marker를 유지하면서 style phase만 첫 위치에서 시작한다.
+// 오래된 generation 시각이나 재진입에 상관없이 marker의 밝기와 굵기는 고정이다.
 #[test]
-fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
+fn terminal_reentry_keeps_marker_ink_constant() {
     let period = Duration::from_millis(100);
     let mut retained = active_motion_session(period);
     let mut agent = SimpleAgent::default();
@@ -1350,8 +1348,32 @@ fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
     let first_styles = styles_for_ascii_text(&first.frames[0], "* Working");
     let second_styles = styles_for_ascii_text(&second.frames[0], "* Working");
 
-    assert_eq!(first_styles[0].attributes, crate::surface::Attributes::BOLD);
+    assert_eq!(first_styles[0].attributes, crate::surface::Attributes::DIM);
     assert_eq!(second_styles[0].attributes, crate::surface::Attributes::DIM);
+}
+
+// 실행 시각이 marker 주기 중간이어도 실제 presenter가 새 작업의 첫 glyph를 출력한다.
+#[test]
+fn first_presented_turn_frame_starts_at_first_marker_not_generation_phase() {
+    let period = Duration::from_secs(10);
+    let mut retained = active_motion_session(period);
+    retained
+        .commit_appearance(
+            AppearanceCandidate::for_profile(GlyphProfile::Ascii)
+                .with_activity_motion_for_test(period, period, &["*", "+", "-"])
+                .unwrap(),
+        )
+        .unwrap();
+    let mut agent = SimpleAgent::default();
+    let presenter = run_generation_at(
+        &mut retained,
+        &mut agent,
+        Events::new([], Rc::new(Cell::new(0)), Rc::new(Cell::new(0))),
+        1,
+        representable_past(Duration::from_secs(15)),
+    );
+    assert!(surface_text(&presenter.frames[0]).contains("* Working"));
+    assert!(!surface_text(&presenter.frames[0]).contains("+ Working"));
 }
 
 // Monotonic epoch가 아직 offset을 표현하지 못하면 helper는 raw unwrap panic 대신

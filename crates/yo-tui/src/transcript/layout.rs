@@ -13,7 +13,7 @@ use super::{
     viewport::{TranscriptScrollCommand, TranscriptViewState, VisibleRows},
 };
 use crate::{
-    surface::{Grapheme, Point, Style, SurfaceView, WriteOutcome},
+    surface::{Color, Grapheme, Point, Rect, Size, Style, SurfaceView, WriteOutcome},
     text::flow::{TextFlowError, flow_text},
 };
 
@@ -95,6 +95,7 @@ struct TranscriptLayout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PositionedTranscriptItem {
     id: TranscriptItemId,
+    role: MessageRole,
     first_row: u16,
     end_row: u16,
 }
@@ -196,6 +197,22 @@ pub(crate) fn paint_prepared(
     let height = NonZeroU16::new(view.size().height).ok_or(TranscriptPaintError::ZeroHeight)?;
     let visible = VisibleRows::resolve(prepared.layout.height, height, *state, command);
     let context_item = prepared.layout.context_item(visible);
+
+    if styles.user_body.background != Color::Default {
+        for item in &prepared.layout.items {
+            if item.role != MessageRole::User {
+                continue;
+            }
+            for row in item.first_row.max(visible.first())..item.end_row.min(visible.end()) {
+                let y = visible.translate(Point::new(0, row)).y;
+                let width = view.size().width;
+                let mut band = view
+                    .subview(Rect::new(Point::new(0, y), Size::new(width, 1)))
+                    .expect("only visible transcript rows receive a request band");
+                let _ = band.clear(styles.user_body);
+            }
+        }
+    }
 
     for positioned in prepared
         .layout
@@ -321,6 +338,7 @@ fn layout(
         }
         items.push(PositionedTranscriptItem {
             id: item.id(),
+            role,
             first_row: item_y,
             end_row: height,
         });

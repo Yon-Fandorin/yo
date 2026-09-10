@@ -4,6 +4,32 @@ use crate::runner::frame::{FrameRequest, FrameScheduler};
 
 pub(super) const WORKER_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
+pub(super) struct TurnMotionClock {
+    turn: Option<(bool, yo_core::TurnRef)>,
+    epoch: Instant,
+}
+
+impl TurnMotionClock {
+    pub(super) const fn new(epoch: Instant) -> Self {
+        Self { turn: None, epoch }
+    }
+
+    pub(super) fn sample(
+        &mut self,
+        turn: Option<(bool, yo_core::TurnRef)>,
+        now: Instant,
+    ) -> Instant {
+        if self.turn != turn {
+            self.turn = turn;
+            self.epoch = now;
+        }
+        self.epoch
+    }
+}
+
+#[cfg(test)]
+mod output_timing;
+
 pub(super) fn next_motion_deadline(
     epoch: Instant,
     elapsed: Duration,
@@ -63,6 +89,40 @@ mod motion_tests {
 
     use super::{next_motion_deadline, request_due_motion, wait_timeout_at};
     use crate::runner::frame::{FrameRateLimit, FrameRequest, FrameScheduler};
+
+    // 늦게 시작한 작업도 첫 marker부터 완전한 간격을 표시하고, 같은 작업의 redraw나
+    // 늦은 wake는 epoch를 바꾸지 않는다. 새 작업과 preview 전환만 기준을 새로 잡는다.
+    #[test]
+    fn turn_clock_resets_only_on_identity_changes() {
+        use std::num::NonZeroU64;
+
+        use yo_core::{TurnId, TurnRef};
+        let session = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+        let turn = TurnRef::new(session, TurnId::new(NonZeroU64::MIN));
+        let next = TurnRef::new(session, TurnId::new(NonZeroU64::new(2).unwrap()));
+        let start = Instant::now();
+        let first = start + Duration::from_millis(973);
+        let mut clock = super::TurnMotionClock::new(start);
+        let epoch = clock.sample(Some((false, turn)), first);
+        assert_eq!(epoch, first);
+        let step = Duration::from_nanos(800_000_000 / 6);
+        assert_eq!(
+            next_motion_deadline(epoch, Duration::ZERO, Some(step)),
+            Some(first + step)
+        );
+        assert_eq!(
+            clock.sample(Some((false, turn)), first + Duration::from_secs(8)),
+            first
+        );
+        let later = first + Duration::from_secs(9);
+        assert_eq!(clock.sample(Some((false, next)), later), later);
+        assert_eq!(clock.sample(Some((true, next)), later + step), later + step);
+        clock.sample(None, later + step * 2);
+        assert_eq!(
+            clock.sample(Some((true, next)), later + step * 3),
+            later + step * 3
+        );
+    }
 
     // backpressure와 frame·motion 마감이 모두 없으면 주기적 poll 없이 무기한 대기합니다.
     #[test]

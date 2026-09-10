@@ -33,6 +33,7 @@ pub(crate) struct PromptMeasure {
 pub(crate) struct PreparedPrompt {
     layout: crate::input::editor::layout::TextLayout,
     chrome: PromptChrome,
+    empty: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,7 +82,11 @@ pub(crate) fn prepare(
     let layout = editor
         .layout(chrome.content_width())
         .map_err(PromptMeasureError::Layout)?;
-    Ok(PreparedPrompt { layout, chrome })
+    Ok(PreparedPrompt {
+        layout,
+        chrome,
+        empty: editor.text().is_empty(),
+    })
 }
 
 pub(crate) fn render(
@@ -157,6 +162,29 @@ pub(crate) fn paint_prepared(
     prepared
         .chrome
         .paint(view, viewport, styles.glyphs, styles, visible.first());
+
+    // The hint is painted after measurement: it never becomes input, changes
+    // cursor mapping, or creates a wrapped row in a narrow terminal.
+    if prepared.empty && viewport.content_size.width >= 30 {
+        let hint = if viewport.content_size.width >= 33 {
+            "Ask anything, or describe a change"
+        } else {
+            "Describe a change..."
+        };
+        for (column, text) in hint.split("").filter(|text| !text.is_empty()).enumerate() {
+            if column >= usize::from(viewport.content_size.width) {
+                break;
+            }
+            let _ = view.write(
+                Point::new(
+                    viewport.content_origin.x + column as u16,
+                    viewport.content_origin.y,
+                ),
+                crate::surface::Grapheme::try_from(text).expect("the hint is printable ASCII"),
+                styles.rule,
+            );
+        }
+    }
 
     state.set_first_visible_row(visible.first());
     let content_cursor = visible.translate(prepared.layout.cursor);

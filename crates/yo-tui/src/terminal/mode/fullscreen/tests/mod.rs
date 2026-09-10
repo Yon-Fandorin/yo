@@ -20,10 +20,12 @@ struct RecordingWriter {
     bytes: Vec<u8>,
     bytes_before_failure: Option<usize>,
     fail_flush: bool,
+    writes: usize,
 }
 
 impl Write for RecordingWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.writes += 1;
         let Some(remaining) = self.bytes_before_failure else {
             self.bytes.extend_from_slice(buffer);
             return Ok(buffer.len());
@@ -58,7 +60,26 @@ fn initial_frame_is_complete_and_places_the_cursor() {
 
     renderer.render(pending, None, &current).unwrap();
 
-    assert_eq!(renderer.into_inner(), b"\x1b[1;1H\x1b[0;39;49m  \x1b[1;2H");
+    assert_eq!(
+        renderer.into_inner(),
+        b"\x1b[?2026h\x1b[1;1H\x1b[0;39;49m  \x1b[1;2H\x1b[?2026l"
+    );
+}
+
+// 프레임의 ANSI 조각과 최종 cursor를 함께 써서 PTY가 중간 spinner/label 상태를 보지 않게 한다.
+#[test]
+fn frame_is_batched_into_one_write_when_writer_accepts_all_bytes() {
+    let current = surface_with(Size::new(88, 22), Point::new(0, 0), "⠋");
+    let mut viewport = FullscreenViewport::default();
+    let pending = viewport
+        .begin_frame(current.size(), Point::new(2, 20))
+        .unwrap();
+    let mut renderer = FullscreenRenderer::new(RecordingWriter::default());
+    renderer.render(pending, None, &current).unwrap();
+    let writer = renderer.into_inner();
+    assert_eq!(writer.writes, 1);
+    assert!(writer.bytes.starts_with(b"\x1b[?2026h"));
+    assert!(writer.bytes.ends_with(b"\x1b[21;3H\x1b[?2026l"));
 }
 
 // 신뢰할 수 있는 같은 크기 frame은 변경된 cell만 쓰고 cursor 위치는 항상 다시 적용한다.
@@ -78,7 +99,10 @@ fn trusted_same_size_frame_uses_an_incremental_diff() {
 
     renderer.render(pending, Some(&previous), &current).unwrap();
 
-    assert_eq!(renderer.into_inner(), b"\x1b[1;1H\x1b[0;39;49mA\x1b[1;2H");
+    assert_eq!(
+        renderer.into_inner(),
+        b"\x1b[?2026h\x1b[1;1H\x1b[0;39;49mA\x1b[1;2H\x1b[?2026l"
+    );
 }
 
 // resize는 이전 geometry를 ANSI encoder에 넘기지 않고 현재 화면 전체를 다시 그린다.
@@ -104,7 +128,7 @@ fn resize_selects_a_complete_current_frame() {
 
     let output = renderer.into_inner();
     assert!(output.windows(6).any(|window| window == b"\x1b[2;1H"));
-    assert!(output.ends_with(b"\x1b[2;3H"));
+    assert!(output.ends_with(b"\x1b[2;3H\x1b[?2026l"));
 }
 
 // resize event가 같은 geometry를 다시 보고하더라도 이전 화면 신뢰를 폐기해 다음 frame을

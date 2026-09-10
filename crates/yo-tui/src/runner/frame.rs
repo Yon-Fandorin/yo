@@ -32,6 +32,8 @@ pub(super) struct FrameScheduler {
     last_frame: Option<Instant>,
     requested: bool,
     immediate: bool,
+    marker_deadline: Option<Instant>,
+    render_cost: Duration,
 }
 
 impl FrameScheduler {
@@ -41,6 +43,8 @@ impl FrameScheduler {
             last_frame: None,
             requested: false,
             immediate: false,
+            marker_deadline: None,
+            render_cost: Duration::ZERO,
         }
     }
 
@@ -56,11 +60,20 @@ impl FrameScheduler {
         if self.immediate {
             return Some(now);
         }
-        Some(
-            self.last_frame
-                .and_then(|last| last.checked_add(self.interval))
-                .map_or(now, |deadline| deadline.max(now)),
-        )
+        let ordinary = self
+            .last_frame
+            .and_then(|last| last.checked_add(self.interval))
+            .map_or(now, |deadline| deadline.max(now));
+        // Do not spend the next frame slot on a shimmer/input redraw just
+        // before a marker transition. Preserve the FPS bound, merging those
+        // redraws into the marker boundary instead of delaying the marker.
+        if let Some(marker) = self.marker_deadline
+            && ordinary < marker
+            && marker.duration_since(ordinary) < self.interval.saturating_add(self.render_cost)
+        {
+            return Some(marker);
+        }
+        Some(ordinary)
     }
 
     pub(super) fn is_due(&self, now: Instant) -> bool {
@@ -70,12 +83,22 @@ impl FrameScheduler {
     pub(super) fn suppress_pending(&mut self) {
         self.requested = false;
         self.immediate = false;
+        self.marker_deadline = None;
     }
 
     pub(super) fn rendered(&mut self, now: Instant) {
         self.last_frame = Some(now);
         self.requested = false;
         self.immediate = false;
+    }
+
+    pub(super) fn reserve_marker(&mut self, deadline: Option<Instant>) {
+        self.marker_deadline = deadline;
+    }
+
+    pub(super) fn rendered_with_cost(&mut self, started: Instant, completed: Instant) {
+        self.render_cost = completed.saturating_duration_since(started);
+        self.rendered(completed);
     }
 }
 
@@ -126,6 +149,37 @@ mod tests {
         scheduler.request(FrameRequest::Coalesced);
         scheduler.request(FrameRequest::Immediate);
 
+        assert_eq!(scheduler.deadline(now), Some(now));
+    }
+
+    // 지난 marker 예약은 FPS 제한을 우회하거나 과거 deadline으로 busy loop를 만들지 않는다.
+    #[test]
+    fn overdue_marker_preserves_frame_limit() {
+        let now = Instant::now();
+        let mut scheduler = FrameScheduler::new(FrameRateLimit::Fps60);
+        scheduler.rendered(now);
+        scheduler.reserve_marker(Some(now));
+        scheduler.request(FrameRequest::Coalesced);
+        assert_eq!(
+            scheduler.deadline(now),
+            Some(now + FrameRateLimit::Fps60.interval())
+        );
+        assert!(scheduler.is_due(now + Duration::from_millis(20)));
+    }
+
+    // motion이 끝나 예약을 해제하면 가까운 marker 경계 때문에 일반 입력 frame이 지연되지 않는다.
+    #[test]
+    fn clearing_marker_releases_reserved_frame_slot() {
+        let now = Instant::now();
+        let mut scheduler = FrameScheduler::new(FrameRateLimit::Fps120);
+        scheduler.reserve_marker(Some(now + Duration::from_millis(4)));
+        assert_eq!(scheduler.deadline(now), None);
+        scheduler.request(FrameRequest::Coalesced);
+        assert_eq!(
+            scheduler.deadline(now),
+            Some(now + Duration::from_millis(4))
+        );
+        scheduler.reserve_marker(None);
         assert_eq!(scheduler.deadline(now), Some(now));
     }
 

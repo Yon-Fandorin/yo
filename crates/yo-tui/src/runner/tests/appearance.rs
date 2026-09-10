@@ -246,7 +246,7 @@ fn session_projects_host_metadata_active_work_and_presentation_mode() {
 }
 
 // 실제 Chat 작업 marker가 보일 때만 PreparedFrame이 16ms motion demand를 보고하고,
-// 같은 80ms marker 구간의 서로 다른 elapsed에서도 동일한 frame geometry를 유지한다.
+// 같은 marker 구간의 서로 다른 elapsed에서도 동일한 frame geometry를 유지한다.
 #[test]
 fn visible_activity_marker_alone_demands_timed_motion() {
     let mut state = TuiState::new();
@@ -275,7 +275,7 @@ fn visible_activity_marker_alone_demands_timed_motion() {
     assert_eq!(second.motion_demand, first.motion_demand);
     assert_eq!(first.surface.size(), second.surface.size());
     assert_eq!(visible_rows(&first.surface), visible_rows(&second.surface));
-    assert!(visible_rows(&first.surface).contains("⠦ Working"));
+    assert!(visible_rows(&first.surface).contains("⠴ Working"));
     assert_ne!(first.surface, second.surface);
 }
 

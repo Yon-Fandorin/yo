@@ -143,17 +143,35 @@ fn marker_wider_than_the_body_indent_is_rejected() {
     );
 }
 
-// Rich와 ASCII 내장 profile은 rib에서 선택한 frame 순서를 80ms마다 elapsed로 고르고,
+// Rich는 균등한 6단계로 약 800ms 회전을 유지하고 ASCII는 기존 80ms 간격을 사용한다.
 // marker 형태가 바뀌어도 부드러운 shimmer를 위한 16ms repaint 주기는 그대로 유지한다.
 #[test]
-fn built_in_activity_profiles_select_marker_frames_at_eighty_milliseconds() {
+fn built_in_activity_profiles_preserve_rotation_period_and_ascii_cadence() {
     let rich = AppearanceState::default().pin();
     let first = rich.snapshot().activity_motion_frame(Duration::ZERO);
     let later = rich
         .snapshot()
         .activity_motion_frame(Duration::from_millis(777));
     assert_eq!(first.marker(), "⠋");
-    assert_eq!(later.marker(), "⠏");
+    assert_eq!(later.marker(), "⠇");
+    assert_eq!(
+        rich.snapshot()
+            .activity_motion_frame(Duration::from_millis(799))
+            .marker(),
+        "⠇"
+    );
+    assert_eq!(
+        rich.snapshot()
+            .activity_motion_frame(Duration::from_millis(800))
+            .marker(),
+        "⠋"
+    );
+    assert_eq!(
+        rich.snapshot()
+            .activity_motion_frame(Duration::from_millis(934))
+            .marker(),
+        "⠙"
+    );
     assert_eq!(first.reserved_marker_width(), 1);
     assert_eq!(first.period(), Some(Duration::from_millis(16)));
 
@@ -162,7 +180,48 @@ fn built_in_activity_profiles_select_marker_frames_at_eighty_milliseconds() {
         .pin();
     let ascii_frame = ascii.snapshot().activity_motion_frame(Duration::ZERO);
     assert_eq!(ascii_frame.marker(), "|");
+    assert_eq!(
+        ascii
+            .snapshot()
+            .activity_motion_frame(Duration::from_millis(80))
+            .marker(),
+        "/"
+    );
     assert_eq!(ascii_frame.period(), Some(Duration::from_millis(16)));
+}
+
+// 점 3개가 6점 테두리에서 정확히 한 칸씩 순환하며 마지막→처음도 같은 이동 규칙을 따른다.
+#[test]
+fn rich_spinner_rotates_three_dots_one_position_at_every_boundary() {
+    let pin = AppearanceState::default().pin();
+    let step = Duration::from_nanos(800_000_000 / 6);
+    let ring = [0_u32, 3, 4, 5, 2, 1];
+    let mut masks = Vec::new();
+    for index in 0..6 {
+        let frame = pin.snapshot().activity_motion_frame(step * index);
+        let mask = u32::from(frame.marker().chars().next().unwrap()) - 0x2800;
+        assert_eq!(mask.count_ones(), 3);
+        assert_eq!(frame.marker_width(), 1);
+        assert_eq!(frame.reserved_marker_width(), 1);
+        assert_eq!(
+            pin.snapshot()
+                .activity_motion_frame(step * (index + 1) - Duration::from_nanos(1))
+                .marker(),
+            frame.marker()
+        );
+        masks.push(mask);
+    }
+    for index in 0..6 {
+        let rotated = ring.iter().enumerate().fold(0, |result, (position, bit)| {
+            if masks[index] & (1 << bit) != 0 {
+                result | (1 << ring[(position + 1) % 6])
+            } else {
+                result
+            }
+        });
+        assert_eq!(masks[(index + 1) % 6], rotated);
+    }
+    assert_eq!(pin.snapshot().activity_motion_frame(step * 6).marker(), "⠋");
 }
 
 // reduced-motion 후보는 같은 snapshot publication 경로를 쓰되 marker와 label sheen 모두
@@ -224,6 +283,45 @@ fn host_color_capability_selects_rgb_or_safe_fallback() {
         unknown_frame.marker_style(styles).foreground,
         Color::Rgb { .. }
     ));
+}
+
+// 전체 단어의 pulse는 경계에서 연속이고 중간에 밝아진다. 마커 밝기와 모든 font weight는 고정된다.
+#[test]
+fn label_pulse_changes_only_color_and_marker_stays_constant() {
+    let state = AppearanceState::new(AppearanceCandidate::for_profile_with_host_preferences(
+        GlyphProfile::Rich,
+        ColorCapability::TrueColor,
+        MotionPreference::Standard,
+    ))
+    .unwrap();
+    let pin = state.pin();
+    let styles = pin.snapshot().styles().chrome.activity;
+    let frame = |ms| {
+        pin.snapshot()
+            .activity_motion_frame(Duration::from_millis(ms))
+    };
+    assert_ne!(
+        frame(0).label_style(styles).foreground,
+        frame(1000).label_style(styles).foreground
+    );
+    assert_eq!(
+        frame(0).label_style(styles),
+        frame(2000).label_style(styles)
+    );
+    assert_eq!(
+        frame(1999).label_style(styles),
+        frame(2000).label_style(styles)
+    );
+    for ms in (0..4000).step_by(16) {
+        assert_eq!(
+            frame(ms).marker_style(styles),
+            frame(0).marker_style(styles)
+        );
+        assert_eq!(
+            frame(ms).label_style(styles).attributes,
+            styles.marker.attributes
+        );
+    }
 }
 
 // 빈 frame 목록·문자열, 제어·폭 0 grapheme, 잘못된 두 timer와 0초 sweep를 publication

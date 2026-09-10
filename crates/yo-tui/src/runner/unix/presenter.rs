@@ -51,6 +51,7 @@ pub(super) struct PresentationState<'session> {
     pub(super) started: std::time::Instant,
     pub(super) frame_visible: bool,
     pub(super) motion_deadline: Option<std::time::Instant>,
+    motion_clock: super::timing::TurnMotionClock,
     recovery_evidence: &'session mut PublicationRecoveryEvidence,
 }
 
@@ -67,6 +68,7 @@ impl<'session> PresentationState<'session> {
             started,
             frame_visible: false,
             motion_deadline: None,
+            motion_clock: super::timing::TurnMotionClock::new(started),
             recovery_evidence,
         }
     }
@@ -75,6 +77,7 @@ impl<'session> PresentationState<'session> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RedrawOutcome {
     motion_deadline: Option<std::time::Instant>,
+    marker_deadline: Option<std::time::Instant>,
     live_committed: bool,
     request_immediate: bool,
 }
@@ -169,7 +172,11 @@ where
     P: LivePresenter<B>,
 {
     let appearance = appearance.pin();
-    let elapsed = presentation.started.elapsed();
+    let now = std::time::Instant::now();
+    let motion_epoch = presentation
+        .motion_clock
+        .sample(state.visible_motion_turn(), now);
+    let elapsed = now.saturating_duration_since(motion_epoch);
     let frame = state
         .prepare_frame_for_geometry(
             presentation.size,
@@ -194,15 +201,22 @@ where
         presentation.recovery_evidence.record(recovery);
     }
     let deadline = super::timing::next_motion_deadline(
-        presentation.started,
+        motion_epoch,
         elapsed,
         frame.motion_demand.map(MotionDemand::period),
     );
+    let marker_deadline = super::timing::next_motion_deadline(
+        motion_epoch,
+        elapsed,
+        frame.motion_demand.and_then(MotionDemand::marker_period),
+    );
+    let deadline = [deadline, marker_deadline].into_iter().flatten().min();
     let Some(publication) = frame.publication.as_ref() else {
         state.commit_frame(&frame);
         presentation.previous = Some(frame.surface);
         return Ok(RedrawOutcome {
             motion_deadline: deadline,
+            marker_deadline,
             live_committed: true,
             request_immediate: frame.reprepare_for_publication,
         });
@@ -255,6 +269,7 @@ where
     }
     Ok(RedrawOutcome {
         motion_deadline: live_current.then_some(deadline).flatten(),
+        marker_deadline: live_current.then_some(marker_deadline).flatten(),
         live_committed: live_current,
         request_immediate: !live_current,
     })
@@ -304,7 +319,8 @@ where
         observe_geometry,
     )?;
     presentation.motion_deadline = outcome.motion_deadline;
-    frames.rendered(std::time::Instant::now());
+    frames.reserve_marker(outcome.marker_deadline);
+    frames.rendered_with_cost(now, std::time::Instant::now());
     presentation.frame_visible = outcome.live_committed;
     if outcome.request_immediate {
         frames.request(crate::runner::frame::FrameRequest::Immediate);

@@ -273,8 +273,35 @@ impl ChatProjection {
             return Err(StateError::UnknownActivity(activity));
         };
         let id = presentation.item;
+        let label_changed = if presentation.kind == ActivityKind::ToolCall {
+            let item = self
+                .transcript
+                .items()
+                .iter()
+                .find(|item| item.id() == id)
+                .expect("an active presentation owns a transcript item");
+            let crate::transcript::TranscriptBody::Message(message) = item.body();
+            let text = message.text();
+            let replacement = text.strip_prefix("Running tool…").map(|payload| {
+                let label = match outcome {
+                    ActivityOutcome::Completed => "Tool completed",
+                    ActivityOutcome::Interrupted => "Tool interrupted",
+                    ActivityOutcome::Failed(_) => "Tool failed",
+                };
+                format!("{label}{payload}")
+            });
+            if let Some(text) = replacement {
+                self.transcript
+                    .replace_text_changed(id, text)
+                    .map_err(StateError::Transcript)?
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         let visible = match outcome {
-            ActivityOutcome::Completed => !presentation.visible,
+            ActivityOutcome::Completed => label_changed || !presentation.visible,
             ActivityOutcome::Interrupted => self
                 .transcript
                 .append_text(id, "\nInterrupted")

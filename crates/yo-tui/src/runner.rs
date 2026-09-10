@@ -6,6 +6,7 @@ mod chat;
 mod error;
 mod frame;
 mod model;
+mod preview_agent;
 mod publication;
 mod session;
 mod skill;
