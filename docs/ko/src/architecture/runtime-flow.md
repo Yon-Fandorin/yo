@@ -311,7 +311,9 @@ managed model은 `Provider 표시 이름 · Account 표시 이름` 아래에 묶
 TUI는 현재 backend와 무관하게 built-in host 둘의 session-free 인증 inventory를 동시에 읽는다.
 Codex는 `account/read`와 보이는 `model/list` page 전체를 사용하고, Grok은 인증된 ACP
 `modelState`를 사용한다. 활성 delegated host는 자신의 정확한 실행 profile을 유지하고 비활성
-sibling은 일반 inventory profile을 사용한다. 어느 read도 Agent Session을 하나 더 만들지 않는다.
+sibling은 일반 inventory profile을 사용한다. Inventory 호환성 경고는 활성 host의 경우에만
+채팅에 전달한다. 백그라운드 Codex 조회가 managed 또는 Grok 대화에 Codex 경고를 추가하지 않는다.
+어느 read도 Agent Session을 하나 더 만들지 않는다.
 실행 파일, account 또는 usable inventory가 없으면 그 host의 선택 불가능한
 `model catalog unavailable` section을 남기며 sibling을 숨기지 않는다. Host account label은
 검증된 email, 검증된 subscription, `local` 순으로 선택한다. 내부의 안정적인 AccountId에는

@@ -353,6 +353,8 @@ both built-in hosts, independently of the active backend: Codex uses
 `account/read` plus every visible `model/list` page, while Grok uses
 authenticated ACP `modelState`. The active delegated host retains its exact
 execution profile; an inactive sibling uses its ordinary inventory profile.
+Inventory compatibility warnings enter the chat only for the active host; background
+Codex discovery does not add Codex warnings to a managed or Grok conversation.
 Neither read creates another Agent Session. A missing executable, account, or
 usable inventory leaves that host's non-selectable `model catalog unavailable`
 section without suppressing its sibling. Host model-inventory labels prefer verified

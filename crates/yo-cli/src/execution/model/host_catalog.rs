@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use yo_backend_delegated_codex::CodexWarningObserver;
 use yo_core::{AccountId, HostId, HostModelCatalog, ModelId, ModelSelectionController};
 
 use super::DelegatedExecutionProfile;
@@ -89,24 +90,47 @@ impl HostCatalogObservation {
 pub(crate) fn read_builtin_host_catalogs_with_codex_warning_observer(
     workspace: &Path,
     active: Option<(&HostId, DelegatedExecutionProfile)>,
-    warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
+    warning_observer: Option<CodexWarningObserver>,
+) -> Vec<HostCatalogObservation> {
+    read_builtin_host_catalogs(
+        workspace,
+        active,
+        warning_observer,
+        codex::read_catalog,
+        grok::read_catalog,
+    )
+}
+
+fn read_builtin_host_catalogs(
+    workspace: &Path,
+    active: Option<(&HostId, DelegatedExecutionProfile)>,
+    warning_observer: Option<CodexWarningObserver>,
+    read_codex: impl FnOnce(
+        PathBuf,
+        DelegatedExecutionProfile,
+        Option<CodexWarningObserver>,
+    ) -> Result<HostModelCatalog, String>
+    + Send,
+    read_grok: impl FnOnce(PathBuf, DelegatedExecutionProfile) -> Result<HostModelCatalog, String>
+    + Send,
 ) -> Vec<HostCatalogObservation> {
     let requests = inventory_requests(active);
     let [codex_request, grok_request] = requests;
-    let codex_warning_observer = warning_observer;
+    // Inactive inventory discovery must not publish another host's warnings into this chat.
+    let codex_warning_observer =
+        warning_observer.filter(|_| active.is_some_and(|(host, _)| host == &HostId::codex()));
     let codex_workspace = workspace.to_path_buf();
     let grok_workspace = workspace.to_path_buf();
 
     std::thread::scope(|scope| {
         let codex_reader = scope.spawn(move || {
-            codex::read_catalog(
+            read_codex(
                 codex_workspace,
                 codex_request.execution,
                 codex_warning_observer,
             )
         });
-        let grok_reader =
-            scope.spawn(move || grok::read_catalog(grok_workspace, grok_request.execution));
+        let grok_reader = scope.spawn(move || read_grok(grok_workspace, grok_request.execution));
 
         vec![
             HostCatalogObservation::new(

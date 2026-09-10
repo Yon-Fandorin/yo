@@ -6,6 +6,58 @@ use yo_core::{
 
 use super::*;
 
+// 실제 inventory reader 경계에서 managed/Grok 세션에는 Codex 경고 observer를 넘기지
+// 않고, 활성 Codex에는 동일 observer와 실행 profile을 유지합니다. 양쪽 목록은 계속 읽습니다.
+#[test]
+fn inventory_routes_chat_warnings_only_to_the_active_codex_host() {
+    let codex = HostId::codex();
+    let grok = HostId::grok();
+    let observer: CodexWarningObserver = std::sync::Arc::new(|_| {});
+    for active in [
+        None,
+        Some((&grok, DelegatedExecutionProfile::Standard)),
+        Some((&grok, DelegatedExecutionProfile::ReadOnlyReview)),
+        Some((&codex, DelegatedExecutionProfile::Standard)),
+        Some((&codex, DelegatedExecutionProfile::ReadOnlyReview)),
+    ] {
+        let expected_observer = active.is_some_and(|(host, _)| host == &codex);
+        let observations = read_builtin_host_catalogs(
+            Path::new("/workspace"),
+            active,
+            Some(observer.clone()),
+            |workspace, execution, received| {
+                assert_eq!(workspace, Path::new("/workspace"));
+                assert_eq!(received.is_some(), expected_observer);
+                if let Some(received) = received {
+                    assert!(std::sync::Arc::ptr_eq(&received, &observer));
+                    assert_eq!(execution, active.unwrap().1);
+                } else {
+                    assert_eq!(execution, DelegatedExecutionProfile::Standard);
+                }
+                Ok(host_catalog(HostId::codex()))
+            },
+            |workspace, execution| {
+                assert_eq!(workspace, Path::new("/workspace"));
+                assert_eq!(
+                    execution,
+                    active
+                        .filter(|(host, _)| *host == &grok)
+                        .map_or(DelegatedExecutionProfile::Standard, |(_, profile)| profile)
+                );
+                Err("Grok inventory unavailable".to_owned())
+            },
+        );
+        assert_eq!(observations.len(), 2);
+        assert_eq!(observations[0].host(), &codex);
+        assert!(observations[0].catalog().is_ok());
+        assert_eq!(observations[1].host(), &grok);
+        assert_eq!(
+            observations[1].catalog().unwrap_err(),
+            "Grok inventory unavailable"
+        );
+    }
+}
+
 // managed Session에서도 inventory 계획은 Codex와 Grok을 모두 포함해, 현재 backend가
 // delegated host가 아니라는 이유로 host account section 전체가 사라지지 않게 합니다.
 #[test]
