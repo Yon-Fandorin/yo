@@ -1,5 +1,128 @@
 use super::*;
 
+// skills watcher ACK는 session/new의 실제 숫자 response를 대신하지 않고, 0건 reload도
+// 성공한 Session binding을 그대로 보존합니다.
+#[test]
+fn consumes_skills_reload_ack_while_waiting_for_new_session() {
+    let session_id = session(1);
+    let (mut backend, sent) = backend([
+        skills_reload_ack(0),
+        response(3, json!({ "sessionId": "grok-session-a" })),
+    ]);
+
+    let evidence = backend
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+
+    assert!(matches!(
+        evidence,
+        BackendCommandEvidence::BindingOpened(evidence)
+            if evidence.session_locator().value() == "grok-session-a"
+    ));
+    assert_eq!(sent.0.borrow()[2]["method"], "session/new");
+}
+
+// prompt acceptance 전에 maintenance ACK만 오면 active Turn을 만들지 않고, 실제 수락
+// signal이 없었던 종료를 그대로 호출자에게 전달합니다.
+#[test]
+fn skills_reload_ack_is_not_prompt_acceptance() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let (mut backend, _) = backend([
+        response(3, json!({ "sessionId": "grok-session-a" })),
+        skills_reload_ack(0),
+    ]);
+    create_session(&mut backend, session_id);
+
+    let failure = backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("marker"),
+        })
+        .unwrap_err();
+
+    assert_eq!(failure.kind(), BackendFailureKind::ProcessExit);
+    assert!(failure.message().contains("session/prompt acceptance"));
+    assert!(backend.prompt.is_none());
+}
+
+// 수락된 prompt 중 maintenance ACK는 Pending으로만 소진하고, 뒤따른 숫자 ID 4의
+// stopReason 완료를 한 번만 runtime Turn 종료로 투영하며 marker text를 보존합니다.
+#[test]
+fn consumes_skills_reload_ack_during_prompt_without_finishing_early() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let messages = [
+        response(3, json!({ "sessionId": "grok-session-a" })),
+        skills_reload_ack(0),
+        text_update("agent_message_chunk", "marker"),
+        skills_reload_ack(1),
+        response(4, json!({ "stopReason": "end_turn" })),
+    ];
+    let (mut backend, _) = backend(messages);
+    create_session(&mut backend, session_id);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("prompt"),
+        })
+        .unwrap();
+
+    let activity = expect_activity_started(&mut backend, ActivityKind::AgentMessage);
+    assert!(matches!(
+        backend.poll_event().unwrap(),
+        BackendPoll::Event(BackendEvent::ActivityUpdated {
+            activity: observed,
+            update: yo_core::ActivityUpdate::TextDelta(text),
+        }) if observed == activity && text == "marker"
+    ));
+    assert_eq!(backend.poll_event().unwrap(), BackendPoll::Pending);
+
+    let mut completions = 0;
+    for _ in 0..8 {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ResumableTurnFinished { turn, .. }) => {
+                assert_eq!(turn, active_turn);
+                completions += 1;
+                break;
+            },
+            BackendPoll::Pending => {},
+            BackendPoll::Event(_) => {},
+            BackendPoll::Closed => panic!("fixture peer closed before prompt completion"),
+        }
+    }
+    assert_eq!(completions, 1);
+}
+
+// maintenance ACK를 소진해도 active prompt와 무관한 숫자 response를 정상 완료로
+// 오인하지 않고 기존 foreign-response Protocol 실패를 유지합니다.
+#[test]
+fn skills_reload_ack_does_not_hide_foreign_prompt_response() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let (mut backend, _) = backend([
+        response(3, json!({ "sessionId": "grok-session-a" })),
+        skills_reload_ack(0),
+        response(99, json!({ "stopReason": "end_turn" })),
+    ]);
+    create_session(&mut backend, session_id);
+
+    let failure = backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("prompt"),
+        })
+        .unwrap_err();
+
+    assert_eq!(failure.kind(), BackendFailureKind::Protocol);
+    assert!(
+        failure
+            .message()
+            .contains("unexpected Grok ACP response id")
+    );
+    assert!(backend.prompt.is_none());
+}
+
 // 상대가 한 Turn에 고유 messageId를 무제한 발급해 state를 키우지 못하도록, 정확한
 // per-Turn 상한까지는 event를 투영하고 다음 신규 Activity는 삽입 전에 거절합니다.
 #[test]
@@ -162,7 +285,7 @@ fn resumes_with_session_load_without_replaying_history_as_new_activity() {
             }
         }
     });
-    let (mut backend, sent) = backend([history, response(3, json!({}))]);
+    let (mut backend, sent) = backend([history, skills_reload_ack(0), response(3, json!({}))]);
 
     let evidence = backend
         .resume_binding(session_id, &resume_binding("grok-session-a"))

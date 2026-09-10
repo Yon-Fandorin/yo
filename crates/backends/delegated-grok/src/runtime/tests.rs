@@ -93,6 +93,14 @@ fn error_response(id: u64, code: i64, message: &str) -> Value {
     })
 }
 
+fn skills_reload_ack(reloaded: u64) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": "skills-reload",
+        "result": { "result": { "reloaded": reloaded } }
+    })
+}
+
 fn session(value: u64) -> SessionId {
     let uuid = uuid::Uuid::from_u128(0x0189_0f00_0000_7000_8000_0000_0000_0000 | u128::from(value));
     SessionId::from_uuid(uuid).expect("the test Session fixture is a UUIDv7")

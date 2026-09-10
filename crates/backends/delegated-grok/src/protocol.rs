@@ -9,6 +9,8 @@ const MAX_REQUEST_ID_BYTES: usize = 4096;
 
 #[derive(Debug)]
 pub(super) enum Incoming {
+    // Grok 1.0.25's native skills watcher sends this unsolicited acknowledgement.
+    MaintenanceAck,
     Response {
         id: u64,
         result: Value,
@@ -67,6 +69,9 @@ pub(super) fn classify(value: Value) -> Result<Incoming, BackendFailure> {
         return Err(protocol_failure(
             "Grok ACP message does not declare JSON-RPC 2.0",
         ));
+    }
+    if decode_skills_reload_ack(object).is_some() {
+        return Ok(Incoming::MaintenanceAck);
     }
     let method = object.get("method").and_then(Value::as_str);
     let id = object.get("id");
@@ -142,6 +147,24 @@ pub(super) fn classify(value: Value) -> Result<Incoming, BackendFailure> {
             "Grok ACP message has neither method nor id",
         )),
     }
+}
+
+fn decode_skills_reload_ack(object: &serde_json::Map<String, Value>) -> Option<u64> {
+    if object.len() != 3
+        || object.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
+        || object.get("id").and_then(Value::as_str) != Some("skills-reload")
+    {
+        return None;
+    }
+    let result = object.get("result")?.as_object()?;
+    if result.len() != 1 {
+        return None;
+    }
+    let nested = result.get("result")?.as_object()?;
+    if nested.len() != 1 {
+        return None;
+    }
+    nested.get("reloaded")?.as_u64()
 }
 
 pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, BackendFailure> {

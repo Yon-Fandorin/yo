@@ -192,7 +192,10 @@ impl<P: JsonPeer> AcpClient<P> {
             match self.peer.try_receive()? {
                 PeerPoll::Pending => return Ok(ClientPoll::Pending),
                 PeerPoll::Closed => return Ok(ClientPoll::Closed),
-                PeerPoll::Message(value) => protocol::classify(value)?,
+                PeerPoll::Message(value) => match protocol::classify(value)? {
+                    Incoming::MaintenanceAck => return Ok(ClientPoll::Pending),
+                    message => message,
+                },
             }
         };
         match &message {
@@ -237,7 +240,10 @@ impl<P: JsonPeer> AcpClient<P> {
                 ));
             }
             match self.peer.receive(remaining)? {
-                PeerPoll::Message(value) => return protocol::classify(value),
+                PeerPoll::Message(value) => match protocol::classify(value)? {
+                    Incoming::MaintenanceAck => continue,
+                    message => return Ok(message),
+                },
                 PeerPoll::Closed => {
                     return Err(BackendFailure::new(
                         BackendFailureKind::ProcessExit,

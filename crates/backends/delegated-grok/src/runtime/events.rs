@@ -32,6 +32,7 @@ impl<P: JsonPeer> Backend<P> {
                 ClientPoll::Message(incoming) => incoming,
             };
             let event = match incoming {
+                Incoming::MaintenanceAck => None,
                 Incoming::Notification { method, params } => {
                     self.map_notification(&method, params)?
                 },

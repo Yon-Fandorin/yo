@@ -32,6 +32,93 @@ fn invalid_response_ids_report_only_the_wire_type() {
     }
 }
 
+// Grok 1.0.25 skills watcher의 maintenance ACK는 중첩 result와 0건도 포함한 exact
+// shape만 내부적으로 소비하고, 문자열·숫자열·오류·추가 필드는 일반 Protocol 실패로 남깁니다.
+#[test]
+fn accepts_only_the_exact_skills_reload_ack_shape() {
+    let accepted = classify(json!({
+        "jsonrpc": "2.0",
+        "id": "skills-reload",
+        "result": { "result": { "reloaded": 0 } }
+    }))
+    .unwrap();
+    assert!(matches!(accepted, Incoming::MaintenanceAck));
+
+    let near_misses = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": "skills-reload",
+            "result": { "result": { "reloaded": "0" } }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "skills-reload",
+            "result": { "result": { "reloaded": -1 } }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "skills-reload",
+            "result": { "result": { "reloaded": 1.0 } }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "skills-reload",
+            "result": { "result": { "reloaded": 0, "extra": true } }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "skills-reload",
+            "result": { "reloaded": 0 }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "skills-reload",
+            "result": { "result": { "reloaded": 0 } },
+            "trace": true
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "4",
+            "result": { "result": { "reloaded": 0 } }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": null,
+            "result": { "result": { "reloaded": 0 } }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1.5,
+            "result": { "result": { "reloaded": 0 } }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "skills-reload",
+            "error": { "code": -32000, "message": "maintenance failed" }
+        }),
+    ];
+
+    for near_miss in near_misses {
+        assert_eq!(
+            classify(near_miss).unwrap_err().kind(),
+            BackendFailureKind::Protocol
+        );
+    }
+
+    let server_request = classify(json!({
+        "jsonrpc": "2.0",
+        "id": "skills-reload",
+        "method": "session/request_permission",
+        "params": {}
+    }))
+    .unwrap();
+    assert!(matches!(
+        server_request,
+        Incoming::ServerRequest { id, method, .. }
+            if id == json!("skills-reload") && method == "session/request_permission"
+    ));
+}
+
 // ACP 메시지는 JSON-RPC 2.0 표식을 생략하면 method와 id가 올바르더라도 wire 경계를
 // 통과하지 못해야 하며, 표식이 있는 server request의 문자열 id는 그대로 보존합니다.
 #[test]
