@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use yo_backend::transport::JsonMessagePeer;
 use yo_core::{
     AccountId, AgentCommand, BackendBindingEvidence, BackendCommandEvidence, BackendFailureKind,
-    BackendIdentity, BackendPoll, BackendStopHandle, ContinuationStrategy, HostId, ModelId,
-    UserInput, derive_host_account_id,
+    BackendIdentity, BackendPoll, BackendStopHandle, ContinuationStrategy, HostId,
+    InputImageHistory, ModelId, UserInput, derive_host_account_id,
 };
 
 use super::{
@@ -594,6 +594,102 @@ fn rejects_a_resumed_thread_with_different_model_identity() {
 
     assert_eq!(failure.kind(), BackendFailureKind::Session);
     assert_eq!(sent.0.borrow()[2]["method"], "thread/resume");
+}
+
+// retained image history는 exact model capability를 확인하기 전 thread/resume을 보내지 않아,
+// 불완전한 model/list가 provider-native mutation으로 이어지지 않게 합니다.
+#[test]
+fn retained_image_history_rejects_resume_before_native_mutation() {
+    let (peer, sent) = FakePeer::new([
+        initialize_response(1, "0.153.4"),
+        json!({
+            "id": 2,
+            "result": {"account": {"type": "chatgpt", "email": "person@example.test"}}
+        }),
+        json!({
+            "id": 3,
+            "result": {
+                "data": [{"model": "gpt-test", "inputModalities": ["text"]}],
+                "nextCursor": null
+            }
+        }),
+    ]);
+    let client = AppServerClient::new(peer, Duration::from_secs(1));
+    let mut backend = Backend::new_uninitialized(client, "/workspace".into(), false, None);
+
+    let failure = backend
+        .resume_binding_with_history(
+            session(1),
+            &resume_binding("thread-a"),
+            InputImageHistory::ContainsImages,
+        )
+        .unwrap_err();
+
+    assert_eq!(failure.kind(), BackendFailureKind::Unsupported);
+    assert!(sent.0.borrow().iter().all(|message| matches!(
+        message["method"].as_str(),
+        Some("initialize" | "account/read" | "model/list" | "initialized")
+    )));
+    assert!(!sent.0.borrow().iter().any(|message| {
+        matches!(
+            message["method"].as_str(),
+            Some("thread/resume" | "thread/fork")
+        )
+    }));
+}
+
+// retained image history는 native model rebind에서도 target model의 modality를 먼저 관찰하고,
+// Unsupported 결과일 때 thread/fork를 전혀 시작하지 않습니다.
+#[test]
+fn retained_image_history_rejects_model_rebind_before_native_mutation() {
+    let (peer, sent) = FakePeer::new([
+        json!({
+            "id": 1,
+            "result": {
+                "userAgent": "codex_cli_rs/0.153.4 (test)",
+                "platformFamily": "unix",
+                "platformOs": "linux",
+                "codexHome": "/tmp/codex-test"
+            }
+        }),
+        json!({
+            "id": 2,
+            "result": {
+                "data": [{"model": "gpt-new", "inputModalities": ["text"]}],
+                "nextCursor": null
+            }
+        }),
+    ]);
+    let mut client = AppServerClient::new(peer, Duration::from_secs(1));
+    let initialize = client.initialize().unwrap();
+    let requested_account = AccountId::new("account-test").unwrap();
+    let requested_model = ModelId::new("gpt-new").unwrap();
+    let mut backend = Backend::new_uninitialized(
+        client,
+        "/workspace".into(),
+        false,
+        Some((requested_account.clone(), requested_model)),
+    );
+    backend.initialized = true;
+    backend.backend_version = Some(initialize.user_agent);
+    backend.account = Some(requested_account);
+    backend.image_wire_supported = true;
+
+    let failure = backend
+        .rebind_model_with_history(
+            session(1),
+            &rebind_source("thread-a", "gpt-old"),
+            InputImageHistory::ContainsImages,
+        )
+        .unwrap_err();
+
+    assert_eq!(failure.kind(), BackendFailureKind::Unsupported);
+    assert!(!sent.0.borrow().iter().any(|message| {
+        matches!(
+            message["method"].as_str(),
+            Some("thread/resume" | "thread/fork")
+        )
+    }));
 }
 
 // 검증하지 않은 같은-major Codex minor 버전은 경고를 제공하면서도 initialized까지 보내

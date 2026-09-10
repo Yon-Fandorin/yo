@@ -45,6 +45,14 @@ cargo test -p yo-core local_codex_completes_a_real_file_change \
 전체 실행 시간에는 Codex 시작과 종료도 포함된다. 호환되는 Codex 인증과
 쓰기 가능한 Codex 상태가 있는 환경에서만 실행한다.
 
+위임 Codex image 경계는 adapter와 core의 offline test로 검증한다. 정확한
+`0.153.4` wire 증거, 선택한 model의 정확한 `inputModalities`, start와 steer 양쪽의
+순서가 있는 반복 immutable PNG projection, 보수적인 inherited-history resume/rebind
+admission, 완전한 32 MiB outbound JSONL 경계를 검사한다. 경계 test는 정확히 32 MiB를
+허용하고 첫 초과 byte를 peer에 보내기 전에 거절한다. server response도 같은 경계를
+사용하며 overflow는 protocol failure로 분류한다. 이 검사는 fake JSONL peer를 사용하고
+model service에 접속하지 않는다.
+
 ## 설치된 Grok 검사
 
 Session 생성이나 model 추론 요청 없이 ACP 초기화, cached-login 인증,

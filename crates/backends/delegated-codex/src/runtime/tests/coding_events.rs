@@ -1,7 +1,8 @@
 use serde_json::json;
 use yo_core::{
     ActivityKind, ActivityOutcome, AgentCommand, AgentEvent, AgentRuntime, BackendFailureKind,
-    RuntimePoll, ToolOutput, TurnOutcome, UserInput,
+    ImageInputCapability, InputImage, InputImageSnapshot, ModelInputPart, RuntimePoll, ToolOutput,
+    TurnOutcome, UserInput,
 };
 
 use super::support::{activity, backend, session, submission, thread_start_response, turn};
@@ -2710,5 +2711,111 @@ fn resolved_skill_snapshot_reaches_codex_start_and_steer_requests() {
             request["params"]["input"],
             json!([{"type":"text", "text": expected}])
         );
+    }
+}
+
+// immutable PNG occurrence와 host-resolved skill trailer가 start와 steer 모두에서 정확한
+// text/image 순서와 마지막 지침 위치를 유지하며, 표시 metadata나 별도 caption을 만들지 않습니다.
+#[test]
+fn immutable_png_projection_preserves_repeated_occurrences_on_start_and_steer() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use yo_core::{InputReference, ResolvedSkill, SkillReference, SkillReferenceScope};
+
+    let png = STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")
+        .unwrap();
+    let snapshot = InputImageSnapshot::new(1, 1, png.clone()).unwrap();
+    let text = "before [image] middle [image] use $review after";
+    let reference = SkillReference::new(
+        "review",
+        "host",
+        "/skills/review/SKILL.md",
+        "review",
+        SkillReferenceScope::User,
+        1,
+        "revision",
+    );
+    let input =
+        UserInput::with_references(text, vec![InputReference::skill(34..41, reference.clone())])
+            .unwrap()
+            .with_images(vec![
+                InputImage::new(7..14, 70, snapshot.clone()).unwrap(),
+                InputImage::new(22..29, 70, snapshot).unwrap(),
+            ])
+            .unwrap()
+            .with_resolved_skill(
+                ResolvedSkill::new(reference, "# Review\nVerify the exact implementation.")
+                    .unwrap(),
+            )
+            .unwrap();
+    let expected_url = format!("data:image/png;base64,{}", STANDARD.encode(png));
+    let parts = super::super::project_input(&input).unwrap();
+    let skill_snapshot = json!({
+        "name": "review",
+        "source": "/skills/review/SKILL.md",
+        "instructions": "# Review\nVerify the exact implementation."
+    });
+    let expected_tail = format!(
+        " use $review after\n\nExplicit skill instructions (yo.skill-instructions/v1):\n{}",
+        skill_snapshot
+    );
+    assert_eq!(
+        parts,
+        vec![
+            json!({"type":"text", "text":"before "}),
+            json!({"type":"image", "url": expected_url.clone()}),
+            json!({"type":"text", "text":" middle "}),
+            json!({"type":"image", "url": expected_url}),
+            json!({"type":"text", "text": expected_tail}),
+        ]
+    );
+    assert!(matches!(
+        input.model_parts()[1],
+        ModelInputPart::Image { .. }
+    ));
+
+    let session_id = session(1);
+    let active = turn(session_id, 1);
+    let (mut backend, sent) = backend([
+        thread_start_response(2, "thread-a"),
+        json!({
+            "id": 3,
+            "result": {
+                "data": [{"model": "gpt-test", "inputModalities": ["text", "image"]}],
+                "nextCursor": null
+            }
+        }),
+        json!({"id":4,"result":{"turn":{"id":"turn-a"}}}),
+        json!({"id":5,"result":{"turnId":"turn-a"}}),
+    ]);
+    backend.image_wire_supported = true;
+    backend.selected_model = Some("gpt-test".to_owned());
+    backend.image_capability = ImageInputCapability::Supported {
+        maximum_occurrences: 16,
+        maximum_image_bytes: InputImageSnapshot::MAX_BYTES as u64,
+        maximum_input_bytes: InputImageSnapshot::MAX_BYTES as u64,
+    };
+    backend
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active,
+            input: input.clone(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: active,
+            input,
+        })
+        .unwrap();
+    let sent = sent.0.borrow();
+    for method in ["turn/start", "turn/steer"] {
+        let request = sent
+            .iter()
+            .find(|request| request["method"] == method)
+            .unwrap();
+        assert_eq!(request["params"]["input"], json!(parts.clone()));
     }
 }

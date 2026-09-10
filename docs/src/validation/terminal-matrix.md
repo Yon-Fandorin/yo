@@ -47,6 +47,15 @@ at 180 seconds; total runtime also includes Codex startup and shutdown. Run it
 only where compatible Codex authentication and writable Codex state are
 available.
 
+The delegated Codex image boundary is verified offline in the adapter and core
+tests. The suite checks exact `0.153.4` wire evidence, exact selected-model
+`inputModalities`, ordered repeated immutable PNG projection for both start and
+steer, conservative inherited-history resume/rebind admission, and the complete
+32 MiB outbound JSONL boundary. The boundary test accepts exactly 32 MiB and
+rejects the first excess byte before the peer sees any bytes; server responses use
+the same boundary and classify overflow as protocol failure. These tests use fake
+JSONL peers and do not contact a model service.
+
 ## Installed Grok checks
 
 Verify ACP initialization, cached-login authentication, and cleanup without creating

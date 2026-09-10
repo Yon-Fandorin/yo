@@ -1,17 +1,23 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
 };
 
 use super::*;
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
     AgentEvent, AgentIntent, AgentRuntime, AgentSession, AgentSessionPoll, BackendBindingEvidence,
-    BackendCommandEvidence, BackendEvent, BackendIdentity, BackendOutcomeEvidence,
-    BackendRequestEvidence, BackendScriptStep, CommandAdmission, ContextPolicyChanged,
-    ContextStrategy, ContinuationStrategy, InputSubmission, ModelReplayContract, ModelReplayDelta,
-    ModelReplayItem, ModelReplayRole, ReplayExecutor, RuntimePoll, ScriptedBackend, SubmissionId,
-    TurnId, TurnRef, UserInput,
+    BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendIdentity,
+    BackendOutcomeEvidence, BackendRequestEvidence, BackendScriptStep, CommandAdmission,
+    ContextPolicyChanged, ContextStrategy, ContinuationStrategy, ImageInputCapability,
+    InputAdmissionHost, InputImage, InputImageHistory, InputImageSnapshot, InputSubmission,
+    ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReplayExecutor,
+    RuntimePoll, ScriptedBackend, SubmissionId, SubmissionOutcome, SubmissionRejection,
+    SubmissionRejectionKind, TurnId, TurnRef, UserInput,
     journal::SessionJournal,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, DurableRecordKind, RepositoryEntry,
@@ -87,6 +93,18 @@ fn binding() -> BackendBindingEvidence {
     )
 }
 
+fn managed_binding() -> BackendBindingEvidence {
+    let source = binding();
+    BackendBindingEvidence::new(
+        source.backend_kind(),
+        source.backend_version(),
+        source.binding_identity().clone(),
+        source.model_identity().clone(),
+        source.session_locator().clone(),
+        ContinuationStrategy::BackendManagedState,
+    )
+}
+
 fn replacement_binding() -> BackendBindingEvidence {
     BackendBindingEvidence::new(
         binding().backend_kind(),
@@ -125,7 +143,54 @@ fn stored_submission() -> SubmissionId {
     SubmissionId::from_uuid(uuid::Builder::from_random_bytes([9; 16]).into_uuid()).unwrap()
 }
 
+fn wait_for_submission_outcome(session: &mut AgentSession) -> SubmissionOutcome {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(outcome) = session.take_submission_outcome() {
+            return outcome;
+        }
+        assert!(Instant::now() < deadline, "submission outcome timed out");
+        session
+            .poll()
+            .expect("submission rejection must keep the resumed worker healthy");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+struct TestInputAdmission;
+
+impl InputAdmissionHost for TestInputAdmission {
+    fn validate(&self, _: &UserInput) -> Result<(), SubmissionRejection> {
+        Ok(())
+    }
+
+    fn validate_images(&self, _: &UserInput) -> Result<(), SubmissionRejection> {
+        Ok(())
+    }
+}
+
+fn image_input() -> UserInput {
+    let snapshot: InputImageSnapshot = serde_json::from_str(
+        r#"{"profile":"yo.input-image-rgba8-triangle/v1","mime_type":"image/png","width":1,"height":1,"byte_length":70,"sha256":"sha256:4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5","data_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="}"#,
+    )
+    .unwrap();
+    UserInput::new("[image]")
+        .with_images(vec![InputImage::new(0..7, 70, snapshot).unwrap()])
+        .unwrap()
+}
+
 fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) {
+    durable_resumable_session_with_binding(binding(), UserInput::new("resume me"))
+}
+
+fn durable_resumable_image_session() -> (MemoryRepository, StoredSessionContinuation) {
+    durable_resumable_session_with_binding(managed_binding(), image_input())
+}
+
+fn durable_resumable_session_with_binding(
+    binding: BackendBindingEvidence,
+    input: UserInput,
+) -> (MemoryRepository, StoredSessionContinuation) {
     let session_id = crate::fixture_session(1);
     let turn = TurnRef::new(
         session_id,
@@ -141,27 +206,46 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
             r#"{"jsonRpcId":3,"turnId":"turn-a"}"#,
         ),
     );
-    let backend = ScriptedBackend::new([
-        BackendScriptStep::AcceptCommandWithEvidence {
-            command: AgentCommand::CreateSession { session_id },
-            evidence: BackendCommandEvidence::BindingOpened(binding()),
-        },
-        BackendScriptStep::Emit(BackendEvent::ContextPolicyChanged {
-            policy: ContextPolicyChanged::try_new(
-                1,
-                true,
-                ContextStrategy::PortableSummaryV1Alpha1,
-                85,
-                90,
-                Some(10),
-                Some(65_536),
-            )
-            .unwrap(),
-        }),
+    let image_capability = if input.images().is_empty() {
+        ImageInputCapability::Unknown
+    } else {
+        ImageInputCapability::Supported {
+            maximum_occurrences: 16,
+            maximum_image_bytes: InputImageSnapshot::MAX_BYTES as u64,
+            maximum_input_bytes: InputImageSnapshot::MAX_BYTES as u64,
+        }
+    };
+    let mut steps = vec![BackendScriptStep::AcceptCommandWithEvidence {
+        command: AgentCommand::CreateSession { session_id },
+        evidence: BackendCommandEvidence::BindingOpened(binding.clone()),
+    }];
+    if matches!(
+        binding.continuation_strategy(),
+        ContinuationStrategy::ExactReplay {
+            executor: ReplayExecutor::LocalClient,
+            ..
+        }
+    ) {
+        steps.push(BackendScriptStep::Emit(
+            BackendEvent::ContextPolicyChanged {
+                policy: ContextPolicyChanged::try_new(
+                    1,
+                    true,
+                    ContextStrategy::PortableSummaryV1Alpha1,
+                    85,
+                    90,
+                    Some(10),
+                    Some(65_536),
+                )
+                .unwrap(),
+            },
+        ));
+    }
+    steps.extend([
         BackendScriptStep::AcceptCommandWithEvidence {
             command: AgentCommand::StartTurn {
                 turn,
-                input: UserInput::new("resume me"),
+                input: input.clone(),
             },
             evidence: BackendCommandEvidence::RequestAccepted(request),
         },
@@ -179,28 +263,33 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
         }),
         BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
             turn,
-            evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
-                "codex.app-server/turn-outcome/v1",
-                "turn-a",
-            ))
-            .with_replay(ModelReplayDelta::new(
-                Some(ModelReplayContract::new("system", Vec::new())),
-                vec![
-                    ModelReplayItem::Message {
-                        role: ModelReplayRole::User,
-                        content: "resume me".to_owned(),
-                        refusal: None,
+            evidence: {
+                let evidence = BackendOutcomeEvidence::with_identity(BackendIdentity::new(
+                    "codex.app-server/turn-outcome/v1",
+                    "turn-a",
+                ));
+                match binding.continuation_strategy() {
+                    ContinuationStrategy::BackendManagedState => evidence,
+                    ContinuationStrategy::ExactReplay { .. } => {
+                        evidence.with_replay(ModelReplayDelta::new(
+                            Some(ModelReplayContract::new("system", Vec::new())),
+                            vec![
+                                input.model_replay_item(),
+                                ModelReplayItem::Message {
+                                    role: ModelReplayRole::Assistant,
+                                    content: "durable streamed answer".to_owned(),
+                                    refusal: None,
+                                },
+                            ],
+                        ))
                     },
-                    ModelReplayItem::Message {
-                        role: ModelReplayRole::Assistant,
-                        content: "durable streamed answer".to_owned(),
-                        refusal: None,
-                    },
-                ],
-            )),
+                }
+            },
         }),
         BackendScriptStep::Shutdown(Ok(())),
     ]);
+    let backend = ScriptedBackend::new(steps)
+        .with_capabilities(BackendCapabilities::none().with_image_input(image_capability));
     let mut repository = MemoryRepository::default();
     let journal = SessionJournal::with_repository_and_descriptor(
         Box::new(repository.clone()),
@@ -209,16 +298,13 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
     let mut runtime = AgentRuntime::with_journal(backend, journal);
     runtime.initialize_durability();
     runtime
+        .configure_input_admission(Box::new(TestInputAdmission))
+        .unwrap();
+    runtime
         .execute_command(AgentCommand::CreateSession { session_id })
         .unwrap();
     runtime
-        .execute_submission(
-            AgentCommand::StartTurn {
-                turn,
-                input: UserInput::new("resume me"),
-            },
-            submission,
-        )
+        .execute_submission(AgentCommand::StartTurn { turn, input }, submission)
         .unwrap();
     loop {
         match runtime.poll_event().unwrap() {
@@ -255,6 +341,53 @@ fn derives_one_executable_plan_from_the_newest_durable_anchor() {
         Some(&ModelReplayContract::new("system", Vec::new()))
     );
     assert_eq!(continuation.target().model_replay().items().len(), 2);
+    assert_eq!(
+        continuation.target().input_image_history(),
+        InputImageHistory::TextOnly
+    );
+}
+
+// BackendManagedState의 image-bearing command를 durable하게 복구한 뒤에는 다음 text Turn도
+// 보존된 ContainsImages evidence를 다시 확인하므로, capability가 Unknown이면 provider에
+// 보내지지 않고 correlated rejection으로 끝나야 합니다.
+#[test]
+fn recovers_image_history_and_guards_a_later_text_turn() {
+    let (_repository, continuation) = durable_resumable_image_session();
+    assert_eq!(
+        continuation.target().input_image_history(),
+        InputImageHistory::ContainsImages
+    );
+    let target = continuation.target().clone();
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::Resume {
+            target: Box::new(target),
+            evidence: managed_binding(),
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut session = AgentSession::start_cancellable_with_continuation(
+        backend,
+        continuation,
+        MemoryRepository::default(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        session
+            .dispatch(AgentIntent::submit("text after the image").unwrap())
+            .unwrap(),
+        CommandAdmission::Queued
+    );
+    let SubmissionOutcome::Rejected { rejection, .. } = wait_for_submission_outcome(&mut session)
+    else {
+        panic!("a text turn after retained image history must be rejected");
+    };
+    assert_eq!(
+        rejection.kind(),
+        SubmissionRejectionKind::ImageCapabilityUnknown
+    );
+    session.shutdown().unwrap();
 }
 
 // 이전의 유효한 Anchor 뒤에 새 Turn 명령만 durable하게 남고 완결 Anchor가 생기지
@@ -308,14 +441,14 @@ fn rejects_an_unanchored_suffix_instead_of_falling_back_to_an_older_anchor() {
     while let CommandAdmission::Backpressured(pending) = admission {
         admission = session.retry(pending).unwrap();
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(1);
     while repository.entries.lock().unwrap().len() < before + 2 {
         session.poll().unwrap();
         assert!(
-            std::time::Instant::now() < deadline,
+            Instant::now() < deadline,
             "the unfinished command did not reach its durable accepted-request suffix"
         );
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
     }
     session.shutdown().unwrap();
 
@@ -401,6 +534,7 @@ fn idle_replacement_is_immediately_resumable_without_another_turn() {
             .sequence(),
     )
     .with_model_replay(target.model_replay().clone())
+    .with_input_image_history(target.input_image_history())
     .with_context_state(
         target.context_policy().cloned(),
         target.context_epoch(),
@@ -512,7 +646,7 @@ fn failed_idle_replacement_keeps_the_previous_backend_usable() {
         admission = session.retry(pending).unwrap();
     }
     let transcript = session.transcript_reader();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         session.poll().unwrap();
         if transcript.read_after(None).entries().iter().any(|entry| {
@@ -527,10 +661,10 @@ fn failed_idle_replacement_keeps_the_previous_backend_usable() {
             break;
         }
         assert!(
-            std::time::Instant::now() < deadline,
+            Instant::now() < deadline,
             "the previous backend did not finish work after a rejected replacement"
         );
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
     }
     session.shutdown().unwrap();
 }
@@ -607,14 +741,14 @@ fn replacement_resume_publishes_a_new_binding_epoch_from_the_exact_anchor() {
     while let CommandAdmission::Backpressured(pending) = admission {
         admission = session.retry(pending).unwrap();
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(1);
     while repository.entries.lock().unwrap().len() < before + 4 {
         session.poll().unwrap();
         assert!(
-            std::time::Instant::now() < deadline,
+            Instant::now() < deadline,
             "the replacement Turn did not publish its durable Anchor"
         );
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
     }
     session.shutdown().unwrap();
 
@@ -694,16 +828,16 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
     )
     .unwrap()
     .unwrap();
-    let startup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let startup_deadline = Instant::now() + Duration::from_secs(1);
     loop {
         match session.poll().unwrap() {
             AgentSessionPoll::Changed => break,
             AgentSessionPoll::Pending => {
                 assert!(
-                    std::time::Instant::now() < startup_deadline,
+                    Instant::now() < startup_deadline,
                     "the resumed Session did not publish its startup snapshot"
                 );
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                thread::sleep(Duration::from_millis(1));
             },
             AgentSessionPoll::Closed => panic!("the resumed Session closed during startup"),
         }
@@ -726,20 +860,20 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
         )))
         .unwrap();
     while let CommandAdmission::Backpressured(pending) = admission {
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
         admission = session.retry(pending).unwrap();
     }
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(1);
     while repository.entries.lock().unwrap().len() < before + 3 {
         if let Err(error) = session.poll() {
             panic!("the resumed Turn failed before durable completion: {error}");
         }
         assert!(
-            std::time::Instant::now() < deadline,
+            Instant::now() < deadline,
             "the resumed Turn did not publish its snapshot, request, and Anchor"
         );
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
     }
     session.shutdown().unwrap();
     let recovered = recover_stored_session_continuation(&mut repository, session_id).unwrap();
@@ -830,8 +964,9 @@ fn exact_child_binding() -> BackendBindingEvidence {
     )
 }
 
-// fork 준비는 부모 저장소를 바꾸지 않으며 실제 startup의 첫 envelope가 child의 전체 bootstrap을
-// 원자적으로 저장한 뒤에만 실행 가능한 Session을 반환합니다.
+// nonempty inherited archive는 replay가 text-only여도 완전한 입력 부재를 증명하지 못하므로
+// Unknown으로 복구합니다. ExactReplay의 실행 가능한 replay는 이 보수적 archive evidence만으로
+// text-only admission을 막지 않고, 실제 image input은 별도 capability 경계를 계속 적용합니다.
 #[test]
 fn prepared_exact_fork_starts_and_publishes_one_atomic_child_snapshot() {
     use crate::{
@@ -839,6 +974,10 @@ fn prepared_exact_fork_starts_and_publishes_one_atomic_child_snapshot() {
         journal::codec::{decode, recover},
     };
     let (parent_repository, parent) = durable_resumable_session();
+    assert_eq!(
+        parent.target().input_image_history(),
+        InputImageHistory::TextOnly
+    );
     let before = parent_repository
         .entries
         .lock()
@@ -859,6 +998,10 @@ fn prepared_exact_fork_starts_and_publishes_one_atomic_child_snapshot() {
     );
     assert_eq!(child.target().epoch(), 1);
     assert_eq!(child.target().context_epoch(), Some(1));
+    assert_eq!(
+        child.target().input_image_history(),
+        InputImageHistory::Unknown
+    );
     assert_eq!(
         child.target().model_replay(),
         parent.target().model_replay()
@@ -898,6 +1041,16 @@ fn prepared_exact_fork_starts_and_publishes_one_atomic_child_snapshot() {
         reopened.target().model_replay(),
         parent.target().model_replay()
     );
+    assert_eq!(
+        reopened.target().input_image_history(),
+        InputImageHistory::Unknown
+    );
+    assert!(reopened.inherited_history().is_some_and(|history| {
+        history
+            .sections()
+            .iter()
+            .any(|section| !section.records().is_empty())
+    }));
     assert_eq!(reopened.next_turn_id(), 1);
     session.shutdown().unwrap();
     let after = parent_repository

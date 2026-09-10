@@ -5,9 +5,10 @@ use std::sync::{
 
 use super::{session, submission, turn};
 use crate::{
-    AgentCommand, AgentRuntime, BackendCapabilities, BackendScriptStep, ImageInputCapability,
-    InputAdmissionHost, InputImage, InputImageSnapshot, ResolvedSkill, RuntimeError,
-    ScriptedBackend, SubmissionRejection, SubmissionRejectionKind, UserInput,
+    AgentCommand, AgentRuntime, BackendCapabilities, BackendFailure, BackendFailureKind,
+    BackendScriptStep, ContinuationStrategy, ImageInputCapability, InputAdmissionHost, InputImage,
+    InputImageHistory, InputImageSnapshot, ResolvedSkill, RuntimeError, ScriptedBackend,
+    SubmissionRejection, SubmissionRejectionKind, UserInput,
 };
 
 fn input() -> UserInput {
@@ -90,4 +91,76 @@ fn image_rejections_preserve_backend_and_preparation_boundaries() {
         runtime.execute_submission(text, submission(92)).unwrap();
         runtime.shutdown().unwrap();
     }
+}
+
+// BackendManagedState에서 상속 archive가 Unknown이면 image가 없는 다음 text도 capability를
+// 다시 확인하고, 같은 submission identity로 보수적 거절 뒤 재시도할 수 있어야 합니다.
+#[test]
+fn unknown_image_history_guards_later_text_without_consuming_submission() {
+    let session_id = session(92);
+    let create = AgentCommand::CreateSession { session_id };
+    let text = AgentCommand::StartTurn {
+        turn: turn(session_id, 1),
+        input: UserInput::new("retry after inherited history"),
+    };
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(create.clone()),
+        BackendScriptStep::AcceptCommand(text.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut runtime = AgentRuntime::new(backend);
+    runtime.execute_command(create).unwrap();
+    runtime.continuation_strategy = Some(ContinuationStrategy::BackendManagedState);
+    runtime.input_image_history = InputImageHistory::Unknown;
+    let submission = submission(93);
+
+    let error = runtime
+        .execute_submission(text.clone(), submission)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        RuntimeError::InputRejected(ref rejection)
+            if rejection.kind() == SubmissionRejectionKind::ImageCapabilityUnknown
+    ));
+    runtime.input_image_history = InputImageHistory::TextOnly;
+    runtime.execute_submission(text, submission).unwrap();
+    runtime.shutdown().unwrap();
+}
+
+// adapter의 outbound image budget rejection은 core InputRejected로 매핑되지만 submission ID를
+// 소비하지 않아 같은 immutable 입력을 보정하거나 재시도할 수 있어야 합니다.
+#[test]
+fn input_over_budget_failure_preserves_submission_identity_for_retry() {
+    let session_id = session(93);
+    let create = AgentCommand::CreateSession { session_id };
+    let text = AgentCommand::StartTurn {
+        turn: turn(session_id, 1),
+        input: UserInput::new("retry over budget"),
+    };
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(create.clone()),
+        BackendScriptStep::RejectCommand {
+            command: text.clone(),
+            failure: BackendFailure::new(
+                BackendFailureKind::InputOverBudget,
+                "encoded request exceeds the Codex JSONL boundary",
+            ),
+        },
+        BackendScriptStep::AcceptCommand(text.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut runtime = AgentRuntime::new(backend);
+    runtime.execute_command(create).unwrap();
+    let submission = submission(94);
+
+    let error = runtime
+        .execute_submission(text.clone(), submission)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        RuntimeError::InputRejected(ref rejection)
+            if rejection.kind() == SubmissionRejectionKind::OverBudget
+    ));
+    runtime.execute_submission(text, submission).unwrap();
+    runtime.shutdown().unwrap();
 }

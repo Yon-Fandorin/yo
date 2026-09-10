@@ -10,11 +10,11 @@ use super::{
 };
 use crate::{
     AgentCommand, BackendBindingEvidence, BackendIdentity, BackendResumeSource,
-    BackendResumeTarget, ContinuationStrategy, JournalDurability, JournalSequence, ModelReplay,
-    SessionDescriptor, SessionId, SubmissionId,
+    BackendResumeTarget, ContinuationStrategy, InputImageHistory, JournalDurability,
+    JournalSequence, ModelReplay, SessionDescriptor, SessionId, SubmissionId,
     journal::{
         JournalEntry,
-        codec::{HistoricalForkKind, JournalRecord, RecoveredJournal},
+        codec::{ForkSource, HistoricalForkKind, JournalRecord, RecoveredJournal},
     },
 };
 
@@ -478,6 +478,58 @@ pub fn read_stored_session_continuation(
     build_continuation(recovered, session_id)
 }
 
+fn recovered_input_image_history(recovered: &RecoveredJournal) -> InputImageHistory {
+    let mut history = InputImageHistory::TextOnly;
+    for record in recovered.records() {
+        let JournalRecord::CommandCommitted(committed) = record.record() else {
+            continue;
+        };
+        if matches!(
+            committed.command(),
+            AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. }
+                if !input.images().is_empty()
+        ) {
+            history = InputImageHistory::ContainsImages;
+            break;
+        }
+    }
+    if history == InputImageHistory::ContainsImages {
+        return history;
+    }
+    let Some(seed_sequence) = recovered.initial_fork_seed() else {
+        return history;
+    };
+    let Some(seed) = recovered
+        .records()
+        .iter()
+        .find_map(|record| {
+            (record.journal_sequence() == Some(seed_sequence)).then(|| match record.record() {
+                JournalRecord::InitialForkSeed(seed) => Some(seed.as_ref()),
+                _ => None,
+            })
+        })
+        .flatten()
+    else {
+        return InputImageHistory::Unknown;
+    };
+    for entry in seed.history() {
+        if let JournalRecord::CommandCommitted(committed) = entry.record().record()
+            && matches!(
+                committed.command(),
+                AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. }
+                    if !input.images().is_empty()
+            )
+        {
+            return InputImageHistory::ContainsImages;
+        }
+    }
+    if matches!(seed.source(), ForkSource::Empty) {
+        InputImageHistory::TextOnly
+    } else {
+        InputImageHistory::Unknown
+    }
+}
+
 pub(crate) fn build_continuation(
     recovered: RecoveredJournal,
     session_id: SessionId,
@@ -636,6 +688,7 @@ pub(crate) fn build_continuation(
         },
     }
     .with_model_replay(model_replay)
+    .with_input_image_history(recovered_input_image_history(&recovered))
     .with_context_state(
         recovered.context_policy().cloned(),
         recovered.context_epoch(),

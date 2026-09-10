@@ -218,7 +218,7 @@ fn display_metadata_is_bounded_without_entering_projection() {
 }
 
 fn uncompressed_rgba_png(width: u32, height: u32) -> Vec<u8> {
-    // Stored DEFLATE blocks encode a real all-transparent image without another image library.
+    // 저장된 DEFLATE block으로 다른 이미지 library 없이 완전 투명한 실제 이미지를 인코딩합니다.
     let raw_len = (width as usize * 4 + 1) * height as usize;
     let mut zlib = vec![0x78, 0x01];
     let mut remaining = raw_len;

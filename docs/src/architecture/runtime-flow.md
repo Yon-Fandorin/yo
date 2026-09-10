@@ -636,6 +636,20 @@ no images remain. Text-only bindings keep their old pressure/checkpoint shapes.
 The accepted contracts are `agent.input.image-attachment`,
 `agent.persistence.format-compatibility` and `agent.backend.yo-managed-model-loop`.
 
+The delegated Codex adapter adds a provider-owned image boundary after this neutral
+admission. It grants image input only when initialization reports the exact reviewed
+`0.153.4` wire version and the same initialized client observes the selected model's
+complete `model/list` row with an explicit `inputModalities` entry containing `image`.
+Missing, malformed, duplicate, incomplete, or unreviewed evidence remains unknown;
+an explicit text-only list is unsupported. The adapter retains whether a binding may
+contain images, so resume, native model rebind, and later text turns cannot bypass the
+same check when inherited history is unknown or contains images. It projects every
+immutable PNG occurrence in order as a padded `data:image/png;base64,...` URL for both
+`turn/start` and `turn/steer`, with no filesystem or upload step. Every outbound Codex
+JSONL envelope is encoded once and checked against the complete 32 MiB boundary before
+any peer write; inbound Codex JSONL uses the same bound while other backend defaults
+remain unchanged.
+
 ### Clipboard acquisition and SSH forwarding
 
 Ctrl+V selects `ImagePreparationSource::Clipboard`; it inserts a ready image at the

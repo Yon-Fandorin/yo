@@ -241,6 +241,9 @@ pub enum BackendFailureKind {
     ProcessExit,
     Turn,
     ContextExhausted,
+    /// The adapter rejected a complete Start/Steer request before dispatch because its
+    /// provider-specific encoded input budget was exceeded.
+    InputOverBudget,
     Cleanup,
 }
 

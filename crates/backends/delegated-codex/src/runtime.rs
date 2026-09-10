@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Map, Value, json};
 use yo_backend::{BackendAdapter, transport::JsonMessagePeer};
 use yo_core::{
@@ -15,8 +16,9 @@ use yo_core::{
     ActivityRequestRef, ActivityResponse, ActivityUpdate, AgentCommand, ApprovalDecision,
     BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
     BackendFailure, BackendFailureKind, BackendIdentity, BackendPoll, BackendRequestEvidence,
-    BackendResumeTarget, BackendStopHandle, ContinuationStrategy, HostId, ModelId, QuestionChoice,
-    RequestId, SessionId, TurnRef,
+    BackendResumeTarget, BackendStopHandle, ContinuationStrategy, HostId, ImageInputCapability,
+    InputImageHistory, ModelId, ModelInputPart, QuestionChoice, RequestId, SessionId, TurnRef,
+    UserInput,
 };
 
 use crate::{
@@ -206,6 +208,10 @@ struct Backend<P> {
     initialized: bool,
     backend_version: Option<String>,
     account: Option<AccountId>,
+    image_wire_supported: bool,
+    image_capability: ImageInputCapability,
+    input_image_history: InputImageHistory,
+    selected_model: Option<String>,
     cwd: String,
     read_only_review: bool,
     model_rebind_target: Option<(AccountId, ModelId)>,
@@ -239,6 +245,10 @@ impl<P: JsonMessagePeer> Backend<P> {
             initialized: false,
             backend_version: None,
             account: None,
+            image_wire_supported: false,
+            image_capability: ImageInputCapability::Unknown,
+            input_image_history: InputImageHistory::TextOnly,
+            selected_model: None,
             cwd,
             read_only_review,
             model_rebind_target,
@@ -265,28 +275,22 @@ impl<P: JsonMessagePeer> Backend<P> {
         BackendCapabilities::none()
             .with_steer()
             .with_native_model_rebind()
+            .with_image_input(self.image_capability)
     }
 
     fn execute_command(
         &mut self,
         command: AgentCommand,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
-        if let AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. } =
-            &command
-            && !input.images().is_empty()
-        {
-            return Err(BackendFailure::new(
-                BackendFailureKind::Unsupported,
-                "Codex image input requires negotiated protocol and selected-model capability",
-            ));
-        }
         match command {
             AgentCommand::CreateSession { session_id } => self.create_session(session_id),
             AgentCommand::StartTurn { turn, input } => {
+                self.validate_direct_input(&input)?;
                 let thread_id = self.thread_id(turn.session_id())?.to_owned();
+                let projected_input = project_input(&input)?;
                 let mut params = json!({
                     "threadId": thread_id,
-                    "input": [{ "type": "text", "text": input.into_model_input() }],
+                    "input": projected_input,
                     "cwd": self.cwd,
                 });
                 self.apply_turn_policy(&mut params);
@@ -301,6 +305,9 @@ impl<P: JsonMessagePeer> Backend<P> {
                         finished: false,
                     },
                 );
+                if !input.images().is_empty() {
+                    self.input_image_history = InputImageHistory::ContainsImages;
+                }
                 Ok(BackendCommandEvidence::RequestAccepted(
                     BackendRequestEvidence::new(
                         "codex.app-server/turn-start/v1",
@@ -310,14 +317,16 @@ impl<P: JsonMessagePeer> Backend<P> {
                 ))
             },
             AgentCommand::SteerTurn { turn, input } => {
+                self.validate_direct_input(&input)?;
                 let thread_id = self.thread_id(turn.session_id())?.to_owned();
                 let turn_id = self.turn_id(turn)?.to_owned();
+                let projected_input = project_input(&input)?;
                 let call = self.client.call(
                     "turn/steer",
                     json!({
                         "threadId": thread_id,
                         "expectedTurnId": &turn_id,
-                        "input": [{ "type": "text", "text": input.into_model_input() }],
+                        "input": projected_input,
                     }),
                 )?;
                 let accepted = protocol::string_at(&call.result, &["turnId"])?;
@@ -325,6 +334,9 @@ impl<P: JsonMessagePeer> Backend<P> {
                     return Err(protocol::protocol_failure(format!(
                         "Codex steer accepted Turn `{accepted}` instead of `{turn_id}`"
                     )));
+                }
+                if !input.images().is_empty() {
+                    self.input_image_history = InputImageHistory::ContainsImages;
                 }
                 Ok(BackendCommandEvidence::RequestAccepted(
                     BackendRequestEvidence::new(
@@ -386,6 +398,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             ));
         }
         let model_provider = protocol::string_at(&result, &["modelProvider"])?;
+        self.selected_model = Some(model.to_owned());
         let backend_version = self.backend_version.clone().ok_or_else(|| {
             protocol::protocol_failure("Codex backend version was not retained after initialize")
         })?;
@@ -399,6 +412,11 @@ impl<P: JsonMessagePeer> Backend<P> {
             yo: session_id,
             codex: thread_id.clone(),
         });
+        if self.image_wire_supported {
+            self.refresh_model_capability(model);
+        } else {
+            self.image_capability = ImageInputCapability::Unknown;
+        }
         Ok(BackendCommandEvidence::BindingOpened(
             BackendBindingEvidence::new(
                 BACKEND_KIND,
@@ -419,6 +437,10 @@ impl<P: JsonMessagePeer> Backend<P> {
                 .call("account/read", json!({ "refreshToken": false }))?
                 .result;
             self.backend_version = Some(initialize.user_agent);
+            self.image_wire_supported = protocol::image_wire_version_supported(
+                self.backend_version.as_deref().unwrap_or_default(),
+            );
+            self.image_capability = ImageInputCapability::Unknown;
             self.account = decode_optional_account(&HostId::codex(), &account_result)?;
             self.initialized = true;
         }
@@ -439,13 +461,27 @@ impl<P: JsonMessagePeer> Backend<P> {
                 "a new-session target cannot be used to resume or fork a Session",
             ));
         }
-        self.resume_binding(target.session_id(), target.binding())
+        self.resume_binding_with_history(
+            target.session_id(),
+            target.binding(),
+            target.input_image_history(),
+        )
     }
 
+    #[cfg(test)]
     fn resume_binding(
         &mut self,
         session_id: SessionId,
         binding: &BackendBindingEvidence,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        self.resume_binding_with_history(session_id, binding, InputImageHistory::TextOnly)
+    }
+
+    fn resume_binding_with_history(
+        &mut self,
+        session_id: SessionId,
+        binding: &BackendBindingEvidence,
+        image_history: InputImageHistory,
     ) -> Result<BackendBindingEvidence, BackendFailure> {
         if binding.backend_kind() != BACKEND_KIND {
             return Err(BackendFailure::new(
@@ -466,7 +502,14 @@ impl<P: JsonMessagePeer> Backend<P> {
         let thread_id = locator.value();
         self.initialize()?;
         self.validate_execution_binding(binding)?;
+        let (expected_model, _) = model_and_provider(binding.model_identity())?;
+        if image_history != InputImageHistory::TextOnly {
+            self.require_image_capability(expected_model.as_str())?;
+        }
         let mut params = json!({ "threadId": thread_id });
+        if image_history != InputImageHistory::TextOnly {
+            params["model"] = json!(expected_model.as_str());
+        }
         self.apply_thread_policy(&mut params);
         let result = self.client.call("thread/resume", params)?.result;
         let resumed_thread = protocol::string_at(&result, &["thread", "id"])?;
@@ -497,11 +540,21 @@ impl<P: JsonMessagePeer> Backend<P> {
                 "Codex resumed a binding whose thread, Session, model, or provider identity differs from the durable Continuation Anchor",
             ));
         }
+        self.selected_model = Some(model.to_owned());
+        if self.image_wire_supported {
+            self.refresh_model_capability(model);
+        } else {
+            self.image_capability = ImageInputCapability::Unknown;
+        }
+        if image_history != InputImageHistory::TextOnly {
+            self.require_image_capability(model)?;
+        }
         self.client.bind_notice_thread(resumed_thread);
         self.session = Some(SessionBinding {
             yo: session_id,
             codex: resumed_thread.to_owned(),
         });
+        self.input_image_history = image_history;
         Ok(evidence)
     }
 
@@ -509,13 +562,27 @@ impl<P: JsonMessagePeer> Backend<P> {
         &mut self,
         target: &BackendResumeTarget,
     ) -> Result<BackendBindingEvidence, BackendFailure> {
-        self.rebind_model(target.session_id(), target.binding())
+        self.rebind_model_with_history(
+            target.session_id(),
+            target.binding(),
+            target.input_image_history(),
+        )
     }
 
+    #[cfg(test)]
     fn rebind_model(
         &mut self,
         session_id: SessionId,
         source: &BackendBindingEvidence,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        self.rebind_model_with_history(session_id, source, InputImageHistory::TextOnly)
+    }
+
+    fn rebind_model_with_history(
+        &mut self,
+        session_id: SessionId,
+        source: &BackendBindingEvidence,
+        image_history: InputImageHistory,
     ) -> Result<BackendBindingEvidence, BackendFailure> {
         if source.backend_kind() != BACKEND_KIND
             || source.continuation_strategy() != ContinuationStrategy::BackendManagedState
@@ -560,6 +627,9 @@ impl<P: JsonMessagePeer> Backend<P> {
                 "Codex native model rebind target is already active",
             ));
         }
+        if image_history != InputImageHistory::TextOnly {
+            self.require_image_capability(requested_model.as_str())?;
+        }
 
         let source_thread = source.session_locator().value();
         let mut params = json!({
@@ -597,12 +667,93 @@ impl<P: JsonMessagePeer> Backend<P> {
             BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
             ContinuationStrategy::BackendManagedState,
         );
+        self.selected_model = Some(model.to_owned());
+        if self.image_wire_supported {
+            self.refresh_model_capability(model);
+        } else {
+            self.image_capability = ImageInputCapability::Unknown;
+        }
+        if image_history != InputImageHistory::TextOnly {
+            self.require_image_capability(model)?;
+        }
         self.client.bind_notice_thread(thread_id);
         self.session = Some(SessionBinding {
             yo: session_id,
             codex: thread_id.to_owned(),
         });
+        self.input_image_history = image_history;
         Ok(evidence)
+    }
+
+    fn validate_direct_input(&mut self, input: &UserInput) -> Result<(), BackendFailure> {
+        if input.images().is_empty() && self.input_image_history == InputImageHistory::TextOnly {
+            return Ok(());
+        }
+        let Some(model) = self.selected_model.clone() else {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "Codex image input has no verified selected model",
+            ));
+        };
+        self.require_image_capability(&model)?;
+        if let ImageInputCapability::Supported {
+            maximum_occurrences,
+            maximum_image_bytes,
+            maximum_input_bytes,
+        } = self.image_capability
+            && (!input.images().is_empty())
+        {
+            let total = input.images().iter().try_fold(0_u64, |total, image| {
+                total.checked_add(image.snapshot().png().len() as u64)
+            });
+            if input.images().len() as u64 > u64::from(maximum_occurrences)
+                || input
+                    .images()
+                    .iter()
+                    .any(|image| image.snapshot().png().len() as u64 > maximum_image_bytes)
+                || total.is_none_or(|total| total > maximum_input_bytes)
+            {
+                return Err(BackendFailure::new(
+                    BackendFailureKind::InputOverBudget,
+                    "Codex image input exceeds the selected model's admitted limits",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn require_image_capability(&mut self, expected_model: &str) -> Result<(), BackendFailure> {
+        if !self.image_wire_supported {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "Codex image input requires the reviewed image-capable protocol build",
+            ));
+        }
+        if self.selected_model.as_deref() != Some(expected_model)
+            || self.image_capability == ImageInputCapability::Unknown
+        {
+            self.selected_model = Some(expected_model.to_owned());
+            self.refresh_model_capability(expected_model);
+        }
+        match self.image_capability {
+            ImageInputCapability::Supported { .. } => Ok(()),
+            ImageInputCapability::Unsupported => Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "the selected Codex model does not advertise image input",
+            )),
+            ImageInputCapability::Unknown => Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "Codex image capability could not be established for the selected model",
+            )),
+        }
+    }
+
+    fn refresh_model_capability(&mut self, model: &str) {
+        self.image_capability = crate::observation::observe_model_capability(
+            &mut self.client,
+            model,
+            self.image_wire_supported,
+        );
     }
 
     fn apply_thread_policy(&self, params: &mut Value) {
@@ -1115,4 +1266,27 @@ fn accepted_request_identity(request_id: u64, turn_id: &str) -> BackendIdentity 
         "codex.app-server/accepted-request/v1",
         json!({ "jsonRpcId": request_id, "turnId": turn_id }).to_string(),
     )
+}
+
+fn project_input(input: &UserInput) -> Result<Vec<Value>, BackendFailure> {
+    if input.images().is_empty() {
+        return Ok(vec![json!({
+            "type": "text",
+            "text": input.model_input(),
+        })]);
+    }
+    let parts = input.model_parts();
+    ModelInputPart::validate_user_parts(&parts).map_err(|detail| {
+        protocol::protocol_failure(format!("invalid Codex image input: {detail}"))
+    })?;
+    Ok(parts
+        .into_iter()
+        .map(|part| match part {
+            ModelInputPart::Text { text } => json!({ "type": "text", "text": text }),
+            ModelInputPart::Image { snapshot } => json!({
+                "type": "image",
+                "url": format!("data:image/png;base64,{}", STANDARD.encode(snapshot.png())),
+            }),
+        })
+        .collect())
 }

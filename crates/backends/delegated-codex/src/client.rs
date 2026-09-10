@@ -1,4 +1,8 @@
-use std::time::{Duration, Instant};
+use std::{
+    io,
+    io::Write,
+    time::{Duration, Instant},
+};
 
 use serde_json::{Value, json};
 use yo_backend::transport::{JsonMessagePeer, JsonRpcMailbox};
@@ -9,6 +13,9 @@ use super::{
     protocol::{self, CodexWarning, Incoming},
     transport::PeerPoll,
 };
+
+/// Codex app-server accepts one complete JSONL message up to this encoded byte boundary.
+pub(super) const MAX_OUTBOUND_JSONL_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 
 pub(super) enum ClientPoll {
     Pending,
@@ -99,7 +106,10 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
         ) {
             observer(warning.clone());
         }
-        self.peer.send(&protocol::initialized_notification())?;
+        self.send_bounded(
+            &protocol::initialized_notification(),
+            BackendFailureKind::Protocol,
+        )?;
         Ok(initialize)
     }
 
@@ -109,7 +119,12 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
         params: Value,
     ) -> Result<CallResult, BackendFailure> {
         let id = self.mailbox.next_request_id()?;
-        self.peer.send(&protocol::request(id, method, params))?;
+        let overflow_kind = if matches!(method, "turn/start" | "turn/steer") {
+            BackendFailureKind::InputOverBudget
+        } else {
+            BackendFailureKind::Protocol
+        };
+        self.send_bounded(&protocol::request(id, method, params), overflow_kind)?;
         let deadline = Instant::now() + self.request_timeout;
 
         loop {
@@ -169,7 +184,10 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
     }
 
     pub(super) fn respond(&mut self, id: Value, result: Value) -> Result<(), BackendFailure> {
-        self.peer.send(&protocol::server_response(id, result))
+        self.send_bounded(
+            &protocol::server_response(id, result),
+            BackendFailureKind::Protocol,
+        )
     }
 
     pub(super) fn reject(
@@ -178,7 +196,10 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
         code: i64,
         message: &str,
     ) -> Result<(), BackendFailure> {
-        self.peer.send(&protocol::server_error(id, code, message))
+        self.send_bounded(
+            &protocol::server_error(id, code, message),
+            BackendFailureKind::Protocol,
+        )
     }
 
     pub(super) fn poll(&mut self) -> Result<ClientPoll, BackendFailure> {
@@ -211,6 +232,78 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
     pub(super) fn shutdown(&mut self) -> Result<(), BackendFailure> {
         self.peer.shutdown()
     }
+
+    fn send_bounded(
+        &mut self,
+        message: &Value,
+        overflow_kind: BackendFailureKind,
+    ) -> Result<(), BackendFailure> {
+        let mut writer = BoundedJsonWriter::new(MAX_OUTBOUND_JSONL_MESSAGE_BYTES);
+        if let Err(error) = serde_json::to_writer(&mut writer, message) {
+            if writer.overflowed {
+                return Err(BackendFailure::new(
+                    overflow_kind,
+                    format!(
+                        "Codex app-server JSONL message exceeds the {}-byte limit",
+                        MAX_OUTBOUND_JSONL_MESSAGE_BYTES
+                    ),
+                ));
+            }
+            return Err(BackendFailure::new(
+                BackendFailureKind::Protocol,
+                format!("failed to encode Codex app-server JSONL message: {error}"),
+            ));
+        }
+        let encoded = writer.into_bytes();
+        self.peer.send_encoded(&encoded)
+    }
+}
+
+struct BoundedJsonWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+    overflowed: bool,
+}
+
+impl BoundedJsonWriter {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::with_capacity(limit.min(4096)),
+            limit,
+            overflowed: false,
+        }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+impl Write for BoundedJsonWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let Some(end) = self.bytes.len().checked_add(bytes.len()) else {
+            self.overflowed = true;
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "bounded JSONL writer length overflow",
+            ));
+        };
+        if end > self.limit {
+            let remaining = self.limit.saturating_sub(self.bytes.len());
+            self.bytes.extend_from_slice(&bytes[..remaining]);
+            self.overflowed = true;
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "bounded JSONL message exceeds its limit",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn failure_kind_for(method: &str) -> BackendFailureKind {
@@ -221,3 +314,6 @@ fn failure_kind_for(method: &str) -> BackendFailureKind {
         _ => BackendFailureKind::Protocol,
     }
 }
+
+#[cfg(test)]
+mod tests;

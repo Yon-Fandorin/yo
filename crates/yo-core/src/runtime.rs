@@ -14,8 +14,9 @@ use crate::{
     AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendBindingEvidence,
     BackendCommandEvidence, BackendEvent, BackendFailureKind, BackendPoll, BackendResumeSource,
     BackendResumeTarget, ContextPolicyChanged, ContinuationStrategy, Failure, ImageInputCapability,
-    InputAdmissionConfigurationError, InputAdmissionHost, JournalSequence, ModelReplay, SessionId,
-    SubmissionId, SubmissionRejection, SubmissionRejectionKind, TurnOutcome, TurnRef,
+    InputAdmissionConfigurationError, InputAdmissionHost, InputImageHistory, JournalSequence,
+    ModelReplay, SessionId, SubmissionId, SubmissionRejection, SubmissionRejectionKind,
+    TurnOutcome, TurnRef,
     journal::{ContextActiveSource, SessionJournal},
 };
 
@@ -44,6 +45,7 @@ pub struct AgentRuntime<B> {
     continuation_strategy: Option<ContinuationStrategy>,
     model_replay: ModelReplay,
     replay_contract_rebind_required: bool,
+    input_image_history: InputImageHistory,
     resume_source: Option<BackendResumeSource>,
     binding_has_accepted_request: bool,
     binding_has_unanchored_request: bool,
@@ -76,6 +78,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             continuation_strategy: None,
             model_replay: ModelReplay::default(),
             replay_contract_rebind_required: false,
+            input_image_history: InputImageHistory::TextOnly,
             resume_source: None,
             binding_has_accepted_request: false,
             binding_has_unanchored_request: false,
@@ -220,6 +223,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.continuation_strategy = Some(target.binding().continuation_strategy());
         self.model_replay = target.model_replay().clone();
         self.replay_contract_rebind_required = target.replay_contract_rebind_required();
+        self.input_image_history = target.input_image_history();
         self.resume_source = target.source();
         self.binding_has_accepted_request = target.binding_has_accepted_request();
         self.binding_has_unanchored_request = false;
@@ -339,11 +343,17 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 "Activity responses cannot contain images or resolved skill instructions",
             )));
         }
+        let historical_image_guard = matches!(
+            self.continuation_strategy,
+            Some(ContinuationStrategy::BackendManagedState)
+        ) && self.input_image_history != InputImageHistory::TextOnly;
         if let AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. } =
             &mut command
-            && (!input.references().is_empty() || !input.images().is_empty())
+            && (!input.references().is_empty()
+                || !input.images().is_empty()
+                || historical_image_guard)
         {
-            if !input.images().is_empty() {
+            if !input.images().is_empty() || historical_image_guard {
                 match self.backend.capabilities().image_input() {
                     ImageInputCapability::Unknown => {
                         return Err(RuntimeError::InputRejected(SubmissionRejection::new(
@@ -379,43 +389,57 @@ impl<B: AgentBackend> AgentRuntime<B> {
                     },
                 }
             }
-            let host = self.input_admission.get().ok_or_else(|| {
-                RuntimeError::InputRejected(SubmissionRejection::new(
-                    SubmissionRejectionKind::EnvironmentUnavailable,
-                    "the Session has no execution host for structured input admission",
-                ))
-            })?;
-            if input.resolved_skill().is_some() {
-                return Err(RuntimeError::InputRejected(SubmissionRejection::new(
-                    SubmissionRejectionKind::InvalidReference,
-                    "live input cannot supply pre-resolved skill instructions",
-                )));
-            }
-            host.validate_images(input)
-                .map_err(RuntimeError::InputRejected)?;
-            let resolved = host.prepare(input).map_err(RuntimeError::InputRejected)?;
-            if let Some(skill) = resolved {
-                *input = input.clone().with_resolved_skill(skill).map_err(|error| {
+            if !input.references().is_empty() || !input.images().is_empty() {
+                let host = self.input_admission.get().ok_or_else(|| {
                     RuntimeError::InputRejected(SubmissionRejection::new(
-                        SubmissionRejectionKind::InvalidReference,
-                        error.to_string(),
+                        SubmissionRejectionKind::EnvironmentUnavailable,
+                        "the Session has no execution host for structured input admission",
                     ))
                 })?;
-            } else if input
-                .references()
-                .iter()
-                .any(|reference| reference.skill_reference().is_some())
-            {
-                return Err(RuntimeError::InputRejected(SubmissionRejection::new(
-                    SubmissionRejectionKind::RequiredAssetUnavailable,
-                    "the execution host did not resolve the selected skill",
-                )));
+                if input.resolved_skill().is_some() {
+                    return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                        SubmissionRejectionKind::InvalidReference,
+                        "live input cannot supply pre-resolved skill instructions",
+                    )));
+                }
+                host.validate_images(input)
+                    .map_err(RuntimeError::InputRejected)?;
+                let resolved = host.prepare(input).map_err(RuntimeError::InputRejected)?;
+                if let Some(skill) = resolved {
+                    *input = input.clone().with_resolved_skill(skill).map_err(|error| {
+                        RuntimeError::InputRejected(SubmissionRejection::new(
+                            SubmissionRejectionKind::InvalidReference,
+                            error.to_string(),
+                        ))
+                    })?;
+                } else if input
+                    .references()
+                    .iter()
+                    .any(|reference| reference.skill_reference().is_some())
+                {
+                    return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                        SubmissionRejectionKind::RequiredAssetUnavailable,
+                        "the execution host did not resolve the selected skill",
+                    )));
+                }
             }
         }
-        let evidence = self
-            .backend
-            .execute_command(command.clone())
-            .map_err(RuntimeError::backend)?;
+        let turn_submission = matches!(
+            command,
+            AgentCommand::StartTurn { .. } | AgentCommand::SteerTurn { .. }
+        );
+        let evidence = match self.backend.execute_command(command.clone()) {
+            Err(failure)
+                if turn_submission && failure.kind() == BackendFailureKind::InputOverBudget =>
+            {
+                return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                    SubmissionRejectionKind::OverBudget,
+                    failure.message(),
+                )));
+            },
+            Err(failure) => return Err(RuntimeError::backend(failure)),
+            Ok(evidence) => evidence,
+        };
         if let Err(error) = self.validate_command_evidence(&command, submission_id, &evidence) {
             if submission_id.is_some() {
                 let turn = submission_turn(&command);
@@ -432,6 +456,11 @@ impl<B: AgentBackend> AgentRuntime<B> {
             AgentCommand::StartTurn { turn, input } => Some((*turn, input.model_replay_item())),
             _ => None,
         };
+        let commits_image_input = matches!(
+            &committed,
+            AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. }
+                if !input.images().is_empty()
+        );
         let events = self
             .engine
             .commit_command(command, supports_steer)
@@ -468,6 +497,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             },
             (None, BackendCommandEvidence::BindingOpened(evidence)) => {
                 let epoch = 1;
+                self.input_image_history = InputImageHistory::TextOnly;
                 self.binding = Some(evidence.clone());
                 self.continuation_strategy = Some(evidence.continuation_strategy());
                 self.journal
@@ -484,6 +514,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
         if starts_idle_context_compaction {
             self.idle_context_compaction_pending = true;
             self.idle_context_checkpoint_committed = false;
+        }
+        if commits_image_input {
+            self.input_image_history = InputImageHistory::ContainsImages;
         }
         if let Some((turn, item)) = active_input {
             self.active_context_source = Some(ContextActiveSource::new(
@@ -969,6 +1002,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                     },
                 }
                 .with_model_replay(self.model_replay.clone())
+                .with_input_image_history(self.input_image_history)
                 .with_context_state(
                     self.context_policy.clone(),
                     self.context_epoch,
@@ -1056,6 +1090,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                     binding.clone(),
                     source_anchor,
                 );
+                let target = target.with_input_image_history(self.input_image_history);
                 let evidence = candidate
                     .resume_session_rebinding_model(&target)
                     .map_err(RuntimeError::backend)

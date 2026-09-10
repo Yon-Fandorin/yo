@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 use super::super::*;
 use crate::{
     BackendCapabilities, BackendIdentity, BackendOutcomeEvidence, BackendRequestEvidence,
-    BackendScriptStep, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend, TurnId,
-    UserInput,
+    BackendScriptStep, InputImageHistory, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+    ModelReplayRole, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
+    TurnId, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, SessionWriterRepository,
@@ -163,7 +163,8 @@ fn native_model_rebind_allows_a_source_free_unused_binding() {
         },
         BackendScriptStep::Shutdown(Ok(())),
     ]);
-    let target = BackendResumeTarget::for_model_rebind(session_id, 1, source, None);
+    let target = BackendResumeTarget::for_model_rebind(session_id, 1, source, None)
+        .with_input_image_history(InputImageHistory::TextOnly);
     let candidate = ScriptedBackend::new([
         BackendScriptStep::RebindModel {
             target: Box::new(target),
@@ -260,7 +261,8 @@ fn native_model_rebind_uses_the_newest_source_anchor_after_model_work() {
     let Some(BackendResumeSource::ContinuationAnchor(anchor)) = runtime.resume_source else {
         panic!("completed backend-managed work has a continuation Anchor");
     };
-    let target = BackendResumeTarget::for_model_rebind(session_id, 1, source, Some(anchor));
+    let target = BackendResumeTarget::for_model_rebind(session_id, 1, source, Some(anchor))
+        .with_input_image_history(InputImageHistory::TextOnly);
     let candidate = ScriptedBackend::new([
         BackendScriptStep::RebindModel {
             target: Box::new(target),

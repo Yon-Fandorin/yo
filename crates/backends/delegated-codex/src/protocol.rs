@@ -147,8 +147,24 @@ impl fmt::Display for CodexWarning {
 
 #[derive(Debug)]
 pub(super) struct ModelListPage {
-    pub(super) models: Vec<(String, String, bool)>,
+    pub(super) models: Vec<ModelListModel>,
     pub(super) next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ModelListModel {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) hidden: bool,
+    pub(super) is_default: bool,
+    pub(super) image_modality: ModelImageModality,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ModelImageModality {
+    Missing,
+    Invalid,
+    Explicit { image: bool },
 }
 
 #[derive(Deserialize)]
@@ -380,9 +396,6 @@ pub(super) fn decode_model_list(result: Value) -> Result<ModelListPage, BackendF
         .ok_or_else(|| protocol_failure("invalid Codex model/list response: missing `data`"))?;
     let mut models = Vec::new();
     for entry in data {
-        if entry.get("hidden").and_then(Value::as_bool) == Some(true) {
-            continue;
-        }
         let id = entry.get("model").and_then(Value::as_str).ok_or_else(|| {
             protocol_failure("invalid Codex model/list response: model has no `model`")
         })?;
@@ -395,14 +408,40 @@ pub(super) fn decode_model_list(result: Value) -> Result<ModelListPage, BackendF
                 "invalid Codex model/list response: invalid model id or display name",
             ));
         }
-        models.push((
-            id.to_owned(),
-            label.to_owned(),
-            entry
+        let image_modality = match entry.get("inputModalities") {
+            None => ModelImageModality::Missing,
+            Some(Value::Array(values)) => {
+                let mut text = false;
+                let mut image = false;
+                let mut valid = true;
+                for value in values {
+                    match value.as_str() {
+                        Some("text") if !text => text = true,
+                        Some("image") if !image => image = true,
+                        _ => valid = false,
+                    }
+                }
+                if valid {
+                    ModelImageModality::Explicit { image }
+                } else {
+                    ModelImageModality::Invalid
+                }
+            },
+            Some(_) => ModelImageModality::Invalid,
+        };
+        models.push(ModelListModel {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            hidden: entry
+                .get("hidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            is_default: entry
                 .get("isDefault")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
-        ));
+            image_modality,
+        });
     }
     let next_cursor = match result.get("nextCursor") {
         None | Some(Value::Null) => None,
@@ -505,6 +544,14 @@ fn version_compatibility_warning(
         notice: None,
         thread_id: None,
     }))
+}
+
+/// Returns true only for the exact reviewed image-capable Codex wire build.
+pub(super) fn image_wire_version_supported(user_agent: &str) -> bool {
+    user_agent
+        .split_whitespace()
+        .find_map(|part| part.split_once('/').map(|(_, version)| version))
+        == Some("0.153.4")
 }
 
 fn safe_user_agent(user_agent: &str) -> String {

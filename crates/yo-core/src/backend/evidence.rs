@@ -10,6 +10,18 @@ pub(crate) use yo_backend::{
 
 use crate::{ContextPolicyChanged, JournalSequence, SessionId};
 
+/// Durable evidence about whether a resumed backend binding may contain image input.
+///
+/// `Unknown` is deliberately conservative: a displayed transcript or model replay is not enough
+/// to prove that an inherited backend archive was text-only.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum InputImageHistory {
+    #[default]
+    Unknown,
+    TextOnly,
+    ContainsImages,
+}
+
 /// Durable Yo coordinates required to reconnect one existing backend binding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackendResumeSource {
@@ -41,6 +53,7 @@ pub struct BackendResumeTarget {
     context_epoch: Option<u64>,
     replay_contract_rebind_required: bool,
     binding_has_accepted_request: bool,
+    input_image_history: InputImageHistory,
     source: Option<BackendResumeSource>,
 }
 
@@ -61,6 +74,7 @@ impl BackendResumeTarget {
             context_epoch: None,
             replay_contract_rebind_required: false,
             binding_has_accepted_request: true,
+            input_image_history: InputImageHistory::Unknown,
             source: Some(BackendResumeSource::ContinuationAnchor(
                 source_anchor_sequence,
             )),
@@ -83,6 +97,7 @@ impl BackendResumeTarget {
             context_epoch: None,
             replay_contract_rebind_required: false,
             binding_has_accepted_request: true,
+            input_image_history: InputImageHistory::Unknown,
             source: Some(BackendResumeSource::ContextCheckpoint(
                 source_checkpoint_sequence,
             )),
@@ -105,6 +120,7 @@ impl BackendResumeTarget {
             context_epoch: None,
             replay_contract_rebind_required: false,
             binding_has_accepted_request: false,
+            input_image_history: InputImageHistory::Unknown,
             source: Some(BackendResumeSource::InitialFork(
                 source_initial_fork_sequence,
             )),
@@ -127,6 +143,7 @@ impl BackendResumeTarget {
             context_epoch: None,
             replay_contract_rebind_required: false,
             binding_has_accepted_request: false,
+            input_image_history: InputImageHistory::Unknown,
             source: source_anchor_sequence.map(BackendResumeSource::ContinuationAnchor),
         }
     }
@@ -172,6 +189,11 @@ impl BackendResumeTarget {
 
     pub(crate) const fn binding_has_accepted_request(&self) -> bool {
         self.binding_has_accepted_request
+    }
+
+    #[must_use]
+    pub const fn input_image_history(&self) -> InputImageHistory {
+        self.input_image_history
     }
 
     #[must_use]
@@ -237,6 +259,11 @@ impl BackendResumeTarget {
 
     pub(crate) const fn with_binding_has_accepted_request(mut self, accepted: bool) -> Self {
         self.binding_has_accepted_request = accepted;
+        self
+    }
+
+    pub(crate) const fn with_input_image_history(mut self, history: InputImageHistory) -> Self {
+        self.input_image_history = history;
         self
     }
 }

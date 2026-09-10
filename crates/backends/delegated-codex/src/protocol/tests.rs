@@ -46,6 +46,17 @@ fn rejects_a_different_or_unparseable_protocol_major() {
     assert!(failure.message().contains("unparseable version"));
 }
 
+// 이미지 wire 계약은 호환 major 경고와 분리해 정확히 검토된 patch 하나만 허용합니다.
+#[test]
+fn grants_image_wire_policy_only_to_the_exact_reviewed_patch() {
+    assert!(image_wire_version_supported("codex_cli_rs/0.153.4 (Linux)"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.153.4-alpha"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.153.4.1"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.154.0"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.153"));
+    assert!(!image_wire_version_supported("codex_cli_rs/unknown"));
+}
+
 // warning과 version failure가 제어문자와 과도한 길이를 포함해도 bounded 한 줄 안전 출력인지
 // 확인합니다.
 #[test]
@@ -93,8 +104,8 @@ fn distinguishes_server_requests_from_notifications() {
     ));
 }
 
-// model/list는 host가 숨긴 항목을 다시 노출하지 않고 exact model ID, display label,
-// default marker와 pagination cursor를 함께 보존합니다.
+// model/list row는 hidden 표시와 exact model ID, display label, default marker와 pagination
+// cursor를 함께 보존하고, catalog owner가 기존 hidden filtering을 적용할 수 있게 합니다.
 #[test]
 fn decodes_only_visible_codex_models_with_default_and_cursor() {
     let page = decode_model_list(json!({
@@ -108,9 +119,61 @@ fn decodes_only_visible_codex_models_with_default_and_cursor() {
 
     assert_eq!(
         page.models,
-        vec![("gpt-5.6-codex".to_owned(), "GPT-5.6 Codex".to_owned(), true)]
+        vec![
+            ModelListModel {
+                id: "gpt-5.6-codex".to_owned(),
+                label: "GPT-5.6 Codex".to_owned(),
+                hidden: false,
+                is_default: true,
+                image_modality: ModelImageModality::Missing,
+            },
+            ModelListModel {
+                id: "internal".to_owned(),
+                label: "Internal".to_owned(),
+                hidden: true,
+                is_default: false,
+                image_modality: ModelImageModality::Missing,
+            }
+        ]
     );
     assert_eq!(page.next_cursor.as_deref(), Some("page-2"));
+}
+
+// inputModalities의 누락, null, unknown enum, 중복 값은 catalog 표시와 분리된 불확실성으로
+// 보존하여 exact model capability가 추정으로 Supported 되지 않게 합니다.
+#[test]
+fn preserves_typed_image_modality_evidence_without_guessing() {
+    let page = decode_model_list(json!({
+        "data": [
+            {"model": "missing", "inputModalities": null},
+            {"model": "text-only", "inputModalities": ["text"]},
+            {"model": "image", "inputModalities": ["text", "image"]},
+            {"model": "unknown", "inputModalities": ["text", "audio"]},
+            {"model": "duplicate", "inputModalities": ["image", "image"]}
+        ]
+    }))
+    .unwrap();
+
+    assert_eq!(page.models[0].image_modality, ModelImageModality::Invalid);
+    assert_eq!(
+        page.models[1].image_modality,
+        ModelImageModality::Explicit { image: false }
+    );
+    assert_eq!(
+        page.models[2].image_modality,
+        ModelImageModality::Explicit { image: true }
+    );
+    assert_eq!(page.models[3].image_modality, ModelImageModality::Invalid);
+    assert_eq!(page.models[4].image_modality, ModelImageModality::Invalid);
+
+    let missing = decode_model_list(json!({
+        "data": [{"model": "absent"}]
+    }))
+    .unwrap();
+    assert_eq!(
+        missing.models[0].image_modality,
+        ModelImageModality::Missing
+    );
 }
 
 // account section은 verified email을 사람이 보는 label로 사용하고 native id가 있으면

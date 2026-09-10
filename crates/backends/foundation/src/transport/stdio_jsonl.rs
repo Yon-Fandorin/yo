@@ -110,6 +110,18 @@ pub enum JsonlPoll {
 pub trait JsonMessagePeer {
     fn stop_handle(&self) -> BackendStopHandle;
     fn send(&mut self, message: &Value) -> Result<(), BackendFailure>;
+    /// Sends one already encoded JSON value. Implementations backed by a byte stream should
+    /// write these bytes directly so callers can enforce one complete-message boundary without
+    /// serializing the envelope a second time.
+    fn send_encoded(&mut self, encoded: &[u8]) -> Result<(), BackendFailure> {
+        let message: Value = serde_json::from_slice(encoded).map_err(|error| {
+            BackendFailure::new(
+                BackendFailureKind::Protocol,
+                format!("failed to validate encoded JSONL message: {error}"),
+            )
+        })?;
+        self.send(&message)
+    }
     fn receive(&mut self, timeout: Duration) -> Result<JsonlPoll, BackendFailure>;
     fn try_receive(&mut self) -> Result<JsonlPoll, BackendFailure>;
     fn shutdown(&mut self) -> Result<(), BackendFailure>;
@@ -264,20 +276,26 @@ impl StdioJsonlPeer {
     }
 
     pub fn send(&mut self, message: &Value) -> Result<(), BackendFailure> {
+        let encoded = serde_json::to_vec(message).map_err(|error| {
+            BackendFailure::new(
+                BackendFailureKind::Protocol,
+                format!("failed to encode {} request: {error}", self.process_name),
+            )
+        })?;
+        self.send_encoded(&encoded)
+    }
+
+    pub fn send_encoded(&mut self, encoded: &[u8]) -> Result<(), BackendFailure> {
         let stdin = self.stdin.as_mut().ok_or_else(|| {
             BackendFailure::new(
                 BackendFailureKind::ProcessExit,
                 format!("{} stdin is closed", self.process_name),
             )
         })?;
-        let mut line = serde_json::to_vec(message).map_err(|error| {
-            BackendFailure::new(
-                BackendFailureKind::Protocol,
-                format!("failed to encode {} request: {error}", self.process_name),
-            )
-        })?;
-        line.push(b'\n');
-        let write_result = stdin.write_all(&line).and_then(|()| stdin.flush());
+        let write_result = stdin
+            .write_all(encoded)
+            .and_then(|()| stdin.write_all(b"\n"))
+            .and_then(|()| stdin.flush());
         write_result.map_err(|error| {
             self.with_failure_diagnostic(BackendFailure::new(
                 BackendFailureKind::ProcessExit,
@@ -442,6 +460,10 @@ impl JsonMessagePeer for StdioJsonlPeer {
 
     fn send(&mut self, message: &Value) -> Result<(), BackendFailure> {
         Self::send(self, message)
+    }
+
+    fn send_encoded(&mut self, encoded: &[u8]) -> Result<(), BackendFailure> {
+        Self::send_encoded(self, encoded)
     }
 
     fn receive(&mut self, timeout: Duration) -> Result<JsonlPoll, BackendFailure> {

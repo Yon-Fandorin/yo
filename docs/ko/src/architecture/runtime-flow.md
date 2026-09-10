@@ -568,6 +568,18 @@ accounting과 정확한 로컬 이미지 손실 출처를 기록하며, 남겨�
 pressure/checkpoint 형식을 유지한다. 승인된 계약은 `agent.input.image-attachment`,
 `agent.persistence.format-compatibility`, `agent.backend.yo-managed-model-loop`다.
 
+위임 Codex adapter는 이 중립 admission 뒤에 provider 소유 이미지 경계를 둔다.
+초기화가 정확히 검토된 `0.153.4` wire version을 보고하고, 같은 initialized client가
+선택한 model의 완전한 `model/list` row에서 `image`를 포함한 명시적
+`inputModalities`를 관찰했을 때만 image input을 허용한다. 누락·잘못된 형식·중복·불완전
+catalog나 검토되지 않은 wire는 Unknown으로 남기며, text-only 명시 목록은 Unsupported다.
+adapter는 binding이 image를 포함할 수 있는지 보존하므로 resume, native model rebind와
+이후 text Turn도 inherited history가 Unknown이거나 image를 포함하면 같은 검사를 우회하지
+않는다. 불변 PNG occurrence는 `turn/start`와 `turn/steer` 모두 순서대로 padded
+`data:image/png;base64,...` URL로 투영하며 filesystem이나 upload 단계는 없다. 모든 Codex
+outbound JSONL envelope는 한 번만 encode하고 peer에 쓰기 전에 완전한 32 MiB 경계를 검사한다.
+inbound Codex JSONL도 같은 경계를 사용하며 다른 backend 기본 한도는 바꾸지 않는다.
+
 ### 클립보드 획득과 SSH 전달
 
 Ctrl+V는 `ImagePreparationSource::Clipboard`를 선택하고, 초안을 제출하지 않은 채

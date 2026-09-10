@@ -5,7 +5,8 @@ use std::collections::HashSet;
 use serde_json::{Value, json};
 use yo_backend::transport::JsonMessagePeer;
 use yo_core::{
-    AccountCapacitySnapshot, AccountId, BackendFailure, HostId, ModelId, derive_host_account_id,
+    AccountCapacitySnapshot, AccountId, BackendFailure, HostId, ImageInputCapability,
+    InputImageSnapshot, ModelId, derive_host_account_id,
 };
 
 use crate::{
@@ -126,9 +127,6 @@ fn observe_account_capacity<P: JsonMessagePeer>(
 fn observe_model_catalog<P: JsonMessagePeer>(
     client: &mut AppServerClient<P>,
 ) -> Result<yo_core::HostModelCatalog, BackendFailure> {
-    const PAGE_LIMIT: u64 = 100;
-    const MAX_MODELS: usize = 4096;
-
     client.initialize()?;
     let account_result = client
         .call("account/read", json!({ "refreshToken": false }))?
@@ -136,46 +134,23 @@ fn observe_model_catalog<P: JsonMessagePeer>(
     let host = HostId::codex();
     let (account_label, account) = decode_account(&host, &account_result)?;
 
-    let mut cursor = None::<String>;
-    let mut seen_cursors = HashSet::new();
-    let mut seen_models = HashSet::new();
+    let rows = observe_model_rows(client, false)?;
+    let mut current = None;
     let mut models = Vec::new();
     let mut ids = Vec::new();
-    let mut current = None;
-    loop {
-        let mut params = json!({ "limit": PAGE_LIMIT, "includeHidden": false });
-        if let Some(cursor) = cursor.as_ref() {
-            params["cursor"] = Value::String(cursor.clone());
-        }
-        let page = protocol::decode_model_list(client.call("model/list", params)?.result)?;
-        for (id, label, is_default) in page.models {
-            if models.len() == MAX_MODELS || !seen_models.insert(id.clone()) {
-                return Err(protocol::protocol_failure(
-                    "Codex model/list exceeded the model bound or repeated a model id",
-                ));
-            }
-            let id =
-                ModelId::new(id).map_err(|error| protocol::protocol_failure(error.to_string()))?;
-            if is_default && current.replace(id.clone()).is_some() {
-                return Err(protocol::protocol_failure(
-                    "Codex model/list advertised more than one default model",
-                ));
-            }
-            ids.push(id.clone());
-            models.push(
-                yo_core::HostCatalogModel::selectable(id, label)
-                    .map_err(|error| protocol::protocol_failure(error.to_string()))?,
-            );
-        }
-        let Some(next) = page.next_cursor else {
-            break;
-        };
-        if !seen_cursors.insert(next.clone()) {
+    for row in rows.into_iter().filter(|row| !row.hidden) {
+        let id =
+            ModelId::new(row.id).map_err(|error| protocol::protocol_failure(error.to_string()))?;
+        if row.is_default && current.replace(id.clone()).is_some() {
             return Err(protocol::protocol_failure(
-                "Codex model/list repeated a pagination cursor",
+                "Codex model/list advertised more than one default model",
             ));
         }
-        cursor = Some(next);
+        ids.push(id.clone());
+        models.push(
+            yo_core::HostCatalogModel::selectable(id, row.label)
+                .map_err(|error| protocol::protocol_failure(error.to_string()))?,
+        );
     }
     let revision = yo_core::derive_host_catalog_revision(&host, &account, current.as_ref(), &ids);
     yo_core::HostModelCatalog::new(
@@ -188,6 +163,106 @@ fn observe_model_catalog<P: JsonMessagePeer>(
         models,
     )
     .map_err(|error| protocol::protocol_failure(error.to_string()))
+}
+
+const MODEL_LIST_PAGE_LIMIT: u64 = 100;
+const MAX_MODEL_LIST_MODELS: usize = 4096;
+const MAX_MODEL_LIST_PAGES: usize = 64;
+
+fn observe_model_rows<P: JsonMessagePeer>(
+    client: &mut AppServerClient<P>,
+    include_hidden: bool,
+) -> Result<Vec<protocol::ModelListModel>, BackendFailure> {
+    let mut cursor = None::<String>;
+    let mut seen_cursors = HashSet::new();
+    let mut seen_models = HashSet::new();
+    let mut rows = Vec::new();
+    for _ in 0..MAX_MODEL_LIST_PAGES {
+        let mut params = json!({
+            "limit": MODEL_LIST_PAGE_LIMIT,
+            "includeHidden": include_hidden,
+        });
+        if let Some(cursor) = cursor.as_ref() {
+            params["cursor"] = Value::String(cursor.clone());
+        }
+        let result = client.call("model/list", params)?.result;
+        if result
+            .get("data")
+            .and_then(Value::as_array)
+            .is_some_and(|rows| rows.len() > MODEL_LIST_PAGE_LIMIT as usize)
+        {
+            return Err(protocol::protocol_failure(
+                "Codex model/list exceeded the per-page model bound",
+            ));
+        }
+        let page = protocol::decode_model_list(result)?;
+        if page.models.len() > MODEL_LIST_PAGE_LIMIT as usize {
+            return Err(protocol::protocol_failure(
+                "Codex model/list exceeded the per-page model bound",
+            ));
+        }
+        if rows
+            .len()
+            .checked_add(page.models.len())
+            .is_none_or(|count| count > MAX_MODEL_LIST_MODELS)
+        {
+            return Err(protocol::protocol_failure(
+                "Codex model/list exceeded the model bound",
+            ));
+        }
+        for row in page.models {
+            if !seen_models.insert(row.id.clone()) {
+                return Err(protocol::protocol_failure(
+                    "Codex model/list repeated a model id",
+                ));
+            }
+            rows.push(row);
+        }
+        let Some(next) = page.next_cursor else {
+            return Ok(rows);
+        };
+        if !seen_cursors.insert(next.clone()) {
+            return Err(protocol::protocol_failure(
+                "Codex model/list repeated a pagination cursor",
+            ));
+        }
+        cursor = Some(next);
+    }
+    Err(protocol::protocol_failure(
+        "Codex model/list exceeded the pagination bound",
+    ))
+}
+
+/// Observes one exact selected model on the initialized client's complete model catalog.
+/// Catalog uncertainty is returned to the caller so text-only use can remain available while
+/// image admission fails closed.
+pub(super) fn observe_model_capability<P: JsonMessagePeer>(
+    client: &mut AppServerClient<P>,
+    expected_model: &str,
+    image_wire_supported: bool,
+) -> ImageInputCapability {
+    let Ok(rows) = observe_model_rows(client, true) else {
+        return ImageInputCapability::Unknown;
+    };
+    let Some(row) = rows.into_iter().find(|row| row.id == expected_model) else {
+        return ImageInputCapability::Unknown;
+    };
+    match row.image_modality {
+        protocol::ModelImageModality::Explicit { image: false } => {
+            ImageInputCapability::Unsupported
+        },
+        protocol::ModelImageModality::Explicit { image: true } if image_wire_supported => {
+            ImageInputCapability::Supported {
+                maximum_occurrences: 16,
+                maximum_image_bytes: InputImageSnapshot::MAX_BYTES as u64,
+                maximum_input_bytes: InputImageSnapshot::MAX_BYTES as u64,
+            }
+        },
+        protocol::ModelImageModality::Explicit { image: true } => ImageInputCapability::Unknown,
+        protocol::ModelImageModality::Missing | protocol::ModelImageModality::Invalid => {
+            ImageInputCapability::Unknown
+        },
+    }
 }
 
 fn decode_account(host: &HostId, result: &Value) -> Result<(String, AccountId), BackendFailure> {

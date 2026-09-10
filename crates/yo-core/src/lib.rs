@@ -32,11 +32,11 @@ pub use backend::{
     BackendOutcomeEvidence, BackendPoll, BackendRequestEvidence, BackendResumeSource,
     BackendResumeTarget, BackendScriptStep, BackendStopHandle, ContextAccounting,
     ContextAccountingQuality, ContextCheckpointProposal, ContextPressureDecision,
-    ContextPressureObservation, ContinuationStrategy, ImageInputCapability, InputImageSnapshot,
-    InputImageSnapshotError, KIMI_CODE_IMAGE_ACCOUNTING_PROFILE, ModelInputPart, ModelReplay,
-    ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    ModelReplayTool, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
-    provider_private_schema,
+    ContextPressureObservation, ContinuationStrategy, ImageInputCapability, InputImageHistory,
+    InputImageSnapshot, InputImageSnapshotError, KIMI_CODE_IMAGE_ACCOUNTING_PROFILE,
+    ModelInputPart, ModelReplay, ModelReplayBudget, ModelReplayContract, ModelReplayDelta,
+    ModelReplayItem, ModelReplayRole, ModelReplayTool, ProviderPrivateReplayEnvelope,
+    ReplayExecutor, ReplayProfile, ScriptedBackend, provider_private_schema,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};

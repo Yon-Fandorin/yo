@@ -20,7 +20,8 @@ impl StdioPeer {
             config.working_directory(),
         )
         .with_arguments(config.process_arguments())
-        .with_shutdown_timeout(config.shutdown_timeout());
+        .with_shutdown_timeout(config.shutdown_timeout())
+        .with_maximum_message_bytes(32 * 1024 * 1024);
         StdioJsonlPeer::spawn(transport).map(Self)
     }
 }
@@ -32,6 +33,10 @@ impl JsonMessagePeer for StdioPeer {
 
     fn send(&mut self, message: &Value) -> Result<(), BackendFailure> {
         self.0.send(message)
+    }
+
+    fn send_encoded(&mut self, encoded: &[u8]) -> Result<(), BackendFailure> {
+        self.0.send_encoded(encoded)
     }
 
     fn receive(&mut self, timeout: Duration) -> Result<PeerPoll, BackendFailure> {
