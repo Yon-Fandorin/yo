@@ -109,6 +109,29 @@ pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다
 획득했다. 중첩 session 종료 뒤 바깥 로컬 PTY도 복원됐다. 이 SSH 관찰은
 실제 원격 host를 사용했으며 일반 test set이 아니라 증거 기록이다.
 
+## Mac 클립보드에서 Linux yo로
+
+2026-09-10에 candidate `8343292f0281b9e8d7321fd504bed97ead205b7c`의 이미지
+첨부를 macOS 26.6.2 arm64에서 SSH Unix 소켓 전달을 거쳐 격리된 tmux의 실제
+Linux Rust 바이너리까지 검증했다. Mac은 `pngpaste` 0.2.3과 candidate의
+`tools/clipboard_bridge.py`를 사용했으며 Homebrew 경로를 명시해야 했다.
+설치한 helper의 해시는
+`5e3fa05d25b1d856a89927dc1e5cd236d9801b80a4c6ac42af6704ace0b57c58`였다.
+
+Mac의 기존 pasteboard 항목을 읽어 Mac 메모리에만 보관하고 일반 pasteboard에
+64 × 32 합성 PNG를 넣었다. 임시 guard는 실제 `pngpaste` 출력을 Mac 안에서
+버퍼링하고 fixture 픽셀과 변경되지 않은 pasteboard revision을 확인한 뒤에만
+바이트를 전달했다. `tmux send-keys`로 전달한 Ctrl+V가 20·40·96열에서 이미지를
+첨부했다. 기존 pasteboard를 복원한 뒤 guard가 다음 캡처를 거절했을 때도 yo는
+기존 이미지와 초안을 모두 유지했다. 모델 Turn은 제출하지 않았다. 앱은 정상 종료했고
+검증이 만든 SSH 연결, helper, 소켓, tmux와 fixture를 정리했다.
+
+연결 실행기는 별도로 Linux 실제 PTY에서 Ctrl+Z → foreground 복귀 두 번과
+빈 입력창의 Ctrl+D 종료를 검증했으며 셸 터미널 설정도 복원됐다. 이 관찰은 native
+획득, 전달과 Rust 입력 처리를 확인한다. 실제 Mac 키보드 단축키나 터미널의 픽셀
+이미지 프로토콜 검증은 포함하지 않는다. 클립보드 원본은 여전히 프로세스마다 명시적으로
+선택해야 한다.
+
 ## 플랫폼 검사 범위
 
 현재 실행 가능한 환경 매트릭스의 범위는 다음과 같다.

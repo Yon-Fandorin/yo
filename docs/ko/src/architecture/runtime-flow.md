@@ -584,7 +584,7 @@ Mac 클립보드와 Linux yo를 연결하려면 먼저 Mac의 그래픽 세션�
 checkout으로 이동해 실행한다. `pngpaste`가 없으면 먼저 설치한다:
 
 ```sh
-python3 tools/clipboard_bridge.py --socket "$HOME/.yo-clipboard/source.sock"
+PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" python3 tools/clipboard_bridge.py --socket "$HOME/.yo-clipboard/source.sock"
 ```
 
 Linux에서는 비공개 디렉터리가 없으면 만든 뒤 아래 터널을 계속 실행한다.
@@ -607,8 +607,12 @@ Mac에서 이미지를 복사하고 yo에서 Ctrl+V를 눌러 미리보기를 �
 원본은 yo 프로세스마다 명시적으로 선택한다. tmux에 연결된 어느 컴퓨터의 클립보드인지
 자동으로 추측하지 않는다. 다른 원본을 선택하려면 터널을 중지·재설정하고 yo를 다시
 실행한다. 전달 도구가 미지원 모델에 이미지 지원을 부여하지는 않는다.
-로컬 합성 SSH/tmux 검사는 전달 동작을 확인하며, macOS native 클립보드 사용 가능 여부는
-실제 Mac에서 별도로 확인해야 한다.
+소켓은 실제 경로를 사용한다. macOS의 `/tmp` 같은 심볼릭 링크 별칭은 의도적으로
+거절한다. `/private/tmp`나 실제 홈 경로는 같은 디렉터리 권한 검사를 만족하면 사용할 수 있다.
+
+[터미널 매트릭스](../validation/terminal-matrix.md)에 실제
+Mac native reader → SSH → Linux tmux 첨부 검증을 기록했다. 단축키 전달은 여전히
+터미널 앱에 달려 있으며, 모든 SSH 세션에서 Mac 클립보드에 자동 접근할 수 있다는 뜻은 아니다.
 
 ## 명시적 skill 지원
 

@@ -653,7 +653,7 @@ For a Mac clipboard and Linux yo, first run this in the Mac graphical session
 from a checkout containing the helper (install `pngpaste` first if absent):
 
 ```sh
-python3 tools/clipboard_bridge.py --socket "$HOME/.yo-clipboard/source.sock"
+PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" python3 tools/clipboard_bridge.py --socket "$HOME/.yo-clipboard/source.sock"
 ```
 
 On Linux, create a private directory if absent, then keep this tunnel running.
@@ -676,8 +676,14 @@ socket. It captures only after an explicit request, sends at most 4 MiB and remo
 only its own socket when stopped. A source is explicitly selected for each yo process;
 tmux does not guess which attached computer owns the clipboard. Stop/reconfigure the
 tunnel and restart yo when selecting another source. The bridge does not make an
-unsupported model accept images. Local synthetic SSH/tmux checks establish transport
-behavior; native macOS clipboard availability needs a check on the actual Mac.
+unsupported model accept images. Use a physical socket path: symlink aliases such as
+macOS `/tmp` are intentionally rejected; `/private/tmp` or the physical home path work
+when directory permissions satisfy the same checks.
+
+The [terminal matrix](../validation/terminal-matrix.md) records
+an actual Mac native-reader → SSH → Linux tmux attachment check. Terminal shortcut
+delivery still depends on the terminal application; this does not imply that a Mac
+clipboard is automatically accessible from every SSH session.
 
 ## Explicit skill assistance
 

@@ -111,6 +111,30 @@ restored the requested presentation mode. Exiting the nested session also
 restored the outer local PTY. These SSH observations used a real remote host;
 they are evidence records rather than part of the normal test set.
 
+## Mac clipboard to Linux yo
+
+On 2026-09-10, candidate `8343292f0281b9e8d7321fd504bed97ead205b7c` passed
+an image attachment check from macOS 26.6.2 arm64 through SSH Unix-socket forwarding
+to the actual Linux Rust binary in isolated tmux. The Mac used `pngpaste` 0.2.3 and
+the candidate's `tools/clipboard_bridge.py`; explicit Homebrew paths were required.
+The helper's installation hash was
+`5e3fa05d25b1d856a89927dc1e5cd236d9801b80a4c6ac42af6704ace0b57c58`.
+
+A synthetic 64 × 32 PNG was placed in the Mac general pasteboard while its previous
+materialized items stayed in Mac memory. A temporary guard buffered real `pngpaste`
+output on the Mac and checked the fixture pixels and unchanged pasteboard revision
+before exporting any bytes. Ctrl+V delivered through `tmux send-keys` attached the
+image at 20, 40 and 96 columns. After restoring the previous pasteboard, the guard
+rejected another capture and yo preserved both the existing image and the draft.
+No model Turn was submitted. The application exited successfully and the owned
+SSH connection, helper, sockets, tmux and fixture were cleaned up.
+
+The connection launcher was also checked separately in a Linux real PTY for two
+Ctrl+Z → foreground cycles and empty-Ctrl+D exit, with shell terminal settings
+restored. These observations establish native acquisition, transport and Rust input
+routing; they do not verify a physical Mac keyboard shortcut or a terminal's pixel
+image protocol. A clipboard source still requires explicit per-process selection.
+
 ## Platform coverage
 
 The executable environment matrix currently covers:
