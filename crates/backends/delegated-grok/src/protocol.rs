@@ -95,7 +95,18 @@ pub(super) fn classify(value: Value) -> Result<Incoming, BackendFailure> {
         }),
         (None, Some(id)) => {
             let id = id.as_u64().ok_or_else(|| {
-                protocol_failure("response id from Grok ACP must be an unsigned integer")
+                // Report the wire shape without exposing an arbitrary host-provided ID.
+                let kind = match id {
+                    Value::Null => "null",
+                    Value::Bool(_) => "boolean",
+                    Value::Number(_) => "non-unsigned number",
+                    Value::String(_) => "string",
+                    Value::Array(_) => "array",
+                    Value::Object(_) => "object",
+                };
+                protocol_failure(format!(
+                    "response id from Grok ACP must be an unsigned integer (received {kind})"
+                ))
             })?;
             match (object.get("result"), object.get("error")) {
                 (Some(result), None) => Ok(Incoming::Response {

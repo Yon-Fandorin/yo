@@ -72,6 +72,14 @@ and resumable outcome. Other sessions, server requests, correlation failures,
 and the original unrelated-message backlog bound remain enforced. This is a
 deterministic adapter test, not an actual long Grok session measurement.
 
+A subsequent isolated synthetic skill prompt completed with the expected marker
+in Grok's native record, but Yo failed with an unsigned response-ID protocol error
+before recording a continuation anchor. Fresh-process resume was not attempted;
+the accepted request was not resent. Offline leader-mode Responses API tests with
+explicit skill text returned numeric IDs and did not reproduce the failure.
+The adapter now reports the invalid ID's JSON type without exposing its value;
+this improves diagnosis but does not fix or establish the cause of that failure.
+
 ## Local tmux and Linux SSH checks
 
 Local tmux on Linux or macOS, both presentation modes:

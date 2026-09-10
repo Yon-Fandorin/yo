@@ -68,6 +68,13 @@ sandbox에는 각각 별도 증거가 필요하다. 일반 Grok suite는 `sessio
 무관 메시지 대기열 상한은 계속 적용한다. 이는 결정적인 adapter 검사이며 실제로
 긴 Grok Session을 측정한 결과는 아니다.
 
+이후 격리된 합성 스킬 프롬프트는 Grok 자체 기록에서 예상한 marker로 완료됐지만,
+Yo는 continuation anchor를 기록하기 전에 unsigned 응답 ID protocol 오류로 실패했다.
+새 프로세스에서 재개를 시도하지 않았으며 수락된 요청을 재전송하지 않았다.
+스킬 본문을 포함한 오프라인 leader mode Responses API 검사는 숫자 ID를 반환해
+이 오류를 재현하지 못했다. 이제 adapter는 잘못된 ID의 값을 노출하지 않고 JSON
+종류만 오류에 표시한다. 이는 진단 개선이며 실패 원인을 확정하거나 해결한 것은 아니다.
+
 ## 로컬 tmux와 Linux SSH 검사
 
 Linux 또는 macOS의 두 표시 mode에서 로컬 tmux를 검사한다.

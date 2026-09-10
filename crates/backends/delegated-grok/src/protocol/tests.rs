@@ -2,6 +2,36 @@ use serde_json::json;
 
 use super::*;
 
+// 잘못된 응답 ID는 변환하거나 수락하지 않고 JSON 종류만 알려야 하며, host가
+// 보낸 임의 문자열이나 중첩 값이 사용자에게 보이는 오류에 노출되면 안 됩니다.
+#[test]
+fn invalid_response_ids_report_only_the_wire_type() {
+    for (id, kind) in [
+        (json!(null), "null"),
+        (json!(true), "boolean"),
+        (json!(-1), "non-unsigned number"),
+        (json!(1.5), "non-unsigned number"),
+        (json!("private-response-id"), "string"),
+        (json!(["private-response-id"]), "array"),
+        (json!({ "private-response-id": true }), "object"),
+    ] {
+        for response in [
+            json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
+            json!({
+                "jsonrpc": "2.0", "id": id,
+                "error": { "code": -32000, "message": "private-host-message" }
+            }),
+        ] {
+            let failure = classify(response).unwrap_err();
+            assert_eq!(failure.kind(), BackendFailureKind::Protocol);
+            assert_eq!(
+                failure.message(),
+                format!("response id from Grok ACP must be an unsigned integer (received {kind})")
+            );
+        }
+    }
+}
+
 // ACP 메시지는 JSON-RPC 2.0 표식을 생략하면 method와 id가 올바르더라도 wire 경계를
 // 통과하지 못해야 하며, 표식이 있는 server request의 문자열 id는 그대로 보존합니다.
 #[test]
