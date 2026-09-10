@@ -48,11 +48,28 @@ impl<P: JsonPeer> AcpClient<P> {
         method: &str,
         params: Value,
     ) -> Result<CallResult, BackendFailure> {
+        let replay_session = if method == "session/load" {
+            params
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        } else {
+            None
+        };
         let id = self.begin_request(method, params)?;
         let deadline = Instant::now() + self.request_timeout;
         loop {
             let message = self.receive_until(deadline, method)?;
             match message {
+                // Yo already owns this transcript. Drain replay as it arrives so a long
+                // history cannot fill the mailbox before the session/load response.
+                Incoming::Notification {
+                    ref method,
+                    ref params,
+                } if method == "session/update"
+                    && replay_session
+                        .as_deref()
+                        .is_some_and(|session| session_matches(params, session)) => {},
                 Incoming::Response {
                     id: response_id,
                     result,

@@ -47,6 +47,31 @@ at 180 seconds; total runtime also includes Codex startup and shutdown. Run it
 only where compatible Codex authentication and writable Codex state are
 available.
 
+## Installed Grok checks
+
+Verify ACP initialization, cached-login authentication, and cleanup without creating
+a Session or requesting model inference:
+
+```bash
+cargo test --locked -p yo-backend-delegated-grok \
+  runtime::tests::session::local_grok_authenticates_and_shuts_down_without_a_session \
+  -- --ignored --exact
+```
+
+This check passed on Linux with Grok `1.0.25 (f7e67d6988e2)` on 2026-09-10.
+An isolated 96×32 tmux run also reached the empty composer through the actual
+Rust `yo --fullscreen --model host:grok`, then exited cleanly with Ctrl+D.
+The tested binary SHA256 was
+`42f7c955d966d56825213c18a8ce59c7d655acb17532fa606dc2f449f2b83d7a`.
+No prompt was submitted or clipboard read. This establishes authentication and
+empty Session startup only; authenticated turns, actual retained
+history, skills, and the native read-only sandbox still need their own evidence.
+The normal Grok suite separately verifies that `session/load` drains 1,025
+matching historical updates before its response, then delivers a fresh response
+and resumable outcome. Other sessions, server requests, correlation failures,
+and the original unrelated-message backlog bound remain enforced. This is a
+deterministic adapter test, not an actual long Grok session measurement.
+
 ## Local tmux and Linux SSH checks
 
 Local tmux on Linux or macOS, both presentation modes:

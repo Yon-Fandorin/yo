@@ -173,6 +173,102 @@ fn resumes_with_session_load_without_replaying_history_as_new_activity() {
     assert_eq!(backend.poll_event().unwrap(), BackendPoll::Pending);
 }
 
+// 1,025개의 과거 update는 기존 mailbox 상한을 넘지만 재개를 막거나 새 응답으로
+// 나타나면 안 됩니다. load 응답 이후 같은 Session의 새 prompt 응답은 그대로 전달합니다.
+#[test]
+fn long_resume_drains_history_before_accepting_the_next_turn() {
+    let session_id = session(1);
+    let old = session_update(
+        "agent_message_chunk",
+        json!({ "content": { "type": "text", "text": "historical" } }),
+    );
+    let fresh = session_update(
+        "agent_message_chunk",
+        json!({ "content": { "type": "text", "text": "fresh" } }),
+    );
+    let messages = std::iter::repeat_n(old, 1025).chain([
+        response(3, json!({})),
+        fresh,
+        response(4, json!({ "stopReason": "end_turn" })),
+    ]);
+    let (mut backend, sent) = backend(messages);
+    backend
+        .resume_binding(session_id, &resume_binding("grok-session-a"))
+        .unwrap();
+    let active_turn = turn(session_id, 2);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("continue"),
+        })
+        .unwrap();
+    assert_eq!(sent.0.borrow()[2]["method"], "session/load");
+    assert_eq!(sent.0.borrow()[3]["method"], "session/prompt");
+    let mut updates = Vec::new();
+    let mut completed = false;
+    for _ in 0..8 {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ActivityUpdated { update, .. }) => {
+                updates.push(update)
+            },
+            BackendPoll::Event(BackendEvent::ResumableTurnFinished { turn, .. }) => {
+                assert_eq!(turn, active_turn);
+                completed = true;
+                break;
+            },
+            _ => {},
+        }
+    }
+    assert!(completed);
+    assert_eq!(
+        updates,
+        vec![yo_core::ActivityUpdate::TextDelta("fresh".to_owned())]
+    );
+}
+
+// history를 걸러도 다른 Session 알림, 다른 메서드, 서버 요청의 대기열 상한은 유지하며
+// 오류 응답과 다른 request ID는 성공으로 숨기지 않습니다.
+#[test]
+fn resume_history_filter_preserves_unrelated_bounds_and_response_failures() {
+    let history = session_update(
+        "agent_message_chunk",
+        json!({ "content": { "type": "text", "text": "old" } }),
+    );
+    let mut other_session = history.clone();
+    other_session["params"]["sessionId"] = json!("different-session");
+    let mut other_method = history.clone();
+    other_method["method"] = json!("other/notification");
+    for unrelated in [
+        other_session,
+        other_method,
+        permission_request("permission", None),
+    ] {
+        let messages = [history.clone()]
+            .into_iter()
+            .chain(std::iter::repeat_n(unrelated, 1025));
+        let (mut backend, _) = backend(messages);
+        let failure = backend
+            .resume_binding(session(1), &resume_binding("grok-session-a"))
+            .unwrap_err();
+        assert!(failure.message().contains("event backlog filled"));
+        assert!(backend.session.is_none());
+    }
+    for (reply, expected) in [
+        (
+            error_response(3, -32000, "fixture load failed"),
+            "fixture load failed",
+        ),
+        (response(4, json!({})), "unexpected Grok ACP response id"),
+    ] {
+        let (mut backend, _) = backend([history.clone(), reply]);
+        let failure = backend
+            .resume_binding(session(1), &resume_binding("grok-session-a"))
+            .unwrap_err();
+        assert!(failure.message().contains(expected));
+        assert!(backend.session.is_none());
+    }
+}
+
 // 제한 binding은 같은 read-only backend에서만 session/load로 이어지고, 일반 backend가
 // 받으면 process 초기화 전 거절되어 resume이 권한을 넓히지 않습니다.
 #[test]

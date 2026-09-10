@@ -45,6 +45,29 @@ cargo test -p yo-core local_codex_completes_a_real_file_change \
 전체 실행 시간에는 Codex 시작과 종료도 포함된다. 호환되는 Codex 인증과
 쓰기 가능한 Codex 상태가 있는 환경에서만 실행한다.
 
+## 설치된 Grok 검사
+
+Session 생성이나 model 추론 요청 없이 ACP 초기화, cached-login 인증,
+정상 종료를 검사한다.
+
+```bash
+cargo test --locked -p yo-backend-delegated-grok \
+  runtime::tests::session::local_grok_authenticates_and_shuts_down_without_a_session \
+  -- --ignored --exact
+```
+
+2026-09-10 Linux에서 Grok `1.0.25 (f7e67d6988e2)`로 이 검사가 통과했다.
+독립 96×32 tmux 실행에서도 실제 Rust `yo --fullscreen --model host:grok`으로
+빈 입력창까지 도달한 뒤 Ctrl+D로 정상 종료했다. 검사한 바이너리 SHA256은
+`42f7c955d966d56825213c18a8ce59c7d655acb17532fa606dc2f449f2b83d7a`다.
+프롬프트를 제출하거나 클립보드를 읽지 않았다. 인증과 빈 Session 시작만 입증하며
+인증된 Turn, 실제 과거 대화, 스킬, native read-only
+sandbox에는 각각 별도 증거가 필요하다. 일반 Grok suite는 `session/load` 응답 전에
+같은 Session의 과거 update 1,025개를 즉시 버리고 이후 새 응답과 resumable outcome을
+전달하는 경계를 별도로 검증한다. 다른 Session, 서버 요청, 응답 신원 오류와 기존
+무관 메시지 대기열 상한은 계속 적용한다. 이는 결정적인 adapter 검사이며 실제로
+긴 Grok Session을 측정한 결과는 아니다.
+
 ## 로컬 tmux와 Linux SSH 검사
 
 Linux 또는 macOS의 두 표시 mode에서 로컬 tmux를 검사한다.
