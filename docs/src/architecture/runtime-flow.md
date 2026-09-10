@@ -634,6 +634,51 @@ no images remain. Text-only bindings keep their old pressure/checkpoint shapes.
 The accepted contracts are `agent.input.image-attachment`,
 `agent.persistence.format-compatibility` and `agent.backend.yo-managed-model-loop`.
 
+### Clipboard acquisition and SSH forwarding
+
+Ctrl+V selects `ImagePreparationSource::Clipboard`; it inserts a ready image at the
+cursor without submitting the draft. The file command selects `File(PathBuf)`.
+The existing image worker owns both sources, so no clipboard bytes or platform
+libraries enter input/replay. Key repeats/releases, non-Chat views and active request
+prompts cannot capture an image. Ordinary terminal text paste stays text.
+
+`execution/image/clipboard.rs` reads PNG through fixed native readers (`wl-paste`,
+`xclip`, `pngpaste`) or an explicitly configured `YO_CLIPBOARD_IMAGE_SOCKET`.
+Acquisition is cancellable and limited to three seconds and the first byte beyond
+4 MiB; normal image decoding limits still apply. The socket must be in a private
+owned directory with trusted ancestry. There is no arbitrary command configuration
+or automatic model request.
+
+For a Mac clipboard and Linux yo, first run this in the Mac graphical session
+from a checkout containing the helper (install `pngpaste` first if absent):
+
+```sh
+python3 tools/clipboard_bridge.py --socket "$HOME/.yo-clipboard/source.sock"
+```
+
+On Linux, create a private directory if absent, then keep this tunnel running.
+Replace `YOUR_MAC_USER` and `YOUR_MAC_SSH_HOST` with the actual Mac login and SSH target:
+
+```sh
+mkdir -m 700 "$HOME/.yo-clipboard"
+ssh -N -o ExitOnForwardFailure=yes -L "$HOME/.yo-clipboard/mac.sock:/Users/YOUR_MAC_USER/.yo-clipboard/source.sock" YOUR_MAC_SSH_HOST
+```
+
+In the Linux terminal or tmux pane where yo will run:
+
+```sh
+YO_CLIPBOARD_IMAGE_SOCKET="$HOME/.yo-clipboard/mac.sock" yo
+```
+
+Copy an image on the Mac, press Ctrl+V in yo, inspect the preview, then submit.
+An existing directory must already be private; the helper never replaces an existing
+socket. It captures only after an explicit request, sends at most 4 MiB and removes
+only its own socket when stopped. A source is explicitly selected for each yo process;
+tmux does not guess which attached computer owns the clipboard. Stop/reconfigure the
+tunnel and restart yo when selecting another source. The bridge does not make an
+unsupported model accept images. Local synthetic SSH/tmux checks establish transport
+behavior; native macOS clipboard availability needs a check on the actual Mac.
+
 ## Explicit skill assistance
 
 Typing an eligible `$query` reuses the prompt trigger lifecycle but discovers

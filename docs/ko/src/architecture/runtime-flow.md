@@ -566,6 +566,50 @@ accounting과 정확한 로컬 이미지 손실 출처를 기록하며, 남겨�
 pressure/checkpoint 형식을 유지한다. 승인된 계약은 `agent.input.image-attachment`,
 `agent.persistence.format-compatibility`, `agent.backend.yo-managed-model-loop`다.
 
+### 클립보드 획득과 SSH 전달
+
+Ctrl+V는 `ImagePreparationSource::Clipboard`를 선택하고, 초안을 제출하지 않은 채
+준비된 이미지를 커서 위치에 삽입한다. 파일 명령은 `File(PathBuf)`를 선택한다.
+기존 image worker가 두 원본을 모두 소유하므로 클립보드 바이트나 플랫폼 라이브러리는
+input/replay에 들어가지 않는다. 키 반복·해제, Chat 외 화면, 요청에 응답 중인 입력창에서는
+이미지를 읽지 않는다. 터미널의 일반 텍스트 붙여넣기는 텍스트로 유지한다.
+
+`execution/image/clipboard.rs`는 고정된 native reader (`wl-paste`, `xclip`, `pngpaste`)
+또는 명시적으로 설정한 `YO_CLIPBOARD_IMAGE_SOCKET`을 통해 PNG를 읽는다.
+획득은 취소할 수 있고 3초와 4 MiB를 넘는 첫 바이트까지로 제한하며, 기존 이미지 decode
+한도도 적용한다. 소켓은 신뢰 가능한 상위 경로 아래 현재 사용자 소유의 비공개 디렉터리에
+있어야 한다. 임의 명령 설정이나 자동 모델 요청은 없다.
+
+Mac 클립보드와 Linux yo를 연결하려면 먼저 Mac의 그래픽 세션에서 전달 도구가 있는
+checkout으로 이동해 실행한다. `pngpaste`가 없으면 먼저 설치한다:
+
+```sh
+python3 tools/clipboard_bridge.py --socket "$HOME/.yo-clipboard/source.sock"
+```
+
+Linux에서는 비공개 디렉터리가 없으면 만든 뒤 아래 터널을 계속 실행한다.
+`YOUR_MAC_USER`와 `YOUR_MAC_SSH_HOST`를 실제 Mac 계정과 SSH 접속 대상으로 바꾼다:
+
+```sh
+mkdir -m 700 "$HOME/.yo-clipboard"
+ssh -N -o ExitOnForwardFailure=yes -L "$HOME/.yo-clipboard/mac.sock:/Users/YOUR_MAC_USER/.yo-clipboard/source.sock" YOUR_MAC_SSH_HOST
+```
+
+yo를 실행할 Linux 터미널 또는 tmux pane에서 실행한다:
+
+```sh
+YO_CLIPBOARD_IMAGE_SOCKET="$HOME/.yo-clipboard/mac.sock" yo
+```
+
+Mac에서 이미지를 복사하고 yo에서 Ctrl+V를 눌러 미리보기를 확인한 다음 제출한다.
+기존 디렉터리는 이미 비공개여야 하며 전달 도구는 기존 소켓을 덮어쓰지 않는다.
+명시적 요청이 있을 때만 읽고 최대 4 MiB를 전송하며, 종료할 때 자기 소켓만 제거한다.
+원본은 yo 프로세스마다 명시적으로 선택한다. tmux에 연결된 어느 컴퓨터의 클립보드인지
+자동으로 추측하지 않는다. 다른 원본을 선택하려면 터널을 중지·재설정하고 yo를 다시
+실행한다. 전달 도구가 미지원 모델에 이미지 지원을 부여하지는 않는다.
+로컬 합성 SSH/tmux 검사는 전달 동작을 확인하며, macOS native 클립보드 사용 가능 여부는
+실제 Mac에서 별도로 확인해야 한다.
+
 ## 명시적 skill 지원
 
 유효한 `$query`를 입력하면 같은 prompt trigger 생명주기를 재사용하되,

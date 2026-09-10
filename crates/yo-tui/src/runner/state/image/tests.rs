@@ -65,7 +65,10 @@ fn explicit_attachment_keeps_text_and_rejected_submission_exact() {
         state.editor.text(),
         "describe this\n/attach local image.jpg"
     );
-    assert_eq!(request.source, PathBuf::from("local image.jpg"));
+    assert_eq!(
+        request.source,
+        ImagePreparationSource::File(PathBuf::from("local image.jpg"))
+    );
     finish(&mut state, request, 321);
     assert_eq!(state.editor.text(), "describe this\n[image]");
     let StateEffect::Dispatch(AgentAction::Submit(submission)) =
@@ -261,7 +264,10 @@ fn trailing_attachment_after_ready_image_never_submits_the_draft() {
         else {
             panic!("a final attachment command must not submit an existing image");
         };
-        assert_eq!(request.source, PathBuf::from("/tmp/not-there.png"));
+        assert_eq!(
+            request.source,
+            ImagePreparationSource::File(PathBuf::from("/tmp/not-there.png"))
+        );
         assert!(state.pending_submissions.is_empty());
         assert!(state.starting_submission.is_none());
         assert!(
@@ -371,5 +377,126 @@ fn trailing_attachment_is_blocked_in_a_presented_question_prompt() {
         assert!(state.has_pending_request());
         assert!(state.pending_image.is_none());
         assert!(state.pending_submissions.is_empty());
+        assert_eq!(
+            state
+                .handle(clipboard_key(KeyAction::Press), Duration::ZERO)
+                .unwrap(),
+            StateEffect::Redraw
+        );
+        assert!(state.pending_image.is_none());
+        assert_eq!(state.editor.text(), draft);
+        assert_eq!(
+            state
+                .handle(clipboard_key(KeyAction::Press), Duration::ZERO)
+                .unwrap(),
+            StateEffect::Redraw
+        );
+        assert!(state.pending_image.is_none());
+        assert_eq!(state.editor.text(), draft);
     }
+}
+
+fn clipboard_key(action: KeyAction) -> InputEvent {
+    InputEvent::Key(KeyEvent {
+        code: KeyCode::Character('v'),
+        modifiers: KeyModifiers::CONTROL,
+        action,
+        state: KeyState::NONE,
+    })
+}
+
+// 클립보드 이미지는 UTF-8 커서 위치에 준비 후 삽입하며 Enter 전에는 제출하지 않는다.
+#[test]
+fn clipboard_image_inserts_at_cursor_without_submitting() {
+    let mut state = TuiState::new();
+    state.enable_image_preparation();
+    state
+        .handle(InputEvent::Paste("앞뒤".to_owned()), Duration::ZERO)
+        .unwrap();
+    state.handle(key(KeyCode::Left), Duration::ZERO).unwrap();
+    let StateEffect::PrepareImage(request) = state
+        .handle(clipboard_key(KeyAction::Press), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("clipboard gesture prepares an image");
+    };
+    assert_eq!(request.source, ImagePreparationSource::Clipboard);
+    assert_eq!(state.editor.text(), "앞뒤");
+    assert!(state.pending_submissions.is_empty());
+    assert_eq!(
+        state
+            .handle(clipboard_key(KeyAction::Repeat), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    assert_eq!(
+        state
+            .handle(clipboard_key(KeyAction::Release), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    finish(&mut state, request, 777);
+    assert_eq!(state.editor.text(), "앞[image]뒤");
+    assert_eq!(state.prompt_assist.image_occurrences()[0].span(), &(3..10));
+    assert!(state.pending_submissions.is_empty());
+    let StateEffect::Dispatch(AgentAction::Submit(input)) =
+        state.handle(key(KeyCode::Enter), Duration::ZERO).unwrap()
+    else {
+        panic!("only Enter submits the prepared attachment");
+    };
+    assert_eq!(input.input().images().len(), 1);
+}
+
+// 이미지 마커 내부에서 붙여넣어도 기존 첨부를 깨뜨리지 않고 다음 위치에 추가한다.
+#[test]
+fn clipboard_image_preserves_an_existing_image_marker() {
+    let mut state = TuiState::new();
+    let first = start(&mut state, "/attach first.png");
+    finish(&mut state, first, 123);
+    state.handle(key(KeyCode::Left), Duration::ZERO).unwrap();
+    let StateEffect::PrepareImage(request) = state
+        .handle(clipboard_key(KeyAction::Press), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("prepare");
+    };
+    finish(&mut state, request, 456);
+    assert_eq!(state.editor.text(), "[image][image]");
+    let images = state.prompt_assist.image_occurrences();
+    assert_eq!(images.len(), 2);
+    assert_eq!(images[0].source_byte_length(), 123);
+    assert_eq!(images[1].source_byte_length(), 456);
+}
+
+// 클립보드 실패와 일반 텍스트 붙여넣기는 원본 초안·첨부를 유지하며 전송하지 않는다.
+#[test]
+fn clipboard_failure_keeps_draft_and_text_paste_stays_text() {
+    let mut state = TuiState::new();
+    let first = start(&mut state, "/attach first.png");
+    finish(&mut state, first, 123);
+    state
+        .handle(InputEvent::Paste(" 설명".to_owned()), Duration::ZERO)
+        .unwrap();
+    let original = state.prompt_assist.input(state.editor.text()).unwrap();
+    let StateEffect::PrepareImage(request) = state
+        .handle(clipboard_key(KeyAction::Press), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("prepare");
+    };
+    state
+        .observe_image_preparation(ImagePreparationUpdate {
+            id: request.id,
+            revision: request.revision,
+            result: Err(SubmissionRejection::new(
+                SubmissionRejectionKind::InvalidReference,
+                "No clipboard image",
+            )),
+        })
+        .unwrap();
+    assert_eq!(
+        state.prompt_assist.input(state.editor.text()).unwrap(),
+        original
+    );
+    assert!(state.pending_submissions.is_empty());
 }

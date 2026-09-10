@@ -52,7 +52,7 @@ pub use host::{
     WorkspaceHostIdGenerationError,
 };
 pub use input::{
-    ImagePreparationHost, ImagePreparationRequest, ImagePreparationUpdate,
+    ImagePreparationHost, ImagePreparationRequest, ImagePreparationSource, ImagePreparationUpdate,
     InputAdmissionConfigurationError, InputAdmissionHost, InputImage, InputImageDisplay,
     InputReference, InputSubmission, PreparedImageAttachment, ResolvedSkill, SubmissionId,
     SubmissionIdError, SubmissionIdGenerationError, SubmissionOutcome, SubmissionRejection,

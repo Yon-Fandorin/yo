@@ -8,12 +8,21 @@ use std::{
 
 use super::{InputImage, SubmissionRejection, SubmissionRejectionKind};
 
+/// Source selected by an explicit attachment gesture; bytes are acquired by the host.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImagePreparationSource {
+    /// File in the execution host's filesystem.
+    File(PathBuf),
+    /// The execution host's explicitly configured clipboard source.
+    Clipboard,
+}
+
 /// Explicit source selection correlated to one frontend draft revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImagePreparationRequest {
     pub id: u64,
     pub revision: u64,
-    pub source: PathBuf,
+    pub source: ImagePreparationSource,
 }
 
 /// Immutable transmission image and its host-prepared display derivative.

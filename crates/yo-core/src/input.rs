@@ -10,7 +10,8 @@ mod submission;
 pub use identity::{SubmissionId, SubmissionIdError, SubmissionIdGenerationError};
 pub use image::{InputImage, InputImageDisplay};
 pub use image_preparation::{
-    ImagePreparationHost, ImagePreparationRequest, ImagePreparationUpdate, PreparedImageAttachment,
+    ImagePreparationHost, ImagePreparationRequest, ImagePreparationSource, ImagePreparationUpdate,
+    PreparedImageAttachment,
 };
 pub use projection::{skill_reference_projection, workspace_reference_projection};
 pub use reference::{InputReference, ResolvedSkill, UserInput, UserInputError};

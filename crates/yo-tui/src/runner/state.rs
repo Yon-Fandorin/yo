@@ -199,6 +199,18 @@ impl TuiState {
         if input.is_ctrl_z_press() {
             return Ok(StateEffect::Suspend);
         }
+        if let InputEvent::Key(key) = &input
+            && key.modifiers == KeyModifiers::CONTROL
+            && matches!(key.code, KeyCode::Character('v' | 'V'))
+        {
+            if key.action != KeyAction::Press {
+                return Ok(StateEffect::Unchanged);
+            }
+            if self.views.active() == ObservabilityView::Chat {
+                return self.prepare_clipboard_image();
+            }
+            return Ok(StateEffect::Unchanged);
+        }
         let active_before = self.views.active();
         match self.views.handle_global(&input) {
             ViewInputEffect::Unhandled => {},

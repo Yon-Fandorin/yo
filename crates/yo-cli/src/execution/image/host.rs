@@ -13,10 +13,10 @@ use std::{
 };
 
 use yo_core::{
-    AgentCommand, ImagePreparationHost, ImagePreparationRequest, ImagePreparationUpdate,
-    InputAdmissionHost, InputImage, InputImageDisplay, PreparedImageAttachment, ResolvedSkill,
-    SubmissionRejection, SubmissionRejectionKind, TranscriptRecord, UserInput,
-    session_repository::InheritedSessionHistory,
+    AgentCommand, ImagePreparationHost, ImagePreparationRequest, ImagePreparationSource,
+    ImagePreparationUpdate, InputAdmissionHost, InputImage, InputImageDisplay,
+    PreparedImageAttachment, ResolvedSkill, SubmissionRejection, SubmissionRejectionKind,
+    TranscriptRecord, UserInput, session_repository::InheritedSessionHistory,
 };
 
 type Evidence = (String, u64, String);
@@ -117,7 +117,12 @@ impl ImagePreparationHost for Preparation {
                 "One image is still being prepared. Wait for it to finish before attaching another.",
             ));
         }
-        let path = self.workspace.join(&request.source);
+        let source = match request.source {
+            ImagePreparationSource::File(path) => {
+                ImagePreparationSource::File(self.workspace.join(path))
+            },
+            ImagePreparationSource::Clipboard => ImagePreparationSource::Clipboard,
+        };
         let cancel = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Mutex::new(None::<Waker>));
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -129,7 +134,7 @@ impl ImagePreparationHost for Preparation {
         let thread = thread::Builder::new()
             .name("yo-image-preparation".to_owned())
             .spawn(move || {
-                let result = prepare_attachment(&path, &worker_cancel).and_then(|prepared| {
+                let result = prepare_attachment(&source, &worker_cancel).and_then(|prepared| {
                     if worker_cancel.load(Ordering::Acquire) {
                         return Err(cancelled());
                     }
@@ -199,25 +204,48 @@ impl Drop for Preparation {
 }
 
 fn prepare_attachment(
-    path: &Path,
+    source: &ImagePreparationSource,
     cancel: &AtomicBool,
 ) -> Result<PreparedImageAttachment, SubmissionRejection> {
-    let prepared = super::prepare(path, &mut || cancel.load(Ordering::Acquire))
-        .map_err(|_| if cancel.load(Ordering::Acquire) { cancelled() } else {
-            SubmissionRejection::new(SubmissionRejectionKind::InvalidReference,
-                "Image preparation failed. Choose a static PNG or JPEG within 4 MiB, 4096 pixels per side, and 4 megapixels.")
-        })?;
-    let filename = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| {
-            !name.is_empty()
-                && name.len() <= 255
-                && !name
-                    .chars()
-                    .any(|c| c.is_control() || c == '/' || c == '\\')
-        })
-        .map(str::to_owned);
+    let mut is_cancelled = || cancel.load(Ordering::Acquire);
+    let result = match source {
+        ImagePreparationSource::File(path) => super::prepare(path, &mut is_cancelled),
+        ImagePreparationSource::Clipboard => {
+            #[cfg(unix)]
+            {
+                super::clipboard::prepare(&mut is_cancelled)
+            }
+            #[cfg(not(unix))]
+            {
+                Err(crate::interaction::diagnostic::AppError::message(
+                    "Clipboard images are unavailable on this platform. Use /attach with a PNG or JPEG path.",
+                ))
+            }
+        },
+    };
+    let prepared = result.map_err(|error| {
+        if cancel.load(Ordering::Acquire) {
+            cancelled()
+        } else {
+            SubmissionRejection::new(
+                SubmissionRejectionKind::InvalidReference,
+                format!("{error} Use /attach with a static PNG or JPEG path if needed."),
+            )
+        }
+    })?;
+    let filename = match source {
+        ImagePreparationSource::File(path) => path.file_name(),
+        ImagePreparationSource::Clipboard => None,
+    }
+    .and_then(|name| name.to_str())
+    .filter(|name| {
+        !name.is_empty()
+            && name.len() <= 255
+            && !name
+                .chars()
+                .any(|c| c.is_control() || c == '/' || c == '\\')
+    })
+    .map(str::to_owned);
     let image = InputImage::new(
         0..InputImage::PROJECTION.len(),
         prepared.source_byte_length(),

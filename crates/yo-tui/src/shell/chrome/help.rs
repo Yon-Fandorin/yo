@@ -121,6 +121,7 @@ pub(super) fn paint(
         }
         let mut discoverable = primary.clone();
         discoverable.insert(2, ("@", "files"));
+        discoverable.insert(3, ("^V", "image"));
         candidates.push(action_spans(&discoverable, styles.key_hint, styles.mode));
         candidates.push(action_spans(&primary, styles.key_hint, styles.mode));
         candidates.push(action_spans(

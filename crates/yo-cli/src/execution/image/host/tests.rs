@@ -63,7 +63,7 @@ fn worker_evidence_is_required_before_skill_preparation() {
     let request = ImagePreparationRequest {
         id: 7,
         revision: 11,
-        source: PathBuf::from("source.png"),
+        source: ImagePreparationSource::File(PathBuf::from("source.png")),
     };
     host.start(request.clone()).unwrap();
     assert!(host.start(request).is_err());
@@ -103,7 +103,7 @@ fn cancellation_releases_the_single_preparation_lane() {
     host.start(ImagePreparationRequest {
         id: 1,
         revision: 2,
-        source: PathBuf::from("missing.png"),
+        source: ImagePreparationSource::File(PathBuf::from("missing.png")),
     })
     .unwrap();
     host.cancel();
@@ -111,7 +111,7 @@ fn cancellation_releases_the_single_preparation_lane() {
     host.start(ImagePreparationRequest {
         id: 2,
         revision: 3,
-        source: PathBuf::from("missing.png"),
+        source: ImagePreparationSource::File(PathBuf::from("missing.png")),
     })
     .unwrap();
     assert_eq!(poll(host.as_mut()).id, 2);

@@ -2,7 +2,10 @@
 
 use std::ops::Range;
 
-use yo_core::{ImagePreparationRequest, ImagePreparationUpdate, InputImage, InputImageSnapshot};
+use yo_core::{
+    ImagePreparationRequest, ImagePreparationSource, ImagePreparationUpdate, InputImage,
+    InputImageSnapshot,
+};
 
 use super::{StateEffect, StateError, TuiState};
 use crate::{command::attachment_argument, prompt::workspace_reference::WorkspaceEdit};
@@ -42,20 +45,44 @@ impl TuiState {
         let Some((command, source)) = attachment_argument(draft) else {
             return Ok(StateEffect::Redraw);
         };
+        if source.as_os_str().is_empty() {
+            self.chat.push_notice("Use /attach PATH to prepare a local PNG or JPEG. Add it on a new final draft line to keep existing text and images.".to_owned())?;
+            return Ok(StateEffect::Redraw);
+        }
+        self.prepare_image(draft, command, ImagePreparationSource::File(source))
+    }
+
+    pub(super) fn prepare_clipboard_image(&mut self) -> Result<StateEffect, StateError> {
+        let draft = self.editor.text().to_owned();
+        let cursor = self.editor.cursor_byte_index();
+        let cursor = self
+            .prompt_assist
+            .image_occurrences()
+            .iter()
+            .find(|image| image.span().start < cursor && cursor < image.span().end)
+            .map_or(cursor, |image| image.span().end);
+        self.prepare_image(&draft, cursor..cursor, ImagePreparationSource::Clipboard)
+    }
+
+    fn prepare_image(
+        &mut self,
+        draft: &str,
+        command: Range<usize>,
+        source: ImagePreparationSource,
+    ) -> Result<StateEffect, StateError> {
         if !self.image_preparation_enabled
             || self.preview_mode
             || self.has_pending_request()
             || self.pending_model_selection.is_some()
             || self.reserved_model_selection.is_some()
+            || self.model_overlay.is_some()
+            || self.resume_overlay.is_some()
+            || self.fork_overlay.is_some()
         {
             self.chat.push_notice(
                 "Image attachment is unavailable in this prompt; your draft was preserved."
                     .to_owned(),
             )?;
-            return Ok(StateEffect::Redraw);
-        }
-        if source.as_os_str().is_empty() {
-            self.chat.push_notice("Use /attach PATH to prepare a local PNG or JPEG. Add it on a new final draft line to keep existing text and images.".to_owned())?;
             return Ok(StateEffect::Redraw);
         }
         if self.pending_image.is_some() || !self.pending_submissions.is_empty() {
@@ -185,7 +212,7 @@ impl TuiState {
         let image = prepared.image();
         let source = image.display();
         self.chat.push_notice(format!(
-            "Image attached: source {} × {}; transmission {} × {} RGBA8 PNG ({} bytes). Preview is a {} × {} thumbnail; the source file is unchanged.",
+            "Image attached: source {} × {}; transmission {} × {} RGBA8 PNG ({} bytes). Preview is a {} × {} thumbnail.",
             source.and_then(|display| display.source_width).unwrap_or(0), source.and_then(|display| display.source_height).unwrap_or(0),
             image.snapshot().width(), image.snapshot().height(), image.snapshot().png().len(), prepared.thumbnail_width(), prepared.thumbnail_height(),
         ))?;

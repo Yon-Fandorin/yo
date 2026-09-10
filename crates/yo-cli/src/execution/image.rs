@@ -1,5 +1,7 @@
 //! Bounded local image preparation; callers run this outside the UI thread.
 
+#[cfg(unix)]
+mod clipboard;
 mod host;
 use std::{
     fmt::Write as _,
