@@ -9,6 +9,7 @@ mod tests;
 pub use context::{
     ContextAccounting, ContextAccountingQuality, ContextCheckpointProposal,
     ContextPressureDecision, ContextPressureObservation, KIMI_CODE_IMAGE_ACCOUNTING_PROFILE,
+    OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE,
 };
 pub use contract::{
     AgentBackend, BackendAdapter, BackendCapabilities, BackendEvent, BackendFailure,

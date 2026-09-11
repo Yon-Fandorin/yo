@@ -35,7 +35,7 @@ impl BackendAdapter for NativeModelBackend {
     }
 
     fn capabilities(&self) -> BackendCapabilities {
-        BackendCapabilities::none().with_image_input(if self.image_accounting {
+        BackendCapabilities::none().with_image_input(if self.image_accounting.is_some() {
             ImageInputCapability::Supported {
                 maximum_occurrences: 16,
                 maximum_image_bytes: InputImageSnapshot::MAX_BYTES as u64,
@@ -87,7 +87,7 @@ impl BackendAdapter for NativeModelBackend {
                 "durable exact replay contract does not match the replacement binding",
             ));
         }
-        if !self.image_accounting
+        if self.image_accounting.is_none()
             && target
                 .model_replay()
                 .items()

@@ -2,8 +2,7 @@
 
 use yo_core::{
     BackendFailure, BackendFailureKind, ContextAccounting, ContextAccountingQuality,
-    ContextCheckpointProposal, KIMI_CODE_IMAGE_ACCOUNTING_PROFILE, ModelConnectorRequest,
-    VersionedProfileId,
+    ContextCheckpointProposal, ModelConnectorRequest, VersionedProfileId,
 };
 
 use super::{NativeModelBackend, failure, map_connector_turn};
@@ -45,7 +44,7 @@ impl NativeModelBackend {
         &self,
         request: &ModelConnectorRequest,
     ) -> Result<InputCount, BackendFailure> {
-        if !self.image_accounting && request.image_count() > 0 {
+        if self.image_accounting.is_none() && request.image_count() > 0 {
             return Err(failure(
                 BackendFailureKind::Unsupported,
                 "image input requires the complete binding's reviewed image accounting profile",
@@ -64,21 +63,25 @@ impl NativeModelBackend {
                     "model token counting failed before remote request dispatch",
                 )
             })?;
-        request_count(text_tokens, request.image_count(), self.image_accounting)
+        request_count(
+            text_tokens,
+            request.image_count(),
+            self.image_accounting.as_ref(),
+        )
     }
 }
 
 fn request_count(
     text_tokens: u64,
     image_count: usize,
-    image_accounting: bool,
+    image_accounting: Option<&VersionedProfileId>,
 ) -> Result<InputCount, BackendFailure> {
-    if !image_accounting {
+    let Some(policy) = image_accounting else {
         return Ok(InputCount {
             tokens: text_tokens,
             accounting: None,
         });
-    }
+    };
     let estimate = u64::try_from(image_count)
         .ok()
         .and_then(|images| images.checked_mul(2000))
@@ -91,8 +94,7 @@ fn request_count(
         })?;
     let accounting = ContextAccounting::new(
         ContextAccountingQuality::AdvisoryEstimate,
-        VersionedProfileId::new(KIMI_CODE_IMAGE_ACCOUNTING_PROFILE)
-            .expect("reviewed accounting profile identity"),
+        policy.clone(),
         estimate,
         if image_count == 0 { 0 } else { 1024 },
     )
@@ -106,27 +108,32 @@ fn request_count(
 #[cfg(test)]
 mod tests {
     use super::request_count;
+    fn policy() -> yo_core::VersionedProfileId {
+        yo_core::VersionedProfileId::new(yo_core::KIMI_CODE_IMAGE_ACCOUNTING_PROFILE).unwrap()
+    }
 
     // 전체 요청에 한 번만 reserve를 더하며 이미지가 없어도 선택된 추정 정책은 유지한다.
     #[test]
     fn counts_occurrences_and_charges_one_reserve() {
-        let count = request_count(300, 3, true).unwrap();
+        let count = request_count(300, 3, Some(&policy())).unwrap();
         assert_eq!(count.planning_tokens(), 7324);
         assert_eq!(count.accounting().unwrap().input_estimate(), 6300);
         assert_eq!(count.accounting().unwrap().reserve_tokens(), 1024);
-        let empty = request_count(300, 0, true).unwrap();
+        let empty = request_count(300, 0, Some(&policy())).unwrap();
         assert_eq!(empty.planning_tokens(), 300);
         assert_eq!(empty.accounting().unwrap().reserve_tokens(), 0);
-        assert!(request_count(300, 0, false).unwrap().accounting().is_none());
+        assert!(request_count(300, 0, None).unwrap().accounting().is_none());
     }
 
     // 추정값과 reserve의 첫 초과도 조용히 포화시키지 않고 요청 전에 거절한다.
     #[test]
     fn rejects_estimate_and_reserve_overflow() {
-        assert!(request_count(u64::MAX, 1, true).is_err());
-        assert!(request_count(u64::MAX - 2000, 1, true).is_err());
+        assert!(request_count(u64::MAX, 1, Some(&policy())).is_err());
+        assert!(request_count(u64::MAX - 2000, 1, Some(&policy())).is_err());
         assert_eq!(
-            request_count(u64::MAX, 0, true).unwrap().planning_tokens(),
+            request_count(u64::MAX, 0, Some(&policy()))
+                .unwrap()
+                .planning_tokens(),
             u64::MAX
         );
     }

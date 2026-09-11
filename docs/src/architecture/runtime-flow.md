@@ -627,6 +627,13 @@ Kimi's connector emits typed PNG data URLs and removes only those image URLs fro
 its tokenizer projection. Managed `backend/accounting.rs` applies the selected
 advisory estimate and one reserve per complete request, including final output-cap
 recount. Actual provider usage remains separate telemetry.
+The additional explicit OpenRouter free profile uses the neutral Chat connector's
+`with_complete_binding` constructor and ordered multipart projection. Its text
+counter omits complete image parts, while `ModelConnectorRequest::input_images`
+retains separate typed descriptors. The admitted provider options remain in every
+request. `EffectiveModelProfile::image_accounting_policy` selects the distinct
+policy through live admission, pressure and checkpoint recovery; the backend does
+not branch on provider. See [the explicit import definition](../workflows/provider-catalogs/openrouter.md#explicit-free-image-connection).
 
 `model_connector/image_summary.rs` derives the ordered manifest and exact images
 for one tools-disabled summary request under separate summary limits. Core's v2

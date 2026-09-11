@@ -2654,6 +2654,7 @@ dependencies = [
 name = "yo-connector-openai-chat-completions"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "reqwest",
  "serde_json",
  "yo-connector-transport",

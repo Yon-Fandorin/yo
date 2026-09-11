@@ -98,6 +98,8 @@ pub(crate) struct ProfileDetails {
     request_options: String,
     tools: String,
     pub(crate) replay: String,
+    image_input: Option<String>,
+    image_accounting: Option<String>,
 }
 
 impl BindingDetails {
@@ -119,6 +121,51 @@ impl BindingDetails {
 }
 
 impl ProfileDetails {
+    pub(crate) fn has_image_input(&self) -> bool {
+        self.image_input.is_some()
+    }
+
+    pub(crate) fn render_image_disclosure(
+        &self,
+        output: &mut String,
+        width: usize,
+        style: PresentationStyle,
+    ) -> Result<(), PresentationError> {
+        let Some(image_input) = &self.image_input else {
+            return Ok(());
+        };
+        push_detail_field(
+            output,
+            "Image input",
+            "Enabled: normalized PNG snapshots",
+            width,
+            style,
+        )?;
+        push_detail_field(
+            output,
+            "Accounting",
+            &format!(
+                "Advisory estimate ({}), not measured provider usage",
+                self.image_accounting
+                    .as_deref()
+                    .expect("admitted image accounting policy")
+            ),
+            width,
+            style,
+        )?;
+        if image_input == yo_core::OPENROUTER_FREE_IMAGE_INPUT_PROFILE {
+            push_detail_field(output, "Image endpoint", &self.endpoint, width, style)?;
+            push_detail_field(
+                output,
+                "Free route",
+                "NVIDIA only; no fallbacks; required parameters enforced; prompt, completion, request and image price caps are all 0 on every request",
+                width,
+                style,
+            )?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn render(
         &self,
         output: &mut String,
@@ -151,7 +198,8 @@ impl ProfileDetails {
             &self.request_options,
             width,
             style,
-        )
+        )?;
+        self.render_image_disclosure(output, width, style)
     }
 }
 
@@ -198,6 +246,10 @@ impl From<&CompleteModelBinding> for BindingDetails {
                     .to_string(),
                 tools: profile.tool_capability_policy().to_string(),
                 replay: profile.replay_profile().to_string(),
+                image_input: profile.image_input_profile().map(ToString::to_string),
+                image_accounting: profile
+                    .image_accounting_policy()
+                    .map(|policy| policy.to_string()),
             },
         }
     }

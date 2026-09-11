@@ -1,0 +1,30 @@
+{
+  "provider": "openrouter",
+  "account": "default",
+  "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+  "connector": "openai-chat-completions",
+  "base_url": "https://openrouter.ai/api/v1",
+  "api_dialect": "openai-chat-completions",
+  "tokenizer_profile": "utf8-bytes/v1",
+  "input_token_limit": 256000,
+  "max_output_tokens": 65536,
+  "reasoning_parameters": {},
+  "optional_request_parameters": {
+    "provider": {
+      "only": [
+        "nvidia"
+      ],
+      "allow_fallbacks": false,
+      "require_parameters": true,
+      "max_price": {
+        "prompt": 0,
+        "completion": 0,
+        "request": 0,
+        "image": 0
+      }
+    }
+  },
+  "tool_capability_policy": "no-tools/v1",
+  "replay_profile": "semantic-only/v1",
+  "image_input_profile": "openrouter-free-png-advisory/v1"
+}

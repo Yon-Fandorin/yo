@@ -207,3 +207,70 @@ fn complete_binding_decoder_rejects_out_of_range_number_spellings() {
     );
     CompleteModelBinding::from_durable_json(&quoted).unwrap();
 }
+
+// 무료 경로를 약화하거나 다른 모델·endpoint·회계로 바꾸면 저장 가능한 binding 자체를 거절한다.
+#[test]
+fn openrouter_image_binding_rejects_relaxed_routing_and_profile_changes() {
+    let value: Value = serde_json::from_str(include_str!("openrouter-binding.json")).unwrap();
+    let binding = CompleteModelBinding::from_durable_json(&value.to_string()).unwrap();
+    crate::admit_standard_complete_binding(&binding).unwrap();
+    assert_eq!(
+        binding
+            .profile()
+            .image_accounting_policy()
+            .unwrap()
+            .as_str(),
+        crate::OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE
+    );
+    for (pointer, replacement) in [
+        ("/provider", json!("other")),
+        ("/base_url", json!("https://example.test/v1")),
+        ("/model", json!("openrouter/free")),
+        ("/input_token_limit", json!(256001)),
+        ("/max_output_tokens", json!(65537)),
+        ("/tokenizer_profile", json!("o200k_base/v1")),
+        ("/reasoning_parameters", json!({"effort":"high"})),
+        ("/replay_profile", json!("kimi-private-local-plaintext/v1")),
+        ("/optional_request_parameters", json!({})),
+        (
+            "/optional_request_parameters/provider/only",
+            json!(["nvidia", "other"]),
+        ),
+        (
+            "/optional_request_parameters/provider/allow_fallbacks",
+            json!(true),
+        ),
+        (
+            "/optional_request_parameters/provider/require_parameters",
+            json!(false),
+        ),
+        (
+            "/optional_request_parameters/provider/max_price/image",
+            json!(0.01),
+        ),
+        (
+            "/optional_request_parameters/provider/max_price/prompt",
+            json!(0.0),
+        ),
+    ] {
+        let mut changed = value.clone();
+        *changed.pointer_mut(pointer).unwrap() = replacement;
+        assert!(
+            CompleteModelBinding::from_durable_json(&changed.to_string()).is_err(),
+            "{pointer}"
+        );
+    }
+    let mut tools = value.clone();
+    tools["tool_capability_policy"] = json!("local-tools/v1");
+    crate::admit_standard_complete_binding(
+        &CompleteModelBinding::from_durable_json(&tools.to_string()).unwrap(),
+    )
+    .unwrap();
+    let mut text = value;
+    text.as_object_mut().unwrap().remove("image_input_profile");
+    text["optional_request_parameters"] = json!({});
+    let text = CompleteModelBinding::from_durable_json(&text.to_string()).unwrap();
+    assert_eq!(text.binding(), binding.binding());
+    assert_ne!(text, binding);
+    assert!(text.profile().image_accounting_policy().is_none());
+}

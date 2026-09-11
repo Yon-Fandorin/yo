@@ -101,6 +101,9 @@ fn validate_image_profile(
     let Some(image) = profile.image_input_profile() else {
         return Ok(());
     };
+    if image.as_str() == super::OPENROUTER_FREE_IMAGE_INPUT_PROFILE {
+        return validate_openrouter_image_profile(binding, profile);
+    }
     let input = profile.context().input_token_limit();
     let output = profile.context().max_output_tokens();
     let reasoning = profile.reasoning_parameters().to_json_value();
@@ -139,6 +142,39 @@ fn validate_image_profile(
         ));
     }
     Ok(())
+}
+
+fn validate_openrouter_image_profile(
+    binding: &EffectiveModelBinding,
+    profile: &EffectiveModelProfile,
+) -> Result<(), ModelServiceError> {
+    let valid = binding.provider_id().as_str() == "openrouter"
+        && binding.connector_id().as_str() == ConnectorId::OPENAI_CHAT_COMPLETIONS
+        && binding.api_dialect() == ApiDialect::OpenAiChatCompletions
+        && binding.endpoint().as_str() == "https://openrouter.ai/api/v1"
+        && binding.model_id().as_str() == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+        && profile.context().tokenizer_profile() == "utf8-bytes/v1"
+        && profile.context().input_token_limit() == 256_000
+        && profile.context().max_output_tokens() == Some(65_536)
+        && profile.reasoning_parameters().to_json_value() == json!({})
+        && profile.replay_profile().as_str() == super::SEMANTIC_REPLAY_PROFILE
+        && matches!(
+            profile.tool_capability_policy().as_str(),
+            "local-tools/v1" | "no-tools/v1"
+        )
+        && profile.optional_request_parameters().to_json_value()
+            == json!({
+                "provider": {"only": ["nvidia"], "allow_fallbacks": false,
+                    "require_parameters": true,
+                    "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0}}
+            });
+    if valid {
+        Ok(())
+    } else {
+        Err(ModelServiceError::new(
+            "image_input_profile is incompatible with the complete model binding",
+        ))
+    }
 }
 
 #[derive(Deserialize)]

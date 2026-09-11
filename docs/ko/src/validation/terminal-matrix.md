@@ -24,6 +24,20 @@ cargo test -p yo-cli execution::process::termination::tests
 이 호스트 통합 검사는 일반 package test에 포함된다. 통과했다고 해서 tmux나
 SSH 동작까지 실행되었다는 뜻은 아니다.
 
+## OpenRouter 이미지 사용 흐름
+
+명시적 무료 이미지 프로필은 정의 가져오기, private 클립보드 socket의 Ctrl+V,
+첨부 미리보기, Enter 제출, 스트리밍 완료, 정상 종료, 새 TUI 프로세스의
+`--continue`까지 확인한다. 첫 요청과 재개 요청의 정규화된 PNG data URL과
+무료 경로 필드를 비교한다. 설정·credential·Session 저장소는 격리한다.
+
+2026-09-11 Linux PTY 검증은 로컬 TLS/SSE fixture에 두 번 요청하여 이 흐름을
+통과했다. 테스트 프로세스에서 정확한 OpenRouter 호스트를 loopback으로 연결하고
+다른 TCP 목적지를 거절했으며 임시 CA·가짜 키를 사용하고 종료 후 상태를 삭제했다.
+이는 Yo의 전송·복원 검증이다. 실제 NVIDIA 스트리밍·도구 실행·요약 완료와 새
+프로필의 macOS·SSH·tmux 검증은 별도 환경 검사로 남는다. Connector 단위 test의
+도구 결과·제한 내 요약 전송 검사는 Provider 실행을 증명하지 않는다.
+
 ## 설치된 Codex 검사
 
 model Turn 없이 stdio initialize와 shutdown 경계를 검사한다.

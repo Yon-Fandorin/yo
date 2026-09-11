@@ -22,6 +22,84 @@ fn fixture_binding_for_model(model: &str) -> BindingDetails {
     BindingDetails::from(&CompleteModelBinding::from_durable_json(&durable.to_string()).unwrap())
 }
 
+// 신규·교체 import의 일반 확인에서도 정확한 무료 경로와 이미지·추정 회계를 숨기지 않는다.
+#[test]
+fn image_import_discloses_free_route_before_new_and_replacement_confirmation() {
+    let complete = CompleteModelBinding::from_durable_json(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../yo-core/src/model_service/tests/openrouter-binding.json"
+    )))
+    .unwrap();
+    let model = complete.binding().model_id().to_string();
+    for replacement in [false, true] {
+        for verbose in [false, true] {
+            let preview = ImportPreview::new(
+                "openrouter:default".into(),
+                if replacement {
+                    vec![]
+                } else {
+                    vec![model.clone()]
+                },
+                if replacement {
+                    vec![model.clone()]
+                } else {
+                    vec![]
+                },
+                if replacement {
+                    vec!["old-model".into()]
+                } else {
+                    vec![]
+                },
+                true,
+                "openrouter:default".into(),
+                !replacement,
+                "none".into(),
+                false,
+                vec![],
+                "explicit definition".into(),
+                if replacement {
+                    CredentialMutationAction::Replace
+                } else {
+                    CredentialMutationAction::Add
+                },
+                "unset".into(),
+                false,
+                vec![BindingDetails::from(&complete)],
+                verbose,
+            );
+            for columns in [36, 80, 160] {
+                let output = preview
+                    .render(width(columns), PresentationStyle::Plain)
+                    .unwrap();
+                for line in output.lines() {
+                    assert!(cell_width(line).unwrap() <= usize::from(columns));
+                }
+                let compact = output.split_whitespace().collect::<String>();
+                for disclosure in [
+                    model.as_str(),
+                    "https://openrouter.ai/api/v1",
+                    "Enabled:normalizedPNGsnapshots",
+                    "Advisoryestimate(openrouter-free-image-advisory/v1)",
+                    "notmeasuredproviderusage",
+                    "NVIDIAonly;nofallbacks;requiredparametersenforced",
+                    "prompt,completion,requestandimagepricecapsareall0oneveryrequest",
+                ] {
+                    assert!(
+                        compact.contains(disclosure),
+                        "missing {disclosure}: {output}"
+                    );
+                }
+                assert_eq!(compact.matches("Imageinput").count(), 1);
+                assert_eq!(compact.matches("Freeroute").count(), 1);
+                assert!(output.find("Accounting").unwrap() < output.find("Plan:").unwrap());
+                assert_eq!(output.contains("old-model"), replacement);
+            }
+        }
+    }
+    let text = fixture_binding();
+    assert!(!text.profile.has_image_input());
+}
+
 // 기본 confirmation은 적용 판단에 필요한 change set과 요약만 보여 주며, exact profile은
 // -v를 선택한 경우에만 노출해 반복 실행의 기본 화면을 짧게 유지합니다.
 #[test]
