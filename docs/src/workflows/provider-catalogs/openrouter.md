@@ -47,3 +47,59 @@ cargo test --locked -p yo-provider-openrouter
 cargo test --locked -p yo-cli command::connect::external::discovery_tests
 cargo test --locked -p yo-cli command::connect::picker
 ```
+
+## Explicit free image connection
+
+Image input is initially available for the exact NVIDIA Nemotron 3 Nano Omni
+free model below. Save this definition to a local YAML file, then run
+`yo connect --from /absolute/vision-free.yaml`. Review the connection plan and
+provide your OpenRouter key. The normal confirmation shows the exact model and
+endpoint, NVIDIA-only zero-price routing without fallbacks, PNG image support
+and advisory accounting before you accept. The distinct `vision-free` account label keeps
+this plan separate from a `default` account; importing into an existing account
+replaces its complete model group, so inspect the plan's removals.
+
+```yaml
+provider: openrouter
+account: vision-free
+base_url: https://openrouter.ai/api/v1
+profile:
+  api_dialect: openai-chat-completions
+  tokenizer_profile: utf8-bytes/v1
+  input_token_limit: 256000
+  max_output_tokens: 65536
+  reasoning_parameters: {}
+  optional_request_parameters:
+    provider:
+      only: [nvidia]
+      allow_fallbacks: false
+      require_parameters: true
+      max_price: {prompt: 0, completion: 0, request: 0, image: 0}
+  tool_capability_policy: local-tools/v1
+  replay_profile: semantic-only/v1
+  image_input_profile: openrouter-free-png-advisory/v1
+models:
+  - model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+
+```
+
+Select the new connection with `/model` or start
+`yo --model openrouter:vision-free:nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`.
+Use the existing Ctrl+V clipboard flow, inspect the preview, and press Enter.
+For SSH/tmux, configure the same explicit clipboard source described in
+[the image input flow](../../architecture/runtime-flow.md#clipboard-acquisition-and-ssh-forwarding).
+`/attach /absolute/image.png` remains available for a file on the execution host.
+
+The complete profile is required; discovery and binary upgrades do not add it
+to existing connections. Every request—including text-only turns, tool results,
+resume and summaries—keeps NVIDIA-only routing, zero-price limits and disabled
+fallbacks. A capacity or price rejection is shown without automatic resend.
+Other OpenRouter models retain their existing text behavior.
+
+Images retain their exact normalized PNG bytes and order in saved Sessions.
+Context pressure uses a labeled advisory estimate (image-free serialized UTF-8
+bytes plus 2000 per image occurrence and a single 1024 reserve when images exist).
+This is not measured provider usage or a guaranteed upper bound. The immutable
+snapshot, source-size and summary bounds are the same as other admitted image
+bindings. Responsibility stays with core complete-binding admission, the neutral
+Chat Completions request projection, and managed complete-request accounting.

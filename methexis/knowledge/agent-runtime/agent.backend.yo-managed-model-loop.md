@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:521fb41f6f30738aa5e8289437f4d3b4f48344b88e162a89e2088a2994616dfd
+    revision: sha256:ca018906e2161173cf019fe64d7dce5c50a627405aad8b4414a6f401bc8f2583
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -83,6 +83,23 @@ values, never measured usage or a proved upper bound. The connector supplies a
 typed image-free projection and separate immutable image descriptors; the backend
 MUST NOT search arbitrary JSON for image-like URLs, count base64 as image cost,
 read a path, fetch an image URL or make a hidden remote estimator request.
+
+The additional policy `openrouter-free-image-advisory/v1`, selected only by
+its admitted `openrouter-free-png-advisory/v1` complete binding, uses the same
+explicit planning formula with its own policy identity: T is the selected
+Chat Completions connector's complete image-free tokenization projection after
+request-local tool exposure and selected output-cap serialization; N counts all
+immutable image occurrences, including repetitions, retained history and image
+summary sources. Input estimate is the checked unsigned-64-bit sum T + 2000*N;
+reserve is 1024 for N greater than zero and zero otherwise. Quality remains
+`advisory_estimate` even when N is zero. The constants are a local planning
+heuristic, not a calibrated image-token model, measured usage or upper bound.
+Overflow rejects before dispatch. The backend selects the admitted typed
+accounting policy without branching on Provider or Model and MUST retain the
+selected policy identity in every admission, pressure and checkpoint path.
+All preceding and following image-aware failure, protected-replay, recount,
+one-summary and persistence rules apply unchanged. This additional policy
+MUST activate with its matching service-binding and Chat Completions revisions.
 
 Warning/trigger percentages and output-budget checks consume the complete
 planning count. A known output maximum retains the existing final selected-cap

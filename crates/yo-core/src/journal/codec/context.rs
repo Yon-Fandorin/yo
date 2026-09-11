@@ -685,14 +685,13 @@ impl ContextCheckpoint {
         binding_value: &str,
     ) -> Result<(), &'static str> {
         let binding = crate::CompleteModelBinding::from_durable_json(binding_value).ok();
-        let image_profile = binding
+        let accounting_policy = binding
             .as_ref()
-            .and_then(|binding| binding.profile().image_input_profile());
-        match (image_profile, self.accounting()) {
+            .and_then(|binding| binding.profile().image_accounting_policy());
+        match (accounting_policy, self.accounting()) {
             (None, None) => Ok(()),
             (Some(profile), Some((before, after)))
-                if profile.as_str() == crate::KIMI_CODE_IMAGE_INPUT_PROFILE
-                    && before.policy() == crate::KIMI_CODE_IMAGE_ACCOUNTING_PROFILE
+                if before.policy() == profile.as_str()
                     && before.policy() == after.policy()
                     && binding.as_ref().is_some_and(|binding| {
                         binding.profile().context().input_token_limit() == self.input_token_limit

@@ -283,3 +283,50 @@ fn image_loss_bounds_keep_occurrence_identity() {
         assert!(ContextImageLoss::from_snapshot(&snapshot(), 1, source).is_err());
     }
 }
+
+// 새 정책의 checkpoint를 journal에서 복원하고 다른 이미지 정책으로 위조하면 epoch 검사가 거절한다.
+#[test]
+fn openrouter_checkpoint_recovers_only_under_its_own_accounting_policy() {
+    let binding = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/model_service/tests/openrouter-binding.json"
+    ));
+    let semantic_items = items(true)
+        .into_iter()
+        .filter(|item| !matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }))
+        .collect();
+    let mut commits = current_history_with(ReplayProfile::SemanticOnly, semantic_items)
+        .into_iter()
+        .map(|commit| {
+            let mut wire: serde_json::Value =
+                serde_json::from_str(&encode(&commit).unwrap()).unwrap();
+            for record in wire["records"].as_array_mut().unwrap() {
+                if record["type"] == "backend_binding_opened" {
+                    record["binding_identity"]["value"] = binding.into();
+                }
+            }
+            decode(&wire.to_string()).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut wire: serde_json::Value =
+        serde_json::from_str(&encode(&checkpoint_commit(image_checkpoint(true, false))).unwrap())
+            .unwrap();
+    let checkpoint = &mut wire["records"][0];
+    checkpoint["input_token_limit"] = 256000.into();
+    checkpoint["losses"].as_array_mut().unwrap().remove(1); // no provider-private input on semantic-only replay
+    for field in ["accounting_before", "accounting_after"] {
+        checkpoint[field]["policy"] = crate::OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE.into();
+    }
+    commits.push(decode(&wire.to_string()).unwrap());
+    assert!(recover(&commits).is_ok());
+    for field in ["accounting_before", "accounting_after"] {
+        wire["records"][0][field]["policy"] = crate::KIMI_CODE_IMAGE_ACCOUNTING_PROFILE.into();
+    }
+    *commits.last_mut().unwrap() = decode(&wire.to_string()).unwrap();
+    assert!(
+        recover(&commits)
+            .unwrap_err()
+            .to_string()
+            .contains("owning binding")
+    );
+}

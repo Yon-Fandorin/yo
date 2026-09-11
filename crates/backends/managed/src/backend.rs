@@ -215,7 +215,7 @@ pub struct NativeModelBackend {
     tool_host: Box<dyn ToolExecutionHost>,
     config: NativeModelBackendConfig,
     model_context: ModelContextProfile,
-    image_accounting: bool,
+    image_accounting: Option<yo_core::VersionedProfileId>,
     token_counter: Box<dyn ModelTokenCounter>,
     request_observer: Option<Box<dyn ModelRequestObserver>>,
     contract: ModelReplayContract,
@@ -367,7 +367,7 @@ impl NativeModelBackend {
             model_context,
             image_accounting: explicit_profile
                 .as_ref()
-                .is_some_and(|profile| profile.image_input_profile().is_some()),
+                .and_then(|profile| profile.image_accounting_policy()),
             token_counter: services.token_counter,
             request_observer: services.request_observer,
             contract,

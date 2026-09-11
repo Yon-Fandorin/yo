@@ -35,8 +35,9 @@ pub use backend::{
     ContextPressureObservation, ContinuationStrategy, ImageInputCapability, InputImageHistory,
     InputImageSnapshot, InputImageSnapshotError, KIMI_CODE_IMAGE_ACCOUNTING_PROFILE,
     ModelInputPart, ModelReplay, ModelReplayBudget, ModelReplayContract, ModelReplayDelta,
-    ModelReplayItem, ModelReplayRole, ModelReplayTool, ProviderPrivateReplayEnvelope,
-    ReplayExecutor, ReplayProfile, ScriptedBackend, provider_private_schema,
+    ModelReplayItem, ModelReplayRole, ModelReplayTool, OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE,
+    ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
+    provider_private_schema,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
@@ -102,9 +103,10 @@ pub use model_service::{
     ModelProfileLayer, ModelProfileParameters, ModelRequestFailureKind, ModelRequestOutcome,
     ModelSelection, ModelSelectionChoice, ModelSelectionController, ModelServiceError,
     ModelServiceErrorKind, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint,
-    PreparedAccountSessionMutation, PreparedConnectionMutation, PreparedCredentialMutation,
-    PreparedExternalConnection, PreparedExternalDisconnect, ProviderId, SEMANTIC_REPLAY_PROFILE,
-    StartupPolicy, StartupSelectionSources, StartupTarget, StoredModelBinding, VersionedProfileId,
+    OPENROUTER_FREE_IMAGE_INPUT_PROFILE, PreparedAccountSessionMutation,
+    PreparedConnectionMutation, PreparedCredentialMutation, PreparedExternalConnection,
+    PreparedExternalDisconnect, ProviderId, SEMANTIC_REPLAY_PROFILE, StartupPolicy,
+    StartupSelectionSources, StartupTarget, StoredModelBinding, VersionedProfileId,
     derive_host_account_id, derive_host_catalog_revision, plan_connection_recovery,
     resolve_startup_target,
 };

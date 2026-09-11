@@ -25,6 +25,22 @@ cargo test -p yo-cli execution::process::termination::tests
 These host-integrated checks are part of the ordinary package test run. Their
 passing result does not imply that tmux or SSH behavior ran.
 
+## OpenRouter image journey
+
+For the explicit free image profile, verify definition import, Ctrl+V from a
+private clipboard socket, visible attachment preview, Enter submission, streamed
+completion, clean exit, and `--continue` in a fresh TUI process. Compare the
+normalized PNG data URLs and free routing fields on the first and resumed
+requests. Keep configuration, credentials and Session storage isolated.
+
+The Linux PTY smoke on 2026-09-11 passed this journey with two requests to a
+local TLS/SSE fixture. The test process redirected the exact OpenRouter hostname
+to loopback, denied other TCP destinations, used a temporary test CA and a fake
+key, and removed its state after exit. This verifies Yo's transport and recovery;
+live NVIDIA streaming, tool execution, summary completion and the new profile
+on macOS/SSH/tmux remain separate environment checks. Connector unit tests cover
+tool-result and bounded summary projection; they do not prove provider execution.
+
 ## Installed Codex checks
 
 Verify the stdio initialize and shutdown boundary without a model turn:

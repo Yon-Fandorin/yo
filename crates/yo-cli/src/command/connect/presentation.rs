@@ -222,6 +222,25 @@ impl ImportPreview {
             )?;
             counts.record(PlanAction::Add);
         }
+        if !self.verbose {
+            for group in group_profiles(&self.bindings)
+                .into_iter()
+                .filter(|group| group.profile.has_image_input())
+            {
+                output.push('\n');
+                push_section_heading(&mut output, "Image connection", width, style)?;
+                push_model_list_field(
+                    &mut output,
+                    &format!("Models ({})", group.models.len()),
+                    &group.models,
+                    width,
+                    style,
+                )?;
+                group
+                    .profile
+                    .render_image_disclosure(&mut output, width, style)?;
+            }
+        }
         if self.verbose && !self.bindings.is_empty() {
             output.push('\n');
             for (index, group) in group_profiles(&self.bindings).iter().enumerate() {

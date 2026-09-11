@@ -49,7 +49,8 @@ pub use local_credentials::{
 };
 pub use profile::{
     EffectiveModelProfile, KIMI_CODE_IMAGE_INPUT_PROFILE, KIMI_PRIVATE_REPLAY_PROFILE,
-    ModelProfileLayer, ModelProfileParameters, SEMANTIC_REPLAY_PROFILE, VersionedProfileId,
+    ModelProfileLayer, ModelProfileParameters, OPENROUTER_FREE_IMAGE_INPUT_PROFILE,
+    SEMANTIC_REPLAY_PROFILE, VersionedProfileId,
 };
 pub use selection::{
     HostCatalogModel, HostModelCatalog, HostModelSelection, ModelPickerChoice, ModelPickerSection,

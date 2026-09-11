@@ -25,6 +25,7 @@ pub struct OpenAiChatCompletionsConnector {
     model: String,
     credential: ApiCredential,
     limits: ModelConnectorLimits,
+    image_policy: Option<request::ImageWirePolicy>,
 }
 
 impl OpenAiChatCompletionsConnector {
@@ -34,6 +35,18 @@ impl OpenAiChatCompletionsConnector {
         limits: ModelConnectorLimits,
     ) -> Result<Self, ConnectorError> {
         Self::new_with_client_factory(binding, credential, limits, http_client)
+    }
+
+    /// Constructs a connector after defensive admission of the complete service profile.
+    pub fn with_complete_binding(
+        complete: &yo_core::CompleteModelBinding,
+        credential: ApiCredential,
+        limits: ModelConnectorLimits,
+    ) -> Result<Self, ConnectorError> {
+        let policy = request::ImageWirePolicy::admit(complete)?;
+        let mut connector = Self::new(complete.binding(), credential, limits)?;
+        connector.image_policy = policy;
+        Ok(connector)
     }
 
     fn new_with_client_factory(
@@ -69,6 +82,7 @@ impl OpenAiChatCompletionsConnector {
             model: binding.model_id().as_str().to_owned(),
             credential,
             limits,
+            image_policy: None,
         })
     }
 
@@ -81,7 +95,7 @@ impl OpenAiChatCompletionsConnector {
         &self,
         request: &ModelConnectorRequest,
     ) -> Result<Value, ConnectorError> {
-        request::wire_body(request, &self.model)
+        request::projected_body(request, &self.model, self.image_policy.as_ref(), true)
     }
 
     pub fn start(
@@ -89,7 +103,8 @@ impl OpenAiChatCompletionsConnector {
         request: ModelConnectorRequest,
         cancellation: ModelConnectorCancellation,
     ) -> Result<ConnectorStream, ConnectorError> {
-        let body = request::wire_body(&request, &self.model)?;
+        let body =
+            request::projected_body(&request, &self.model, self.image_policy.as_ref(), false)?;
         start_stream(
             self.client.clone(),
             self.request_url.clone(),

@@ -201,8 +201,13 @@ fn native_connector(
                 .map(|connector| Box::new(connector) as Box<dyn ModelConnector>)
         },
         (ConnectorId::OPENAI_CHAT_COMPLETIONS, ApiDialect::OpenAiChatCompletions) => {
-            OpenAiChatCompletionsConnector::new(binding, credential, limits)
-                .map(|connector| Box::new(connector) as Box<dyn ModelConnector>)
+            match entry.complete_binding() {
+                Some(complete) => OpenAiChatCompletionsConnector::with_complete_binding(
+                    complete, credential, limits,
+                ),
+                None => OpenAiChatCompletionsConnector::new(binding, credential, limits),
+            }
+            .map(|connector| Box::new(connector) as Box<dyn ModelConnector>)
         },
         (ConnectorId::KIMI_CHAT_COMPLETIONS, ApiDialect::KimiChatCompletions) => {
             let complete = entry.complete_binding().ok_or_else(|| {

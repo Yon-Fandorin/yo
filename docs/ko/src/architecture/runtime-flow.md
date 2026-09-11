@@ -560,6 +560,13 @@ v3 입력과 multimodal replay는 text/image part 순서를 유지한다. Kimi c
 PNG data URL을 내보내고 tokenizer projection에서는 해당 image URL만 제거한다.
 관리형 `backend/accounting.rs`는 최종 output-cap 재계산을 포함한 완전한 요청마다 선택된
 advisory 추정값과 여유분 하나를 적용한다. 실제 provider 사용량은 별도 telemetry로 유지한다.
+명시적 OpenRouter 무료 프로필은 중립 Chat connector의 `with_complete_binding`과
+순서 있는 multipart 변환을 사용한다. tokenizer에서는 이미지 part 전체를 제외하고
+`ModelConnectorRequest::input_images`가 별도 typed descriptor를 유지한다.
+허용한 provider 옵션은 모든 요청에 남는다. `EffectiveModelProfile::image_accounting_policy`가
+입력·pressure·checkpoint 복원에서 별도 정책을 선택하며 backend는 provider로 분기하지 않는다.
+[연결 정의](../workflows/provider-catalogs/openrouter.md#명시적-무료-이미지-연결)를 참고한다.
+
 
 `model_connector/image_summary.rs`는 별도 summary 한도 아래 tools를 끈 summary 요청
 하나의 순서 있는 manifest와 정확한 이미지를 구성한다. core의 v2 checkpoint는 이전·이후

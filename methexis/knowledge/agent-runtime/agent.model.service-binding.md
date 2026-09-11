@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.model-001
-    revision: sha256:9ef63962457a150a5ae31e73f8c1814479c00b5e03a4100fc14fd1a0992024e0
+    revision: sha256:0c8f287614b890caf2f97b817ef20e23cb5265ecda36d27f433ec0e42d3f08e8
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -173,6 +173,53 @@ new accounting result retains quality, policy, input estimate and request reserv
 under the persistence owner's closed shape. A binding with this profile MUST NOT
 be dispatched by a runtime that understands PNG serialization but lacks its
 complete request accounting, persistence or replay contract.
+
+### OpenRouter free PNG profile
+
+The additional closed image profile `openrouter-free-png-advisory/v1` admits
+only ProviderId `openrouter`, any valid explicitly selected AccountId, normalized
+endpoint `https://openrouter.ai/api/v1`, the dialect-derived
+`openai-chat-completions` Connector, and exact ModelId
+`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`. The remaining complete
+profile is exactly tokenizer `utf8-bytes/v1`, input limit 256000, known output
+maximum 65536, empty reasoning parameters, `semantic-only/v1` replay, and either
+`local-tools/v1` or `no-tools/v1` under the existing request-local exposure rule.
+Its accounting policy is `openrouter-free-image-advisory/v1` with explicit
+`advisory_estimate` quality; neither the text counter nor that planning policy
+claims to implement the remote model's tokenizer.
+
+The complete profile's `optional_request_parameters` is exactly
+`{"provider":{"only":["nvidia"],"allow_fallbacks":false,"require_parameters":true,"max_price":{"prompt":0,"completion":0,"request":0,"image":0}}}`,
+with integer zero values under the existing variant-exact structured-value
+algebra. These declared routing fields are sent on every request, including
+text-only, tools-disabled verification, continuation and image summary. They
+are not a general arbitrary-parameter passthrough. Missing, relaxed, additional
+or conflicting options, a different model or endpoint, private replay, or any
+other complete-envelope mismatch rejects before publication and transport.
+The service admits the complete envelope and supplies typed request policy;
+the selected Connector defensively verifies that same admitted envelope.
+Provider policy remains outside the generic managed model loop.
+
+A new or replacement binding may select this profile only in an explicit
+connection plan that discloses the exact free route, advisory accounting and
+image support. The first implementation exposes it through an explicit
+`yo connect --from` definition using the existing reviewed plan/commit flow.
+Discovery metadata alone cannot attach this profile; existing stored bindings,
+historical epochs and ordinary text-only discovery profiles remain unchanged.
+Selecting another model requires a separately admitted complete binding, never
+a fallback or suffix-based inference. The free suffix and zero-price routing
+restrictions are a dispatch policy, not a promise of provider availability.
+A provider capacity or price rejection remains a visible failure and never
+relaxes those restrictions or causes image stripping or an automatic resend.
+
+The profile reuses the accepted ordered immutable PNG input, replay, summary
+source, pressure and checkpoint shapes without a storage migration. Missing
+profile support rejects image dispatch while preserving the existing draft
+behavior. The first activation MUST select compatible reviewed revisions of
+this service-binding owner, the Chat Completions Connector and the managed-loop
+accounting owner together, alongside the already compatible image-input,
+continuation, persistence and checkpoint contracts. No member may independently
+activate image admission against an older member lacking this profile.
 
 ## Rationale
 

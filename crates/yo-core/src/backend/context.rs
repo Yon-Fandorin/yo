@@ -6,6 +6,9 @@ use crate::{ModelReplayContract, ModelReplayItem, TurnRef, VersionedProfileId};
 const CONTEXT_PRESSURE_SCHEMA: &str = "yo.context-pressure/v1alpha1";
 const IMAGE_CONTEXT_PRESSURE_SCHEMA: &str = "yo.context-pressure/v2alpha1";
 /// Reviewed advisory accounting identity, separate from input-image capability.
+pub const OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE: &str = "openrouter-free-image-advisory/v1";
+
+/// Reviewed Kimi advisory accounting identity, separate from input-image capability.
 pub const KIMI_CODE_IMAGE_ACCOUNTING_PROFILE: &str = "kimi-code-image-advisory/v1";
 
 /// Strength of a complete request's planning estimate.
@@ -56,8 +59,10 @@ impl ContextAccounting {
         input_estimate: u64,
         reserve_tokens: u64,
     ) -> Result<Self, &'static str> {
-        if policy.as_str() != KIMI_CODE_IMAGE_ACCOUNTING_PROFILE
-            || quality != ContextAccountingQuality::AdvisoryEstimate
+        if !matches!(
+            policy.as_str(),
+            KIMI_CODE_IMAGE_ACCOUNTING_PROFILE | OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE
+        ) || quality != ContextAccountingQuality::AdvisoryEstimate
             || !matches!(reserve_tokens, 0 | 1024)
             || input_estimate.checked_add(reserve_tokens).is_none()
         {

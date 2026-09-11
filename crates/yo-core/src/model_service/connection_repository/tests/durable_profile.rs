@@ -322,3 +322,40 @@ fn image_profile_round_trips_and_rejects_null_or_unknown_policy() {
         assert_eq!(fs::read_to_string(repository.path()).unwrap(), changed);
     }
 }
+
+// 이미지 프로필은 저장 후에도 명시적 정체성으로 남고 null·미등록 정책으로 약화되지 않는다.
+#[test]
+fn openrouter_image_profile_round_trips_and_keeps_free_parameters() {
+    let (_directory, repository) = repository("openrouter-image-profile");
+    let complete = CompleteModelBinding::from_durable_json(include_str!(
+        "../../tests/openrouter-binding.json"
+    ))
+    .unwrap();
+    let account = ConnectionAccount::new(
+        ProviderId::new("openrouter").unwrap(),
+        AccountId::new("default").unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    let binding = StoredModelBinding::new(complete, None).unwrap();
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_model_upsert(account, binding.clone())
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    assert_eq!(repository.capture().unwrap().models(), &[binding]);
+    let encoded = fs::read_to_string(repository.path()).unwrap();
+    assert!(encoded.contains("image_input_profile: openrouter-free-png-advisory/v1"));
+    for invalid in ["null", "unknown-image-policy/v1"] {
+        let changed = encoded.replace(
+            "image_input_profile: openrouter-free-png-advisory/v1",
+            &format!("image_input_profile: {invalid}"),
+        );
+        fs::write(repository.path(), &changed).unwrap();
+        assert!(repository.capture().is_err());
+        assert_eq!(fs::read_to_string(repository.path()).unwrap(), changed);
+    }
+}
