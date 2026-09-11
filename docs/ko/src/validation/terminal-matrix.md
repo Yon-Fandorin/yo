@@ -53,6 +53,92 @@ admission, 완전한 32 MiB outbound JSONL 경계를 검사한다. 경계 test�
 사용하며 overflow는 protocol failure로 분류한다. 이 검사는 fake JSONL peer를 사용하고
 model service에 접속하지 않는다.
 
+2026-09-10에는 `gpt-6-astra`를 사용한 격리된 공식 Codex 실행에서도 합성 model
+요청 두 번으로 이미지 Turn과 새 프로세스 재개를 검증했다. 클립보드 fixture에 대해
+정확한 `red,blue` 답변을 받았고, 재개 Turn도 정확한 회상 검사를 통과했다.
+continuation anchor 두 개와 기존 journal prefix를 보존했다. 검사한 바이너리 SHA256은
+`a20df491ff6445f521bb45d8f03f67f79fb7f72dbea355312ac36c9af394603d`다.
+소유한 tmux Session을 종료하고 임시 인증을 제거했다. 이는 검사한 이미지 입력과
+복구 경로를 입증하며 바깥 터미널의 이미지 픽셀이나 다른 model/version 조합을
+검증하지 않는다. 승인된 요청 두 번의 예산은 모두 사용했다.
+
+### 저장된 명령 규칙과 자동 승인
+
+2026-09-11 Linux Rust yo를 격리된 110×44 tmux에서 실행해 공식 Codex `0.154.0`,
+`gpt-6-astra`에 대한 합성 Turn 네 번을 검증했다. 바이너리 SHA256은
+`f72d343be2d2aecef3f844033a6e84fa59aa3ffc902c680ced0a6b5bc6200d6a`다.
+추론 전에 위임 Codex package 검사와 CLI build가 통과했다.
+
+`approval_policy = "on-request"`, `approvals_reviewer = "user"`,
+`sandbox_mode = "read-only"`에서 첫 Turn은 임시 스크립트 하나의 정확한 절대 경로에
+대해 실제 TUI의 `Approve + save rule`을 선택했다. Native 규칙 파일에는 해당 allow
+prefix만 저장됐고 스크립트는 marker를 정확히 한 번 추가했다. 승인 대기 패널을
+40, 20, 110열로 변경하는 동안 실행이나 규칙 저장은 일어나지 않았다. 정상 종료 후
+새 프로세스로 재개했을 때 같은 명령은 추가 승인 없이 marker를 한 번 더 추가했다.
+기존 Yo journal의 물리적 prefix와 저장 규칙은 그대로 유지됐다.
+
+다른 스크립트에는 새로운 승인 요청이 표시됐다. `Decline and stop`을 선택하자
+출력 파일을 만들지 않고 저장 규칙을 유지하면서 Turn을 중단했다. 최초 드라이버는
+이 취소된 suffix를 재개하려 했지만, 최신 durable anchor가 없어 현재 continuation
+guard가 읽기 전용 기록을 열었다. 이 드라이버 순서 오류는 원래 기록에 보존했다.
+완료한 세 시나리오는 재전송하지 않고 네 번째 시나리오는 새 Session에서 실행했다.
+
+새 Session은 같은 read-only sandbox와 빈 규칙 디렉터리에서
+`approvals_reviewer = "auto_review"`를 사용했다. 합성 append 한 번이 수동 승인 없이
+완료됐다. 캡처한 `item/autoApprovalReview/completed`는 `decisionSource: "agent"`와
+`approved`를 보고했고 명령 완료 전에 정확한 command item, thread, turn과 연결됐다.
+파일에는 marker가 정확히 하나 있었고 규칙은 저장되지 않았다. 이는 호스트의
+[자동 검토 경로](https://learn.chatgpt.com/docs/sandboxing/auto-review)를 검사한 것이며
+승인 패널이 없다는 사실만으로 권한 부여를 추정하지 않는다.
+
+오프라인 감사는 선택지 번호, 정확한 wire 결정, native 명령 결과와 Yo 요청·응답
+신원을 대조했다. 선택지, 규칙 범위, cleanup, 요청 신원, 명령 상태, 검토 상태,
+대상, 순서, 결정 출처, 검토 누락을 변조한 대조군 열 개를 모두 거절했다. 임시 인증,
+native 상태와 규칙을 제거하고 작업 폴더를 비웠으며, 소유한 tmux 서버를 종료한 뒤
+남은 소유 프로세스가 없음을 확인했다. `turn/start` 네 번은 내부 model이나 reviewer
+요청 횟수를 뜻하지 않는다.
+
+### 자동 거절과 네트워크 승인 범위
+
+같은 날 같은 Yo 바이너리와 공식 Codex `0.154.0`을 격리된 120×48 tmux TUI에서
+실행해 추가 Turn 열 번을 검증했다. 인증 정보 없는 로컬 Responses fixture가
+결정적인 도구 호출과 reviewer 응답을 제공했다. 로컬 model/reviewer HTTP 요청은
+20번이었고 실제 서비스 요청은 없었다. 이는 native 정책 실행, adapter 동작과
+TUI 표시 결과를 검증하며 서비스 model의 위험 분류 정확도를 측정하지 않는다.
+
+네트워크 검사는 native proxy를 활성화한 이름 있는 permission profile과 격리된
+`[experimental_network]` requirements fixture를 사용했다. Mount namespace로 임시
+requirements를 테스트 프로세스에만 제공했으며 실제 `/etc/codex`와 사용자의 Codex
+설정은 변경하지 않았다. 대상은 수신 요청을 집계하는 loopback HTTP 서버였다.
+
+- 제공된 Session 한정 승인을 선택하자 요청 하나가 도달했다. 실행 중인 같은
+  Session의 다음 Turn은 추가 승인 없이 같은 대상에 도달했고, 새 프로세스와
+  Session에서는 다시 승인을 요구했다. 취소했을 때는 대상에 도달하지 않았다.
+- 제공된 영구 네트워크 허용을 선택하자 loopback 호스트와 HTTP protocol에 대한
+  native `network_rule` 하나가 저장됐다. 새 프로세스와 Session에서도 추가 승인
+  없이 적용됐다. 다른 호스트 이름에는 여전히 승인을 요구했고 취소하면 대상에
+  도달하지 않았다.
+- 명시적으로 준비한 네트워크 거부 규칙은 최초 실행과 새 프로세스 모두에서 승인
+  요청이나 대상 도달 없이 접속을 차단했다. Yo는 정책이 도메인을 명시적으로
+  거부한다는 native 실패 설명을 표시했다. 규칙은 변경되지 않았다.
+- 주입한 reviewer 거부 응답은 native `denied` 검토와 `declined` 명령을 만들었다.
+  Reviewer 응답을 멈추자 native의 90초 제한에 도달해 `timedOut`과 실패한 명령을
+  만들었다. 둘 다 명령의 marker 파일을 만들거나 수동 승인을 요구하지 않았으며,
+  Yo에 해당 거부 또는 시간 초과 설명과 함께 `Codex approval warning`을 표시했다.
+
+Codex `0.154.0`은 metadata에 네트워크 amendment 두 가지를 제안했지만
+`availableDecisions`에는 허용만 제공했다. 따라서 이 호스트 버전에서는 실제 TUI로
+영구 거부를 저장하는 경로를 사용할 수 없다. 준비한 규칙 검사는 차단 적용을
+입증하며 대화형 거부 저장 과정을 입증하지 않는다. Adapter 검사
+`offered_approval_choices_preserve_exact_scopes_and_wire_payloads`는 호스트가 해당
+선택지를 제공할 때 정확한 allow/deny 전송을 별도로 다룬다.
+
+오프라인 감사는 열 번의 결과, 선택지 번호와 정확한 응답, 프로세스 경계, 저장
+규칙, 대상 수신, 표시된 경고, 검토와 명령의 신원·순서를 확인했다. 증거를 변조한
+대조군 여덟 개를 거절했다. 임시 native 상태, 테스트 규칙과 작업 폴더를 제거하고
+소유한 프로세스와 tmux 서버를 종료했으며 loopback listener를 해제했다. Runtime
+코드는 변경하지 않았으므로 앞선 package/build 검사 결과가 계속 유효하다.
+
 ## 설치된 Grok 검사
 
 Session 생성이나 model 추론 요청 없이 ACP 초기화, cached-login 인증,
@@ -68,22 +154,62 @@ cargo test --locked -p yo-backend-delegated-grok \
 독립 96×32 tmux 실행에서도 실제 Rust `yo --fullscreen --model host:grok`으로
 빈 입력창까지 도달한 뒤 Ctrl+D로 정상 종료했다. 검사한 바이너리 SHA256은
 `42f7c955d966d56825213c18a8ce59c7d655acb17532fa606dc2f449f2b83d7a`다.
-프롬프트를 제출하거나 클립보드를 읽지 않았다. 인증과 빈 Session 시작만 입증하며
-인증된 Turn, 실제 과거 대화, 스킬, native read-only
-sandbox에는 각각 별도 증거가 필요하다. 일반 Grok suite는 `session/load` 응답 전에
+프롬프트를 제출하거나 클립보드를 읽지 않았다. 이 초기 검사는 인증과 빈 Session
+시작만 입증한다. 이후 스킬과 재개 검사는 아래에 기록하며 native read-only sandbox는
+계속 사용할 수 없다. 일반 Grok suite는 `session/load` 응답 전에
 같은 Session의 과거 update 1,025개를 즉시 버리고 이후 새 응답과 resumable outcome을
 전달하는 경계를 별도로 검증한다. 다른 Session, 서버 요청, 응답 신원 오류와 기존
-무관 메시지 대기열 상한은 계속 적용한다. 이는 결정적인 adapter 검사이며 실제로
-긴 Grok Session을 측정한 결과는 아니다.
+무관 메시지 대기열 상한은 계속 적용한다. 이는 결정적인 adapter 검사이며,
+실제 문맥 재개 측정 결과는 아래에 기록한다.
 
-이후 격리된 합성 스킬 프롬프트는 Grok 자체 기록에서 예상한 marker로 완료됐지만,
-Yo는 continuation anchor를 기록하기 전에 unsigned 응답 ID protocol 오류로 실패했다.
-새 프로세스에서 재개를 시도하지 않았으며 수락된 요청을 재전송하지 않았다.
-스킬 본문을 포함한 오프라인 leader mode Responses API 검사는 숫자 ID를 반환해
-이 오류를 재현하지 못했다. 이제 adapter는 잘못된 ID의 값을 노출하지 않고 JSON
-종류만 오류에 표시한다. 이는 진단 개선이며 실패 원인을 확정하거나 해결한 것은 아니다.
+최초 격리된 합성 스킬 프롬프트에서 Grok native skill watcher가 요청 없이 보내는
+method 없는 `skills-reload` 유지보수 응답을 발견했다. Yo는 continuation anchor를
+기록하기 전에 이 문자열 ID를 거절했다. 커밋 `f94d1a42`는 숫자 요청 ID 상관관계를
+유지하면서 정확한 유지보수 acknowledgement 형식을 소비한다. Adapter 검사는 시작,
+활성 프롬프트, 재개를 다루며 무관한 응답 거절과 프롬프트 조기 완료 방지도 포함한다.
+
+수정된 바이너리는 2026-09-10 격리된 공식 Grok 실행에서 합성 model 제출 두 번과
+관측된 watcher acknowledgement 두 번으로 검증을 통과했다. 첫 스킬 답변이 정확히
+일치했고, 스킬 원본을 제거한 뒤 새 프로세스 재개에서도 정확한 회상을 검증했다.
+continuation anchor 두 개와 journal prefix를 보존했다. 검사한 바이너리 SHA256은
+`f72d343be2d2aecef3f844033a6e84fa59aa3ffc902c680ced0a6b5bc6200d6a`다.
+소유한 tmux Session을 종료하고 임시 인증을 제거했다. 설치된 호스트는 이미지 prompt
+지원을 광고하지 않으며 native read-only review sandbox는 계속 사용할 수 없다.
+
+### Grok 큰 문맥 재개
+
+2026-09-11 같은 바이너리와 Grok `1.0.25 (f7e67d6988e2)`를 격리된 Linux 110×40
+tmux에서 실행해 공식 서비스에 대한 합성 제출 일곱 번을 검증했다. 위임 Grok
+suite는 64개 검사가 통과했고 환경 검사 두 개는 ignored였다. 앞서 통과한 CLI
+build는 변경되지 않았다. 도구, 웹 검색, 하위 에이전트와 memory를 비활성화했고,
+인증과 호스트 상태에는 임시 Grok home을 사용했다.
+
+여섯 Turn에 합성 기록 960개, 총 입력 120,272바이트를 제공했고 각각 정확한 확인
+답변을 받았다. 정상 종료한 뒤 새 Yo 프로세스에서 같은 Yo Session과 native Grok
+Session을 재개해 앞부분·중간·마지막 batch의 무작위 checkpoint 값 세 개를 정확히
+회상했다. 재개 prompt에는 checkpoint 이름만 주고 정답 값은 제공하지 않았다.
+일곱 Turn이 모두 완료됐고 continuation anchor 일곱 개를 보존했으며, 기존 물리적
+journal prefix 192,069바이트가 바이트 단위로 동일했다. 도구나 승인 실행은 없었다.
+
+Native `session/load`는 상관관계가 일치하는 응답 전에 update 19개를 재생했고,
+해당 응답 이후 일곱 번째 `session/prompt`가 전송됐다. 재생된 메시지는 Yo 답변을
+중복 생성하지 않았다. 오프라인 감사는 정확한 답변, 입력 크기, Session·프로세스
+신원, journal prefix, anchor, 순서와 cleanup을 확인했고 증거를 변조한 대조군
+여섯 개를 거절했다. 계획한 제출 일곱 번을 재시도 없이 모두 사용했다. 검증 후
+임시 인증, native 상태와 소유한 프로세스를 제거했다.
+
+이는 측정한 입력 크기와 일곱 Turn 깊이에서의 재개를 입증한다. Update 1,025개의
+mailbox 경계는 별도 결정적 검사이며, 이번 실행은 그만큼의 실제 update 재생,
+context compaction이나 호스트 최대 context window에서의 동작을 입증하지 않는다.
 
 ## 로컬 tmux와 Linux SSH 검사
+
+이전 사용자 관찰에서 SSH/tmux 터미널에 산 이미지가 표시되고 HTTP 링크가
+열리는 것을 확인했다. 원격 README 파일 링크는 열리지 않았다. 해당 파일 링크
+제한은 저장소 README에 기록되어 있으며 원격 파일 전송이나 내장 viewer는 없다.
+이는 터미널·버전 matrix가 남아 있지 않은 사용자 보고이며 자동 픽셀 검사나 모든
+터미널에 대한 주장은 아니다. 이전 로컬 메모의 “픽셀 확인 대기” 상태는 이 응답으로
+해소됐다.
 
 Linux 또는 macOS의 두 표시 mode에서 로컬 tmux를 검사한다.
 

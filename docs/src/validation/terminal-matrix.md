@@ -56,6 +56,103 @@ rejects the first excess byte before the peer sees any bytes; server responses u
 the same boundary and classify overflow as protocol failure. These tests use fake
 JSONL peers and do not contact a model service.
 
+On 2026-09-10, an isolated official Codex run with `gpt-6-astra` also passed
+two synthetic model requests: an image turn and fresh-process resume. The
+clipboard fixture produced the exact `red,blue` answer; the resumed turn passed
+the exact recall check, retained two continuation anchors and preserved the
+existing journal prefix. The tested binary SHA256 was
+`a20df491ff6445f521bb45d8f03f67f79fb7f72dbea355312ac36c9af394603d`.
+The owned tmux session was closed and temporary authentication was removed.
+This establishes the tested image-input and recovery route; it does not verify
+outer-terminal image pixels or other model/version combinations. Both requests
+in the approved two-request budget were consumed.
+
+### Saved command rules and automatic approval
+
+On 2026-09-11, Linux Rust yo in isolated 110×44 tmux passed four synthetic
+turns against official Codex `0.154.0` with `gpt-6-astra`. The binary SHA256 was
+`f72d343be2d2aecef3f844033a6e84fa59aa3ffc902c680ced0a6b5bc6200d6a`.
+The delegated Codex package tests and CLI build passed before inference.
+
+With `approval_policy = "on-request"`, `approvals_reviewer = "user"` and
+`sandbox_mode = "read-only"`, the first turn selected the actual TUI's
+`Approve + save rule` choice for one disposable script's exact absolute path.
+The native rules file contained only that allow prefix, and the script appended
+exactly one marker. Resizing the pending panel to 40, 20 and 110 columns neither
+executed the script nor saved a rule. After graceful exit and fresh-process
+resume, the same command appended one more marker without another approval.
+The physical Yo journal prefix and saved rule were unchanged.
+
+A different script produced a new approval request. Selecting `Decline and stop`
+left its output absent, kept the saved rule unchanged and interrupted the turn.
+The original driver then attempted to resume this cancelled suffix; the current
+continuation guard correctly opened read-only history because no newest durable
+anchor existed. This driver sequencing failure was retained. Its three completed
+scenarios were not resent; the fourth scenario used a fresh Session.
+
+For that Session, `approvals_reviewer = "auto_review"` used the same read-only
+sandbox with an empty rules directory. A single synthetic append completed
+without a manual approval. Captured `item/autoApprovalReview/completed` evidence
+reported `decisionSource: "agent"` and `approved`, correlated to the exact
+command item, thread and turn before command completion. The file contained
+exactly one marker, and no rule was saved. This checks the host's
+[automatic review route](https://learn.chatgpt.com/docs/sandboxing/auto-review),
+not a grant inferred from the absence of an approval panel.
+
+An offline audit matched offered ordinals, exact wire decisions, native command
+results and Yo request/response identities. It rejected ten altered-evidence
+controls covering choice, rule scope, cleanup, request identity, command status,
+review status, target, ordering, decision source and missing review. Temporary
+authentication, native state and rules were removed; workspaces were emptied,
+owned tmux servers closed and no owned processes remained. The four `turn/start`
+calls do not count internal model or reviewer requests.
+
+### Automatic refusal and network approval scopes
+
+On the same date, the same Yo binary and official Codex `0.154.0` passed ten
+additional turns through an isolated 120×48 tmux TUI. A credential-free local
+Responses fixture supplied deterministic tool calls and reviewer responses;
+there were 20 local model/reviewer HTTP requests and zero real-service requests.
+This verifies native policy execution, adapter behavior and visible TUI results;
+it does not measure the service model's risk classification.
+
+Network cases used a named permission profile with the native proxy enabled and
+an isolated `[experimental_network]` requirements fixture. A mount namespace
+exposed the temporary requirements only to test processes; the real `/etc/codex`
+and the user's Codex configuration were unchanged. The target was a loopback
+HTTP server that counted received requests.
+
+- Selecting the offered session-only grant allowed one request. Another turn in
+  that running Session reached the same target without an approval; a fresh
+  process and Session required approval again. Cancelling reached no target.
+- Selecting the offered persistent network allow saved exactly one native
+  `network_rule` for the loopback host and HTTP protocol. A fresh process and
+  Session reused it without approval. A different hostname still required
+  approval, and cancelling reached no target.
+- An explicitly seeded network deny rule blocked both the initial and
+  fresh-process requests without approval or a target hit. Yo displayed the
+  native failure explaining that policy explicitly denied the domain. The rule
+  remained unchanged.
+- An injected reviewer denial produced a native `denied` review and a `declined`
+  command. A stalled reviewer response reached the native 90-second deadline,
+  producing `timedOut` and a failed command. Neither created the command's marker
+  file or requested manual approval; both displayed `Codex approval warning` in
+  Yo, with the corresponding denial or timeout explanation.
+
+Codex `0.154.0` proposed both network amendments in metadata but exposed only
+allow in `availableDecisions`. Therefore saving a persistent deny through the
+actual TUI remains unavailable in this host version. The seeded-rule check
+establishes enforcement, not an interactive deny-save journey. The adapter test
+`offered_approval_choices_preserve_exact_scopes_and_wire_payloads` separately
+covers exact allow/deny transmission when the host offers those choices.
+
+An offline audit checked the ten outcomes, offered ordinals and exact responses,
+process boundaries, persisted rules, target receipts, visible warnings and
+review-to-command identities and ordering. Eight altered-evidence controls were
+rejected. Temporary native state, test rules and workspaces were removed, owned
+processes and tmux servers closed, and loopback listeners released. No runtime
+code changed; the prior package/build results still apply.
+
 ## Installed Grok checks
 
 Verify ACP initialization, cached-login authentication, and cleanup without creating
@@ -72,24 +169,70 @@ An isolated 96×32 tmux run also reached the empty composer through the actual
 Rust `yo --fullscreen --model host:grok`, then exited cleanly with Ctrl+D.
 The tested binary SHA256 was
 `42f7c955d966d56825213c18a8ce59c7d655acb17532fa606dc2f449f2b83d7a`.
-No prompt was submitted or clipboard read. This establishes authentication and
-empty Session startup only; authenticated turns, actual retained
-history, skills, and the native read-only sandbox still need their own evidence.
+No prompt was submitted or clipboard read. This initial check establishes
+authentication and empty Session startup only. The subsequent skill and resume
+check is recorded below; the native read-only sandbox remains unavailable.
 The normal Grok suite separately verifies that `session/load` drains 1,025
 matching historical updates before its response, then delivers a fresh response
 and resumable outcome. Other sessions, server requests, correlation failures,
 and the original unrelated-message backlog bound remain enforced. This is a
-deterministic adapter test, not an actual long Grok session measurement.
+deterministic adapter test; the measured live context-resume check is below.
 
-A subsequent isolated synthetic skill prompt completed with the expected marker
-in Grok's native record, but Yo failed with an unsigned response-ID protocol error
-before recording a continuation anchor. Fresh-process resume was not attempted;
-the accepted request was not resent. Offline leader-mode Responses API tests with
-explicit skill text returned numeric IDs and did not reproduce the failure.
-The adapter now reports the invalid ID's JSON type without exposing its value;
-this improves diagnosis but does not fix or establish the cause of that failure.
+An initial isolated synthetic skill prompt exposed an unsolicited, methodless
+`skills-reload` maintenance response from Grok's native skill watcher. Yo rejected
+its string ID before recording a continuation anchor. Commit `f94d1a42` consumes
+the exact maintenance acknowledgement shape while preserving numeric request
+correlation. Adapter tests cover startup, active prompts and resume, including
+rejection of unrelated responses and no early prompt completion.
+
+The corrected binary passed an isolated official Grok run on 2026-09-10 with
+two synthetic model submissions and two observed watcher acknowledgements.
+The first skill response matched exactly. After removing the skill source,
+fresh-process resume also passed exact recall, retained two continuation anchors
+and preserved the journal prefix. The tested binary SHA256 was
+`f72d343be2d2aecef3f844033a6e84fa59aa3ffc902c680ced0a6b5bc6200d6a`.
+The owned tmux session was closed and temporary authentication was removed.
+The installed host advertises no image prompt support; a native read-only review
+sandbox remains unavailable.
+
+### Grok large-context resume
+
+On 2026-09-11, the same binary and Grok `1.0.25 (f7e67d6988e2)` passed seven
+synthetic submissions against the official service in isolated Linux 110×40
+tmux. The delegated Grok suite passed 64 tests with two environment tests ignored;
+the previously passing CLI build was unchanged. Tools, web search, subagents and
+memory were disabled; authentication and host state used a disposable Grok home.
+
+Six turns supplied 960 synthetic records totaling 120,272 input bytes. Each
+returned its exact acknowledgement. After graceful exit, a fresh Yo process
+resumed the same Yo Session and native Grok Session, then correctly returned
+three random checkpoint values from the early, middle and final batches. The
+resume prompt named the checkpoints without supplying their values. All seven
+turns completed, seven continuation anchors were retained, and the 192,069-byte
+physical journal prefix remained byte-identical. No tool or approval ran.
+
+Native `session/load` replayed 19 updates before its correlated response; that
+response preceded the seventh `session/prompt`. Replayed messages did not create
+duplicate Yo answers. An offline audit checked exact answers, input size, Session
+and process identity, journal prefix, anchors, ordering and cleanup, and rejected
+six altered-evidence controls. The seven planned submissions were all consumed
+without retry. Temporary authentication, native state and owned processes were
+removed after verification.
+
+This establishes resume at the measured input size and seven-turn depth. The
+1,025-update mailbox boundary remains a separate deterministic test; this run
+does not establish a live replay of that many updates, context compaction or
+behavior at the host's maximum context window.
 
 ## Local tmux and Linux SSH checks
+
+An earlier user observation confirmed that the mountain image was visible and
+an HTTP link opened in their SSH/tmux terminal. The remote README file link did
+not open. That file-link limitation is documented in the repository README;
+there is no remote file transfer or built-in viewer. This is a user-reported
+observation with no retained terminal/version matrix, not an automated pixel
+check or a claim about every terminal. The earlier local "awaiting pixel
+confirmation" notes are superseded by that response.
 
 Local tmux on Linux or macOS, both presentation modes:
 
