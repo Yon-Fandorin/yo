@@ -296,6 +296,39 @@ restored the requested presentation mode. Exiting the nested session also
 restored the outer local PTY. These SSH observations used a real remote host;
 they are evidence records rather than part of the normal test set.
 
+### Current Apple Silicon build and input check
+
+On 2026-09-11, the corrected tree based on `f57e61e5` was checked on macOS
+26.6.2 arm64 with the pinned `nightly-2026-05-22` toolchain. The initial run
+exposed incompatible device-ID types, Linux-only imports in Grok admission,
+and nonportable test assumptions about FIFO creation, temporary-path aliases,
+Unix-socket path length, executable locations and configuring a disconnected
+socket. The correction preserves the existing file-identity and path checks;
+it normalizes Apple's signed device ID only at the native metadata boundary
+and uses canonical, bounded test fixtures.
+
+The native core suite passed 706 tests. CLI checks passed 524 unit tests and
+seven integration tests, with 18 environment tests ignored. Clippy passed for
+`yo-core`, `yo-backend-delegated-grok` and `yo-cli`; the host-target Unix matrix
+and native offline `chat_preview` build also passed. Linux validation passed
+706 core tests, 64 Grok tests, 532 CLI unit tests and seven CLI integration tests;
+the updated workspace-reference fixtures passed 31 focused tests. These totals
+overlap and must not be added together as independent coverage.
+
+The user opened the offline executable in a Mac tmux pane and explicitly
+requested automated input there. Injected input verified Korean text, cursor
+movement, Backspace and insertion, bracketed multiline paste, clearing the
+draft, empty `Ctrl+D` exit, and a subsequent shell command with canonical input
+and echo restored. The user-owned tmux pane remained at its shell. The native
+preview binary SHA256 was
+`34ebe6cf4633d15e36d826ff8ce9774ec63aa2a7014027a35fa753cd6eb04a85`.
+No model request or account access was involved. This is an actual Mac tmux
+route with injected input; physical keys, IME composition and the terminal
+application's Command-V handling still require direct user observation.
+
+Disposable checkouts, source-transfer artifacts and test processes were cleaned
+up. The user's tmux session and existing clipboard installation were preserved.
+
 ## Mac clipboard to Linux yo
 
 On 2026-09-10, candidate `8343292f0281b9e8d7321fd504bed97ead205b7c` passed

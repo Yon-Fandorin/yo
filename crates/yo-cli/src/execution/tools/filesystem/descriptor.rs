@@ -81,7 +81,7 @@ pub(super) fn open_regular_file(
 
 pub(super) fn file_identity(file: &File) -> Option<FileIdentity> {
     file.metadata().ok().map(|metadata| FileIdentity {
-        device: normalize_device_id(metadata.dev()),
+        device: metadata.dev(),
         inode: metadata.ino(),
     })
 }

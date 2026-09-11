@@ -57,7 +57,7 @@ impl AccountCredentialFixture {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
             "yo-account-session-{}-{name}-{nonce}",
             std::process::id()
         ));

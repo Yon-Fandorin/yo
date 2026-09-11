@@ -94,9 +94,10 @@ fn provider_git_commands_remove_every_cleared_git_environment_override() {
 // 해당 설정을 제거하면 같은 작업 공간을 다시 정상적으로 탐색할 수 있다.
 #[test]
 fn git_discovery_timeout_reaps_a_process_blocked_on_configuration() {
-    use std::time::{Duration, Instant};
-
-    use rustix::fs::{CWD, Mode, mkfifoat};
+    use std::{
+        process::Command,
+        time::{Duration, Instant},
+    };
     let fixture = TempFixture::new("git-discovery-timeout");
     let root = fixture.path();
     assert!(
@@ -109,7 +110,14 @@ fn git_discovery_timeout_reaps_a_process_blocked_on_configuration() {
     let config_path = root.join(".git/config");
     let original = fs::read_to_string(&config_path).unwrap();
     let fifo = root.join("blocked-config");
-    mkfifoat(CWD, &fifo, Mode::RUSR | Mode::WUSR).unwrap();
+    assert!(
+        Command::new("mkfifo")
+            .args(["-m", "600"])
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
     fs::write(
         &config_path,
         format!("{original}\n[include]\n    path = {}\n", fifo.display()),

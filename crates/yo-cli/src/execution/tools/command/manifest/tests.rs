@@ -365,7 +365,8 @@ fn configured_shell_receives_literal_argv_and_normalized_json_stdin() {
 #[test]
 fn configured_native_executable_receives_json_and_eof_without_a_script() {
     let fixture = Fixture::new();
-    let prepared = fixture.prepare(&fixture.config("/usr/bin/cat", None, &[]));
+    let executable = fs::canonicalize("/bin/cat").unwrap();
+    let prepared = fixture.prepare(&fixture.config(executable.to_str().unwrap(), None, &[]));
     let result = wait(&mut start(&fixture, &prepared, "native"));
     assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
     assert_eq!(

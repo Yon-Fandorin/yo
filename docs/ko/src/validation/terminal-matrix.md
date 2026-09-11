@@ -273,6 +273,36 @@ pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다
 획득했다. 중첩 session 종료 뒤 바깥 로컬 PTY도 복원됐다. 이 SSH 관찰은
 실제 원격 host를 사용했으며 일반 test set이 아니라 증거 기록이다.
 
+### 현재 Apple Silicon 빌드와 입력 검사
+
+2026-09-11 `f57e61e5` 기반 수정 트리를 macOS 26.6.2 arm64에서 고정된
+`nightly-2026-05-22` toolchain으로 검사했다. 최초 실행은 장치 ID 자료형 불일치,
+Grok admission의 Linux 전용 import, FIFO 생성·임시 경로 alias·Unix socket 경로
+길이·실행 파일 위치·종료된 socket 설정에 대한 이식 불가능한 테스트 가정을
+드러냈다. 수정은 기존 파일 신원·경로 검사를 유지하며 native metadata 경계에서만
+Apple의 signed device ID를 정규화하고 정규 경로와 길이가 제한된 fixture를 사용한다.
+
+Native core suite는 706개 검사가 통과했다. CLI 검사는 unit test 524개와 integration
+test 7개가 통과했고 환경 검사 18개는 ignored였다. `yo-core`,
+`yo-backend-delegated-grok`, `yo-cli`의 Clippy, host-target Unix matrix와 native
+오프라인 `chat_preview` 빌드도 통과했다. Linux에서는 core 706개, Grok 64개, CLI
+unit test 532개와 integration test 7개가 통과했다. 변경한 workspace-reference
+fixture는 별도의 집중 검사 31개를 통과했다. 이 수치는 중복되므로 독립적인 검사
+범위인 것처럼 합산하지 않는다.
+
+사용자가 Mac tmux pane에 오프라인 실행 파일을 열고 해당 창의 자동 입력을
+명시적으로 요청했다. 주입한 입력으로 한글 텍스트, 커서 이동, Backspace와 삽입,
+bracketed 여러 줄 붙여넣기, 초안 지우기, 빈 입력의 `Ctrl+D` 종료, 이후 셸 명령과
+canonical 입력·echo 복구를 확인했다. 사용자 소유 tmux pane은 셸에 남겨 두었다.
+Native preview 바이너리 SHA256은
+`34ebe6cf4633d15e36d826ff8ce9774ec63aa2a7014027a35fa753cd6eb04a85`다.
+모델 요청이나 계정 접근은 없었다. 이는 실제 Mac tmux 경로에서 입력을 주입한
+검사이며, 물리 키보드·IME 조합·터미널 앱의 Command-V 처리는 사용자 직접 관찰이
+별도로 필요하다.
+
+임시 체크아웃, 소스 전송 파일과 테스트 프로세스를 정리했다. 사용자의 tmux Session과
+기존 클립보드 설치는 보존했다.
+
 ## Mac 클립보드에서 Linux yo로
 
 2026-09-10에 candidate `8343292f0281b9e8d7321fd504bed97ead205b7c`의 이미지
