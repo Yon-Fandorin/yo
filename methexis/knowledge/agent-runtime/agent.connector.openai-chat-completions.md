@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.connector-002
-    revision: sha256:37c813d541f61de54aace12e7f7e6b6e2f3a30d78b39836efc08b29d8d0f1f81
+    revision: sha256:bf1bb6f3457ba58bf292a95e95938429dea12400e17562b2c63fd21461f135d0
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -39,6 +39,61 @@ An absolute model-request deadline belongs to the Yo-managed agent policy rather
 Transport policy MUST also set maximum error-body bytes, SSE-event bytes, SSE-event count, tool-call count, cumulative response-content bytes, cumulative refusal bytes, cumulative reasoning bytes, and cumulative function-argument bytes. The connector MUST enforce those bounds while reading rather than after buffering an unbounded value. Deadline expiry, oversized HTTP or SSE data, event-count or cumulative response overflow, and cancellation during decoding MUST terminate with a typed failure and MUST follow the same partial-response retry prohibition below.
 
 An HTTP status that explicitly reports throttling or temporary service failure MAY be retried within a bounded policy before any response item is admitted. Connection ambiguity after request transmission and any failure after the first response item MUST NOT be retried automatically. Every retry attempt MUST keep its own request correlation; the connector MUST never repeat a tool result or hide a partial stream behind a replacement response.
+
+## Admitted PNG request projection
+
+An effective binding carrying a separately reviewed image-input profile may
+use this connector only after complete-envelope admission by the service owner
+and the connector's defensive check. The initial additional service envelope
+is `openrouter-free-png-advisory/v1` from `agent.model.service-binding`; the
+connector remains provider-neutral and acquires no Provider-named dialect or
+implicit capability. An absent profile retains the existing text-only bytes
+and rejection of image-bearing inputs. An unknown or mismatched profile fails
+before transport, and no remote capability flag supplies executable policy.
+
+For each admitted multimodal user input, the connector emits exactly one
+`user` message whose `content` is the original ordered array. Each text part is
+`{"type":"text","text":<exact text>}`; each image part is
+`{"type":"image_url","image_url":{"url":<PNG data URL>}}`. The data URL is
+`data:image/png;base64,` followed by canonical padded standard base64 of the
+already admitted immutable PNG snapshot. Repeated images remain separate
+occurrences. No path, remote URL, re-read, resize, thumbnail, generated caption,
+reordering or deduplication may replace those bytes. Historical multimodal
+inputs use the same exact projection on every continuation and fresh-process
+resume. System, assistant, refusal, tool-call and result semantics remain as
+specified above; hidden reasoning and provider-private replay remain excluded.
+
+Image-bearing summary sources use the same array encoding with their exact
+versioned manifest as the first text part followed by the exact ordered image
+occurrences. The connector validates the complete source manifest and matching
+snapshot descriptors under the managed-loop summary contract before transport.
+The existing ordinary-input limits, separate 64-image/16-MiB complete summary
+source limits, and request/replay limits all apply. The first excess rejects;
+no truncation, split summary, dropped occurrence or retry repairs an oversized
+request. The request-local tools-disabled rule also applies to image summaries.
+
+The admitted service policy carries only its closed declared request options;
+the connector serializes them without permitting replacement of model,
+messages, streaming, usage, output-cap or tool-exposure fields. For the initial
+service envelope these are the exact routing fields owned by service-binding,
+and they remain present even for requests with no images. Arbitrary optional
+parameters remain unsupported. The image-free tokenization projection retains
+every serialized non-image field and each image-bearing user message, replacing
+its content array with the ordered text parts only; image parts and their data
+URLs are omitted rather than counted as text or replaced with fake captions.
+The connector separately returns typed immutable descriptors for every image
+occurrence in request order. The selected backend policy supplies advisory
+image cost without inspecting arbitrary JSON or making a remote estimate.
+
+PNG admission does not relax the existing streaming grammar, bounded transport,
+usage, cancellation, or failed/incomplete-response Anchor exclusion. The
+additional image profile permits no automatic resend or provider/model fallback,
+including before the first response item; this narrows the general bounded
+pre-response retry permission for this profile. A JSON error in an HTTP 200
+response or a stream error is a failed request, never a completed assistant
+response or evidence that images should be removed. The additional projection
+MUST activate with its compatible service-binding and managed-loop accounting
+revisions before it can admit image transport.
 
 ## Rationale
 
