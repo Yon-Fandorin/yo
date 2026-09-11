@@ -9,7 +9,7 @@ use yo_backend::transport::JsonMessagePeer;
 use yo_core::{
     AccountId, AgentCommand, BackendBindingEvidence, BackendCommandEvidence, BackendFailureKind,
     BackendIdentity, BackendPoll, BackendStopHandle, ContinuationStrategy, HostId,
-    InputImageHistory, ModelId, UserInput, derive_host_account_id,
+    ImageInputCapability, InputImageHistory, ModelId, UserInput, derive_host_account_id,
 };
 
 use super::{
@@ -185,6 +185,52 @@ fn initializes_before_starting_a_thread() {
     assert_eq!(sent[3]["method"], "thread/start");
     assert_eq!(sent[3]["params"]["cwd"], "/workspace");
     assert!(sent[3]["params"].get("ephemeral").is_none());
+}
+
+// 검토된 두 버전 모두 실제 초기화와 선택 모델 관찰을 거쳐야 이미지를 허용하며,
+// 다른 모델의 image 표시는 선택 모델의 누락 또는 text-only 선언을 덮어쓰지 않습니다.
+#[test]
+fn reviewed_image_versions_require_the_selected_models_explicit_modality() {
+    for version in ["0.153.4", "0.154.0"] {
+        for (selected, expected) in [
+            (
+                json!({"model": "gpt-test", "inputModalities": ["text", "image"]}),
+                ImageInputCapability::Supported {
+                    maximum_occurrences: 16,
+                    maximum_image_bytes: 9_437_184,
+                    maximum_input_bytes: 9_437_184,
+                },
+            ),
+            (
+                json!({"model": "gpt-test", "inputModalities": ["text"]}),
+                ImageInputCapability::Unsupported,
+            ),
+            (json!({"model": "gpt-test"}), ImageInputCapability::Unknown),
+        ] {
+            let (peer, sent) = FakePeer::new([
+                initialize_response(1, version),
+                json!({"id": 2, "result": {"account": {"type": "apiKey"}}}),
+                thread_start_response(3, "thread-a"),
+                json!({"id": 4, "result": {"data": [
+                    {"model": "another-model", "inputModalities": ["text", "image"]},
+                    selected
+                ], "nextCursor": null}}),
+            ]);
+            let client = AppServerClient::new(peer, Duration::from_secs(1));
+            let mut backend = Backend::new_uninitialized(client, "/workspace".into(), false, None);
+            assert_eq!(
+                backend.capabilities().image_input(),
+                ImageInputCapability::Unknown
+            );
+            backend
+                .execute_command(AgentCommand::CreateSession {
+                    session_id: session(1),
+                })
+                .unwrap();
+            assert_eq!(backend.capabilities().image_input(), expected, "{version}");
+            assert_eq!(sent.0.borrow().last().unwrap()["method"], "model/list");
+        }
+    }
 }
 
 // API-key authentication has no stable account identifier, but ordinary Codex use remains
@@ -601,7 +647,7 @@ fn rejects_a_resumed_thread_with_different_model_identity() {
 #[test]
 fn retained_image_history_rejects_resume_before_native_mutation() {
     let (peer, sent) = FakePeer::new([
-        initialize_response(1, "0.153.4"),
+        initialize_response(1, "0.154.0"),
         json!({
             "id": 2,
             "result": {"account": {"type": "chatgpt", "email": "person@example.test"}}

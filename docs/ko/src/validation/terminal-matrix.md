@@ -46,7 +46,7 @@ cargo test -p yo-core local_codex_completes_a_real_file_change \
 쓰기 가능한 Codex 상태가 있는 환경에서만 실행한다.
 
 위임 Codex image 경계는 adapter와 core의 offline test로 검증한다. 정확한
-`0.153.4` wire 증거, 선택한 model의 정확한 `inputModalities`, start와 steer 양쪽의
+`0.153.4`와 `0.154.0` wire 증거, 선택한 model의 정확한 `inputModalities`, start와 steer 양쪽의
 순서가 있는 반복 immutable PNG projection, 보수적인 inherited-history resume/rebind
 admission, 완전한 32 MiB outbound JSONL 경계를 검사한다. 경계 test는 정확히 32 MiB를
 허용하고 첫 초과 byte를 peer에 보내기 전에 거절한다. server response도 같은 경계를
@@ -61,6 +61,26 @@ continuation anchor 두 개와 기존 journal prefix를 보존했다. 검사한 
 소유한 tmux Session을 종료하고 임시 인증을 제거했다. 이는 검사한 이미지 입력과
 복구 경로를 입증하며 바깥 터미널의 이미지 픽셀이나 다른 model/version 조합을
 검증하지 않는다. 승인된 요청 두 번의 예산은 모두 사용했다.
+
+2026-09-11에는 외부 네트워크를 차단한 loopback 전용 namespace에서 설치된
+Codex `0.154.0`의 이미지 wire 호환성을 검증했다. 설치된 `0.153.4`와 `0.154.0`
+실행 파일로 생성한 schema bundle의 `TurnStartParams`, `TurnSteerParams`,
+`ModelListResponse` 정의는 동일했다. 검토된 정확한 버전 목록은 두 버전을 포함하며,
+인접 patch와 prerelease의 이미지 지원은 계속 Unknown으로 처리한다.
+
+Native app-server는 1,080,993바이트 합성 PNG를 `turn/start`와 `turn/steer`에서
+수용했고, 로컬 mock Responses 요청 두 번에서 이미지 바이트와 앞뒤 텍스트 순서를
+보존했다. 별도의 실제 Rust Yo를 격리된 96×32 tmux에서 실행해 Ctrl+V로 이미지를
+준비하고 Turn을 완료한 뒤, 종료하고 새 프로세스로 재개했다. Mock endpoint는
+두 Turn 모두 Yo journal의 정확한 불변 PNG를 받았다(data URI 1,921,054바이트).
+continuation anchor 두 개와 기존 journal prefix를 보존했다. 검사한 Yo 바이너리
+SHA256은 `a4b4173d6ddba7ef9a092e960d229a93eaf028b315b43809749570d83a457aa5`다.
+
+이 검사는 설치된 host와 합성 로컬 model endpoint를 사용했으며, 자격증명이나 외부
+model 요청을 사용하지 않았다. 전송과 continuation 호환성을 입증하지만 실제 서비스의
+시각 인식을 검증한 것은 아니다. Adapter suite는 선택 model의 modality admission과,
+이미지가 남아 있는 대화의 대상이 text-only이면 native resume 전에 거부하는 동작도
+검사한다. 기존 메시지 크기 제한과 불변 입력 검사는 계속 적용한다.
 
 ### 저장된 명령 규칙과 자동 승인
 

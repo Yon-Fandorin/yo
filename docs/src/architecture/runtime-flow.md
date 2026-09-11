@@ -638,7 +638,7 @@ The accepted contracts are `agent.input.image-attachment`,
 
 The delegated Codex adapter adds a provider-owned image boundary after this neutral
 admission. It grants image input only when initialization reports the exact reviewed
-`0.153.4` wire version and the same initialized client observes the selected model's
+`0.153.4` or `0.154.0` wire version and the same initialized client observes the selected model's
 complete `model/list` row with an explicit `inputModalities` entry containing `image`.
 Missing, malformed, duplicate, incomplete, or unreviewed evidence remains unknown;
 an explicit text-only list is unsupported. The adapter retains whether a binding may

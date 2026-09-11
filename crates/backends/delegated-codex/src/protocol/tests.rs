@@ -46,13 +46,19 @@ fn rejects_a_different_or_unparseable_protocol_major() {
     assert!(failure.message().contains("unparseable version"));
 }
 
-// 이미지 wire 계약은 호환 major 경고와 분리해 정확히 검토된 patch 하나만 허용합니다.
+// 이미지 wire 계약은 호환 major 경고와 분리해 검토된 정확한 patch만 허용하고,
+// 같은 minor의 미검증 patch나 prerelease에는 이미지 권한을 확장하지 않습니다.
 #[test]
-fn grants_image_wire_policy_only_to_the_exact_reviewed_patch() {
+fn grants_image_wire_policy_only_to_exact_reviewed_patches() {
     assert!(image_wire_version_supported("codex_cli_rs/0.153.4 (Linux)"));
     assert!(!image_wire_version_supported("codex_cli_rs/0.153.4-alpha"));
     assert!(!image_wire_version_supported("codex_cli_rs/0.153.4.1"));
-    assert!(!image_wire_version_supported("codex_cli_rs/0.154.0"));
+    assert!(image_wire_version_supported("codex_cli_rs/0.154.0 (Linux)"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.154.0-alpha"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.154.0.1"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.154.1"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.155.0"));
+    assert!(!image_wire_version_supported("codex_cli_rs/0.154"));
     assert!(!image_wire_version_supported("codex_cli_rs/0.153"));
     assert!(!image_wire_version_supported("codex_cli_rs/unknown"));
 }
