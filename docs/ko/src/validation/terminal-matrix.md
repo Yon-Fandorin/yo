@@ -38,6 +38,18 @@ SSH 동작까지 실행되었다는 뜻은 아니다.
 프로필의 macOS·SSH·tmux 검증은 별도 환경 검사로 남는다. Connector 단위 test의
 도구 결과·제한 내 요약 전송 검사는 Provider 실행을 증명하지 않는다.
 
+2026-09-11 실제 Linux tmux 검증은 후보 `12e169a8`, 격리된 설정·Session 저장소,
+문서의 무료 이미지 정의를 사용했다. 정의 가져오기와 private socket을 통한
+합성 두 색상 PNG 읽기는 성공했다. 이미지 제출 1회는 HTTP 404를 반환했고,
+Yo는 connector 오류를 표시하고 격리된 binding에 `request_rejected`를 기록한 뒤
+상태 1로 종료했다. 재시도나 fallback은 실행하지 않았다. 따라서 스트리밍 완료,
+도구 실행·요약·재개는 미검증이다. 공개
+[endpoint 목록](https://openrouter.ai/api/v1/models/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free/endpoints)에
+무료 NVIDIA 경로가 여전히 있었으므로 모델 삭제로 단정하지 않았다. Connector가
+응답 본문 없이 HTTP 상태만 보존하므로 구체적인 거절 원인은 확인되지 않았다.
+임시 credential·Session·fixture·tmux 서버는 삭제했으며 기존 사용자 설정은
+변경하지 않았다.
+
 ## 설치된 Codex 검사
 
 model Turn 없이 stdio initialize와 shutdown 경계를 검사한다.

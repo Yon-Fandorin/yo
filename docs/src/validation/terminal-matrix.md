@@ -41,6 +41,19 @@ live NVIDIA streaming, tool execution, summary completion and the new profile
 on macOS/SSH/tmux remain separate environment checks. Connector unit tests cover
 tool-result and bounded summary projection; they do not prove provider execution.
 
+The live Linux tmux probe on 2026-09-11 used candidate `12e169a8`, isolated
+configuration and Session storage, and the documented free image definition.
+Import and a private-socket read of a synthetic two-color PNG succeeded. The
+single image submission returned HTTP 404; Yo displayed the connector error,
+recorded `request_rejected` on the isolated binding, and exited with status 1.
+No retry or fallback was launched. Streaming completion, tool execution, summary
+and resume were therefore unverified. The public
+[endpoint listing](https://openrouter.ai/api/v1/models/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free/endpoints)
+still listed the free NVIDIA route, so model removal was not established. The
+connector retained the HTTP status without the response body; the rejection's
+specific cause remains unknown. The temporary credential, Session, fixture and
+tmux server were removed. The existing user configuration was not modified.
+
 ## Installed Codex checks
 
 Verify the stdio initialize and shutdown boundary without a model turn:
