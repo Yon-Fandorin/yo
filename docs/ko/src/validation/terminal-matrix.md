@@ -87,6 +87,39 @@ input 상태에 도달하지 못했고 이후 Fullscreen은 실행하지 않았�
 OpenRouter 검사 결과를 무효화하지 않지만 현재 후보의 Codex tmux lifecycle은
 미검증으로 남는다.
 
+## Managed 요청 실패 진단
+
+Provider 계정 없이 요청 수락 전 실패 경로를 결정적인 fixture로 검사한다.
+
+```bash
+cargo build --locked -p yo-cli
+python3 tools/validation/managed-start-failure.py target/debug/yo --mode inline
+python3 tools/validation/managed-start-failure.py target/debug/yo --mode fullscreen
+```
+
+[Runner](https://github.com/Yon-Fandorin/yo/blob/develop/tools/validation/managed-start-failure.py)는
+가짜 키와 loopback 전용 endpoint를 사용하는 text-only Chat Completions binding을
+가져온다. 로컬 socket은 HTTP 이전의 TLS 연결을 거절하고, 트래픽을 전달하거나
+인증서 신뢰 설정을 바꾸지 않는다. 각 mode에서 한 번 제출한 뒤 종료 코드 1,
+typed `Transport` stderr, 저장된 `last_failure.kind: transport`, 수락된 요청 0건,
+완료된 Turn 0건, PTY mode 복원을 검사한다. Fullscreen에서는 alternate-screen
+진입·종료 쌍도 검사한다. 격리된 설정·credential·host identity·Session을 지우기
+전에 JSON 진단을 수집하며, 검사 실패 시에도 정리 결과를 보고한다. 일반 사용자
+상태는 사용하지 않는다.
+
+`BackendRequestAccepted`는 connector 시작이 성공한 요청 수다.
+[Transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)는
+HTTP 전송 뒤 상태 코드나 transport 오류를 반환하여 이 기록이 저장되기 전에
+실패할 수 있다. CLI는 오류를 전달하고 terminal을 복원한 뒤 종료한다. 제출,
+연결·HTTP 시도, 수락, 완료된 Turn 수를 구분한다. 실제 서비스 harness를 정리하기
+전에 child 종료 코드, secret-safe stderr, binding의 typed failure를 수집하고,
+관찰이 끝날 때까지 tmux pane을 유지한다. 수락된 기록이 0건이라는 사실만으로
+HTTP 시도도 0회였다고 판단할 수 없다.
+
+이 fixture는 공통 실패·진단 경로를 검증하며 OpenRouter image binding이나 Provider의
+HTTP 거절을 검증하지 않는다. 이전 Mac 실제 서비스 실행의 구체적인 원인은 삭제된
+capture에서 복구할 수 없으므로 미검증으로 남는다.
+
 ## 설치된 Codex 검사
 
 model Turn 없이 stdio initialize와 shutdown 경계를 검사한다.

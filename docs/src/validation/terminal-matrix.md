@@ -97,6 +97,40 @@ within five seconds; Fullscreen was not run after that failure. This does not
 invalidate the managed OpenRouter checks, but current-candidate Codex tmux
 lifecycle remains unverified.
 
+## Diagnose a managed request failure
+
+Run the deterministic pre-acceptance failure check without a provider account:
+
+```bash
+cargo build --locked -p yo-cli
+python3 tools/validation/managed-start-failure.py target/debug/yo --mode inline
+python3 tools/validation/managed-start-failure.py target/debug/yo --mode fullscreen
+```
+
+The [runner](https://github.com/Yon-Fandorin/yo/blob/develop/tools/validation/managed-start-failure.py)
+imports a text-only Chat Completions binding with a fake key and a loopback-only
+endpoint. Its local socket rejects TLS before HTTP; it never forwards traffic
+or changes certificate trust. Each mode submits once and checks exit status 1,
+typed `Transport` stderr, saved `last_failure.kind: transport`, zero accepted
+requests and zero finished Turns, and restored PTY modes. Fullscreen also checks
+the alternate-screen enter/leave pair. The JSON diagnostic is collected before
+isolated configuration, credentials, host identity and Sessions are deleted;
+failed checks also report cleanup. Ordinary user state is not used.
+
+`BackendRequestAccepted` counts requests whose connector start succeeded. The
+[transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)
+can send HTTP and then return a status or transport error before that record is
+committed. The CLI propagates that failure and restores the terminal before
+exiting. Keep submission, connection/HTTP attempt, acceptance and finished-Turn
+counts separate. Before cleaning a live harness, collect the child exit status,
+secret-safe stderr and the binding's typed failure; retain the tmux pane until
+those observations are captured. Zero accepted records alone cannot establish
+zero HTTP attempts.
+
+This fixture verifies the shared failure and diagnostic path, not an OpenRouter
+image binding or a provider HTTP rejection. The earlier Mac live run's specific
+cause cannot be recovered from its deleted captures and remains unverified.
+
 ## Installed Codex checks
 
 Verify the stdio initialize and shutdown boundary without a model turn:
