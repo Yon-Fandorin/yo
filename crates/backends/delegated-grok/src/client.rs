@@ -48,6 +48,25 @@ impl<P: JsonPeer> AcpClient<P> {
         method: &str,
         params: Value,
     ) -> Result<CallResult, BackendFailure> {
+        self.call_method(method, params, false)
+            .map(|result| result.expect("required methods never return an unsupported result"))
+    }
+
+    /// Only JSON-RPC method-not-found means an optional extension is unavailable.
+    pub(super) fn call_optional(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Option<CallResult>, BackendFailure> {
+        self.call_method(method, params, true)
+    }
+
+    fn call_method(
+        &mut self,
+        method: &str,
+        params: Value,
+        optional: bool,
+    ) -> Result<Option<CallResult>, BackendFailure> {
         let replay_session = if method == "session/load" {
             params
                 .get("sessionId")
@@ -74,7 +93,14 @@ impl<P: JsonPeer> AcpClient<P> {
                     id: response_id,
                     result,
                 } if response_id == id => {
-                    return Ok(CallResult { result });
+                    return Ok(Some(CallResult { result }));
+                },
+                Incoming::ResponseError {
+                    id: response_id,
+                    code: -32601,
+                    ..
+                } if response_id == id && optional => {
+                    return Ok(None);
                 },
                 Incoming::ResponseError {
                     id: response_id,

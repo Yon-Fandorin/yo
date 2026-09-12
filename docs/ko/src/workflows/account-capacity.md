@@ -79,12 +79,16 @@ session으로 Personal Token Plan console을 읽으며, 저장된 `sk-sp-*` 모�
 각각 한 번 호출하고 종료한다. Grok은 `grok agent stdio`를 시작해 ACP v1로 initialize하고,
 광고된
 `cached_token` method로 한 번 인증한 뒤 정확한 `_meta.subscription_tier`와 필수 이메일
-identity를 읽고 종료한다. 유효한 이메일이 없는 host 응답은 공용 default 계정으로
-저장하지 않고 실패한다. 배포된 Grok ACP 서비스는 내부 billing
-extension을 노출하지 않으므로 Yo는 Grok 공식 `unified.jsonl`의 마지막 1 MiB까지만
+identity를 읽고 읽기 전용 ACP `_x.ai/billing` extension을 한 번 호출한 뒤 종료한다.
+유효한 이메일이 없는 host 응답은 공용 default 계정으로 저장하지 않고 실패한다.
+Grok CLI 1.0.30은 extension에서 현재 credits config를 직접 반환하므로 사용량
+조회에 이전 Grok TUI 실행이나 log가 필요하지 않다. JSON-RPC method-not-found
+응답일 때만 기존 fallback을 사용한다. Yo는 Grok 공식 `unified.jsonl`의 마지막 1 MiB까지만
 읽고, 주간 기간이 끝나지 않은 가장 최신의 완전한
 `billing: fetched credits config` event만 사용한다. 그런 event가 없으면 사용량 창을
-만들지 않고 인증된 plan만 보고한다. Kimi는 먼저 계정 등급명을 얻기 위해 인증한
+만들지 않고 인증된 plan만 보고한다. 지원되는 billing request가 실패하면 refresh도
+실패한다. 그 실패나 용량이 없는 live 응답을 오래된 log 값으로 대체하지 않는다.
+Kimi는 먼저 계정 등급명을 얻기 위해 인증한
 `GET /coding/v1/me`를 한 번 수행한 뒤, 한도 조회를 위해 인증한
 `GET /coding/v1/usages`를 한 번 수행한다. redirect와 retry는 비활성화하고 각 성공
 body는 1 MiB로 제한한다. Provider plan 이름은 정확히 표시하며 Yo는 한도 크기로
@@ -162,7 +166,7 @@ upstream 변경이 근거를 조용히 바꾸지 못하도록 commit에 고정�
 | 기능 | 고정한 upstream 소스 | Yo 적용 지점 |
 |---|---|---|
 | Codex 계정 잔여량 | OpenAI Codex commit `89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5`: [app-server rate-limit request와 field](https://github.com/openai/codex/blob/89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5/codex-rs/app-server/README.md#7-rate-limits-chatgpt), [v2 account protocol type](https://github.com/openai/codex/blob/89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5/codex-rs/app-server-protocol/src/protocol/v2/account.rs) | [`delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs)가 app-server lifecycle을 소유하고 [`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/protocol.rs)가 반환 bucket을 변환한다. |
-| Grok 계정 plan과 최신 billing 관찰 | xAI Grok Build commit `9684fa3cdbf2995e30ea8b9b637f1db008f144fc`: [ACP authenticate response 구성](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/agent/mvp_agent/mod.rs), [typed authentication metadata](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/auth/meta.rs), [bounded unified billing log event](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/extensions/billing.rs). 설치된 Grok CLI `1.0.5 (5115b46bc9)`에서도 정확한 경계를 관찰했다. | [`delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs)가 initialize-authenticate-shutdown read를 소유하고, [`billing_log.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/billing_log.rs)가 bounded tail에서 공식 current-period event만 변환한다. |
+| Grok 계정 plan과 최신 billing 관찰 | xAI Grok Build commit `9684fa3cdbf2995e30ea8b9b637f1db008f144fc`: [ACP authenticate response 구성](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/agent/mvp_agent/mod.rs), [typed authentication metadata](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/auth/meta.rs), commit `37949780c144e37df692e3d669051a21fec24f20`의 [읽기 전용 billing extension과 unified log event](https://github.com/xai-org/grok-build/blob/37949780c144e37df692e3d669051a21fec24f20/crates/codegen/xai-grok-shell/src/extensions/billing.rs). 설치된 Grok CLI `1.0.30 (04b7ffed98c6)`에서 live billing 경계를 관찰했다. | [`delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs)가 initialize-authenticate-billing-shutdown read를 소유하고, [`billing_log.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/billing_log.rs)가 live credits config와 기존 bounded log fallback을 변환한다. |
 | Kimi Code 계정 잔여량 | MoonshotAI Kimi Code commit `21f7ef64f0851504227617f4501bf8359031d9a5`: canonical `/me` request와 `user_level_name`의 근거인 [`managed-userinfo.ts`](https://github.com/MoonshotAI/kimi-code/blob/21f7ef64f0851504227617f4501bf8359031d9a5/packages/oauth/src/managed-userinfo.ts), `/usages`, weekly summary, rolling window, fixed-point booster balance의 근거인 [`managed-usage.ts`](https://github.com/MoonshotAI/kimi-code/blob/21f7ef64f0851504227617f4501bf8359031d9a5/packages/oauth/src/managed-usage.ts) | [`account_capacity.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/kimi/src/account_capacity.rs)가 Kimi catalog seed 옆에서 제품 확인, 두 exact request, bounded parser, 중립 snapshot 변환을 소유한다. |
 | QwenCloud Personal Token Plan 잔여량 | OmniRoute commit `825f8feea73daead73cf6832bed7c61531f9c065`: [`qwenTokenPlanQuotaFetcher.ts`](https://github.com/diegosouzapw/OmniRoute/blob/825f8feea73daead73cf6832bed7c61531f9c065/open-sse/services/qwenTokenPlanQuotaFetcher.ts)는 관찰한 QwenCloud console gateway, cookie/`sec_token` 분리, personal-plan method 세 개, optional 5시간 window를 기록하고, [request와 parser fixture](https://github.com/diegosouzapw/OmniRoute/blob/825f8feea73daead73cf6832bed7c61531f9c065/tests/unit/qwen-token-plan-quota-fetcher.test.ts)는 weekly-only, dual-window, expired-session, token-resolution 사례를 구분한다. | [`account_capacity.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/qwencloud/src/account_capacity.rs)는 session을 고정된 QwenCloud origin에만 사용하고 bounded no-retry read를 수행해 Provider가 작성한 plan과 window를 중립 snapshot으로 변환한다. |
 
@@ -175,8 +179,9 @@ branch를 인용하거나 UI 출력만 보고 private endpoint를 추론하지 �
 - 저장된 Kimi 계정이나 credential이 없으면 local configuration error이며 요청을
   보내지 않는다.
 - Grok cached login이나 유효한 email이 없거나 subscription tier가 없거나 문자열이 아니거나
-  안전하지 않으면 refresh를 실패시킨다. Grok billing log가 없거나 사용할 수 없으면 usage
-  window만 생략한다. Direct xAI 접근으로 fallback하거나 Grok credential file을
+  안전하지 않으면 refresh를 실패시킨다. 지원되는 billing request의 실패도 refresh를
+  실패시킨다. extension을 지원하지 않을 때 Grok billing log가 없거나 사용할 수 없으면
+  usage window만 생략한다. Direct xAI 접근으로 fallback하거나 Grok credential file을
   읽거나 identity metadata를 노출하지 않는다.
 - 저장된 QwenCloud account session이 없으면 no-echo interactive capture를 한 번
   시작한다. 명시적으로 만료된 session이면 replacement capture 한 번과 최대 한 번의

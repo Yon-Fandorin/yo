@@ -57,18 +57,53 @@ fn decode_usage(event: &Value) -> Result<Option<AccountCapacityWindow>, BackendF
     let Some(config) = event.pointer("/ctx/config").and_then(Value::as_object) else {
         return Ok(None);
     };
-    let Some(period) = config.get("currentPeriod").and_then(Value::as_object) else {
-        return Ok(None);
+    decode_usage_config(config)
+}
+
+/// Decodes the same credits config returned by Grok's read-only ACP billing extension.
+/// Source: xAI Grok Build 37949780c144e37df692e3d669051a21fec24f20, `extensions/billing.rs`.
+pub(super) fn decode_billing_response(
+    response: &Value,
+) -> Result<Option<AccountCapacityWindow>, BackendFailure> {
+    let response = response
+        .as_object()
+        .ok_or_else(|| protocol_failure("Grok billing response is not an object"))?;
+    let config = match response.get("config") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(config) => config
+            .as_object()
+            .ok_or_else(|| protocol_failure("Grok billing config is not an object"))?,
     };
-    if period.get("type").and_then(Value::as_str) != Some("USAGE_PERIOD_TYPE_WEEKLY") {
+    decode_usage_config(config)
+}
+
+fn decode_usage_config(
+    config: &serde_json::Map<String, Value>,
+) -> Result<Option<AccountCapacityWindow>, BackendFailure> {
+    let period = match config.get("currentPeriod") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(period) => period
+            .as_object()
+            .ok_or_else(|| protocol_failure("Grok billing currentPeriod is not an object"))?,
+    };
+    let period_type = match period.get("type") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| protocol_failure("Grok billing currentPeriod.type is not a string"))?,
+    };
+    if period_type != "USAGE_PERIOD_TYPE_WEEKLY" {
         return Ok(None);
     }
-    let Some(end) = period.get("end").and_then(Value::as_str) else {
-        return Ok(None);
+    let end = match period.get("end") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| protocol_failure("Grok billing currentPeriod.end is not a string"))?,
     };
     let reset = end
         .parse::<Timestamp>()
-        .map_err(|_| protocol_failure("Grok billing log currentPeriod.end is not RFC 3339"))?;
+        .map_err(|_| protocol_failure("Grok billing currentPeriod.end is not RFC 3339"))?;
     if reset <= Timestamp::now() {
         return Ok(None);
     }
@@ -79,11 +114,11 @@ fn decode_usage(event: &Value) -> Result<Option<AccountCapacityWindow>, BackendF
         None => 0,
         Some(value) => {
             let value = value.as_f64().ok_or_else(|| {
-                protocol_failure("Grok billing log creditUsagePercent is not numeric")
+                protocol_failure("Grok billing creditUsagePercent is not numeric")
             })?;
             if !value.is_finite() || !(0.0..=100.0).contains(&value) {
                 return Err(protocol_failure(
-                    "Grok billing log creditUsagePercent is outside 0..=100",
+                    "Grok billing creditUsagePercent is outside 0..=100",
                 ));
             }
             (value * 100.0).ceil().min(10_000.0) as u16

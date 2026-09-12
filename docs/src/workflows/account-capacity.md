@@ -82,14 +82,19 @@ its local app-server, initializes it, calls `account/read` and
 `account/rateLimits/read` once each, and shuts it down. Grok starts `grok agent stdio`,
 initializes ACP v1, authenticates
 once with the advertised `cached_token` method, reads the exact
-`_meta.subscription_tier` and the required email identity, and shuts it down. A host
+`_meta.subscription_tier` and the required email identity, calls the read-only ACP
+`_x.ai/billing` extension once, and shuts it down. A host
 response without a valid email fails closed instead of being stored under a shared
 default account.
-The distributed Grok ACP service does not expose its internal billing extension,
-so Yo also reads at most the last 1 MiB of Grok's official `unified.jsonl` and
+Grok CLI 1.0.30 exposes the extension and returns the current credits config
+directly, so usage does not depend on a prior Grok TUI run or its log. Only a
+JSON-RPC method-not-found response enables the legacy fallback: Yo reads at
+most the last 1 MiB of Grok's official `unified.jsonl` and
 uses only the newest complete `billing: fetched credits config` event whose
 weekly period has not ended. If none exists, Yo still reports the authenticated
-plan without inventing a usage window. Kimi first
+plan without inventing a usage window. A supported billing request that fails
+fails the refresh; Yo does not substitute an older log for that failure or for
+a live response with no capacity. Kimi first
 makes one authenticated `GET /coding/v1/me` for the account level name, then
 one authenticated `GET /coding/v1/usages` for its limits. Redirects and retries
 are disabled and each successful body is bounded to 1 MiB. Provider plan names
@@ -176,7 +181,7 @@ rewrite the rationale.
 | Feature | Pinned upstream source | Yo adaptation |
 |---|---|---|
 | Codex account capacity | OpenAI Codex commit `89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5`: [app-server rate-limit request and fields](https://github.com/openai/codex/blob/89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5/codex-rs/app-server/README.md#7-rate-limits-chatgpt) and [v2 account protocol types](https://github.com/openai/codex/blob/89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5/codex-rs/app-server-protocol/src/protocol/v2/account.rs) | [`delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs) owns app-server lifecycle and [`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/protocol.rs) maps the returned buckets. |
-| Grok account plan and latest billing observation | xAI Grok Build commit `9684fa3cdbf2995e30ea8b9b637f1db008f144fc`: [ACP authenticate response construction](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/agent/mvp_agent/mod.rs), [typed authentication metadata](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/auth/meta.rs), and [bounded unified billing log event](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/extensions/billing.rs). The exact boundary was also observed with installed Grok CLI `1.0.5 (5115b46bc9)`. | [`delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs) owns the initialize-authenticate-shutdown read; [`billing_log.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/billing_log.rs) reads only a bounded tail and maps the official current-period event. |
+| Grok account plan and latest billing observation | xAI Grok Build commit `9684fa3cdbf2995e30ea8b9b637f1db008f144fc`: [ACP authenticate response construction](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/agent/mvp_agent/mod.rs), [typed authentication metadata](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/auth/meta.rs), and commit `37949780c144e37df692e3d669051a21fec24f20` [read-only billing extension and unified log event](https://github.com/xai-org/grok-build/blob/37949780c144e37df692e3d669051a21fec24f20/crates/codegen/xai-grok-shell/src/extensions/billing.rs). The live billing boundary was observed with installed Grok CLI `1.0.30 (04b7ffed98c6)`. | [`delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs) owns the initialize-authenticate-billing-shutdown read; [`billing_log.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/billing_log.rs) maps the live credits config and the legacy bounded log fallback. |
 | Kimi Code account capacity | MoonshotAI Kimi Code commit `21f7ef64f0851504227617f4501bf8359031d9a5`: [`managed-userinfo.ts`](https://github.com/MoonshotAI/kimi-code/blob/21f7ef64f0851504227617f4501bf8359031d9a5/packages/oauth/src/managed-userinfo.ts) for the canonical `/me` request and `user_level_name`, plus [`managed-usage.ts`](https://github.com/MoonshotAI/kimi-code/blob/21f7ef64f0851504227617f4501bf8359031d9a5/packages/oauth/src/managed-usage.ts) for `/usages`, the weekly summary, rolling windows, and fixed-point booster balance | [`account_capacity.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/kimi/src/account_capacity.rs) keeps the product check, two exact requests, bounded parsers, and neutral snapshot mapping beside the Kimi catalog seed. |
 | QwenCloud Personal Token Plan capacity | OmniRoute commit `825f8feea73daead73cf6832bed7c61531f9c065`: [`qwenTokenPlanQuotaFetcher.ts`](https://github.com/diegosouzapw/OmniRoute/blob/825f8feea73daead73cf6832bed7c61531f9c065/open-sse/services/qwenTokenPlanQuotaFetcher.ts) records the captured QwenCloud console gateway, cookie/`sec_token` split, three personal-plan methods, and optional 5-hour window; its [request and parser fixtures](https://github.com/diegosouzapw/OmniRoute/blob/825f8feea73daead73cf6832bed7c61531f9c065/tests/unit/qwen-token-plan-quota-fetcher.test.ts) distinguish weekly-only, dual-window, expired-session, and token-resolution cases. | [`account_capacity.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/providers/qwencloud/src/account_capacity.rs) uses the session only against fixed QwenCloud origins, performs bounded no-retry reads, and maps the Provider-authored plan and windows into the neutral snapshot. |
 
@@ -189,8 +194,9 @@ an unpinned `main` branch or infer a private endpoint from UI output.
 - A missing stored Kimi account or credential is a local configuration error and
   sends no request.
 - A missing Grok cached login or an absent, non-string, or unsafe subscription
-  tier fails the refresh. An absent or unusable Grok billing log only omits the
-  usage window. Yo does not fall back to direct xAI access, read Grok's credential
+  tier fails the refresh. A supported billing request failure also fails the
+  refresh. For an unsupported extension, an absent or unusable Grok billing log
+  only omits the usage window. Yo does not fall back to direct xAI access, read Grok's credential
   file, or expose identity metadata.
 - A missing QwenCloud account session starts one no-echo interactive capture. An
   explicitly expired session starts one replacement capture and at most one

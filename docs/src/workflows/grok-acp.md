@@ -24,14 +24,16 @@ read, copy, refresh, or persist that token. Direct xAI API or OAuth integration
 is a separate Provider design and must not become a fallback inside this host
 adapter.
 
-`yo account grok --refresh` reuses only the initialize-authenticate prefix and
-then shuts the child down. It maps the exact `subscription_tier` from the
+`yo account grok --refresh` reuses the initialize-authenticate prefix, calls the
+read-only ACP `_x.ai/billing` extension once, and shuts the child down.
+It maps the exact `subscription_tier` from the
 successful authentication metadata into the provider-neutral account snapshot and
 uses the required verified email as both the human-readable account label and stable
 identity evidence. Team identity and authentication-mode metadata are ignored. It creates
-no Agent Session and sends no prompt. Installed Grok CLI 1.0.5 does not expose
-the newer `x.ai/billing` extension, so the command does not infer quota windows
-from a plan name.
+no Agent Session and sends no prompt. Grok CLI 1.0.30 exposes the billing extension
+and supplies its current credits config directly. Only method-not-found enables
+the legacy bounded billing-log fallback; other failures fail the refresh. See
+[Account capacity](./account-capacity.md) for the pinned source and fallback rules.
 
 ## Compatibility contract
 
