@@ -26,6 +26,16 @@ import time
 
 DEADLINE_SECONDS = 15
 CAPTURE_LIMIT = 4 * 1024 * 1024
+EXIT_MARKER = b"YO_MANAGED_DIAGNOSTIC_EXIT="
+# Keep the controlling-terminal session owner alive until the parent captures
+# restored modes. macOS can revoke PTY handles when that owner exits.
+TERMINAL_OWNER = r'''
+"$1" "--$2" --model offline:failure:fixture
+yo_diagnostic_status=$?
+printf '\nYO_MANAGED_DIAGNOSTIC_EXIT=%s\n' "$yo_diagnostic_status"
+IFS= read -r yo_diagnostic_receipt <&"$3"
+exit "$yo_diagnostic_status"
+'''
 
 
 def child_terminal(slave):
@@ -41,6 +51,18 @@ def tag_count(value, tag):
     if isinstance(value, list):
         return sum(tag_count(item, tag) for item in value)
     return 0
+
+
+def modes_restored(slave, original, report):
+    restored = termios.tcgetattr(slave)
+    baseline = list(original)
+    # Darwin sets PENDIN when returning to canonical input; it is queued-input
+    # state, not a mode setting. Compare every other flag, speed and character.
+    pending_input = getattr(termios, "PENDIN", 0) if platform.system() == "Darwin" else 0
+    report["termios_ignored_local_flags"] = ["PENDIN"] if pending_input else []
+    restored[3] &= ~pending_input
+    baseline[3] &= ~pending_input
+    return restored == baseline
 
 
 def collect_state(root, report):
@@ -66,12 +88,14 @@ def run(binary, root, report):
     listener.listen(4)
     listener.setblocking(False)
     master, slave = os.openpty()
+    receipt_read, receipt_write = os.pipe()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     original_termios = termios.tcgetattr(slave)
     child = None
     stdout = bytearray()
     stderr = bytearray()
-    report.update(phase="import", submissions=0, connection_attempts=0, fixture_http_requests=0)
+    report.update(phase="import", submissions=0, connection_attempts=0,
+                  fixture_http_requests=0, termios_restored=False)
     try:
         port = listener.getsockname()[1]
         definition = root / "connection.yaml"
@@ -116,9 +140,11 @@ models:
             raise RuntimeError("isolated import failed: " + imported.stderr.decode(errors="replace"))
         report["phase"] = "ready"
         child = subprocess.Popen(
-            [str(binary), "--" + report["mode"], "--model", "offline:failure:fixture"],
+            ["/bin/sh", "-c", TERMINAL_OWNER, "yo-diagnostic", str(binary),
+             report["mode"], str(receipt_read)],
             cwd=root / "workspace", env=environment,
             stdin=slave, stdout=slave, stderr=subprocess.PIPE,
+            pass_fds=(receipt_read,),
             preexec_fn=lambda: child_terminal(slave),
         )
         streams = {master: stdout, child.stderr.fileno(): stderr}
@@ -146,15 +172,22 @@ models:
                     streams[descriptor].extend(data)
                     if len(streams[descriptor]) > CAPTURE_LIMIT:
                         raise RuntimeError("terminal capture exceeded the bounded limit")
-            mode = termios.tcgetattr(slave)
-            raw = not mode[3] & (termios.ICANON | termios.ECHO)
-            if report["phase"] == "ready" and raw and b"Ask anything" in stdout:
-                os.write(master, b"offline failure probe\r")
-                report["submissions"] += 1
-                report["phase"] = "submitted"
+            exited = re.search(re.escape(EXIT_MARKER) + rb"([0-9]+)\r?\n", stdout)
+            if exited and "app_exit_code" not in report:
+                report["app_exit_code"] = int(exited.group(1))
+                report["termios_restored"] = modes_restored(slave, original_termios, report)
+                # Release the session owner only after the state receipt.
+                os.write(receipt_write, b"\n")
+            if report["phase"] == "ready" and not exited:
+                mode = termios.tcgetattr(slave)
+                raw = not mode[3] & (termios.ICANON | termios.ECHO)
+                if raw and b"Ask anything" in stdout:
+                    os.write(master, b"offline failure probe\r")
+                    report["submissions"] += 1
+                    report["phase"] = "submitted"
             if child.poll() is not None:
-                # Keeping the slave open lets us compare termios after child exit.
-                # Drain available output, then stop rather than waiting for PTY EOF.
+                # Drain available output without waiting for platform-specific
+                # PTY EOF/revocation behavior after the session owner exits.
                 if not readable:
                     break
         report["exit_code"] = child.wait(timeout=1)
@@ -162,11 +195,15 @@ models:
     finally:
         if child is not None:
             if child.poll() is None:
-                os.killpg(child.pid, signal.SIGKILL)
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except PermissionError:
+                    child.kill()
                 child.wait(timeout=5)
             report["exit_code"] = child.returncode
             child.stderr.close()
-        report["termios_restored"] = termios.tcgetattr(slave) == original_termios
+        if child is None:
+            report["termios_restored"] = termios.tcgetattr(slave) == original_termios
         report["alternate_screen_enter"] = stdout.count(b"\x1b[?1049h")
         report["alternate_screen_leave"] = stdout.count(b"\x1b[?1049l")
         report["stderr_bytes"] = len(stderr)
@@ -178,10 +215,13 @@ models:
         finally:
             os.close(master)
             os.close(slave)
+            os.close(receipt_read)
+            os.close(receipt_write)
             listener.close()
 
     expected = {
-        "phase": "exited", "exit_code": 1, "submissions": 1, "connection_attempts": 1,
+        "phase": "exited", "exit_code": 1, "app_exit_code": 1,
+        "submissions": 1, "connection_attempts": 1,
         "fixture_http_requests": 0, "accepted_request_records": 0,
         "turn_finished_records": 0, "session_files": 1,
         "termios_restored": True,

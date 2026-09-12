@@ -113,7 +113,12 @@ endpoint. Its local socket rejects TLS before HTTP; it never forwards traffic
 or changes certificate trust. Each mode submits once and checks exit status 1,
 typed `Transport` stderr, saved `last_failure.kind: transport`, zero accepted
 requests and zero finished Turns, and restored PTY modes. Fullscreen also checks
-the alternate-screen enter/leave pair. The JSON diagnostic is collected before
+the alternate-screen enter/leave pair. A shell keeps the controlling-terminal
+session alive until the parent has captured restored modes; a private pipe
+acknowledges that capture. On Darwin, the comparison excludes only `PENDIN`,
+the kernel's pending-input state bit set when returning to canonical input,
+as shown in [Apple's tty implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/tty.c).
+Every other termios field is compared. The JSON diagnostic is collected before
 isolated configuration, credentials, host identity and Sessions are deleted;
 failed checks also report cleanup. Ordinary user state is not used.
 
@@ -121,8 +126,17 @@ On 2026-09-12, both Linux modes passed: one loopback connection attempt, exit
 status 1, the typed stderr and stored failure, zero accepted requests or finished
 Turns, and terminal restoration. A deliberately failed import also returned a
 failure diagnostic and removed its temporary state. All 13 shared transport
-tests passed, including the status-only HTTP failure classification. Execution
-of this new failure runner on macOS remains unverified.
+tests passed, including the status-only HTTP failure classification.
+
+Candidate `4b180c24` then built on macOS 26.6.2 arm64 and reached the Inline
+submission with one loopback connection attempt and Yo exit status 1. The
+original runner failed with `ENOTTY` (25) while reading PTY modes after the
+controlling-terminal owner had exited; Fullscreen was not run. The temporary
+checkout and isolated state were removed, and ordinary config/credential hashes
+were unchanged. Subsequent OS-only Mac probes reproduced the post-owner-exit
+error and verified that keeping the owner alive allows restored modes to be
+captured, excluding only `PENDIN`. The corrected runner passed both Linux modes
+and failed-import cleanup again. Its complete Yo run on Mac remains unverified.
 
 `BackendRequestAccepted` counts requests whose connector start succeeded. The
 [transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)

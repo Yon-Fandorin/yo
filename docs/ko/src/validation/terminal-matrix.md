@@ -103,7 +103,11 @@ python3 tools/validation/managed-start-failure.py target/debug/yo --mode fullscr
 인증서 신뢰 설정을 바꾸지 않는다. 각 mode에서 한 번 제출한 뒤 종료 코드 1,
 typed `Transport` stderr, 저장된 `last_failure.kind: transport`, 수락된 요청 0건,
 완료된 Turn 0건, PTY mode 복원을 검사한다. Fullscreen에서는 alternate-screen
-진입·종료 쌍도 검사한다. 격리된 설정·credential·host identity·Session을 지우기
+진입·종료 쌍도 검사한다. Parent가 복원된 mode를 수집할 때까지 shell이 controlling
+terminal의 session을 유지하며, private pipe로 수집 완료를 알린다. Darwin에서는
+canonical input 복귀 시 kernel이 설정하는 pending-input 상태 비트 `PENDIN`만
+비교에서 제외한다. 이는 [Apple의 tty 구현](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/tty.c)에서
+확인할 수 있다. 나머지 termios 필드는 모두 비교한다. 격리된 설정·credential·host identity·Session을 지우기
 전에 JSON 진단을 수집하며, 검사 실패 시에도 정리 결과를 보고한다. 일반 사용자
 상태는 사용하지 않는다.
 
@@ -111,7 +115,15 @@ typed `Transport` stderr, 저장된 `last_failure.kind: transport`, 수락된 �
 typed stderr와 저장된 failure, 수락된 요청·완료된 Turn 0건, terminal 복원을 확인했다.
 의도적으로 import를 실패시킨 검사도 실패 진단을 반환하고 임시 상태를 제거했다.
 상태 코드만 보존하는 HTTP 실패 분류를 포함해 공통 transport 검사 13개도 통과했다.
-이 새 실패 runner의 macOS 실행은 미검증이다.
+
+이어 후보 `4b180c24`가 macOS 26.6.2 arm64에서 빌드됐고, Inline에서 제출·loopback
+연결 시도 1회·Yo 종료 코드 1까지 확인했다. 기존 runner는 controlling terminal의
+소유자가 종료된 뒤 PTY mode를 읽다가 `ENOTTY`(25)로 실패했고, Fullscreen은 실행하지
+않았다. 임시 checkout과 격리된 상태를 제거했으며 일반 설정·credential hash는
+바뀌지 않았다. 이후 Mac OS 전용 검사에서 소유자 종료 후 오류를 재현했고,
+소유자를 유지하면 `PENDIN`만 제외하여 복원된 mode를 수집할 수 있음을 확인했다.
+수정된 runner는 Linux 두 mode와 import 실패 시 정리를 다시 통과했다. 수정된
+runner로 Yo를 실행하는 전체 Mac 검증은 미검증이다.
 
 `BackendRequestAccepted`는 connector 시작이 성공한 요청 수다.
 [Transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)는
