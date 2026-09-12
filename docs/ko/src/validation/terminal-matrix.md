@@ -114,16 +114,7 @@ typed stderr와 저장된 failure, 수락된 요청·완료된 Turn 0건, termin
 의도적으로 import를 실패시킨 검사도 실패 진단을 반환하고 임시 상태를 제거했다.
 상태 코드만 보존하는 HTTP 실패 분류를 포함해 공통 transport 검사 13개도 통과했다.
 
-이어 후보 `4b180c24`가 macOS 26.6.2 arm64에서 빌드됐고, Inline에서 제출·loopback
-연결 시도 1회·Yo 종료 코드 1까지 확인했다. 기존 runner는 controlling terminal의
-소유자가 종료된 뒤 PTY mode를 읽다가 `ENOTTY`(25)로 실패했고, Fullscreen은 실행하지
-않았다. 임시 checkout과 격리된 상태를 제거했으며 일반 설정·credential hash는
-바뀌지 않았다. 이후 Mac OS 전용 검사에서 소유자 종료 후 오류를 재현했고,
-소유자를 유지하면 `PENDIN`만 제외하여 복원된 mode를 수집할 수 있음을 확인했다.
-수정된 runner는 Linux 두 mode와 import 실패 시 정리를 다시 통과했다. 수정된
-후보의 전체 Mac 검증은 이어서 진행했다.
-
-수정된 후보 `0f86d85e`가 같은 Mac에서 빌드됐고 Inline·Fullscreen 모두 통과했다.
+같은 날 후보 `0f86d85e`가 macOS 26.6.2 arm64에서 빌드됐고 Inline·Fullscreen 모두 통과했다.
 각 mode에서 제출 1회, loopback 연결 시도 1회, Yo 종료 코드 1, typed `Transport`
 stderr, 저장된 `transport` failure를 수집했다. HTTP 요청·수락된 요청·완료된 Turn은
 모두 0건이었다. 두 mode 모두 kernel의 `PENDIN` 상태 비트를 제외한 모든 PTY 설정을
@@ -412,39 +403,21 @@ PTY 복구도 추가로 확인한다.
 
 ### Current Codex Mac tmux verification
 
-2026-09-12 `b2e3d622`의 정확한 source tree를 설치된 Codex 0.154.0과 tmux 3.6a가
-있는 macOS 26.6.2 arm64에서 검증했다. 전송한 `d04a7966`은 먼저 macOS 전용 test
-경로의 불필요한 `nix::libc` 표기 네 곳을 드러냈다. 이를 `libc`로 고친 뒤 Mac의
-전체 tracked Git tree가 `b2e3d622`와 일치했다
-(`cb09d98dc38cb552c9bd3854f16a693318f1a079`).
-
-로컬 tmux 검사 네 개가 모두 통과했다. Inline과 Fullscreen 각각 raw/no-echo
-input에 진입하고 빈 입력 `Ctrl+D`로 상태 0 종료, 셸 terminal과 main screen 복원,
-두 번의 stopped-job/`fg` generation을 완료했다. Native
-`cargo clippy --locked -p yo-cli --test terminal_matrix -- -D warnings` 검사도
-통과했다. Backend thread binding, 수락된 요청, 완료된 Turn과 예약된 loopback
-inference endpoint로의 연결은 모두 0이었다.
-
-`9848376f`의 이전 Inline harness를 격리해 다시 실행하니 5초 timeout이 재현됐다.
-`--model host:codex`를 생략했기 때문에 저장된 startup target이 없는 상태에서는
-Yo가 raw input 전에 `no startup target is selected`와 함께 상태 1로 종료했다.
-명시적 target 선택과 격리된 설정으로 이 의존을 제거했다. 두 실행 모두 일반 Mac
-Yo 상태는 변하지 않았다. Test 소유 tmux socket과 state root를 모두 제거하고,
-이어 일회용 checkout, bundle, driver, build/log 파일도 삭제했다. 실제 keyboard,
-IME와 terminal Command-V는 여전히 직접 관찰이 필요하다.
-
-같은 날 이후 동일한 Mac에서 수정 없이 `6aac838b` candidate tree
+2026-09-12 수정 없이 `6aac838b` candidate tree
 (`a7dfab60f1caea706c0fc9dbe02f50ba90d4fc64`)의 로컬 tmux 검사 여섯 개가 모두
-통과했다. 초안 입력과 bracketed paste 모킹 두 개도 포함한다.
+통과했다. 환경은 설치된 Codex 0.154.0과 tmux 3.6a가 있는 macOS 26.6.2 arm64였다.
 
 ```bash
 cargo test --locked -p yo-cli --test terminal_matrix local_tmux_ \
   -- --ignored --nocapture --test-threads=1
+cargo clippy --locked -p yo-cli --test terminal_matrix -- -D warnings
 ```
 
-두 mode 모두 ASCII와 완성형 한글 편집, 한글과 emoji를 포함한 서로 다른 LF/CRLF
-paste 행 세 개, 초안 지우기, 정상 종료와 terminal 복원을 통과했다. Native Clippy도
-다시 통과했다. Thread binding, 수락된 요청, 완료된 Turn과 loopback inference 연결은
+Inline과 Fullscreen 각각 raw/no-echo input에 진입하고 빈 입력 `Ctrl+D`로 상태 0
+종료, 셸 termios와 main screen 복원, 두 번의 stopped-job/`fg` generation을 완료했다.
+입력 모킹 두 개도 ASCII와 완성형 한글 편집, 한글과 emoji를 포함한 서로 다른 LF/CRLF
+paste 행 세 개, `Ctrl+C` 초안 지우기를 통과했다. Native Clippy도 통과했다.
+Thread binding, 수락된 요청, 완료된 Turn과 loopback inference 연결은
 모두 0이었다. 일반 Yo 상태와 읽기 전용 Mac source repository는 변하지 않았다.
 Test 소유 tmux 자원과 임시 상태를 모두 제거하고, 이어 일회용 checkout, packet과
 build/log 파일도 삭제했다. 실제 keyboard, IME의 조합 중 문자열·확정 과정과 terminal
@@ -484,11 +457,7 @@ pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다
 ### 현재 Apple Silicon 빌드와 입력 검사
 
 2026-09-11 `f57e61e5` 기반 수정 트리를 macOS 26.6.2 arm64에서 고정된
-`nightly-2026-05-22` toolchain으로 검사했다. 최초 실행은 장치 ID 자료형 불일치,
-Grok admission의 Linux 전용 import, FIFO 생성·임시 경로 alias·Unix socket 경로
-길이·실행 파일 위치·종료된 socket 설정에 대한 이식 불가능한 테스트 가정을
-드러냈다. 수정은 기존 파일 신원·경로 검사를 유지하며 native metadata 경계에서만
-Apple의 signed device ID를 정규화하고 정규 경로와 길이가 제한된 fixture를 사용한다.
+`nightly-2026-05-22` toolchain으로 검사했다.
 
 Native core suite는 706개 검사가 통과했다. CLI 검사는 unit test 524개와 integration
 test 7개가 통과했고 환경 검사 18개는 ignored였다. `yo-core`,

@@ -126,18 +126,8 @@ Turns, and terminal restoration. A deliberately failed import also returned a
 failure diagnostic and removed its temporary state. All 13 shared transport
 tests passed, including the status-only HTTP failure classification.
 
-Candidate `4b180c24` then built on macOS 26.6.2 arm64 and reached the Inline
-submission with one loopback connection attempt and Yo exit status 1. The
-original runner failed with `ENOTTY` (25) while reading PTY modes after the
-controlling-terminal owner had exited; Fullscreen was not run. The temporary
-checkout and isolated state were removed, and ordinary config/credential hashes
-were unchanged. Subsequent OS-only Mac probes reproduced the post-owner-exit
-error and verified that keeping the owner alive allows restored modes to be
-captured, excluding only `PENDIN`. The corrected runner passed both Linux modes
-and failed-import cleanup again.
-
-The corrected candidate `0f86d85e` built and passed both Inline and Fullscreen
-on the same Mac. Each mode retained one submission, one loopback connection
+On the same date, candidate `0f86d85e` built and passed both Inline and Fullscreen
+on macOS 26.6.2 arm64. Each mode retained one submission, one loopback connection
 attempt, Yo exit status 1, typed `Transport` stderr, and the stored `transport`
 failure. There were zero HTTP requests, accepted requests or finished Turns.
 Both modes restored all PTY settings except the kernel's `PENDIN` state bit;
@@ -455,41 +445,22 @@ not convert a missing environment into a successful skip.
 
 ### Current Codex Mac tmux verification
 
-On 2026-09-12, the exact source tree of `b2e3d622` was verified on macOS 26.6.2
-arm64 with installed Codex 0.154.0 and tmux 3.6a. The transferred `d04a7966`
-first exposed four unnecessary `nix::libc` qualifications in the macOS-only test
-path. After correcting them to `libc`, the full tracked Git tree on the Mac
-matched `b2e3d622` (`cb09d98dc38cb552c9bd3854f16a693318f1a079`).
-
-All four local tmux tests passed: Inline and Fullscreen each entered raw/no-echo
-input, exited status 0 on empty `Ctrl+D`, restored the shell terminal and main
-screen, and completed two stopped-job/`fg` generations. The native
-`cargo clippy --locked -p yo-cli --test terminal_matrix -- -D warnings` check
-also passed. Backend thread bindings, accepted requests, finished Turns and
-connections to the reserved loopback inference endpoint were all zero.
-
-An isolated replay of the previous Inline harness from `9848376f` reproduced
-the five-second timeout: it omitted `--model host:codex`, so with no stored
-startup target Yo exited status 1 with `no startup target is selected` before
-raw input. Explicit target selection and isolated settings remove that dependency.
-The ordinary Mac Yo state remained unchanged across both runs. All test-owned
-tmux sockets and state roots, followed by the disposable checkout, bundle,
-driver and build/log files, were removed. Physical keys, IME and terminal
-Command-V still require direct observation.
-
-Later on the same date, the unchanged `6aac838b` candidate tree
+On 2026-09-12, the unchanged `6aac838b` candidate tree
 (`a7dfab60f1caea706c0fc9dbe02f50ba90d4fc64`) passed all six local tmux tests on
-the same Mac, including the two draft-input and bracketed-paste mocks:
+macOS 26.6.2 arm64 with installed Codex 0.154.0 and tmux 3.6a:
 
 ```bash
 cargo test --locked -p yo-cli --test terminal_matrix local_tmux_ \
   -- --ignored --nocapture --test-threads=1
+cargo clippy --locked -p yo-cli --test terminal_matrix -- -D warnings
 ```
 
-Both modes passed ASCII and completed-Korean editing, three distinct LF/CRLF
-paste rows containing Korean and an emoji, draft clearing, clean exit and
-terminal restoration. Native Clippy passed again. Thread bindings, accepted
-requests, finished Turns and loopback inference connections remained zero.
+Inline and Fullscreen each entered raw/no-echo input, exited status 0 on empty
+`Ctrl+D`, restored shell termios and the main screen, and completed two
+stopped-job/`fg` generations. The two input mocks also passed ASCII and
+completed-Korean editing, three distinct LF/CRLF paste rows containing Korean
+and an emoji, and `Ctrl+C` draft clearing. Native Clippy passed. Thread bindings,
+accepted requests, finished Turns and loopback inference connections remained zero.
 Ordinary Yo state and the read-only Mac source repository were unchanged. All
 test-owned tmux resources and temporary state, followed by the disposable
 checkout, packet and build/log files, were removed. Physical keys, IME
@@ -529,13 +500,7 @@ they are evidence records rather than part of the normal test set.
 ### Current Apple Silicon build and input check
 
 On 2026-09-11, the corrected tree based on `f57e61e5` was checked on macOS
-26.6.2 arm64 with the pinned `nightly-2026-05-22` toolchain. The initial run
-exposed incompatible device-ID types, Linux-only imports in Grok admission,
-and nonportable test assumptions about FIFO creation, temporary-path aliases,
-Unix-socket path length, executable locations and configuring a disconnected
-socket. The correction preserves the existing file-identity and path checks;
-it normalizes Apple's signed device ID only at the native metadata boundary
-and uses canonical, bounded test fixtures.
+26.6.2 arm64 with the pinned `nightly-2026-05-22` toolchain.
 
 The native core suite passed 706 tests. CLI checks passed 524 unit tests and
 seven integration tests, with 18 environment tests ignored. Clippy passed for
