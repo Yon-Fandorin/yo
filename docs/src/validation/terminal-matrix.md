@@ -477,6 +477,24 @@ tmux sockets and state roots, followed by the disposable checkout, bundle,
 driver and build/log files, were removed. Physical keys, IME and terminal
 Command-V still require direct observation.
 
+Later on the same date, the unchanged `6aac838b` candidate tree
+(`a7dfab60f1caea706c0fc9dbe02f50ba90d4fc64`) passed all six local tmux tests on
+the same Mac, including the two draft-input and bracketed-paste mocks:
+
+```bash
+cargo test --locked -p yo-cli --test terminal_matrix local_tmux_ \
+  -- --ignored --nocapture --test-threads=1
+```
+
+Both modes passed ASCII and completed-Korean editing, three distinct LF/CRLF
+paste rows containing Korean and an emoji, draft clearing, clean exit and
+terminal restoration. Native Clippy passed again. Thread bindings, accepted
+requests, finished Turns and loopback inference connections remained zero.
+Ordinary Yo state and the read-only Mac source repository were unchanged. All
+test-owned tmux resources and temporary state, followed by the disposable
+checkout, packet and build/log files, were removed. Physical keys, IME
+preedit/commit and terminal Command-V remain unverified.
+
 ## macOS real-host evidence
 
 On 2026-07-30, the tree accepted as `develop` commit `085e763` was exercised

@@ -433,6 +433,23 @@ Yo 상태는 변하지 않았다. Test 소유 tmux socket과 state root를 모�
 이어 일회용 checkout, bundle, driver, build/log 파일도 삭제했다. 실제 keyboard,
 IME와 terminal Command-V는 여전히 직접 관찰이 필요하다.
 
+같은 날 이후 동일한 Mac에서 수정 없이 `6aac838b` candidate tree
+(`a7dfab60f1caea706c0fc9dbe02f50ba90d4fc64`)의 로컬 tmux 검사 여섯 개가 모두
+통과했다. 초안 입력과 bracketed paste 모킹 두 개도 포함한다.
+
+```bash
+cargo test --locked -p yo-cli --test terminal_matrix local_tmux_ \
+  -- --ignored --nocapture --test-threads=1
+```
+
+두 mode 모두 ASCII와 완성형 한글 편집, 한글과 emoji를 포함한 서로 다른 LF/CRLF
+paste 행 세 개, 초안 지우기, 정상 종료와 terminal 복원을 통과했다. Native Clippy도
+다시 통과했다. Thread binding, 수락된 요청, 완료된 Turn과 loopback inference 연결은
+모두 0이었다. 일반 Yo 상태와 읽기 전용 Mac source repository는 변하지 않았다.
+Test 소유 tmux 자원과 임시 상태를 모두 제거하고, 이어 일회용 checkout, packet과
+build/log 파일도 삭제했다. 실제 keyboard, IME의 조합 중 문자열·확정 과정과 terminal
+Command-V는 아직 검증하지 않았다.
+
 ## macOS 실제 host 증거
 
 2026-07-30에 `develop` commit `085e763`으로 수용된 tree를 macOS 26.2
