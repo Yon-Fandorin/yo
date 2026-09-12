@@ -66,6 +66,20 @@ thumbnail을 표시했다. draft를 비운 뒤 Ctrl+D로 상태 0 종료했으�
 binding이 없었고 그대로 유지됐다. 임시 checkout·설정·credential·Session·fixture·
 socket·tmux server는 삭제했다.
 
+같은 Mac에서 수행한 제한된 실제 후속 검사는 후보 `b4283a81`, 소유자만 읽을 수
+있는 단일 임시 파일로 전송한 실제 credential, NVIDIA 전용·가격 상한 0·fallback
+비활성화가 고정된 정확한 무료 profile을 사용했다. 후보 빌드와 격리된 정의
+가져오기가 통과했고, Ctrl+V는 왼쪽 빨강·오른쪽 파랑인 합성 64 × 32 PNG를
+표시했다. 이미지와 일회성 읽기 명령을 합친 prompt를 제출하자 approval prompt,
+`BackendRequestAccepted`, `TurnFinished`가 저장되기 전에 TUI가 종료됐다. Connector
+failure는 request acceptance 증거가 commit되기 전에 HTTP를 보낼 수 있으므로,
+4회 허용량 중 외부 요청 1회를 사용한 것으로 보수적으로 계산한다. 재시도하지
+않았고 예정했던 resume·요약 요청도 시작하지 않았다. HTTP 상태와 종료 원인이
+Provider·Connector·terminal 자동화 중 어디에 있는지는 미검증이며, 이 실행은
+성공한 실제 inference 증거가 아니다. 전송한 원본 key는 격리 import 직후 삭제했고,
+저장된 격리 credential·checkout·Session root·fixture·tmux server도 이어서 삭제했다.
+macOS의 두 일반 Yo 상태 위치 hash는 변하지 않았다.
+
 이로써 새 profile의 자동화된 macOS tmux 첨부와 SSH PTY lifecycle 검증은 완료됐다.
 실제 keyboard 입력, IME 조합, terminal Command-V, 실제 NVIDIA inference·tool·요약·
 재개는 미검증이다. 별도 설치된 Codex 0.154.0 Inline tmux 검사는 5초 안에 준비·raw

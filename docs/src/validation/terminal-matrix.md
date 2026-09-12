@@ -73,9 +73,25 @@ in the Mac's ordinary Yo state, which remained unchanged. Temporary checkouts,
 configuration, credentials, Sessions, fixtures, sockets and tmux servers were
 removed.
 
+A bounded live follow-up on the same Mac used candidate `b4283a81`, a real
+credential transferred as one owner-only temporary file, and the exact
+NVIDIA-only free profile with zero price caps and fallback disabled. The
+candidate built, the isolated definition import passed, and Ctrl+V displayed a
+synthetic 64 × 32 red-left/blue-right PNG. Submitting the combined image and
+one-shot read-command prompt then closed the TUI before an approval prompt,
+`BackendRequestAccepted`, or `TurnFinished` was retained. A connector failure
+can issue HTTP before request-acceptance evidence is committed, so this run
+conservatively counts one external request against its four-request allowance.
+It did not retry or start the planned resume and summary requests. The HTTP
+status and whether the exit originated in the provider, connector, or terminal
+automation remain unverified; the run is not successful live-inference evidence.
+The raw transferred key was deleted immediately after isolated import, and the
+saved isolated credential, checkout, Session root, fixture and tmux server were
+then removed. Hashes of both ordinary macOS Yo state locations were unchanged.
+
 This closes automated macOS tmux attachment and SSH PTY lifecycle coverage for
 the new profile. Physical keyboard input, IME composition, terminal Command-V,
-live NVIDIA inference, tools, summary and resume remain unverified. A separate
+live NVIDIA completion, tools, summary and resume remain unverified. A separate
 installed Codex 0.154.0 Inline tmux check did not reach its ready/raw-input state
 within five seconds; Fullscreen was not run after that failure. This does not
 invalidate the managed OpenRouter checks, but current-candidate Codex tmux
