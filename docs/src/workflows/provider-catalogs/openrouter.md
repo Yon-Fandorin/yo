@@ -96,6 +96,14 @@ resume and summaries—keeps NVIDIA-only routing, zero-price limits and disabled
 fallbacks. A capacity or price rejection is shown without automatic resend.
 Other OpenRouter models retain their existing text behavior.
 
+When this image profile exposes function tools, the connector omits explicit
+`tool_choice: auto` and uses OpenRouter's documented
+[automatic default](https://openrouter.ai/docs/guides/features/tool-calling).
+This avoids the observed NVIDIA endpoint rejection of that explicit value while
+preserving the frozen tool definitions and free routing policy. Live stream
+compatibility remains limited as recorded in the
+[terminal matrix](../../validation/terminal-matrix.md#openrouter-image-journey).
+
 Images retain their exact normalized PNG bytes and order in saved Sessions.
 Context pressure uses a labeled advisory estimate (image-free serialized UTF-8
 bytes plus 2000 per image occurrence and a single 1024 reserve when images exist).

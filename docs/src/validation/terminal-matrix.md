@@ -95,6 +95,32 @@ live NVIDIA completion, tools, summary and resume remain unverified. The separat
 Codex Inline readiness timeout was followed up by the passing
 [Codex Mac tmux verification](#current-codex-mac-tmux-verification) below.
 
+The live Linux Fullscreen PTY probe on 2026-09-12 made two inference requests
+with the exact NVIDIA-only free profile. The first returned HTTP 404 with an
+explicit rejection of the provided `tool_choice` value. Omitting explicit
+`tool_choice: auto` while retaining all five function tools and the closed free
+route allowed the second request to return HTTP 200. The diagnostic intermediary
+observed 30 visible content deltas, `[DONE]`, and reported usage of 1304 prompt
+tokens, 210 completion tokens and cost 0. This tested `71c8fbc5` plus the request
+wire correction; the binary SHA256 was
+`8e4fd4a467a9d9541a0f703975a9d19a3bdd93f1d0f69ab0038ba7ec7a6ee0e2`.
+
+Provider streaming did not establish a successful Yo Turn. The decoded journal
+contained one `BackendRequestAccepted` and one failed `TurnFinished`, with
+`Turn: Protocol: non-null Chat Completions usage appeared on a choice chunk`.
+The intermediary forwarded SSE unchanged; the accepted connector contract
+requires final non-null usage on an empty-choice chunk. Compatibility needs a
+separately reviewed contract change. Successful completion, tools, summary and
+resume remain unverified. A fresh `--continue` correctly rejected the failed
+Session with status 1 and `no resumable Session exists in the current workspace`;
+it made no external request, restored termios and preserved the journal prefix.
+
+Connector tests (27), managed backend tests (84), their all-target Clippy checks
+and the CLI build passed. Ordinary Yo configuration and credentials were
+unchanged. The temporary saved credential, Session state, synthetic workspace,
+diagnostic intermediary and test TLS keys were removed; no automatic retry or
+fallback followed either failed Turn.
+
 ## Diagnose a managed request failure
 
 Run the deterministic pre-acceptance failure check without a provider account:

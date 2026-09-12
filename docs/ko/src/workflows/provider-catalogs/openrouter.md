@@ -91,6 +91,13 @@ SSH·tmux의 클립보드 원본은 [이미지 입력 흐름](../../architecture
 허용하지 않는다. 용량·가격 제한은 실패로 표시하며 자동 재전송하지 않는다.
 다른 OpenRouter 모델의 기존 텍스트 동작은 유지한다.
 
+이 이미지 profile에서 함수 도구를 노출할 때 connector는 명시적
+`tool_choice: auto`를 생략하고 OpenRouter가 문서화한
+[자동 선택 기본값](https://openrouter.ai/docs/guides/features/tool-calling)을 사용한다.
+관찰된 NVIDIA endpoint의 명시적 값 거절을 피하면서 확정된 도구 정의와 무료
+경로 정책을 보존한다. 실제 스트림 호환성 제한은
+[terminal matrix](../../validation/terminal-matrix.md#openrouter-이미지-사용-흐름)에 기록한다.
+
 저장한 세션에는 정규화된 PNG 원본과 순서가 남는다. 컨텍스트 표시는 이미지 없는
 직렬화 UTF-8 바이트 수에 이미지 occurrence당 2000, 이미지가 있으면 요청당 여유분
 1024를 더한 추정값이다. 실제 사용량이나 보장된 상한이 아니며 이를 표시한다.

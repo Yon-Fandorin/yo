@@ -85,6 +85,29 @@ macOS의 두 일반 Yo 상태 위치 hash는 변하지 않았다.
 재개는 미검증이다. 별도 Codex Inline 준비 timeout은 아래의 통과한
 [Codex Mac tmux 검증](#current-codex-mac-tmux-verification)으로 후속 확인했다.
 
+2026-09-12 실제 Linux Fullscreen PTY 검증은 정확한 NVIDIA 전용 무료 profile로
+추론 요청 두 번을 수행했다. 첫 요청은 전달한 `tool_choice` 값을 거절한다는
+명시적 메시지와 HTTP 404를 반환했다. 함수 도구 5개와 고정된 무료 경로를
+유지하면서 명시적 `tool_choice: auto`를 생략하자 두 번째 요청은 HTTP 200을
+반환했다. 진단 중계는 공개 content delta 30개, `[DONE]`, prompt token 1304개,
+completion token 210개와 보고 비용 0을 관찰했다. 검사한 후보는 `71c8fbc5`에
+요청 전송 수정을 더한 것이며 바이너리 SHA256은
+`8e4fd4a467a9d9541a0f703975a9d19a3bdd93f1d0f69ab0038ba7ec7a6ee0e2`다.
+
+Provider 스트리밍이 성공한 Yo Turn을 입증하지는 않는다. 디코딩한 journal에는
+`BackendRequestAccepted` 1개와 실패한 `TurnFinished` 1개가 있었고, 진단은
+`Turn: Protocol: non-null Chat Completions usage appeared on a choice chunk`였다.
+중계는 SSE를 변경하지 않고 전달했다. 승인된 connector 규격은 최종 non-null
+usage가 빈 choice chunk에 있어야 하므로 호환성에는 별도 리뷰를 거친 규격 변경이
+필요하다. 정상 완료·도구 실행·요약·재개는 미검증이다. 새 `--continue`는 실패한
+Session을 상태 1과 `no resumable Session exists in the current workspace`로
+올바르게 거절했다. 외부 요청 없이 termios를 복원하고 journal prefix를 보존했다.
+
+Connector test 27개, managed backend test 84개, 두 package의 all-target Clippy와
+CLI 빌드가 통과했다. 일반 Yo 설정과 credential은 변하지 않았다. 임시 저장
+credential·Session 상태·합성 workspace·진단 중계·테스트 TLS key는 삭제했으며,
+각 Turn 실패 뒤 자동 재시도나 fallback은 수행하지 않았다.
+
 ## Managed 요청 실패 진단
 
 Provider 계정 없이 요청 수락 전 실패 경로를 결정적인 fixture로 검사한다.
