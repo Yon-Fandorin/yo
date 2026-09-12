@@ -37,9 +37,9 @@ The Linux PTY smoke on 2026-09-11 passed this journey with two requests to a
 local TLS/SSE fixture. The test process redirected the exact OpenRouter hostname
 to loopback, denied other TCP destinations, used a temporary test CA and a fake
 key, and removed its state after exit. This verifies Yo's transport and recovery;
-live NVIDIA streaming, tool execution, summary completion and the new profile
-on macOS/SSH/tmux remain separate environment checks. Connector unit tests cover
-tool-result and bounded summary projection; they do not prove provider execution.
+live NVIDIA streaming, tool execution and summary completion remain separate
+environment checks. Connector unit tests cover tool-result and bounded summary
+projection; they do not prove provider execution.
 
 The live Linux tmux probe on 2026-09-11 used candidate `12e169a8`, isolated
 configuration and Session storage, and the documented free image definition.
@@ -53,6 +53,33 @@ still listed the free NVIDIA route, so model removal was not established. The
 connector retained the HTTP status without the response body; the rejection's
 specific cause remains unknown. The temporary credential, Session, fixture and
 tmux server were removed. The existing user configuration was not modified.
+
+On 2026-09-12, candidate `33f491ca` was transferred to the fingerprint-pinned
+macOS 26.6.2 arm64 host and built in disposable checkouts. Clippy, the CLI suite
+(525 passed, 14 ignored plus integration targets) and the native macOS compile
+passed. The first single-threaded core suite had 707 passes and two failures in
+AgentSession ordering/persistence tests; each failed test then passed three
+consecutive isolated runs, so the initial failures were not reproduced.
+
+The exact documented OpenRouter profile was imported with a fake credential in
+an isolated physical `/private/tmp` state root. In a dedicated tmux 3.6a server,
+an injected Ctrl+V read a synthetic PNG from a private Unix socket and displayed
+`Image attached` with the exact 1 × 1 source, normalized 73-byte PNG and thumbnail.
+Clearing the draft and Ctrl+D exited status 0 without a Turn or network request.
+A separate 120 × 40 SSH-owned PTY opened the same profile in Fullscreen; injected
+Ctrl+D exited status 0, emitted the alternate-screen enter and leave sequences,
+and restored the remote and driving PTY state. No credential or binding existed
+in the Mac's ordinary Yo state, which remained unchanged. Temporary checkouts,
+configuration, credentials, Sessions, fixtures, sockets and tmux servers were
+removed.
+
+This closes automated macOS tmux attachment and SSH PTY lifecycle coverage for
+the new profile. Physical keyboard input, IME composition, terminal Command-V,
+live NVIDIA inference, tools, summary and resume remain unverified. A separate
+installed Codex 0.154.0 Inline tmux check did not reach its ready/raw-input state
+within five seconds; Fullscreen was not run after that failure. This does not
+invalidate the managed OpenRouter checks, but current-candidate Codex tmux
+lifecycle remains unverified.
 
 ## Installed Codex checks
 

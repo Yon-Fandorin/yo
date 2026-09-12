@@ -34,9 +34,9 @@ SSH 동작까지 실행되었다는 뜻은 아니다.
 2026-09-11 Linux PTY 검증은 로컬 TLS/SSE fixture에 두 번 요청하여 이 흐름을
 통과했다. 테스트 프로세스에서 정확한 OpenRouter 호스트를 loopback으로 연결하고
 다른 TCP 목적지를 거절했으며 임시 CA·가짜 키를 사용하고 종료 후 상태를 삭제했다.
-이는 Yo의 전송·복원 검증이다. 실제 NVIDIA 스트리밍·도구 실행·요약 완료와 새
-프로필의 macOS·SSH·tmux 검증은 별도 환경 검사로 남는다. Connector 단위 test의
-도구 결과·제한 내 요약 전송 검사는 Provider 실행을 증명하지 않는다.
+이는 Yo의 전송·복원 검증이다. 실제 NVIDIA 스트리밍·도구 실행·요약 완료는 별도
+환경 검사로 남는다. Connector 단위 test의 도구 결과·제한 내 요약 전송 검사는
+Provider 실행을 증명하지 않는다.
 
 2026-09-11 실제 Linux tmux 검증은 후보 `12e169a8`, 격리된 설정·Session 저장소,
 문서의 무료 이미지 정의를 사용했다. 정의 가져오기와 private socket을 통한
@@ -49,6 +49,29 @@ Yo는 connector 오류를 표시하고 격리된 binding에 `request_rejected`�
 응답 본문 없이 HTTP 상태만 보존하므로 구체적인 거절 원인은 확인되지 않았다.
 임시 credential·Session·fixture·tmux 서버는 삭제했으며 기존 사용자 설정은
 변경하지 않았다.
+
+2026-09-12 후보 `33f491ca`를 지문으로 고정한 macOS 26.6.2 arm64 host로 보내
+일회용 checkout에서 빌드했다. Clippy, CLI suite(525개 통과, 14개 ignored와 별도
+integration target), native macOS compile이 통과했다. 첫 단일 thread core suite는
+707개가 통과하고 AgentSession 순서·영속성 test 2개가 실패했다. 두 test를 각각
+격리해 연속 3회 실행하자 모두 통과했으므로 최초 실패는 재현되지 않았다.
+
+문서의 정확한 OpenRouter profile을 가짜 credential과 물리적 `/private/tmp` 격리
+상태에 가져왔다. 전용 tmux 3.6a server에서 주입한 Ctrl+V가 private Unix socket의
+합성 PNG를 읽었고, `Image attached`가 정확한 1 × 1 원본, 정규화된 73-byte PNG,
+thumbnail을 표시했다. draft를 비운 뒤 Ctrl+D로 상태 0 종료했으며 Turn과 network
+요청은 없었다. 별도 120 × 40 SSH 소유 PTY도 같은 profile을 Fullscreen으로 열었다.
+주입한 Ctrl+D로 상태 0 종료하고 alternate-screen 진입·해제 sequence와 원격 및
+구동 PTY 상태 복원을 확인했다. Mac의 일반 Yo 상태에는 OpenRouter credential과
+binding이 없었고 그대로 유지됐다. 임시 checkout·설정·credential·Session·fixture·
+socket·tmux server는 삭제했다.
+
+이로써 새 profile의 자동화된 macOS tmux 첨부와 SSH PTY lifecycle 검증은 완료됐다.
+실제 keyboard 입력, IME 조합, terminal Command-V, 실제 NVIDIA inference·tool·요약·
+재개는 미검증이다. 별도 설치된 Codex 0.154.0 Inline tmux 검사는 5초 안에 준비·raw
+input 상태에 도달하지 못했고 이후 Fullscreen은 실행하지 않았다. 이는 managed
+OpenRouter 검사 결과를 무효화하지 않지만 현재 후보의 Codex tmux lifecycle은
+미검증으로 남는다.
 
 ## 설치된 Codex 검사
 
