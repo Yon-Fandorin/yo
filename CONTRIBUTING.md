@@ -80,7 +80,8 @@ Self-review the actual diff, including new files. Obtain one independent review
 before integrating public-contract, permission/security, concurrency, failure,
 workflow-authority, or semantic-SOT changes. Routine approved implementation and
 mechanical edits need no mandatory second reviewer. Review can be a patch plus
-brief context; packet, model tier, and structured verdict are optional.
+brief context. For model review, match capability to review risk. Packet and
+structured verdict are optional.
 Do not launch agents or transmit data without authorization. If review is
 unavailable, finish and validate the change, then report the remaining review.
 

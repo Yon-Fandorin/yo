@@ -12,6 +12,41 @@ Packet construction belongs to [Review packets](review-packets.md). Verdict
 evidence, approval, integration, and cleanup belong to
 [Review and integration](review-and-integration.md).
 
+## Reviewer model selection
+
+For requested model review, use the configured, authenticated Codex host and
+select the model and reasoning effort for the document's semantic impact,
+required lenses, coupled boundaries and uncertainty. File extension, length
+or the label "docs-only" does not lower contract or permission risk. Routine
+mechanical documentation still needs only the checks required by the default
+workflow; choosing a model does not add a mandatory review.
+
+Use the least costly available model adequate for that review. These project
+defaults follow the roles in [OpenAI's model guidance](https://developers.openai.com/api/docs/models);
+they are workload choices, not guarantees of account access or host cost:
+
+| Review scope | Codex model selector | Reasoning effort |
+| --- | --- | --- |
+| Requested wording, links or formatting review with no behavior change | `gpt-5.6-luna` | `medium` |
+| Bounded implementation guidance or operation descriptions under an accepted contract | `gpt-5.6-terra` | `medium` or `high` |
+| Public contracts, semantic SOT, review/workflow authority, permissions, concurrency or failure behavior | `gpt-5.6-sol` | `high` |
+| Complex architecture or migration across owners, with substantial coupling or unresolved counterexamples | `gpt-6-astra` | `high` or `xhigh` |
+
+Choose before delivery, using current request-free host model metadata and
+supported reasoning levels. Required lens capability and explicit user model
+or cost constraints remain controlling; do not equate a `high` effort setting
+on a smaller model with a high-capability lens. If no available model satisfies
+the applicable scope and constraints, report that limit without a silent
+downgrade or provider substitution. Actual service verification keeps its own
+model and cost constraints, including free-only service probes.
+
+Record the exact selector, reasoning effort and a short selection rationale in
+the immutable pre-delivery record. Bind them through the native controls below;
+opaque `host:codex` cannot prove that selection. Keep the selected model and
+effort for same-Session finding resolution within the frozen chain. Apply a
+changed default to future chains; do not rerun a completed review solely because
+the default changed or rewrite its actual route evidence.
+
 ## Authorization and execution
 
 A request to implement, fix, verify or complete work authorizes the reviews,
