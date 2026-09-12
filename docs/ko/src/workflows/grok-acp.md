@@ -22,13 +22,16 @@ runtime을 소유한다.
 갱신하거나 저장하지 않는다. 직접 xAI API 또는 OAuth 통합은 별도의 Provider
 설계이며 이 host adapter 안의 fallback이 되어서는 안 된다.
 
-`yo account grok --refresh`는 initialize-authenticate prefix만 재사용한 뒤 child를
-종료한다. 성공한 authentication metadata의 정확한 `subscription_tier`를 Provider
+`yo account grok --refresh`는 initialize-authenticate prefix를 재사용하고 읽기 전용
+ACP `_x.ai/billing` extension을 한 번 호출한 뒤 child를 종료한다.
+성공한 authentication metadata의 정확한 `subscription_tier`를 Provider
 중립 account snapshot으로 변환하고, 필수 검증 이메일을 사람이 보는 계정 label과
 stable identity evidence로 함께 사용한다. team identity와 authentication mode
-metadata는 무시한다. Agent Session을 만들거나 prompt를 보내지 않는다. 설치된
-Grok CLI 1.0.5는 더 새로운 `x.ai/billing` extension을 노출하지 않으므로 plan
-이름에서 quota window를 추론하지 않는다.
+metadata는 무시한다. Agent Session을 만들거나 prompt를 보내지 않는다. Grok CLI
+1.0.30은 billing extension에서 현재 credits config를 직접 제공한다.
+method-not-found일 때만 기존 bounded billing-log fallback을 사용하며 다른 실패는
+refresh를 실패시킨다. 고정된 source와 fallback 규칙은
+[Account capacity](./account-capacity.md)에 있다.
 
 ## Compatibility 계약
 
