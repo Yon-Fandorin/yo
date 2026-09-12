@@ -376,6 +376,16 @@ localhost에 격리된 `sshd`를 시작하고 임시 key를 생성한 뒤 fixtur
 `USER`가 로컬 SSH account 이름으로 설정되어 있어야 한다. 중첩된 경우에는
 tmux도 필요하다.
 
+로컬 tmux는 임시 `HOME`, `CODEX_HOME`, XDG root, Yo 설정과 Session repository를
+사용하는 interactive Bash 아래에서 `yo --model host:codex`를 실행한다. Codex
+provider는 예약된 loopback listener만 가리키고 계정을 사용하지 않으며 인증 저장은
+파일로 한정한다. 검사는 tmux의 foreground command 이름 대신 실제 입력 화면과
+raw/no-echo mode를 기다린다. 빈 입력 `Ctrl+D` 뒤에는 셸이 상태 0으로 끝나기 전에
+셸 terminal과 main screen이 복원되어야 한다. macOS에서만 일시적인 queued-input
+`PENDIN` bit를 제외하고 나머지 전체 termios를 비교한다. Backend thread binding,
+수락된 요청, 완료된 Turn과 loopback 연결은 모두 없어야 한다. 각 검사는 자신이
+만든 tmux server, socket과 임시 Codex·Yo 상태를 제거한다.
+
 각 경로는 빈 입력 `Ctrl+D` 종료와 두 번 연속
 `Ctrl+Z` → job 정지 → `fg` terminal generation을 모두 검사한다.
 job-control 검사는 매 정지 구간의 터미널을 해당 경로의 실제 interactive shell

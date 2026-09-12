@@ -416,6 +416,17 @@ fixture directory. They require compatible local `ssh`, `sshd`, `ssh-keygen`,
 Codex, a set `USER` naming the local SSH account, and, for the nested cases,
 tmux.
 
+Local tmux launches `yo --model host:codex` under an interactive Bash with a
+temporary `HOME`, `CODEX_HOME`, XDG roots, Yo configuration and Session repository.
+The Codex provider points only to a reserved loopback listener, uses no account
+and keeps authentication storage file-only. The tests wait for the actual input
+screen and raw/no-echo mode rather than tmux's foreground-command name. Empty
+`Ctrl+D` must restore the shell terminal and main screen before the shell exits
+with status 0. On macOS only, the transient queued-input `PENDIN` bit is excluded
+from the otherwise complete termios comparison. No backend thread binding,
+accepted request, finished Turn or loopback connection may occur. Each test
+removes its own tmux server, socket and temporary Codex/Yo state.
+
 Each route checks both the empty-`Ctrl+D` exit path and two consecutive
 `Ctrl+Z` → stopped job → `fg` generations. The job-control checks compare the
 terminal with the route's actual interactive-shell termios at every stopped

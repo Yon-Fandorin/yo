@@ -1,10 +1,12 @@
 use std::{
+    fs,
+    net::TcpListener,
     process::{Command, Output},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use nix::unistd::Pid;
+use nix::{sys::termios::Termios, unistd::Pid};
 
 use crate::support::{
     has_noncanonical_no_echo_input, only_child, process_exists, process_is_stopped, read_termios,
@@ -23,10 +25,12 @@ struct TmuxSession {
     name: String,
     socket: std::path::PathBuf,
     session_repository: std::path::PathBuf,
+    state_root: std::path::PathBuf,
+    inference_listener: TcpListener,
 }
 
 struct ShellJob {
-    baseline: nix::sys::termios::Termios,
+    baseline: Termios,
     yo_pid: Pid,
 }
 
@@ -41,7 +45,29 @@ impl TmuxSession {
             .as_nanos();
         let name = format!("yo-matrix-{}-{unique}", std::process::id());
         let socket = std::env::temp_dir().join(format!("{name}.sock"));
-        let session_repository = std::env::temp_dir().join(format!("{name}-sessions"));
+        let state_root = std::env::temp_dir().join(format!("{name}-state"));
+        fs::create_dir_all(state_root.join("home")).unwrap();
+        let state_root = state_root.canonicalize().unwrap();
+        let session_repository = state_root.join("sessions");
+        fs::create_dir_all(state_root.join("codex")).unwrap();
+        fs::write(state_root.join("config.yaml"), "{}\n").unwrap();
+        let inference_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        inference_listener.set_nonblocking(true).unwrap();
+        fs::write(
+            state_root.join("codex/config.toml"),
+            format!(
+                "model = \"terminal-matrix-offline\"\n\
+                 model_provider = \"terminal_matrix\"\n\
+                 cli_auth_credentials_store = \"file\"\n\
+                 [model_providers.terminal_matrix]\n\
+                 name = \"Terminal matrix offline fixture\"\n\
+                 base_url = \"http://{}/v1\"\n\
+                 wire_api = \"responses\"\n\
+                 requires_openai_auth = false\n",
+                inference_listener.local_addr().unwrap(),
+            ),
+        )
+        .unwrap();
         run_tmux(
             &socket,
             &["new-session", "-d", "-s", &name, "-x", "80", "-y", "24"],
@@ -50,37 +76,11 @@ impl TmuxSession {
             name,
             socket,
             session_repository,
+            state_root,
+            inference_listener,
         };
         session.run_tmux(&["set-option", "-t", &session.name, "remain-on-exit", "on"]);
         session
-    }
-
-    fn run_mode(&self, option: &str, alternate_screen: bool) {
-        let repository = repository_path();
-        let repository = repository
-            .to_str()
-            .expect("the repository path must be valid UTF-8");
-        self.run_tmux(&[
-            "respawn-pane",
-            "-k",
-            "-t",
-            &self.name,
-            "-c",
-            repository,
-            "/usr/bin/env",
-            &format!(
-                "YO_SESSION_REPOSITORY={}",
-                self.session_repository.display()
-            ),
-            env!("CARGO_BIN_EXE_yo"),
-            option,
-        ]);
-        self.wait_until(COMMAND_READY_TIMEOUT, |state| {
-            !state.dead
-                && state.alternate_screen == alternate_screen
-                && state.command == "yo"
-                && self.has_noncanonical_no_echo_input()
-        });
     }
 
     fn run_mode_under_shell(&self, option: &str, alternate_screen: bool) -> ShellJob {
@@ -93,6 +93,26 @@ impl TmuxSession {
             "-c",
             repository.to_str().expect("repository path is valid UTF-8"),
             "/usr/bin/env",
+            "-i",
+            &format!("PATH={}", std::env::var("PATH").unwrap()),
+            "TERM=xterm-256color",
+            &format!("HOME={}", self.state_root.join("home").display()),
+            &format!("CODEX_HOME={}", self.state_root.join("codex").display()),
+            &format!(
+                "XDG_CONFIG_HOME={}",
+                self.state_root.join("config").display()
+            ),
+            &format!("XDG_DATA_HOME={}", self.state_root.join("data").display()),
+            &format!("XDG_STATE_HOME={}", self.state_root.join("state").display()),
+            &format!("XDG_CACHE_HOME={}", self.state_root.join("cache").display()),
+            &format!(
+                "YO_CONFIG={}",
+                self.state_root.join("config.yaml").display()
+            ),
+            &format!(
+                "YO_SESSION_REPOSITORY={}",
+                self.session_repository.display()
+            ),
             &format!("PS1={SHELL_READY}"),
             "HISTFILE=/dev/null",
             "/bin/bash",
@@ -107,8 +127,7 @@ impl TmuxSession {
         thread::sleep(Duration::from_secs(1));
         let baseline = self.termios().expect("read shell terminal state");
         let yo = shell_quote(std::path::Path::new(env!("CARGO_BIN_EXE_yo")));
-        let session_repository = shell_quote(&self.session_repository);
-        let command = format!("YO_SESSION_REPOSITORY={session_repository} {yo} {option}");
+        let command = format!("{yo} {option} --model host:codex");
         self.send_literal(&command);
         self.send_enter();
         self.wait_for_mode(alternate_screen);
@@ -122,9 +141,84 @@ impl TmuxSession {
         self.wait_until(COMMAND_READY_TIMEOUT, |state| {
             !state.dead
                 && state.alternate_screen == alternate_screen
-                && state.command == "yo"
+                && self
+                    .shell_child()
+                    .is_some_and(|pid| !process_is_stopped(pid))
                 && self.has_noncanonical_no_echo_input()
+                && {
+                    let pane = self.captured_text();
+                    pane.contains("host:codex") && pane.contains("^D exit")
+                }
         });
+    }
+
+    fn journal_tag_count(&self, tag: &str) -> usize {
+        fn count(value: &serde_json::Value, tag: &str) -> usize {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    usize::from(fields.get("type").and_then(|value| value.as_str()) == Some(tag))
+                        + fields
+                            .values()
+                            .map(|value| count(value, tag))
+                            .sum::<usize>()
+                },
+                serde_json::Value::Array(values) => {
+                    values.iter().map(|value| count(value, tag)).sum()
+                },
+                _ => 0,
+            }
+        }
+        let entries = match fs::read_dir(&self.session_repository) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
+            Err(error) => panic!("read isolated Session repository: {error}"),
+        };
+        entries
+            .map(|entry| entry.expect("read isolated Session entry"))
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "jsonl")
+            })
+            .map(|entry| fs::read_to_string(entry.path()).expect("read isolated Session journal"))
+            .flat_map(|text| {
+                text.lines()
+                    .map(|line| {
+                        serde_json::from_str::<serde_json::Value>(line)
+                            .expect("decode isolated Session journal")
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .map(|value| count(&value, tag))
+            .sum()
+    }
+
+    fn terminal_matches(&self, baseline: &Termios) -> bool {
+        self.termios().is_some_and(|actual| {
+            let baseline = baseline.clone();
+            #[cfg(target_os = "macos")]
+            let (actual, baseline) = {
+                // Darwin's queued-input PENDIN bit is transient state, not a terminal mode.
+                // Normalize the underlying snapshot as well as nix's public flag fields.
+                let mut actual: nix::libc::termios = actual.into();
+                let mut baseline: nix::libc::termios = baseline.into();
+                actual.c_lflag &= !nix::libc::PENDIN;
+                baseline.c_lflag &= !nix::libc::PENDIN;
+                (Termios::from(actual), Termios::from(baseline))
+            };
+            actual == baseline
+        })
+    }
+
+    fn assert_no_inference(&self) {
+        assert_eq!(self.journal_tag_count("backend_binding_opened"), 0);
+        assert_eq!(self.journal_tag_count("backend_request_accepted"), 0);
+        assert_eq!(self.journal_tag_count("turn_finished"), 0);
+        assert!(
+            matches!(self.inference_listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "Codex contacted the offline inference endpoint without a submitted Turn"
+        );
     }
 
     fn send_ctrl_z(&self) {
@@ -148,7 +242,7 @@ impl TmuxSession {
             !state.dead
                 && state.command == "bash"
                 && process_is_stopped(job.yo_pid)
-                && self.termios().as_ref() == Some(&job.baseline)
+                && self.terminal_matches(&job.baseline)
         });
         thread::sleep(Duration::from_millis(100));
         self.send_literal("fg");
@@ -158,9 +252,10 @@ impl TmuxSession {
     fn wait_for_yo_exit_then_exit_shell(&self, job: &ShellJob) {
         self.wait_until(COMMAND_READY_TIMEOUT, |state| {
             !state.dead
+                && !state.alternate_screen
                 && state.command == "bash"
                 && !process_exists(job.yo_pid)
-                && self.termios().as_ref() == Some(&job.baseline)
+                && self.terminal_matches(&job.baseline)
         });
         thread::sleep(Duration::from_millis(100));
         self.send_literal(&format!(
@@ -181,7 +276,7 @@ impl TmuxSession {
             .is_some_and(has_noncanonical_no_echo_input)
     }
 
-    fn termios(&self) -> Option<nix::sys::termios::Termios> {
+    fn termios(&self) -> Option<Termios> {
         read_termios(&self.tty_path()?)
     }
 
@@ -272,9 +367,9 @@ impl Drop for TmuxSession {
             .output()
             .is_ok_and(|output| !output.status.success());
         if server_is_absent {
-            let _ = std::fs::remove_file(&self.socket);
+            let _ = fs::remove_file(&self.socket);
         }
-        let _ = std::fs::remove_dir_all(&self.session_repository);
+        let _ = fs::remove_dir_all(&self.state_root);
     }
 }
 
@@ -364,20 +459,32 @@ fn assert_tmux_server_absent(socket: &std::path::Path, name: &str) {
 
 fn assert_empty_ctrl_d_exits_cleanly(option: &str, alternate_screen: bool) {
     let session = TmuxSession::create();
-    session.run_mode(option, alternate_screen);
+    let job = session.run_mode_under_shell(option, alternate_screen);
     session.send_empty_ctrl_d();
+    session.wait_for_yo_exit_then_exit_shell(&job);
 
     let exit = session.wait_for_clean_exit();
 
     assert_eq!(exit.status, Some(0));
+    assert!(
+        session
+            .captured_text()
+            .contains(&format!("{EXIT_MARKER}:0"))
+    );
+    session.assert_no_inference();
     let session_name = session.name.clone();
     let socket = session.socket.clone();
     let session_repository = session.session_repository.clone();
+    let state_root = session.state_root.clone();
     drop(session);
     assert_tmux_server_absent(&socket, &session_name);
     assert!(
         !session_repository.exists(),
         "isolated Session repository remained after cleanup: {session_repository:?}"
+    );
+    assert!(
+        !state_root.exists(),
+        "isolated Codex and Yo state remained after cleanup"
     );
 }
 
@@ -406,7 +513,8 @@ fn pane_state_treats_an_empty_tmux_observation_as_not_ready() {
 }
 
 // 실제 Unix tmux의 main screen에서 Inline이 noncanonical·no-echo 입력 상태에 들어간 뒤
-// 빈 입력 Ctrl+D를 보내면 상태 0으로 끝나고, 격리된 tmux 세션까지 제거하는지 확인한다.
+// 빈 입력 Ctrl+D를 보내면 셸 termios를 복원하고 상태 0으로 끝나며, 모델 요청 없이
+// 격리된 tmux 세션과 임시 Codex·Yo 상태까지 제거하는지 확인한다.
 #[test]
 #[ignore = "requires local tmux and a compatible installed Codex"]
 fn local_tmux_inline_exits_cleanly_from_empty_ctrl_d() {
@@ -414,7 +522,8 @@ fn local_tmux_inline_exits_cleanly_from_empty_ctrl_d() {
 }
 
 // 실제 Unix tmux에서 noncanonical·no-echo 입력과 alternate screen을 획득한
-// Fullscreen에 빈 입력 Ctrl+D를 보내면 상태 0으로 끝나고, 격리 세션까지 제거하는지
+// Fullscreen에 빈 입력 Ctrl+D를 보내면 셸 termios와 main screen을 복원하고 상태 0으로
+// 끝나며, 모델 요청 없이 격리 세션과 임시 Codex·Yo 상태까지 제거하는지
 // 확인한다. 중간 실패 시에는 Drop이 best-effort 정리를 시도해 다음 테스트의 오염을 줄인다.
 #[test]
 #[ignore = "requires local tmux and a compatible installed Codex"]
