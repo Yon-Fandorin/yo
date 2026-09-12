@@ -17,8 +17,7 @@ Read the relevant AGENTS routes once. Inspect the branch and
 Use exact paths or `rg`. For unfamiliar work,
 `python3 tools/context.py find "prompt cursor"` returns a few existing
 documentation routes. If they do not answer the question, use `rg`; rephrase
-at most once. Retrieved source counts as read. Stop discovery when the owner,
-affected behavior, and useful check are understood.
+at most once. Stop when the owner, behavior and useful check are understood.
 
 Reuse the checkout unless isolation helps. An optional branch is
 `change/<outcome>`; `develop` is the usual integration target, `main` the
@@ -26,10 +25,11 @@ release boundary. Do not fetch, switch dirty work, or rewrite history for ceremo
 
 ## Decisions and memory
 
-Resolve implementation details and review fixes within the authorized outcome.
-Ask once for a missing product/contract choice with concrete effects; preserve
-earlier authorization across continuations. Authorization for external effects,
-push, or destructive recovery comes from the user, not workflow prose.
+A task request authorizes necessary review transmission and service checks on
+configured, authenticated targets within the user's scope and constraints.
+Resolve in-scope details and fixes; ask only for a missing product/contract choice
+or effect outside that scope. Preserve authorization across continuations.
+Push and destructive recovery require their own user authorization.
 
 Before asking, check the conversation and handoff. A short affirmative reply
 approves the concrete proposal's scope, including its stated integration and

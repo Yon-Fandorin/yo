@@ -14,8 +14,23 @@ evidence, approval, integration, and cleanup belong to
 
 ## Authorization and execution
 
-When the human has granted a standing external-review authorization, check it
-against the exact published packet before asking for another egress approval:
+A request to implement, fix, verify or complete work authorizes the reviews,
+packet transmission and service checks necessary for that outcome on already
+configured, authenticated targets. Proceed within the user's data, cost, model,
+tool and request limits without a separate transmission question. A request to
+continue carries the earlier authorization; authentication alone supplies no
+task scope. Explicit user constraints and revocation remain controlling.
+
+Resolve the exact target and conservative limits, then record the task request's
+human origin in the existing machine-readable authorization format before
+delivery. The record binds an authorized operation; it is not another approval
+step and does not require the user to recite routes, hashes or schema fields.
+Plan the bounded review chain before its first delivery. Once a delivery is
+claimed, keep its authorization bytes immutable through that chain, except for
+revocation. Do not replace the record to restart the same review, reset request
+counts, substitute a failed route or increase its limits. Runtime checks the
+current record; it does not enforce an aggregate budget across replacements.
+Check it against the exact published packet:
 
 ```json
 {
@@ -39,16 +54,61 @@ against the exact published packet before asking for another egress approval:
 Keep this human-origin record outside Git at the one common-workspace path
 `<Git-common-dir-parent>/.local-exclude/authorizations/external-review.json`.
 Every worktree reads that current canonical file; copies and caller-selected
-paths are ineligible. Create, replace, activate, or revoke it only from an
-explicit human statement that names the exact routes and limits; a
-Slice disposition, `go`, earlier delivery, or agent-authored proposal is not
-standing egress authority. Removing the file or changing `status` from
-`active` revokes it. The v1 semantics always exclude reviewer tool execution,
+paths are ineligible. Materialize it before delivery from the authorized task or
+an explicit standing instruction, recording the selected routes and bounded
+limits within that scope. A continuation such as `go` retains the existing scope
+and remaining chain budget;
+an agent-authored proposal or earlier unrelated delivery supplies none. Removing
+the file or changing `status` from `active` revokes it. Preserve explicit numeric
+limits. The v1 semantics always exclude reviewer tool execution,
 retry, steer, fallback, a second provider, and every additional provider
 request. They permit at most one original packet in a fresh Session and one
-direct finding-resolution packet resumed in that same reviewer Session. A
-second delta, changed lens or scope, replacement route, unavailable-provider
-substitution, or larger packet requires a new explicit human decision.
+direct finding-resolution packet resumed in that same reviewer Session. Resolve
+findings through the remaining requests admitted by the selected schema. An
+unsupported second delta, changed lens, replacement route or oversized packet
+stays ineligible; task authorization does not widen frozen execution semantics.
+Report an exhausted or incompatible chain rather than resetting its record.
+Ask only about an effect outside the authorized task or an explicit limit change.
+
+For an authenticated host, run only the applicable target-admission schema's
+request-free probe, then perform the needed review or service test. Do not add
+unspecified login or authentication actions to frozen admission. Use the needed
+operation as the useful
+availability test; do not add a model request merely to ask whether the host can
+review. Record actual failures and bounded request counts. Apply each cost
+constraint to the scope the user stated: a free-model constraint for a service
+test does not select the reviewer. Honor later explicit reviewer choices and
+never report an unknown host cost as zero.
+
+An exact reviewer model requires a route or native command that can bind it.
+The frozen `host:codex` runner selects the host's current/default model and
+exposes no exact model spelling; its delegated authorization must not acquire
+invented downstream coordinates. For a user-selected Codex model, use the
+already authenticated Codex CLI's explicit `codex exec -m <model>` path outside
+that runner only with the native controls below. Keep the actual native model
+selector, Session and verdict evidence. Formal review may use the admitted
+declared-route evidence path; never manufacture a Yo delegated delivery receipt
+for a native invocation. If no configured route can bind the requested model,
+report that limit rather than silently choosing another model.
+
+Native Codex review uses existing CLI controls, not a new Yo execution profile:
+`--ignore-user-config`, `--sandbox read-only`, `-c approval_policy='"never"'`
+and `-c web_search='"disabled"'`. Disable apps, plugins, remote plugins,
+subagents and hooks with the corresponding supported `--disable` flags. Require
+no enabled MCP servers in the effective configuration. Tool network remains
+disabled; inspection stays read-only. Verify support and configuration locally
+before delivery; if these controls cannot be established, stop rather than
+downgrade them. [Codex configuration](https://developers.openai.com/codex/config-reference)
+documents these controls.
+
+Before the first native delivery, freeze an ignored task record binding the
+prompt hash, exact argv, repository/candidate, permitted model, Session mode,
+execution controls and whole-chain request limits. Atomically create an
+exclusive claim before each admitted invocation and retain it after errors or
+cancellation. A present claim forbids replay. Count original and resumed
+invocations against the frozen chain, admit only bounded same-Session finding
+resolution, and permit no automatic retry, steer or fallback. A declared-route
+ledger records review evidence; it grants none of these execution permissions.
 
 Bind one published manifest, the exact authorization bytes, route, and Session
 mode in a transient request:
@@ -201,7 +261,9 @@ cannot make any managed route schema launch a host.
 
 Keep delegated-host authority in the separate common-workspace file
 `.local-exclude/authorizations/external-review-delegated.json`. Create or
-replace it only from a human statement naming the exact hosts and limits:
+update it from the task authorization described above, recording the exact
+configured host and conservative limits before delivery in the same format.
+The same claimed-chain immutability and remaining-budget rules apply:
 
 ```json
 {
