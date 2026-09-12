@@ -107,6 +107,12 @@ typed `Transport` stderr, 저장된 `last_failure.kind: transport`, 수락된 �
 전에 JSON 진단을 수집하며, 검사 실패 시에도 정리 결과를 보고한다. 일반 사용자
 상태는 사용하지 않는다.
 
+2026-09-12 Linux의 두 mode가 모두 통과했다. Loopback 연결 시도 1회, 종료 코드 1,
+typed stderr와 저장된 failure, 수락된 요청·완료된 Turn 0건, terminal 복원을 확인했다.
+의도적으로 import를 실패시킨 검사도 실패 진단을 반환하고 임시 상태를 제거했다.
+상태 코드만 보존하는 HTTP 실패 분류를 포함해 공통 transport 검사 13개도 통과했다.
+이 새 실패 runner의 macOS 실행은 미검증이다.
+
 `BackendRequestAccepted`는 connector 시작이 성공한 요청 수다.
 [Transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)는
 HTTP 전송 뒤 상태 코드나 transport 오류를 반환하여 이 기록이 저장되기 전에

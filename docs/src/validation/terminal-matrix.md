@@ -117,6 +117,13 @@ the alternate-screen enter/leave pair. The JSON diagnostic is collected before
 isolated configuration, credentials, host identity and Sessions are deleted;
 failed checks also report cleanup. Ordinary user state is not used.
 
+On 2026-09-12, both Linux modes passed: one loopback connection attempt, exit
+status 1, the typed stderr and stored failure, zero accepted requests or finished
+Turns, and terminal restoration. A deliberately failed import also returned a
+failure diagnostic and removed its temporary state. All 13 shared transport
+tests passed, including the status-only HTTP failure classification. Execution
+of this new failure runner on macOS remains unverified.
+
 `BackendRequestAccepted` counts requests whose connector start succeeded. The
 [transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)
 can send HTTP and then return a status or transport error before that record is
