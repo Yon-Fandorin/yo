@@ -74,32 +74,37 @@ pub(super) fn decode_billing_response(
             .as_object()
             .ok_or_else(|| protocol_failure("Grok billing config is not an object"))?,
     };
+    if let Some(value) = config.get("currentPeriod").filter(|value| !value.is_null()) {
+        let period = value
+            .as_object()
+            .ok_or_else(|| protocol_failure("Grok billing currentPeriod is not an object"))?;
+        for field in ["type", "end"] {
+            if period
+                .get(field)
+                .is_some_and(|value| !value.is_null() && !value.is_string())
+            {
+                return Err(protocol_failure(format!(
+                    "Grok billing currentPeriod.{field} is not a string"
+                )));
+            }
+        }
+    }
     decode_usage_config(config)
 }
 
 fn decode_usage_config(
     config: &serde_json::Map<String, Value>,
 ) -> Result<Option<AccountCapacityWindow>, BackendFailure> {
-    let period = match config.get("currentPeriod") {
-        None | Some(Value::Null) => return Ok(None),
-        Some(period) => period
-            .as_object()
-            .ok_or_else(|| protocol_failure("Grok billing currentPeriod is not an object"))?,
+    // Legacy logs skip incomplete event shapes and keep scanning older entries.
+    // Live responses validate their field types before reaching this decoder.
+    let Some(period) = config.get("currentPeriod").and_then(Value::as_object) else {
+        return Ok(None);
     };
-    let period_type = match period.get("type") {
-        None | Some(Value::Null) => return Ok(None),
-        Some(value) => value
-            .as_str()
-            .ok_or_else(|| protocol_failure("Grok billing currentPeriod.type is not a string"))?,
-    };
-    if period_type != "USAGE_PERIOD_TYPE_WEEKLY" {
+    if period.get("type").and_then(Value::as_str) != Some("USAGE_PERIOD_TYPE_WEEKLY") {
         return Ok(None);
     }
-    let end = match period.get("end") {
-        None | Some(Value::Null) => return Ok(None),
-        Some(value) => value
-            .as_str()
-            .ok_or_else(|| protocol_failure("Grok billing currentPeriod.end is not a string"))?,
+    let Some(end) = period.get("end").and_then(Value::as_str) else {
+        return Ok(None);
     };
     let reset = end
         .parse::<Timestamp>()

@@ -236,6 +236,13 @@ fn rejects_billing_failures_and_mismatched_responses_without_using_the_log() {
         ),
         response(3, json!({"config": []})),
         response(3, json!({"config": {"currentPeriod": []}})),
+        response(3, json!({"config": {"currentPeriod": {"type": 7}}})),
+        response(
+            3,
+            json!({"config": {"currentPeriod": {
+                "type": "USAGE_PERIOD_TYPE_WEEKLY", "end": 7
+            }}}),
+        ),
         response(3, json!({"config": billing_config(100.01)})),
         response(3, json!([])),
     ] {
@@ -246,6 +253,45 @@ fn rejects_billing_failures_and_mismatched_responses_without_using_the_log() {
 
         assert!(observe_account_capacity(&mut client, Some(&log.0)).is_err());
     }
+}
+
+// 구버전 log의 최신 period가 잘못된 형식이어도 이전 정상 관측값을 계속 탐색해,
+// billing extension이 없는 계정의 사용량이 사라지지 않도록 보호합니다.
+#[test]
+fn skips_malformed_legacy_periods_and_preserves_the_previous_valid_capacity() {
+    use std::io::Write;
+
+    let log = UsageLog::new();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log.0)
+        .unwrap();
+    for period in [
+        json!([]),
+        json!({"type": 7, "end": "2999-09-01T14:45:00Z"}),
+        json!({"type": "USAGE_PERIOD_TYPE_WEEKLY", "end": 7}),
+    ] {
+        let event = json!({
+            "msg": "billing: fetched credits config",
+            "ctx": {"config": {"currentPeriod": period}}
+        });
+        writeln!(file, "{event}").unwrap();
+    }
+    drop(file);
+    let mut messages = account_messages();
+    messages.push(protocol::server_error(json!(3), -32601, "Method not found"));
+    let (peer, _) = FakePeer::new(messages);
+    let mut client = AcpClient::new(peer, Duration::from_secs(1));
+
+    let snapshot = observe_account_capacity(&mut client, Some(&log.0)).unwrap();
+
+    assert_eq!(
+        snapshot.buckets()[0]
+            .primary()
+            .unwrap()
+            .remaining_percent_basis_points(),
+        8_790
+    );
 }
 
 // 현재 billing 응답에 용량이 없으면 오래된 log를 섞거나 0%를 만들지 않고
