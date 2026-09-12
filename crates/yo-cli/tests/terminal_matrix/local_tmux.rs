@@ -201,10 +201,10 @@ impl TmuxSession {
             let (actual, baseline) = {
                 // Darwin's queued-input PENDIN bit is transient state, not a terminal mode.
                 // Normalize the underlying snapshot as well as nix's public flag fields.
-                let mut actual: nix::libc::termios = actual.into();
-                let mut baseline: nix::libc::termios = baseline.into();
-                actual.c_lflag &= !nix::libc::PENDIN;
-                baseline.c_lflag &= !nix::libc::PENDIN;
+                let mut actual: libc::termios = actual.into();
+                let mut baseline: libc::termios = baseline.into();
+                actual.c_lflag &= !libc::PENDIN;
+                baseline.c_lflag &= !libc::PENDIN;
                 (Termios::from(actual), Termios::from(baseline))
             };
             actual == baseline
