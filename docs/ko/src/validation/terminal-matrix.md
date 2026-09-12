@@ -82,10 +82,8 @@ macOS의 두 일반 Yo 상태 위치 hash는 변하지 않았다.
 
 이로써 새 profile의 자동화된 macOS tmux 첨부와 SSH PTY lifecycle 검증은 완료됐다.
 실제 keyboard 입력, IME 조합, terminal Command-V, 실제 NVIDIA inference·tool·요약·
-재개는 미검증이다. 별도 설치된 Codex 0.154.0 Inline tmux 검사는 5초 안에 준비·raw
-input 상태에 도달하지 못했고 이후 Fullscreen은 실행하지 않았다. 이는 managed
-OpenRouter 검사 결과를 무효화하지 않지만 현재 후보의 Codex tmux lifecycle은
-미검증으로 남는다.
+재개는 미검증이다. 별도 Codex Inline 준비 timeout은 아래의 통과한
+[Codex Mac tmux 검증](#current-codex-mac-tmux-verification)으로 후속 확인했다.
 
 ## Managed 요청 실패 진단
 
@@ -395,6 +393,29 @@ PTY 복구도 추가로 확인한다.
 
 필요한 명령이나 assertion을 사용할 수 없으면 test는 실패한다. 빠진 환경을
 성공한 skip으로 바꾸지 않는다.
+
+### Current Codex Mac tmux verification
+
+2026-09-12 `b2e3d622`의 정확한 source tree를 설치된 Codex 0.154.0과 tmux 3.6a가
+있는 macOS 26.6.2 arm64에서 검증했다. 전송한 `d04a7966`은 먼저 macOS 전용 test
+경로의 불필요한 `nix::libc` 표기 네 곳을 드러냈다. 이를 `libc`로 고친 뒤 Mac의
+전체 tracked Git tree가 `b2e3d622`와 일치했다
+(`cb09d98dc38cb552c9bd3854f16a693318f1a079`).
+
+로컬 tmux 검사 네 개가 모두 통과했다. Inline과 Fullscreen 각각 raw/no-echo
+input에 진입하고 빈 입력 `Ctrl+D`로 상태 0 종료, 셸 terminal과 main screen 복원,
+두 번의 stopped-job/`fg` generation을 완료했다. Native
+`cargo clippy --locked -p yo-cli --test terminal_matrix -- -D warnings` 검사도
+통과했다. Backend thread binding, 수락된 요청, 완료된 Turn과 예약된 loopback
+inference endpoint로의 연결은 모두 0이었다.
+
+`9848376f`의 이전 Inline harness를 격리해 다시 실행하니 5초 timeout이 재현됐다.
+`--model host:codex`를 생략했기 때문에 저장된 startup target이 없는 상태에서는
+Yo가 raw input 전에 `no startup target is selected`와 함께 상태 1로 종료했다.
+명시적 target 선택과 격리된 설정으로 이 의존을 제거했다. 두 실행 모두 일반 Mac
+Yo 상태는 변하지 않았다. Test 소유 tmux socket과 state root를 모두 제거하고,
+이어 일회용 checkout, bundle, driver, build/log 파일도 삭제했다. 실제 keyboard,
+IME와 terminal Command-V는 여전히 직접 관찰이 필요하다.
 
 ## macOS 실제 host 증거
 

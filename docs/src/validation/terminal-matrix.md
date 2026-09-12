@@ -91,11 +91,9 @@ then removed. Hashes of both ordinary macOS Yo state locations were unchanged.
 
 This closes automated macOS tmux attachment and SSH PTY lifecycle coverage for
 the new profile. Physical keyboard input, IME composition, terminal Command-V,
-live NVIDIA completion, tools, summary and resume remain unverified. A separate
-installed Codex 0.154.0 Inline tmux check did not reach its ready/raw-input state
-within five seconds; Fullscreen was not run after that failure. This does not
-invalidate the managed OpenRouter checks, but current-candidate Codex tmux
-lifecycle remains unverified.
+live NVIDIA completion, tools, summary and resume remain unverified. The separate
+Codex Inline readiness timeout was followed up by the passing
+[Codex Mac tmux verification](#current-codex-mac-tmux-verification) below.
 
 ## Diagnose a managed request failure
 
@@ -436,6 +434,30 @@ Nested tmux additionally verifies restoration of the outer SSH PTY.
 
 These tests fail when a required command or assertion is unavailable; they do
 not convert a missing environment into a successful skip.
+
+### Current Codex Mac tmux verification
+
+On 2026-09-12, the exact source tree of `b2e3d622` was verified on macOS 26.6.2
+arm64 with installed Codex 0.154.0 and tmux 3.6a. The transferred `d04a7966`
+first exposed four unnecessary `nix::libc` qualifications in the macOS-only test
+path. After correcting them to `libc`, the full tracked Git tree on the Mac
+matched `b2e3d622` (`cb09d98dc38cb552c9bd3854f16a693318f1a079`).
+
+All four local tmux tests passed: Inline and Fullscreen each entered raw/no-echo
+input, exited status 0 on empty `Ctrl+D`, restored the shell terminal and main
+screen, and completed two stopped-job/`fg` generations. The native
+`cargo clippy --locked -p yo-cli --test terminal_matrix -- -D warnings` check
+also passed. Backend thread bindings, accepted requests, finished Turns and
+connections to the reserved loopback inference endpoint were all zero.
+
+An isolated replay of the previous Inline harness from `9848376f` reproduced
+the five-second timeout: it omitted `--model host:codex`, so with no stored
+startup target Yo exited status 1 with `no startup target is selected` before
+raw input. Explicit target selection and isolated settings remove that dependency.
+The ordinary Mac Yo state remained unchanged across both runs. All test-owned
+tmux sockets and state roots, followed by the disposable checkout, bundle,
+driver and build/log files, were removed. Physical keys, IME and terminal
+Command-V still require direct observation.
 
 ## macOS real-host evidence
 
