@@ -237,6 +237,40 @@ impl TmuxSession {
         self.run_tmux(&["send-keys", "-t", &self.name, "Enter"]);
     }
 
+    fn wait_for_draft(&self, expected: &[&str], absent: &[&str]) {
+        self.wait_until(COMMAND_READY_TIMEOUT, |state| {
+            let output = self.tmux_output(&["capture-pane", "-p", "-t", &self.name]);
+            let pane = String::from_utf8(output.stdout).expect("UTF-8 draft capture");
+            let rows = pane.lines().collect::<Vec<_>>();
+            let matched_rows = expected
+                .iter()
+                .filter_map(|text| rows.iter().position(|row| row.contains(text)))
+                .collect::<Vec<_>>();
+            !state.dead
+                && self.has_noncanonical_no_echo_input()
+                && matched_rows.len() == expected.len()
+                && matched_rows.windows(2).all(|pair| pair[0] < pair[1])
+                && absent.iter().all(|text| !pane.contains(text))
+        });
+    }
+
+    fn clear_draft(&self) {
+        self.run_tmux(&["send-keys", "-t", &self.name, "C-c"]);
+        self.wait_for_draft(&["Ask anything, or describe a change"], &["YO_MOCK_"]);
+    }
+
+    fn paste_draft(&self, text: &str) {
+        self.run_tmux(&["set-buffer", "-b", "yo-mock-input", text]);
+        self.run_tmux(&[
+            "paste-buffer",
+            "-dpr",
+            "-b",
+            "yo-mock-input",
+            "-t",
+            &self.name,
+        ]);
+    }
+
     fn wait_for_suspension_then_foreground(&self, job: &ShellJob) {
         self.wait_until(COMMAND_READY_TIMEOUT, |state| {
             !state.dead
@@ -460,6 +494,10 @@ fn assert_tmux_server_absent(socket: &std::path::Path, name: &str) {
 fn assert_empty_ctrl_d_exits_cleanly(option: &str, alternate_screen: bool) {
     let session = TmuxSession::create();
     let job = session.run_mode_under_shell(option, alternate_screen);
+    assert_draft_exit_and_cleanup(session, job);
+}
+
+fn assert_draft_exit_and_cleanup(session: TmuxSession, job: ShellJob) {
     session.send_empty_ctrl_d();
     session.wait_for_yo_exit_then_exit_shell(&job);
 
@@ -486,6 +524,46 @@ fn assert_empty_ctrl_d_exits_cleanly(option: &str, alternate_screen: bool) {
         !state_root.exists(),
         "isolated Codex and Yo state remained after cleanup"
     );
+}
+
+fn assert_draft_input_and_paste(option: &str, alternate_screen: bool) {
+    let session = TmuxSession::create();
+    let job = session.run_mode_under_shell(option, alternate_screen);
+
+    session.send_literal("YO_MOCK_ASCII_123");
+    session.wait_for_draft(&["YO_MOCK_ASCII_123"], &[]);
+    session.run_tmux(&[
+        "send-keys",
+        "-t",
+        &session.name,
+        "BSpace",
+        "BSpace",
+        "BSpace",
+    ]);
+    session.wait_for_draft(&["YO_MOCK_ASCII_"], &["YO_MOCK_ASCII_123"]);
+    session.clear_draft();
+
+    session.send_literal("YO_MOCK_KOREAN 가나다");
+    session.wait_for_draft(&["YO_MOCK_KOREAN 가나다"], &[]);
+    session.run_tmux(&["send-keys", "-t", &session.name, "Left", "Left", "Delete"]);
+    session.wait_for_draft(&["YO_MOCK_KOREAN 가다"], &["YO_MOCK_KOREAN 가나다"]);
+    session.run_tmux(&["send-keys", "-t", &session.name, "Right", "BSpace"]);
+    session.wait_for_draft(&["YO_MOCK_KOREAN 가"], &["YO_MOCK_KOREAN 가다"]);
+    session.clear_draft();
+
+    session.paste_draft("YO_MOCK_PASTE_ONE 한글\nYO_MOCK_PASTE_TWO 🙂\r\nYO_MOCK_PASTE_THREE 끝");
+    session.wait_for_draft(
+        &[
+            "YO_MOCK_PASTE_ONE 한글",
+            "YO_MOCK_PASTE_TWO 🙂",
+            "YO_MOCK_PASTE_THREE 끝",
+        ],
+        &["Ask anything, or describe a change"],
+    );
+    session.assert_no_inference();
+    session.clear_draft();
+
+    assert_draft_exit_and_cleanup(session, job);
 }
 
 // macOS tmux에서 살아 있는 pane의 빈 dead-status와 command 필드도 printable 구분자로
@@ -529,4 +607,22 @@ fn local_tmux_inline_exits_cleanly_from_empty_ctrl_d() {
 #[ignore = "requires local tmux and a compatible installed Codex"]
 fn local_tmux_fullscreen_exits_cleanly_from_empty_ctrl_d() {
     assert_empty_ctrl_d_exits_cleanly("--fullscreen", true);
+}
+
+// 격리된 실제 tmux에서 Inline에 ASCII·완성형 한글 키 입력과 커서 이동·삭제,
+// LF·CRLF·emoji를 포함한 bracketed paste를 주입해 초안 표시와 Ctrl+C 전체 지우기를
+// 검사한다. 모델 요청 없이 빈 Ctrl+D 종료와 셸 복원·정리까지 확인하며 물리 IME는 모사하지 않는다.
+#[test]
+#[ignore = "requires local tmux and a compatible installed Codex"]
+fn local_tmux_inline_draft_input_and_bracketed_paste() {
+    assert_draft_input_and_paste("--inline", false);
+}
+
+// Fullscreen에서도 같은 문자 입력·편집·여러 줄 bracketed paste가 제출되지 않은 초안으로
+// 남고 Ctrl+C로 제거되는지 확인한다. 빈 Ctrl+D 종료 시 alternate screen과 셸 termios를
+// 복원하고 임시 상태를 지우며, macOS의 물리 Command-V 단축키 동작은 이 검사 범위 밖이다.
+#[test]
+#[ignore = "requires local tmux and a compatible installed Codex"]
+fn local_tmux_fullscreen_draft_input_and_bracketed_paste() {
+    assert_draft_input_and_paste("--fullscreen", true);
 }

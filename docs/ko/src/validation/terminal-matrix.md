@@ -384,6 +384,22 @@ raw/no-echo mode를 기다린다. 빈 입력 `Ctrl+D` 뒤에는 셸이 상태 0�
 수락된 요청, 완료된 Turn과 loopback 연결은 모두 없어야 한다. 각 검사는 자신이
 만든 tmux server, socket과 임시 Codex·Yo 상태를 제거한다.
 
+모델 inference 없이 앱의 문자 입력과 terminal text paste를 모킹한다.
+
+```bash
+cargo test -p yo-cli --test terminal_matrix draft_input_and_bracketed_paste \
+  -- --ignored --nocapture --test-threads=1
+```
+
+두 mode 모두 ASCII 입력과 Backspace, 완성형 한글의 cursor 이동과 Delete/Backspace,
+한글과 emoji를 포함한 LF/CRLF paste를 받는다. Paste는 Turn 제출 없이 서로 다른
+초안 행 세 개로 표시되어야 한다. `Ctrl+C`로 각 초안을 지우고 빈 입력 `Ctrl+D`로
+종료, terminal 복원과 정리를 확인한다. Fixture는 전용 tmux buffer와
+[`paste-buffer -p -r`](https://man.openbsd.org/tmux#paste-buffer)를 사용해 paste bracket을
+요청하고 linefeed를 보존한다. 시스템 clipboard는 사용하지 않는다.
+이는 해석된 문자와 terminal paste 검사다. 물리 key mapping, macOS IME의 조합 중
+문자열·확정 과정과 terminal의 Command-V 단축키는 여전히 직접 관찰이 필요하다.
+
 각 경로는 빈 입력 `Ctrl+D` 종료와 두 번 연속
 `Ctrl+Z` → job 정지 → `fg` terminal generation을 모두 검사한다.
 job-control 검사는 매 정지 구간의 터미널을 해당 경로의 실제 interactive shell

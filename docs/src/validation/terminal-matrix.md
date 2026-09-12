@@ -425,6 +425,24 @@ from the otherwise complete termios comparison. No backend thread binding,
 accepted request, finished Turn or loopback connection may occur. Each test
 removes its own tmux server, socket and temporary Codex/Yo state.
 
+To mock application-side typing and terminal text paste without model inference:
+
+```bash
+cargo test -p yo-cli --test terminal_matrix draft_input_and_bracketed_paste \
+  -- --ignored --nocapture --test-threads=1
+```
+
+Both modes receive ASCII typing and Backspace, completed Korean characters with
+cursor movement and Delete/Backspace, and an LF/CRLF paste containing Korean and
+an emoji. The paste must display three distinct draft rows without submitting a
+Turn. `Ctrl+C` clears each draft; empty `Ctrl+D` verifies exit, terminal restoration
+and cleanup. The fixture uses a private tmux buffer and
+[`paste-buffer -p -r`](https://man.openbsd.org/tmux#paste-buffer) to request paste
+bracketing and preserve linefeeds. It does not use the system clipboard.
+This tests decoded characters and terminal paste; physical key mapping,
+macOS IME preedit/commit and the terminal's Command-V shortcut still need direct
+observation.
+
 Each route checks both the empty-`Ctrl+D` exit path and two consecutive
 `Ctrl+Z` → stopped job → `fg` generations. The job-control checks compare the
 terminal with the route's actual interactive-shell termios at every stopped
