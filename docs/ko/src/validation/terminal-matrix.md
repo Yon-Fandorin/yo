@@ -123,7 +123,17 @@ typed stderr와 저장된 failure, 수락된 요청·완료된 Turn 0건, termin
 바뀌지 않았다. 이후 Mac OS 전용 검사에서 소유자 종료 후 오류를 재현했고,
 소유자를 유지하면 `PENDIN`만 제외하여 복원된 mode를 수집할 수 있음을 확인했다.
 수정된 runner는 Linux 두 mode와 import 실패 시 정리를 다시 통과했다. 수정된
-runner로 Yo를 실행하는 전체 Mac 검증은 미검증이다.
+후보의 전체 Mac 검증은 이어서 진행했다.
+
+수정된 후보 `0f86d85e`가 같은 Mac에서 빌드됐고 Inline·Fullscreen 모두 통과했다.
+각 mode에서 제출 1회, loopback 연결 시도 1회, Yo 종료 코드 1, typed `Transport`
+stderr, 저장된 `transport` failure를 수집했다. HTTP 요청·수락된 요청·완료된 Turn은
+모두 0건이었다. 두 mode 모두 kernel의 `PENDIN` 상태 비트를 제외한 모든 PTY 설정을
+복원했다. Fullscreen은 alternate-screen 진입·종료 쌍을 정확히 한 번 출력했고
+Inline은 출력하지 않았다. 각 격리된 상태 root와 임시 checkout을 제거했으며 일반
+설정·credential hash는 바뀌지 않았다. 이로써 공통 요청 수락 전 실패 진단의 Mac
+검증은 완료됐다. 실제 OpenRouter inference와 이전 실제 서비스 종료의 구체적인
+원인은 미검증으로 남는다.
 
 `BackendRequestAccepted`는 connector 시작이 성공한 요청 수다.
 [Transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)는

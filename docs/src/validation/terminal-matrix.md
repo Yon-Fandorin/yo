@@ -136,7 +136,18 @@ checkout and isolated state were removed, and ordinary config/credential hashes
 were unchanged. Subsequent OS-only Mac probes reproduced the post-owner-exit
 error and verified that keeping the owner alive allows restored modes to be
 captured, excluding only `PENDIN`. The corrected runner passed both Linux modes
-and failed-import cleanup again. Its complete Yo run on Mac remains unverified.
+and failed-import cleanup again.
+
+The corrected candidate `0f86d85e` built and passed both Inline and Fullscreen
+on the same Mac. Each mode retained one submission, one loopback connection
+attempt, Yo exit status 1, typed `Transport` stderr, and the stored `transport`
+failure. There were zero HTTP requests, accepted requests or finished Turns.
+Both modes restored all PTY settings except the kernel's `PENDIN` state bit;
+Fullscreen emitted exactly one alternate-screen enter/leave pair, and Inline
+emitted none. Each isolated state root and the temporary checkout were removed.
+Ordinary config/credential hashes remained unchanged. This closes Mac coverage
+of the shared pre-acceptance failure diagnostic; live OpenRouter inference and
+the earlier live exit's specific cause remain unverified.
 
 `BackendRequestAccepted` counts requests whose connector start succeeded. The
 [transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)
