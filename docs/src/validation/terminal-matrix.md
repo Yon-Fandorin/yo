@@ -127,8 +127,9 @@ On 2026-09-13, an authenticated, read-only quota lookup selected
 `qwen3.8-max-0902`: valid, 1,000,000 tokens remaining before the campaign, with
 [`Free quota only`](https://docs.qwencloud.com/resources/free-quota) enabled.
 The test used a separate general API key and the exact international Responses
-endpoint, with disposable configuration, workspace and sessions. The actual key
-stayed in the proxy's memory; Yo received only a synthetic local credential.
+endpoint, with disposable configuration, workspace and sessions. The proxy read
+the actual key from a private temporary file; Yo received only a synthetic local
+credential, with no actual key in its configuration.
 
 The first bounded run at `29fc2b9c` stopped after three of four requests. Two
 ordinary responses completed, but summary collection rejected the first answer

@@ -118,8 +118,8 @@ image profile이 없어 이 Provider의 첨부·TUI 제출·이미지 인식 재
 선택했다. 해당 쿼터는 유효하고 검증 시작 전 1,000,000 token이 남아 있었으며
 [`Free quota only`](https://docs.qwencloud.com/resources/free-quota)가 켜져 있었다.
 별도 일반 API key와 정확한 국제 Responses endpoint를 사용했고 설정·workspace·
-Session을 임시로 격리했다. 실제 key는 proxy 메모리에만 두고 Yo에는 합성 로컬
-인증 정보만 전달했다.
+Session을 임시로 격리했다. Proxy가 권한을 제한한 임시 파일에서 실제 key를 읽었고
+Yo에는 합성 로컬 인증 정보만 전달해 Yo 설정에 실제 key를 넣지 않았다.
 
 첫 bounded run은 `29fc2b9c`에서 최대 4회 중 3회 요청 후 중단됐다. 일반 응답
 2회는 완료됐지만 요약 처리에서 추론 output slot 0 뒤의 답변 slot 1을 거부했다.
