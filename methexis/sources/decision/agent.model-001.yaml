@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.model-001
-revision: sha256:0c8f287614b890caf2f97b817ef20e23cb5265ecda36d27f433ec0e42d3f08e8
+revision: sha256:26992a9461ccb7870bbd9681b0b758b2b06c462079507f89a44eac4b6b2edd37
 payload:
   kind: decision
   content: |-
@@ -54,3 +54,66 @@ payload:
     accounting owner together, alongside the already compatible image-input,
     continuation, persistence and checkpoint contracts. No member may independently
     activate image admission against an older member lacking this profile.
+
+    ### QwenCloud general API PNG profile
+
+    The additional closed image profile `qwencloud-general-png-advisory/v1` admits
+    only ProviderId `qwencloud`, an explicitly selected valid AccountId, normalized
+    endpoint `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, dialect
+    `openai-chat-completions` and its dialect-derived Connector, and exact ModelId
+    `qwen3.8-flash`. Its remaining complete envelope is exactly
+    tokenizer `utf8-bytes/v1`, input limit 991808, known output maximum 131072,
+    empty reasoning parameters, `semantic-only/v1` replay, and `local-tools/v1`
+    or `no-tools/v1`. Its `optional_request_parameters` is exactly
+    `{"enable_thinking":false,"preserve_thinking":false}` with boolean false values
+    under the variant-exact structured-value algebra. No alias, dated-suffix rule,
+    catalog update, endpoint compatibility or observed API success admits another
+    ModelId or endpoint. In particular, existing QwenCloud Responses, Coding Plan
+    and Token Plan bindings remain outside this image envelope.
+
+    The profile admits the existing ordered immutable canonical PNG snapshots and
+    selects accounting policy `qwencloud-general-image-advisory/v1` with quality
+    `advisory_estimate`. The input limit is a conservative local planning boundary
+    based on the documented non-thinking input ceiling, not a tokenizer guarantee.
+    The service supplies typed admitted request policy; the Chat Connector checks
+    the same complete envelope defensively. These two closed boolean options remain
+    present on text-only, tools-disabled verification, ordinary image, tool-result,
+    summary and continuation requests. The backend remains Provider-neutral and
+    does not infer these options or image capability from the model's name.
+
+    Image admission is explicit through the existing `yo connect --from` plan and
+    commit flow. Its preview discloses the selected endpoint and exact model,
+    image support, advisory accounting, disabled thinking and semantic-only replay.
+    An existing binding remains text-only unless the operator explicitly selects
+    this complete-binding transition; the image field participates in equality,
+    epoch and continuation identity. Remote discovery never attaches the profile.
+    The producer emits the present image field and both option values explicitly.
+    Publication and dispatch reject missing, additional, mismatched, null or
+    variant-different complete-envelope values rather than weakening the profile.
+
+    This is the metered general API, not an intrinsically free route. Its preview
+    also discloses that account/model-specific free quota and the provider's
+    `Free quota only` setting are external to binding identity: Yo cannot infer
+    entitlement or promise no charges from an API key or this profile. This is an
+    operator disclosure, not a new runtime free-only mode, quota-evidence protocol,
+    console query, entitlement evaluator or automatic quota refresh. Profile
+    admission neither enables billing nor modifies provider-side protection or
+    substitutes a subscription credential. Quota exhaustion,
+    authentication, capacity and request rejection remain visible failures; this
+    profile admits no automatic resend, endpoint/model/account replacement, image
+    stripping or switch to a paid alternative.
+
+    The profile reuses the existing input, ordered replay, summary-source,
+    pressure, persistence, checkpoint and continuation shapes without migration.
+    Its first activation MUST select the exact compatible reviewed service-binding,
+    Chat Connector and managed-loop accounting revisions together, alongside the
+    already compatible image-input, continuation, persistence and checkpoint
+    owners. No member may activate alone against another that lacks this profile.
+
+    The reviewed capability basis is the provider's [visual-model inventory](https://docs.qwencloud.com/developer-guides/getting-started/vision-models),
+    [Flash specifications](https://docs.qwencloud.com/developer-guides/getting-started/latest-model),
+    [Chat parameter contract](https://docs.qwencloud.com/api-reference/chat/openai-chat)
+    and [multimodal PNG wire guide](https://docs.qwencloud.com/developer-guides/multimodal/vision), checked
+    on 2026-09-13. These references support the closed candidate, not implicit future
+    membership or account entitlement; a contradictory release fact requires a
+    separately reviewed profile revision.
