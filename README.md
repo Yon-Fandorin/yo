@@ -124,7 +124,12 @@ yo가 Ctrl+V 때 직접 연결하고 종료하므로 별도 실행기나 상시 
 관리형 Kimi Code 연결은 검토된 이미지 프로필을 명시한 경우 이미지 전송을 지원한다.
 해당 `connections.yaml` binding의 `profile`에 `image_input_profile: kimi-code-png-advisory/v1`을
 설정하며, 모델·주소·thinking·replay·토큰 한도가 해당 프로필과 모두 맞아야 연결을 허용한다.
-기존 연결에는 자동 추가하지 않는다. 지원이 확인되지 않은 다른 백엔드·모델은 전송 전에 거절한다.
+기존 연결에는 자동 추가하지 않는다.
+위임 Codex 연결도 초기화에서 검토된 정확한 버전 `0.153.4` 또는 `0.154.0`을 보고하고 같은 연결의
+모델 목록에서 선택한 모델의 `inputModalities`에 `image`가 명시된 경우 지원한다.
+준비한 PNG를 그대로 전송하며 이미지가 포함됐거나 포함 여부를 확인할 수 없는
+기록의 재개·모델 전환에도 지원 조건을 다시 적용한다.
+지원이 확인되지 않은 다른 백엔드·모델은 전송 전에 거절한다.
 OpenRouter의 NVIDIA Nemotron 3 Nano Omni 무료 모델도 명시적 이미지 연결로 사용할 수 있다.
 [연결 정의와 사용법](docs/ko/src/workflows/provider-catalogs/openrouter.md#명시적-무료-이미지-연결)에
 따라 추가한다. 이미지가 없는 요청에도 무료 경로 제한을 유지하며 자동 재시도하지 않는다.

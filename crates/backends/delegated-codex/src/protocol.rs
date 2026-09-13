@@ -546,12 +546,14 @@ fn version_compatibility_warning(
     }))
 }
 
-/// Returns true only for the exact reviewed image-capable Codex wire build.
+/// Returns true only for exact reviewed image-capable Codex wire builds.
 pub(super) fn image_wire_version_supported(user_agent: &str) -> bool {
-    user_agent
-        .split_whitespace()
-        .find_map(|part| part.split_once('/').map(|(_, version)| version))
-        == Some("0.153.4")
+    matches!(
+        user_agent
+            .split_whitespace()
+            .find_map(|part| part.split_once('/').map(|(_, version)| version)),
+        Some("0.153.4" | "0.154.0")
+    )
 }
 
 fn safe_user_agent(user_agent: &str) -> String {

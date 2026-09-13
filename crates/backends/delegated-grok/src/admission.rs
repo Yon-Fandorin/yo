@@ -1,5 +1,6 @@
 //! Grok configuration and bounded-review admission checks.
 
+#[cfg(target_os = "linux")]
 use std::{
     fs::{self, OpenOptions},
     path::Path,
@@ -8,11 +9,11 @@ use std::{
 
 use yo_core::{BackendFailure, BackendFailureKind};
 
-use crate::config::{
-    GrokBackendConfig, OUTER_SANDBOX_REVIEW_ENV, OUTER_SANDBOX_REVIEW_PROFILE,
-    OUTER_SANDBOX_SENTINEL,
-};
+#[cfg(target_os = "linux")]
+use crate::config::OUTER_SANDBOX_SENTINEL;
+use crate::config::{GrokBackendConfig, OUTER_SANDBOX_REVIEW_ENV, OUTER_SANDBOX_REVIEW_PROFILE};
 
+#[cfg(target_os = "linux")]
 static OUTER_SANDBOX_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn validate_config(config: &GrokBackendConfig) -> Result<(), BackendFailure> {
@@ -41,9 +42,11 @@ fn verify_outer_sandbox(config: &GrokBackendConfig) -> Result<(), BackendFailure
         ));
     }
     #[cfg(not(target_os = "linux"))]
-    return Err(initialization_failure(
-        "Yo outer Grok review isolation is supported only on Linux",
-    ));
+    {
+        Err(initialization_failure(
+            "Yo outer Grok review isolation is supported only on Linux",
+        ))
+    }
     #[cfg(target_os = "linux")]
     {
         require_read_only_mount(Path::new(OUTER_SANDBOX_SENTINEL))?;

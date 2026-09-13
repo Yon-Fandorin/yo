@@ -12,7 +12,8 @@ struct Directory(PathBuf);
 impl Directory {
     fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let path = fs::canonicalize(env::temp_dir()).unwrap().join(format!(
+        // Keep nested fixture socket paths below macOS's sockaddr_un limit.
+        let path = fs::canonicalize("/tmp").unwrap().join(format!(
             "yo-clipboard-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -345,6 +346,7 @@ fn ssh_reader_choices_never_interpolate_the_host_into_remote_code() {
 }
 
 // 프록시처럼 부모가 종료된 뒤 파이프를 잡고 있는 자식도 획득 제한 시간에 함께 종료한다.
+// 자식이 살아 있을 때 연결을 받아 macOS에서 종료된 소켓의 옵션을 바꾸지 않는다.
 #[test]
 fn process_group_cleanup_closes_proxy_descendant_pipe() {
     let directory = Directory::new();
@@ -355,17 +357,23 @@ fn process_group_cleanup_closes_proxy_descendant_pipe() {
     let mut command = Command::new("python3");
     command.args(["-c", script]).arg(&socket_path);
     let started = Instant::now();
-    let error = command_error(read_command(
-        &mut command,
-        started + Duration::from_millis(500),
-        &mut || false,
-    ));
+    let mut peer = None;
+    let error = command_error(read_command(&mut command, deadline(), &mut || {
+        if peer.is_none() {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(true).unwrap();
+                    peer = Some(stream);
+                },
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+                Err(error) => panic!("fixture connection failed: {error}"),
+            }
+        }
+        false
+    }));
     assert!(error.contains("timed out"));
-    let (mut peer, _) = listener.accept().unwrap();
-    peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-    let mut marker = [0; 1];
-    peer.read_exact(&mut marker).unwrap();
-    assert_eq!(marker, [b'R']);
-    assert_eq!(peer.read(&mut marker).unwrap(), 0);
-    assert!(started.elapsed() < Duration::from_secs(2));
+    let mut peer = peer.expect("descendant connected before the acquisition deadline");
+    let bytes = read_bounded(&mut peer, deadline(), &mut || false).unwrap();
+    assert_eq!(bytes, b"R");
+    assert!(started.elapsed() < Duration::from_secs(4));
 }

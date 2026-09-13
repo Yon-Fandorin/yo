@@ -134,7 +134,11 @@ fn read_bounded_entries(
         let final_metadata = file.metadata()?;
         let current =
             statat(root, path, AtFlags::SYMLINK_NOFOLLOW).map_err(std::io::Error::from)?;
-        if initial_metadata.dev() != current.st_dev
+        let current_device = current.st_dev;
+        // Match MetadataExt::dev's conversion of Apple's signed dev_t.
+        #[cfg(target_vendor = "apple")]
+        let current_device = current_device as u64;
+        if initial_metadata.dev() != current_device
             || initial_metadata.ino() != current.st_ino
             || initial_metadata.len() != final_metadata.len()
             || initial_metadata.mtime() != final_metadata.mtime()

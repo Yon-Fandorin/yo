@@ -215,6 +215,7 @@ fn git_branch_follows_observed_repository_changes() {
 fn execution_host_link_inventory_honors_git_ignore_and_new_files() {
     let root = std::env::temp_dir().join(format!("yo-host-links-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
+    let root = root.canonicalize().unwrap();
     struct Cleanup(PathBuf);
     impl Drop for Cleanup {
         fn drop(&mut self) {

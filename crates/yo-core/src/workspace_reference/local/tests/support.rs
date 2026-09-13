@@ -21,7 +21,11 @@ impl TempFixture {
             &[PathBuf::from("/dev/shm"), std::env::temp_dir()],
             |path: &Path| fs::create_dir(path),
         );
-        Self { root }
+        // macOS temp directories can traverse /var -> /private/var; the host
+        // supplies a canonical root to the descriptor-based workspace reader.
+        Self {
+            root: root.canonicalize().unwrap(),
+        }
     }
 
     pub(super) fn path(&self) -> &Path {

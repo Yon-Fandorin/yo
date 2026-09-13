@@ -17,10 +17,16 @@ fn assert_repeated_suspend_resume(option: &str, alternate_screen: bool) {
 
     assert_eq!(exit.status, Some(0));
     assert!(output.contains(&format!("{EXIT_MARKER}:0")));
+    session.assert_no_inference();
     let session_name = session.name.clone();
     let socket = session.socket.clone();
+    let state_root = session.state_root.clone();
     drop(session);
     assert_tmux_server_absent(&socket, &session_name);
+    assert!(
+        !state_root.exists(),
+        "isolated Codex and Yo state remained after cleanup"
+    );
 }
 
 // 실제 Unix tmux의 Inline을 두 번 연속 Ctrl+Z로 중지할 때마다 셸의 원래 termios로

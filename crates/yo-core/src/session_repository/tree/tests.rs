@@ -550,7 +550,7 @@ fn disk_tree_validates_every_discovery_envelope_before_using_seed_parent() {
 // 생성이나 blocking lock을 사용하지 않고 기존 active marker의 durable cutoff만 읽습니다.
 #[test]
 fn disk_tree_rejects_special_files_and_observes_active_pending_cutoff() {
-    use rustix::fs::{CWD, Mode, mkfifoat};
+    use std::process::Command;
     let directory = Directory::new();
     let id = fixture_session(1);
     persist(&directory.0, fixture_descriptor(id), 1);
@@ -582,7 +582,14 @@ fn disk_tree_rejects_special_files_and_observes_active_pending_cutoff() {
         &SessionTreeAncestry::UnknownLegacy
     );
     let fifo = directory.log(fixture_session(2));
-    mkfifoat(CWD, &fifo, Mode::RUSR | Mode::WUSR).unwrap();
+    assert!(
+        Command::new("mkfifo")
+            .args(["-m", "600"])
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
     symlink(directory.log(id), directory.log(fixture_session(3))).unwrap();
     let tree = directory.query(SessionTreeLimits::default());
     assert_eq!(tree.nodes().len(), 3);
