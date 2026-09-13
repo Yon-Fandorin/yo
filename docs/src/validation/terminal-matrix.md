@@ -117,12 +117,54 @@ no zero-cost or general-API free-quota claim is made.
 
 This passes Provider API image capability only. Yo has no admitted QwenCloud
 image profile, so attachment, TUI submission and image-aware continuation are
-unverified for this Provider. The free-only text summary comparison awaits a
-separate general API key, an eligible model quota and `Free quota only`;
-the [Token Plan key does not consume that free quota](https://www.alibabacloud.com/help/en/model-studio/new-free-quota).
-A Qwen text comparison would test shared summary/replay behavior, while the
-OpenRouter-specific marker loss and image journey would still require their own
-evidence. Temporary capability probes were removed after recording this result.
+unverified for this Provider. General-API free quota is separate from the
+[Token Plan quota](https://www.alibabacloud.com/help/en/model-studio/new-free-quota).
+Temporary capability probes were removed after recording this result.
+
+## QwenCloud free text summary and continuation
+
+On 2026-09-13, an authenticated, read-only quota lookup selected
+`qwen3.8-max-0902`: valid, 1,000,000 tokens remaining before the campaign, with
+[`Free quota only`](https://docs.qwencloud.com/resources/free-quota) enabled.
+The test used a separate general API key and the exact international Responses
+endpoint, with disposable configuration, workspace and sessions. The actual key
+stayed in the proxy's memory; Yo received only a synthetic local credential.
+
+The first bounded run at `29fc2b9c` stopped after three of four requests. Two
+ordinary responses completed, but summary collection rejected the first answer
+at output slot 1 after reasoning at slot 0. No checkpoint was committed; the
+interrupted summary's completion and usage remain unknown. Fix candidate
+`8afc960f` binds the sole summary message by both output slot and item ID in
+automatic and idle compaction, while rejecting other messages, extra content
+parts, mismatched completion, duplicate completion and text after completion.
+
+The changed-artifact run passed all four requests: initial answer, second Turn,
+tools-disabled summary, and fresh-process `--continue` answer. Every response
+returned HTTP 200 and completed with final usage. The exact initial reference
+and `LEFT=red RIGHT=blue` facts survived the summary source, summary, stored
+checkpoint, resumed request and final answer. The checkpoint body matched the
+summary bytes, and the final sealed Journal message matched the response bytes.
+Summary `resp_8473fe12-7673-9f6d-84fe-b37a6a479f79` and resumed answer
+`resp_fb9e33e9-8724-9496-883c-4b889bfb9c4d` reported 7,954 and 1,510 total
+tokens; the four completed responses reported 23,080 total. The campaign used
+seven requests across its stopped original and changed-artifact runs, with no
+redirects, automatic retries, other models or subscription fallback.
+
+All 85 managed-backend tests passed, including output slots 0 and 1 through
+automatic/idle compaction and disk resume, and seven invalid event cases in both
+paths. Real-PTY offline success and HTTP-200 failure controls passed without
+inference. Native Codex 0.154.0 independently accepted the exact implementation
+candidate with no findings using `gpt-5.6-sol`, effort `high`, Session
+`01a09945-2a3f-76c0-bf0e-2e86bfc24530`; one invocation, no reviewer tool calls
+or finding-resolution rounds. Build, formatting and workspace Clippy passed.
+The tested binary SHA-256 was
+`78fa40e59ac859de2463b0474450cb35c8a5336dfd9bffccde66150ad2fa7c22`.
+
+Both live TUI exits were zero and restored terminal settings. The proxy, owned
+probe state, temporary key and review packet were removed; normal Yo/Codex
+configuration and credential files were unchanged during the live test. This
+passes the shared text summary/checkpoint/replay path. OpenRouter-specific
+marker loss and image-aware summary fidelity still require their own evidence.
 
 ## Diagnose a managed request failure
 

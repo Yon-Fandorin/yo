@@ -108,11 +108,50 @@ PNG의 왼쪽 빨강·오른쪽 파랑에 대해 HTTP 200, status `completed`인
 
 이는 Provider API의 이미지 기능만 통과한 결과다. Yo에는 승인된 QwenCloud
 image profile이 없어 이 Provider의 첨부·TUI 제출·이미지 인식 재개는 미검증이다.
-무료 범위의 텍스트 요약 비교는 별도 일반 API key, 해당 model의 남은 무료 쿼터와
-`Free quota only` 설정을 기다린다.
-[Token Plan key는 해당 무료 쿼터를 사용하지 않는다](https://www.alibabacloud.com/help/en/model-studio/new-free-quota).
-Qwen 텍스트 비교는 공통 요약·replay 동작을 검사하며 OpenRouter 고유의 marker
-누락과 이미지 흐름은 별도 증거가 필요하다. 결과 기록 후 임시 기능 probe는 제거했다.
+일반 API 무료 쿼터는
+[Token Plan 쿼터와 별개다](https://www.alibabacloud.com/help/en/model-studio/new-free-quota).
+결과 기록 후 임시 기능 probe는 제거했다.
+
+## QwenCloud 무료 텍스트 요약과 재개
+
+2026-09-13 인증된 계정의 쿼터를 읽기 전용으로 조회해 `qwen3.8-max-0902`를
+선택했다. 해당 쿼터는 유효하고 검증 시작 전 1,000,000 token이 남아 있었으며
+[`Free quota only`](https://docs.qwencloud.com/resources/free-quota)가 켜져 있었다.
+별도 일반 API key와 정확한 국제 Responses endpoint를 사용했고 설정·workspace·
+Session을 임시로 격리했다. 실제 key는 proxy 메모리에만 두고 Yo에는 합성 로컬
+인증 정보만 전달했다.
+
+첫 bounded run은 `29fc2b9c`에서 최대 4회 중 3회 요청 후 중단됐다. 일반 응답
+2회는 완료됐지만 요약 처리에서 추론 output slot 0 뒤의 답변 slot 1을 거부했다.
+checkpoint는 저장되지 않았으며 중단된 요약의 완료 여부와 usage는 알 수 없다.
+수정 candidate `8afc960f`는 자동·idle 압축 모두 유일한 요약 메시지를 output slot과
+item ID로 함께 식별한다. 다른 메시지·추가 content part·완료 identity 불일치·중복
+완료·완료 뒤 텍스트는 계속 거부한다.
+
+수정본 검증은 초기 답변·두 번째 Turn·tools-disabled 요약·새 프로세스의
+`--continue` 답변을 포함한 요청 4회가 모두 통과했다. 모든 응답은 HTTP 200,
+완료 terminal과 최종 usage를 보고했다. 정확한 초기 reference와
+`LEFT=red RIGHT=blue` 사실이 요약 source·요약·저장된 checkpoint·재개 요청·최종
+답변까지 보존됐다. checkpoint 본문은 요약 bytes와 같았고 최종 Journal의 봉인된
+답변도 response bytes와 같았다. 요약
+`resp_8473fe12-7673-9f6d-84fe-b37a6a479f79`와 재개 답변
+`resp_fb9e33e9-8724-9496-883c-4b889bfb9c4d`는 각각 합계 7,954·1,510 token을
+보고했으며 완료 응답 4회의 합계는 23,080 token이었다. 중단된 첫 run과 수정본
+run의 실제 요청은 총 7회였고 redirect·자동 재시도·다른 model·구독 fallback은 없었다.
+
+Managed backend test 85개가 모두 통과했다. 자동·idle 압축과 disk resume에서
+답변 slot 0·1을 검사하고 두 경로 모두 잘못된 event 7종을 거부했다. 실제 PTY의
+로컬 성공 및 HTTP-200 실패 대조 검사는 추론 요청 없이 통과했다. Native Codex
+0.154.0은 `gpt-5.6-sol`, effort `high`, Session
+`01a09945-2a3f-76c0-bf0e-2e86bfc24530`에서 정확한 구현 candidate를 독립 검토해
+지적 없이 승인했다. 검토 1회·reviewer tool 호출 0회·finding-resolution round
+0회였다. 빌드·formatting·workspace Clippy도 통과했다. 검증한 바이너리의 SHA-256은
+`78fa40e59ac859de2463b0474450cb35c8a5336dfd9bffccde66150ad2fa7c22`였다.
+
+실제 TUI 종료 2회는 exit 0이며 터미널 설정을 복원했다. Proxy·이번 probe 상태·
+임시 key·검토 패킷은 제거했고 실제 검사 중 일반 Yo/Codex 설정·인증 파일은
+바뀌지 않았다. 공통 텍스트 요약·checkpoint·replay 경로는 통과했으며 OpenRouter
+고유의 marker 누락과 이미지 인식 요약 충실도는 별도 증거가 필요하다.
 
 ## Managed 요청 실패 진단
 
