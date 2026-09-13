@@ -42,6 +42,7 @@ fn serializes_mixed_assistant_content_refusal_and_tool_calls_as_one_message() {
     assert_eq!(body["messages"][2]["role"], "tool");
     assert_eq!(body["stream_options"]["include_usage"], true);
     assert_eq!(body["max_tokens"], 512);
+    assert_eq!(body["tool_choice"], "auto");
     assert!(body.get("reasoning").is_none());
     assert!(body.get("enable_thinking").is_none());
     assert!(body.get("prompt_cache_key").is_none());

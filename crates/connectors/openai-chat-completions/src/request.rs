@@ -142,7 +142,11 @@ pub(super) fn projected_body(
                 })
                 .collect(),
         );
-        body["tool_choice"] = Value::String("auto".to_owned());
+        // The admitted image route uses the API's automatic default. Its endpoint
+        // rejects an explicit tool_choice even though it accepts function tools.
+        if images.is_none() {
+            body["tool_choice"] = Value::String("auto".to_owned());
+        }
     }
     if let Some(policy) = images {
         for (key, value) in policy.parameters.as_object().expect("admitted mapping") {

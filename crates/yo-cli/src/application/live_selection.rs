@@ -150,6 +150,15 @@ fn select_continue(cwd: &Path) -> Result<SessionId, AppError> {
             .filter_map(ContinueCandidate::from_stored),
         host,
         &workspace,
+        |candidate| {
+            read_stored_session_continuation(reader, candidate.session_id).is_ok_and(
+                |continuation| {
+                    let descriptor = continuation.descriptor();
+                    descriptor.workspace_host_id() == candidate.host
+                        && descriptor.workspace_path() == &candidate.workspace
+                },
+            )
+        },
     )
     .ok_or_else(|| {
         AppError::many(["no resumable Session exists in the current workspace".to_owned()])
@@ -160,17 +169,26 @@ fn select_continue_from(
     sessions: impl IntoIterator<Item = ContinueCandidate>,
     host: WorkspaceHostId,
     workspace: &HostWorkspacePath,
+    mut recover_unknown: impl FnMut(&ContinueCandidate) -> bool,
 ) -> Option<SessionId> {
     sessions
         .into_iter()
-        .find(|session| session.eligible && session.host == host && &session.workspace == workspace)
+        .find(|session| {
+            session.host == host
+                && &session.workspace == workspace
+                && match session.eligibility {
+                    ContinuationEligibility::Eligible => true,
+                    ContinuationEligibility::Unknown => recover_unknown(session),
+                    ContinuationEligibility::Unavailable => false,
+                }
+        })
         .map(|session| session.session_id)
 }
 
 #[derive(Clone)]
 struct ContinueCandidate {
     session_id: SessionId,
-    eligible: bool,
+    eligibility: ContinuationEligibility,
     host: WorkspaceHostId,
     workspace: HostWorkspacePath,
 }
@@ -181,7 +199,7 @@ impl ContinueCandidate {
         let descriptor = summary.discovery().descriptor();
         Some(Self {
             session_id: session.session_id(),
-            eligible: session.continuation_eligibility() == ContinuationEligibility::Eligible,
+            eligibility: session.continuation_eligibility(),
             host: descriptor.workspace_host_id(),
             workspace: descriptor.workspace_path().clone(),
         })

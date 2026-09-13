@@ -26,17 +26,104 @@ SSH 동작까지 실행되었다는 뜻은 아니다.
 
 ## OpenRouter 이미지 사용 흐름
 
-명시적 무료 이미지 프로필은 정의 가져오기, private 클립보드 socket의 Ctrl+V,
-첨부 미리보기, Enter 제출, 스트리밍 완료, 정상 종료, 새 TUI 프로세스의
-`--continue`까지 확인한다. 첫 요청과 재개 요청의 정규화된 PNG data URL과
-무료 경로 필드를 비교한다. 설정·credential·Session 저장소는 격리한다.
+[명시적 무료 이미지 정의](../workflows/provider-catalogs/openrouter.md#명시적-무료-이미지-연결)와
+격리된 설정·인증·Session state를 사용한다. Private socket Ctrl+V, 첨부 미리보기,
+제출·스트리밍 완료, 연결된 로컬 도구 결과, idle `/compact`, 정상 종료와 새
+`--continue` 응답을 확인한다. 모든 요청의 PNG occurrence, NVIDIA 전용 경로,
+가격 상한 0과 fallback 비활성화를 확인한다. 단위 test와 로컬 fixture는 전송·복원
+검증이며 실제 Provider 실행은 실제 서비스 검사가 필요하다.
 
-2026-09-11 Linux PTY 검증은 로컬 TLS/SSE fixture에 두 번 요청하여 이 흐름을
-통과했다. 테스트 프로세스에서 정확한 OpenRouter 호스트를 loopback으로 연결하고
-다른 TCP 목적지를 거절했으며 임시 CA·가짜 키를 사용하고 종료 후 상태를 삭제했다.
-이는 Yo의 전송·복원 검증이다. 실제 NVIDIA 스트리밍·도구 실행·요약 완료와 새
-프로필의 macOS·SSH·tmux 검증은 별도 환경 검사로 남는다. Connector 단위 test의
-도구 결과·제한 내 요약 전송 검사는 Provider 실행을 증명하지 않는다.
+2026-09-13 실제 Linux PTY의 Fullscreen TUI로
+`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`에서 다음을 확인했다.
+
+| 검사 | 결과 |
+|---|---|
+| 정의 가져오기·private socket의 합성 64 × 32 PNG | 통과 |
+| 왼쪽 빨강·오른쪽 파랑 설명·스트리밍 Turn 완료 | 통과 |
+| 실제 `read_file` 1회·독립 확인한 marker와 연결된 결과 | 통과 |
+| 두 번째 Turn·이미지 인식 idle summary checkpoint | 통과 |
+| 요약 후 새 프로세스 재개·이미지 색상 유지 | 통과 |
+| 실제 요약 뒤 최초 marker 정확히 반환 | 실패 |
+| 최종 정상 TUI 종료·termios 복구 | 통과 |
+
+이 이미지 profile의 함수 도구 선택은 명시적 `tool_choice: auto` 없이 자동
+기본값을 사용한다. 의미적 종료 뒤 동일한 response id, index 0, 반복된 종료
+이유, 비어 있는 닫힌 role/content delta인 최종 accounting choice만 받는다.
+usage를 한 번 기록하고 출력 중복이나 이전 종료 상태 변경은 허용하지 않는다.
+`[DONE]`, 합계 검증, 한도와 중복·후행 데이터 거절은 유지한다.
+Connector test 34개와 managed backend test 84개가 통과했다.
+
+실제 검증 바이너리 SHA256은
+`9e9a7e2443ec20009ca70cd339ba47974beef85d393b26207a2550331d952575`다.
+선택 수정 전 진단 12회와 수정 후 검증 4회로 총 16회 실제 요청을 기록했다.
+이전 harness는 snapshot의 과거 기록을 중복 집계하고 PTY 출력 소비 없이
+입력하며 막혔다. 취소된 이전 응답 2회는 완료 증거에서 제외하며 최종 usage를
+관찰하지 못했다. CLI는 같은 실행 identity의 checkpoint-only 후보를 읽기 전용
+복원으로 검증한 뒤 선택한다. 미지원·unavailable·다른 실행 identity는 승격하지 않는다.
+최종 시나리오는 Journal sequence를 중복 제거하고 정확한 새 Turn id와 응답의
+사실을 확인했다. 이미지 색상은 유지됐지만 최종 응답에 최초 marker가 정확히
+포함되지 않았다. 전체 요약 충실도는 증명되지 않았으며 이 실행만으로 replay
+직렬화 결함을 확정하지 않는다. 관찰한 모든 완료 usage의 보고 비용은 0이며 모든 요청이
+닫힌 무료 경로를 유지했다. Provider 재시도나 fallback은 없었다. 중계는 SSE를
+수정 없이 전달하고 구조적 사실과 usage만 기록했다. 일반 Yo 설정은 유지됐고
+임시 인증·Session state·합성 파일·socket·중계·TLS key는 제거했다.
+
+설정된 Mac은 profile compile·import, tmux 첨부와 SSH PTY lifecycle 검사를
+통과했다. 물리 키보드·IME·실제 Command-V는
+[직접 입력 검증](#현재-mac-직접-입력-검증)에서 통과했다. Mac 검사는 터미널
+동작 검증이며 위 실제 Provider 검사는 Linux에서 수행했다.
+
+## Managed 요청 실패 진단
+
+Provider 계정 없이 요청 수락 전 실패 경로를 결정적인 fixture로 검사한다.
+
+```bash
+cargo build --locked -p yo-cli
+python3 tools/validation/managed-start-failure.py target/debug/yo --mode inline
+python3 tools/validation/managed-start-failure.py target/debug/yo --mode fullscreen
+```
+
+[Runner](https://github.com/Yon-Fandorin/yo/blob/develop/tools/validation/managed-start-failure.py)는
+가짜 키와 loopback 전용 endpoint를 사용하는 text-only Chat Completions binding을
+가져온다. 로컬 socket은 HTTP 이전의 TLS 연결을 거절하고, 트래픽을 전달하거나
+인증서 신뢰 설정을 바꾸지 않는다. 각 mode에서 한 번 제출한 뒤 종료 코드 1,
+typed `Transport` stderr, 저장된 `last_failure.kind: transport`, 수락된 요청 0건,
+완료된 Turn 0건, PTY mode 복원을 검사한다. Fullscreen에서는 alternate-screen
+진입·종료 쌍도 검사한다. Parent가 복원된 mode를 수집할 때까지 shell이 controlling
+terminal의 session을 유지하며, private pipe로 수집 완료를 알린다. Darwin에서는
+canonical input 복귀 시 kernel이 설정하는 pending-input 상태 비트 `PENDIN`만
+비교에서 제외한다. 이는 [Apple의 tty 구현](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/tty.c)에서
+확인할 수 있다. 나머지 termios 필드는 모두 비교한다. 격리된 설정·credential·host identity·Session을 지우기
+전에 JSON 진단을 수집하며, 검사 실패 시에도 정리 결과를 보고한다. 일반 사용자
+상태는 사용하지 않는다.
+
+2026-09-12 Linux의 두 mode가 모두 통과했다. Loopback 연결 시도 1회, 종료 코드 1,
+typed stderr와 저장된 failure, 수락된 요청·완료된 Turn 0건, terminal 복원을 확인했다.
+의도적으로 import를 실패시킨 검사도 실패 진단을 반환하고 임시 상태를 제거했다.
+상태 코드만 보존하는 HTTP 실패 분류를 포함해 공통 transport 검사 13개도 통과했다.
+
+같은 날 후보 `0f86d85e`가 macOS 26.6.2 arm64에서 빌드됐고 Inline·Fullscreen 모두 통과했다.
+각 mode에서 제출 1회, loopback 연결 시도 1회, Yo 종료 코드 1, typed `Transport`
+stderr, 저장된 `transport` failure를 수집했다. HTTP 요청·수락된 요청·완료된 Turn은
+모두 0건이었다. 두 mode 모두 kernel의 `PENDIN` 상태 비트를 제외한 모든 PTY 설정을
+복원했다. Fullscreen은 alternate-screen 진입·종료 쌍을 정확히 한 번 출력했고
+Inline은 출력하지 않았다. 각 격리된 상태 root와 임시 checkout을 제거했으며 일반
+설정·credential hash는 바뀌지 않았다. 이로써 공통 요청 수락 전 실패 진단의 Mac
+검증은 완료됐다. 실제 OpenRouter inference와 이전 실제 서비스 종료의 구체적인
+원인은 미검증으로 남는다.
+
+`BackendRequestAccepted`는 connector 시작이 성공한 요청 수다.
+[Transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)는
+HTTP 전송 뒤 상태 코드나 transport 오류를 반환하여 이 기록이 저장되기 전에
+실패할 수 있다. CLI는 오류를 전달하고 terminal을 복원한 뒤 종료한다. 제출,
+연결·HTTP 시도, 수락, 완료된 Turn 수를 구분한다. 실제 서비스 harness를 정리하기
+전에 child 종료 코드, secret-safe stderr, binding의 typed failure를 수집하고,
+관찰이 끝날 때까지 tmux pane을 유지한다. 수락된 기록이 0건이라는 사실만으로
+HTTP 시도도 0회였다고 판단할 수 없다.
+
+이 fixture는 공통 실패·진단 경로를 검증하며 OpenRouter image binding이나 Provider의
+HTTP 거절을 검증하지 않는다. 이전 Mac 실제 서비스 실행의 구체적인 원인은 삭제된
+capture에서 복구할 수 없으므로 미검증으로 남는다.
 
 ## 설치된 Codex 검사
 
@@ -60,12 +147,118 @@ cargo test -p yo-core local_codex_completes_a_real_file_change \
 쓰기 가능한 Codex 상태가 있는 환경에서만 실행한다.
 
 위임 Codex image 경계는 adapter와 core의 offline test로 검증한다. 정확한
-`0.153.4` wire 증거, 선택한 model의 정확한 `inputModalities`, start와 steer 양쪽의
+`0.153.4`와 `0.154.0` wire 증거, 선택한 model의 정확한 `inputModalities`, start와 steer 양쪽의
 순서가 있는 반복 immutable PNG projection, 보수적인 inherited-history resume/rebind
 admission, 완전한 32 MiB outbound JSONL 경계를 검사한다. 경계 test는 정확히 32 MiB를
 허용하고 첫 초과 byte를 peer에 보내기 전에 거절한다. server response도 같은 경계를
 사용하며 overflow는 protocol failure로 분류한다. 이 검사는 fake JSONL peer를 사용하고
 model service에 접속하지 않는다.
+
+2026-09-10에는 `gpt-6-astra`를 사용한 격리된 공식 Codex 실행에서도 합성 model
+요청 두 번으로 이미지 Turn과 새 프로세스 재개를 검증했다. 클립보드 fixture에 대해
+정확한 `red,blue` 답변을 받았고, 재개 Turn도 정확한 회상 검사를 통과했다.
+continuation anchor 두 개와 기존 journal prefix를 보존했다. 검사한 바이너리 SHA256은
+`a20df491ff6445f521bb45d8f03f67f79fb7f72dbea355312ac36c9af394603d`다.
+소유한 tmux Session을 종료하고 임시 인증을 제거했다. 이는 검사한 이미지 입력과
+복구 경로를 입증하며 바깥 터미널의 이미지 픽셀이나 다른 model/version 조합을
+검증하지 않는다. 승인된 요청 두 번의 예산은 모두 사용했다.
+
+2026-09-11에는 외부 네트워크를 차단한 loopback 전용 namespace에서 설치된
+Codex `0.154.0`의 이미지 wire 호환성을 검증했다. 설치된 `0.153.4`와 `0.154.0`
+실행 파일로 생성한 schema bundle의 `TurnStartParams`, `TurnSteerParams`,
+`ModelListResponse` 정의는 동일했다. 검토된 정확한 버전 목록은 두 버전을 포함하며,
+인접 patch와 prerelease의 이미지 지원은 계속 Unknown으로 처리한다.
+
+Native app-server는 1,080,993바이트 합성 PNG를 `turn/start`와 `turn/steer`에서
+수용했고, 로컬 mock Responses 요청 두 번에서 이미지 바이트와 앞뒤 텍스트 순서를
+보존했다. 별도의 실제 Rust Yo를 격리된 96×32 tmux에서 실행해 Ctrl+V로 이미지를
+준비하고 Turn을 완료한 뒤, 종료하고 새 프로세스로 재개했다. Mock endpoint는
+두 Turn 모두 Yo journal의 정확한 불변 PNG를 받았다(data URI 1,921,054바이트).
+continuation anchor 두 개와 기존 journal prefix를 보존했다. 검사한 Yo 바이너리
+SHA256은 `a4b4173d6ddba7ef9a092e960d229a93eaf028b315b43809749570d83a457aa5`다.
+
+이 검사는 설치된 host와 합성 로컬 model endpoint를 사용했으며, 자격증명이나 외부
+model 요청을 사용하지 않았다. 전송과 continuation 호환성을 입증하지만 실제 서비스의
+시각 인식을 검증한 것은 아니다. Adapter suite는 선택 model의 modality admission과,
+이미지가 남아 있는 대화의 대상이 text-only이면 native resume 전에 거부하는 동작도
+검사한다. 기존 메시지 크기 제한과 불변 입력 검사는 계속 적용한다.
+
+### 저장된 명령 규칙과 자동 승인
+
+2026-09-11 Linux Rust yo를 격리된 110×44 tmux에서 실행해 공식 Codex `0.154.0`,
+`gpt-6-astra`에 대한 합성 Turn 네 번을 검증했다. 바이너리 SHA256은
+`f72d343be2d2aecef3f844033a6e84fa59aa3ffc902c680ced0a6b5bc6200d6a`다.
+추론 전에 위임 Codex package 검사와 CLI build가 통과했다.
+
+`approval_policy = "on-request"`, `approvals_reviewer = "user"`,
+`sandbox_mode = "read-only"`에서 첫 Turn은 임시 스크립트 하나의 정확한 절대 경로에
+대해 실제 TUI의 `Approve + save rule`을 선택했다. Native 규칙 파일에는 해당 allow
+prefix만 저장됐고 스크립트는 marker를 정확히 한 번 추가했다. 승인 대기 패널을
+40, 20, 110열로 변경하는 동안 실행이나 규칙 저장은 일어나지 않았다. 정상 종료 후
+새 프로세스로 재개했을 때 같은 명령은 추가 승인 없이 marker를 한 번 더 추가했다.
+기존 Yo journal의 물리적 prefix와 저장 규칙은 그대로 유지됐다.
+
+다른 스크립트에는 새로운 승인 요청이 표시됐다. `Decline and stop`을 선택하자
+출력 파일을 만들지 않고 저장 규칙을 유지하면서 Turn을 중단했다. 최초 드라이버는
+이 취소된 suffix를 재개하려 했지만, 최신 durable anchor가 없어 현재 continuation
+guard가 읽기 전용 기록을 열었다. 이 드라이버 순서 오류는 원래 기록에 보존했다.
+완료한 세 시나리오는 재전송하지 않고 네 번째 시나리오는 새 Session에서 실행했다.
+
+새 Session은 같은 read-only sandbox와 빈 규칙 디렉터리에서
+`approvals_reviewer = "auto_review"`를 사용했다. 합성 append 한 번이 수동 승인 없이
+완료됐다. 캡처한 `item/autoApprovalReview/completed`는 `decisionSource: "agent"`와
+`approved`를 보고했고 명령 완료 전에 정확한 command item, thread, turn과 연결됐다.
+파일에는 marker가 정확히 하나 있었고 규칙은 저장되지 않았다. 이는 호스트의
+[자동 검토 경로](https://learn.chatgpt.com/docs/sandboxing/auto-review)를 검사한 것이며
+승인 패널이 없다는 사실만으로 권한 부여를 추정하지 않는다.
+
+오프라인 감사는 선택지 번호, 정확한 wire 결정, native 명령 결과와 Yo 요청·응답
+신원을 대조했다. 선택지, 규칙 범위, cleanup, 요청 신원, 명령 상태, 검토 상태,
+대상, 순서, 결정 출처, 검토 누락을 변조한 대조군 열 개를 모두 거절했다. 임시 인증,
+native 상태와 규칙을 제거하고 작업 폴더를 비웠으며, 소유한 tmux 서버를 종료한 뒤
+남은 소유 프로세스가 없음을 확인했다. `turn/start` 네 번은 내부 model이나 reviewer
+요청 횟수를 뜻하지 않는다.
+
+### 자동 거절과 네트워크 승인 범위
+
+같은 날 같은 Yo 바이너리와 공식 Codex `0.154.0`을 격리된 120×48 tmux TUI에서
+실행해 추가 Turn 열 번을 검증했다. 인증 정보 없는 로컬 Responses fixture가
+결정적인 도구 호출과 reviewer 응답을 제공했다. 로컬 model/reviewer HTTP 요청은
+20번이었고 실제 서비스 요청은 없었다. 이는 native 정책 실행, adapter 동작과
+TUI 표시 결과를 검증하며 서비스 model의 위험 분류 정확도를 측정하지 않는다.
+
+네트워크 검사는 native proxy를 활성화한 이름 있는 permission profile과 격리된
+`[experimental_network]` requirements fixture를 사용했다. Mount namespace로 임시
+requirements를 테스트 프로세스에만 제공했으며 실제 `/etc/codex`와 사용자의 Codex
+설정은 변경하지 않았다. 대상은 수신 요청을 집계하는 loopback HTTP 서버였다.
+
+- 제공된 Session 한정 승인을 선택하자 요청 하나가 도달했다. 실행 중인 같은
+  Session의 다음 Turn은 추가 승인 없이 같은 대상에 도달했고, 새 프로세스와
+  Session에서는 다시 승인을 요구했다. 취소했을 때는 대상에 도달하지 않았다.
+- 제공된 영구 네트워크 허용을 선택하자 loopback 호스트와 HTTP protocol에 대한
+  native `network_rule` 하나가 저장됐다. 새 프로세스와 Session에서도 추가 승인
+  없이 적용됐다. 다른 호스트 이름에는 여전히 승인을 요구했고 취소하면 대상에
+  도달하지 않았다.
+- 명시적으로 준비한 네트워크 거부 규칙은 최초 실행과 새 프로세스 모두에서 승인
+  요청이나 대상 도달 없이 접속을 차단했다. Yo는 정책이 도메인을 명시적으로
+  거부한다는 native 실패 설명을 표시했다. 규칙은 변경되지 않았다.
+- 주입한 reviewer 거부 응답은 native `denied` 검토와 `declined` 명령을 만들었다.
+  Reviewer 응답을 멈추자 native의 90초 제한에 도달해 `timedOut`과 실패한 명령을
+  만들었다. 둘 다 명령의 marker 파일을 만들거나 수동 승인을 요구하지 않았으며,
+  Yo에 해당 거부 또는 시간 초과 설명과 함께 `Codex approval warning`을 표시했다.
+
+Codex `0.154.0`은 metadata에 네트워크 amendment 두 가지를 제안했지만
+`availableDecisions`에는 허용만 제공했다. 따라서 이 호스트 버전에서는 실제 TUI로
+영구 거부를 저장하는 경로를 사용할 수 없다. 준비한 규칙 검사는 차단 적용을
+입증하며 대화형 거부 저장 과정을 입증하지 않는다. Adapter 검사
+`offered_approval_choices_preserve_exact_scopes_and_wire_payloads`는 호스트가 해당
+선택지를 제공할 때 정확한 allow/deny 전송을 별도로 다룬다.
+
+오프라인 감사는 열 번의 결과, 선택지 번호와 정확한 응답, 프로세스 경계, 저장
+규칙, 대상 수신, 표시된 경고, 검토와 명령의 신원·순서를 확인했다. 증거를 변조한
+대조군 여덟 개를 거절했다. 임시 native 상태, 테스트 규칙과 작업 폴더를 제거하고
+소유한 프로세스와 tmux 서버를 종료했으며 loopback listener를 해제했다. Runtime
+코드는 변경하지 않았으므로 앞선 package/build 검사 결과가 계속 유효하다.
 
 ## 설치된 Grok 검사
 
@@ -82,22 +275,62 @@ cargo test --locked -p yo-backend-delegated-grok \
 독립 96×32 tmux 실행에서도 실제 Rust `yo --fullscreen --model host:grok`으로
 빈 입력창까지 도달한 뒤 Ctrl+D로 정상 종료했다. 검사한 바이너리 SHA256은
 `42f7c955d966d56825213c18a8ce59c7d655acb17532fa606dc2f449f2b83d7a`다.
-프롬프트를 제출하거나 클립보드를 읽지 않았다. 인증과 빈 Session 시작만 입증하며
-인증된 Turn, 실제 과거 대화, 스킬, native read-only
-sandbox에는 각각 별도 증거가 필요하다. 일반 Grok suite는 `session/load` 응답 전에
+프롬프트를 제출하거나 클립보드를 읽지 않았다. 이 초기 검사는 인증과 빈 Session
+시작만 입증한다. 이후 스킬과 재개 검사는 아래에 기록하며 native read-only sandbox는
+계속 사용할 수 없다. 일반 Grok suite는 `session/load` 응답 전에
 같은 Session의 과거 update 1,025개를 즉시 버리고 이후 새 응답과 resumable outcome을
 전달하는 경계를 별도로 검증한다. 다른 Session, 서버 요청, 응답 신원 오류와 기존
-무관 메시지 대기열 상한은 계속 적용한다. 이는 결정적인 adapter 검사이며 실제로
-긴 Grok Session을 측정한 결과는 아니다.
+무관 메시지 대기열 상한은 계속 적용한다. 이는 결정적인 adapter 검사이며,
+실제 문맥 재개 측정 결과는 아래에 기록한다.
 
-이후 격리된 합성 스킬 프롬프트는 Grok 자체 기록에서 예상한 marker로 완료됐지만,
-Yo는 continuation anchor를 기록하기 전에 unsigned 응답 ID protocol 오류로 실패했다.
-새 프로세스에서 재개를 시도하지 않았으며 수락된 요청을 재전송하지 않았다.
-스킬 본문을 포함한 오프라인 leader mode Responses API 검사는 숫자 ID를 반환해
-이 오류를 재현하지 못했다. 이제 adapter는 잘못된 ID의 값을 노출하지 않고 JSON
-종류만 오류에 표시한다. 이는 진단 개선이며 실패 원인을 확정하거나 해결한 것은 아니다.
+최초 격리된 합성 스킬 프롬프트에서 Grok native skill watcher가 요청 없이 보내는
+method 없는 `skills-reload` 유지보수 응답을 발견했다. Yo는 continuation anchor를
+기록하기 전에 이 문자열 ID를 거절했다. 커밋 `f94d1a42`는 숫자 요청 ID 상관관계를
+유지하면서 정확한 유지보수 acknowledgement 형식을 소비한다. Adapter 검사는 시작,
+활성 프롬프트, 재개를 다루며 무관한 응답 거절과 프롬프트 조기 완료 방지도 포함한다.
+
+수정된 바이너리는 2026-09-10 격리된 공식 Grok 실행에서 합성 model 제출 두 번과
+관측된 watcher acknowledgement 두 번으로 검증을 통과했다. 첫 스킬 답변이 정확히
+일치했고, 스킬 원본을 제거한 뒤 새 프로세스 재개에서도 정확한 회상을 검증했다.
+continuation anchor 두 개와 journal prefix를 보존했다. 검사한 바이너리 SHA256은
+`f72d343be2d2aecef3f844033a6e84fa59aa3ffc902c680ced0a6b5bc6200d6a`다.
+소유한 tmux Session을 종료하고 임시 인증을 제거했다. 설치된 호스트는 이미지 prompt
+지원을 광고하지 않으며 native read-only review sandbox는 계속 사용할 수 없다.
+
+### Grok 큰 문맥 재개
+
+2026-09-11 같은 바이너리와 Grok `1.0.25 (f7e67d6988e2)`를 격리된 Linux 110×40
+tmux에서 실행해 공식 서비스에 대한 합성 제출 일곱 번을 검증했다. 위임 Grok
+suite는 64개 검사가 통과했고 환경 검사 두 개는 ignored였다. 앞서 통과한 CLI
+build는 변경되지 않았다. 도구, 웹 검색, 하위 에이전트와 memory를 비활성화했고,
+인증과 호스트 상태에는 임시 Grok home을 사용했다.
+
+여섯 Turn에 합성 기록 960개, 총 입력 120,272바이트를 제공했고 각각 정확한 확인
+답변을 받았다. 정상 종료한 뒤 새 Yo 프로세스에서 같은 Yo Session과 native Grok
+Session을 재개해 앞부분·중간·마지막 batch의 무작위 checkpoint 값 세 개를 정확히
+회상했다. 재개 prompt에는 checkpoint 이름만 주고 정답 값은 제공하지 않았다.
+일곱 Turn이 모두 완료됐고 continuation anchor 일곱 개를 보존했으며, 기존 물리적
+journal prefix 192,069바이트가 바이트 단위로 동일했다. 도구나 승인 실행은 없었다.
+
+Native `session/load`는 상관관계가 일치하는 응답 전에 update 19개를 재생했고,
+해당 응답 이후 일곱 번째 `session/prompt`가 전송됐다. 재생된 메시지는 Yo 답변을
+중복 생성하지 않았다. 오프라인 감사는 정확한 답변, 입력 크기, Session·프로세스
+신원, journal prefix, anchor, 순서와 cleanup을 확인했고 증거를 변조한 대조군
+여섯 개를 거절했다. 계획한 제출 일곱 번을 재시도 없이 모두 사용했다. 검증 후
+임시 인증, native 상태와 소유한 프로세스를 제거했다.
+
+이는 측정한 입력 크기와 일곱 Turn 깊이에서의 재개를 입증한다. Update 1,025개의
+mailbox 경계는 별도 결정적 검사이며, 이번 실행은 그만큼의 실제 update 재생,
+context compaction이나 호스트 최대 context window에서의 동작을 입증하지 않는다.
 
 ## 로컬 tmux와 Linux SSH 검사
+
+이전 사용자 관찰에서 SSH/tmux 터미널에 산 이미지가 표시되고 HTTP 링크가
+열리는 것을 확인했다. 원격 README 파일 링크는 열리지 않았다. 해당 파일 링크
+제한은 저장소 README에 기록되어 있으며 원격 파일 전송이나 내장 viewer는 없다.
+이는 터미널·버전 matrix가 남아 있지 않은 사용자 보고이며 자동 픽셀 검사나 모든
+터미널에 대한 주장은 아니다. 이전 로컬 메모의 “픽셀 확인 대기” 상태는 이 응답으로
+해소됐다.
 
 Linux 또는 macOS의 두 표시 mode에서 로컬 tmux를 검사한다.
 
@@ -120,6 +353,33 @@ localhost에 격리된 `sshd`를 시작하고 임시 key를 생성한 뒤 fixtur
 `USER`가 로컬 SSH account 이름으로 설정되어 있어야 한다. 중첩된 경우에는
 tmux도 필요하다.
 
+로컬 tmux는 임시 `HOME`, `CODEX_HOME`, XDG root, Yo 설정과 Session repository를
+사용하는 interactive Bash 아래에서 `yo --model host:codex`를 실행한다. Codex
+provider는 예약된 loopback listener만 가리키고 계정을 사용하지 않으며 인증 저장은
+파일로 한정한다. 검사는 tmux의 foreground command 이름 대신 실제 입력 화면과
+raw/no-echo mode를 기다린다. 빈 입력 `Ctrl+D` 뒤에는 셸이 상태 0으로 끝나기 전에
+셸 terminal과 main screen이 복원되어야 한다. macOS에서만 일시적인 queued-input
+`PENDIN` bit를 제외하고 나머지 전체 termios를 비교한다. Backend thread binding,
+수락된 요청, 완료된 Turn과 loopback 연결은 모두 없어야 한다. 각 검사는 자신이
+만든 tmux server, socket과 임시 Codex·Yo 상태를 제거한다.
+
+모델 inference 없이 앱의 문자 입력과 terminal text paste를 모킹한다.
+
+```bash
+cargo test -p yo-cli --test terminal_matrix draft_input_and_bracketed_paste \
+  -- --ignored --nocapture --test-threads=1
+```
+
+두 mode 모두 ASCII 입력과 Backspace, 완성형 한글의 cursor 이동과 Delete/Backspace,
+한글과 emoji를 포함한 LF/CRLF paste를 받는다. Paste는 Turn 제출 없이 서로 다른
+초안 행 세 개로 표시되어야 한다. `Ctrl+C`로 각 초안을 지우고 빈 입력 `Ctrl+D`로
+종료, terminal 복원과 정리를 확인한다. Fixture는 전용 tmux buffer와
+[`paste-buffer -p -r`](https://man.openbsd.org/tmux#paste-buffer)를 사용해 paste bracket을
+요청하고 linefeed를 보존한다. 시스템 clipboard는 사용하지 않는다.
+이는 해석된 문자와 terminal paste 검사다. 물리 key mapping, macOS IME의 조합 중
+문자열·확정 과정과 terminal의 Command-V 단축키는
+[직접 입력 검증](#현재-mac-직접-입력-검증)에서 별도로 확인했다.
+
 각 경로는 빈 입력 `Ctrl+D` 종료와 두 번 연속
 `Ctrl+Z` → job 정지 → `fg` terminal generation을 모두 검사한다.
 job-control 검사는 매 정지 구간의 터미널을 해당 경로의 실제 interactive shell
@@ -129,6 +389,28 @@ PTY 복구도 추가로 확인한다.
 
 필요한 명령이나 assertion을 사용할 수 없으면 test는 실패한다. 빠진 환경을
 성공한 skip으로 바꾸지 않는다.
+
+### Current Codex Mac tmux verification
+
+2026-09-12 수정 없이 `6aac838b` candidate tree
+(`a7dfab60f1caea706c0fc9dbe02f50ba90d4fc64`)의 로컬 tmux 검사 여섯 개가 모두
+통과했다. 환경은 설치된 Codex 0.154.0과 tmux 3.6a가 있는 macOS 26.6.2 arm64였다.
+
+```bash
+cargo test --locked -p yo-cli --test terminal_matrix local_tmux_ \
+  -- --ignored --nocapture --test-threads=1
+cargo clippy --locked -p yo-cli --test terminal_matrix -- -D warnings
+```
+
+Inline과 Fullscreen 각각 raw/no-echo input에 진입하고 빈 입력 `Ctrl+D`로 상태 0
+종료, 셸 termios와 main screen 복원, 두 번의 stopped-job/`fg` generation을 완료했다.
+입력 모킹 두 개도 ASCII와 완성형 한글 편집, 한글과 emoji를 포함한 서로 다른 LF/CRLF
+paste 행 세 개, `Ctrl+C` 초안 지우기를 통과했다. Native Clippy도 통과했다.
+Thread binding, 수락된 요청, 완료된 Turn과 loopback inference 연결은
+모두 0이었다. 일반 Yo 상태와 읽기 전용 Mac source repository는 변하지 않았다.
+Test 소유 tmux 자원과 임시 상태를 모두 제거하고, 이어 일회용 checkout, packet과
+build/log 파일도 삭제했다. 실제 keyboard, IME의 조합 중 문자열·확정 과정과 terminal
+Command-V는 아직 검증하지 않았다.
 
 ## macOS 실제 host 증거
 
@@ -160,6 +442,48 @@ alternate screen을 해제했으며 기준 termios와 일치했다. 각 `fg` 뒤
 pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다시
 획득했다. 중첩 session 종료 뒤 바깥 로컬 PTY도 복원됐다. 이 SSH 관찰은
 실제 원격 host를 사용했으며 일반 test set이 아니라 증거 기록이다.
+
+### 현재 Apple Silicon 빌드와 입력 검사
+
+2026-09-11 `f57e61e5` 기반 수정 트리를 macOS 26.6.2 arm64에서 고정된
+`nightly-2026-05-22` toolchain으로 검사했다.
+
+Native core suite는 706개 검사가 통과했다. CLI 검사는 unit test 524개와 integration
+test 7개가 통과했고 환경 검사 18개는 ignored였다. `yo-core`,
+`yo-backend-delegated-grok`, `yo-cli`의 Clippy, host-target Unix matrix와 native
+오프라인 `chat_preview` 빌드도 통과했다. Linux에서는 core 706개, Grok 64개, CLI
+unit test 532개와 integration test 7개가 통과했다. 변경한 workspace-reference
+fixture는 별도의 집중 검사 31개를 통과했다. 이 수치는 중복되므로 독립적인 검사
+범위인 것처럼 합산하지 않는다.
+
+사용자가 Mac tmux pane에 오프라인 실행 파일을 열고 해당 창의 자동 입력을
+명시적으로 요청했다. 주입한 입력으로 한글 텍스트, 커서 이동, Backspace와 삽입,
+bracketed 여러 줄 붙여넣기, 초안 지우기, 빈 입력의 `Ctrl+D` 종료, 이후 셸 명령과
+canonical 입력·echo 복구를 확인했다. 사용자 소유 tmux pane은 셸에 남겨 두었다.
+Native preview 바이너리 SHA256은
+`34ebe6cf4633d15e36d826ff8ce9774ec63aa2a7014027a35fa753cd6eb04a85`다.
+모델 요청이나 계정 접근은 없었다. 이는 실제 Mac tmux 경로에서 입력을 주입한
+검사이며, 물리 키보드·IME 조합·터미널 앱의 Command-V는
+[직접 입력 검증](#현재-mac-직접-입력-검증)에서 별도로 확인했다.
+
+임시 체크아웃, 소스 전송 파일과 테스트 프로세스를 정리했다. 사용자의 tmux Session과
+기존 클립보드 설치는 보존했다.
+
+## 현재 Mac 직접 입력 검증
+
+2026-09-13에 설정된 arm64 Mac에서 후보 `fb396aa0`를 locked dependency로
+빌드했다. 사용자의 기존 tmux pane `%17` (`mac_yo`)에서 한영 전환, IME 조합과
+Backspace, 방향키 편집, 터미널의 실제 Command-V를 통한 두 줄 붙여넣기가
+모두 정상임을 사용자가 확인했다. Ctrl+C와 빈 입력의 Ctrl+D는 각각 status 0으로
+종료됐으며, macOS의 queued-input `PENDIN` flag를 허용하고 기록된 termios
+복구를 확인했다. 검증 바이너리 SHA256은
+`f07383917d56c280750e7524207832cb48f32ab1e022a85ffa1676b086d509ad`다.
+
+실제 Fullscreen TUI는 가짜 인증과 격리된 설정·Session state를 사용했다.
+macOS native sandbox가 네트워크와 테스트 디렉터리 밖 쓰기를 차단했다.
+이는 물리 터미널 입력과 종료 검증이며 모델 서비스 검증은 아니다. 임시 체크아웃,
+빌드, 입력 state와 이전 바이너리의 실패 probe는 제거했다. 사용자의 tmux pane,
+설치된 Yo와 클립보드 설정은 보존했다.
 
 ## Mac 클립보드에서 Linux yo로
 

@@ -18,7 +18,7 @@ pub(super) struct ChatCompletionsSseDecoder {
     argument_bytes: usize,
     calls: BTreeMap<usize, ToolCall>,
     call_ids: HashSet<String>,
-    finish: Option<ModelConnectorTerminal>,
+    finish: Option<Finish>,
     usage: Option<ModelConnectorUsage>,
     done_seen: bool,
 }
@@ -27,6 +27,11 @@ struct ToolCall {
     id: String,
     name: String,
     arguments: String,
+}
+
+struct Finish {
+    reason: String,
+    status: ModelConnectorTerminal,
 }
 
 impl SseDecoder for ChatCompletionsSseDecoder {
@@ -111,7 +116,8 @@ impl ChatCompletionsSseDecoder {
         })?;
         let status = self
             .finish
-            .clone()
+            .as_ref()
+            .map(|finish| finish.status.clone())
             .ok_or_else(|| protocol_failure("Chat Completions stream has no finish reason"))?;
         let usage = self
             .usage
@@ -201,17 +207,6 @@ impl ChatCompletionsSseDecoder {
                 "Chat Completions stream must contain exactly one choice",
             ));
         }
-        if usage.is_some() {
-            return Err(protocol_failure(
-                "non-null Chat Completions usage appeared on a choice chunk",
-            ));
-        }
-        if self.finish.is_some() {
-            return Err(protocol_failure(
-                "Chat Completions choice data appeared after its finish reason",
-            ));
-        }
-
         let choice = &choices[0];
         if unsigned_at(choice, "index", "choice index")? != 0 {
             return Err(protocol_failure(
@@ -222,6 +217,15 @@ impl ChatCompletionsSseDecoder {
             .get("delta")
             .and_then(Value::as_object)
             .ok_or_else(|| protocol_failure("Chat Completions delta is not an object"))?;
+        if let Some(usage) = usage {
+            self.accept_accounting_choice(choice, delta, usage)?;
+            return Ok(emitted);
+        }
+        if self.finish.is_some() {
+            return Err(protocol_failure(
+                "Chat Completions choice data appeared after its finish reason",
+            ));
+        }
         let role = optional_string(delta.get("role"), "delta.role")?;
         if role.is_some_and(|role| role != "assistant") {
             return Err(protocol_failure(
@@ -344,9 +348,49 @@ impl ChatCompletionsSseDecoder {
                     ));
                 },
             };
-            self.finish = Some(status);
+            self.finish = Some(Finish {
+                reason: reason.to_owned(),
+                status,
+            });
         }
         Ok(emitted)
+    }
+
+    fn accept_accounting_choice(
+        &mut self,
+        choice: &Value,
+        delta: &serde_json::Map<String, Value>,
+        usage: &Value,
+    ) -> Result<(), ConnectorError> {
+        let finish = self.finish.as_ref().ok_or_else(|| {
+            protocol_failure("Chat Completions usage arrived before the finish reason")
+        })?;
+        if optional_string(choice.get("finish_reason"), "finish_reason")?
+            != Some(finish.reason.as_str())
+        {
+            return Err(protocol_failure(
+                "Chat Completions accounting choice changed or omitted the finish reason",
+            ));
+        }
+        if delta.keys().any(|key| key != "role" && key != "content") {
+            return Err(protocol_failure(
+                "Chat Completions accounting delta contains a prohibited field",
+            ));
+        }
+        if optional_string(delta.get("role"), "delta.role")?.is_some_and(|role| role != "assistant")
+        {
+            return Err(protocol_failure(
+                "Chat Completions delta role is not assistant",
+            ));
+        }
+        if optional_string(delta.get("content"), "delta.content")?
+            .is_some_and(|content| !content.is_empty())
+        {
+            return Err(protocol_failure(
+                "Chat Completions accounting delta contains non-empty content",
+            ));
+        }
+        self.accept_usage(decode_usage(usage)?)
     }
 
     fn accept_usage(&mut self, usage: ModelConnectorUsage) -> Result<(), ConnectorError> {

@@ -5,12 +5,13 @@ use yo_core::{
 
 use super::*;
 
+const COMPLETE_BINDING: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../yo-core/src/model_service/tests/openrouter-binding.json"
+));
+
 fn complete() -> CompleteModelBinding {
-    CompleteModelBinding::from_durable_json(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../yo-core/src/model_service/tests/openrouter-binding.json"
-    )))
-    .unwrap()
+    CompleteModelBinding::from_durable_json(COMPLETE_BINDING).unwrap()
 }
 fn snapshot() -> InputImageSnapshot {
     serde_json::from_str(r#"{"profile":"yo.input-image-rgba8-triangle/v1","mime_type":"image/png","width":1,"height":1,"byte_length":70,"sha256":"sha256:4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5","data_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="}"#).unwrap()
@@ -121,6 +122,40 @@ fn text_history_tool_result_and_summary_share_the_admitted_route() {
             .to_string()
             .contains("data:image")
     );
+}
+
+// 무료 endpoint가 거절하는 명시적 auto는 보내지 않고 승인된 도구와 routing은 보존한다.
+#[test]
+fn enabled_image_tools_use_automatic_default_without_a_tool_choice_parameter() {
+    let mut encoded: Value = serde_json::from_str(COMPLETE_BINDING).unwrap();
+    encoded["tool_capability_policy"] = json!("local-tools/v1");
+    let complete = CompleteModelBinding::from_durable_json(&encoded.to_string()).unwrap();
+    let policy = ImageWirePolicy::admit(&complete).unwrap().unwrap();
+    let tool = yo_core::FunctionTool::new(
+        "read_file",
+        "read one file",
+        json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}),
+    )
+    .unwrap();
+    let request = ModelConnectorRequest::new(
+        vec![ModelConnectorInputItem::MultimodalUser { parts: parts() }],
+        RequestToolExposure::enabled(vec![tool]),
+        2048,
+        None,
+    )
+    .unwrap();
+    let body = projected_body(&request, "model", Some(&policy), false).unwrap();
+    assert!(body.get("tool_choice").is_none());
+    assert_eq!(body["tools"][0]["function"]["name"], "read_file");
+    assert_eq!(
+        body["provider"],
+        encoded["optional_request_parameters"]["provider"]
+    );
+    assert_eq!(body["max_tokens"], 2048);
+    let tokens = projected_body(&request, "model", Some(&policy), true).unwrap();
+    assert!(tokens.get("tool_choice").is_none());
+    assert_eq!(tokens["tools"], body["tools"]);
+    assert_eq!(tokens["provider"], body["provider"]);
 }
 
 // 알려진 output cap과 no-tools 정책을 직접 Connector 경계에서도 강제한다.

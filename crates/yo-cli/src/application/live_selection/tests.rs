@@ -18,7 +18,9 @@ fn continue_selection_keeps_discovery_order_and_filters_execution_identity() {
     ];
 
     assert_eq!(
-        select_continue_from(sessions, host, &workspace),
+        select_continue_from(sessions, host, &workspace, |_| panic!(
+            "positive hints need no recovery"
+        )),
         Some(matching.session_id)
     );
 }
@@ -36,7 +38,75 @@ fn continue_selection_returns_none_without_an_eligible_workspace_candidate() {
         true,
     )];
 
-    assert_eq!(select_continue_from(sessions, host, &workspace), None);
+    assert_eq!(
+        select_continue_from(sessions, host, &workspace, |_| panic!(
+            "foreign identity must not be read"
+        )),
+        None
+    );
+}
+
+// checkpoint-only discovery의 Unknown은 full recovery 성공 뒤 최신 후보로 선택되어야 합니다.
+#[test]
+fn continue_selects_the_newest_checkpoint_only_candidate_after_recovery() {
+    let host = WorkspaceHostId::new().unwrap();
+    let workspace = HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap();
+    let mut checkpoint = candidate(2, host, workspace.clone(), false);
+    checkpoint.eligibility = ContinuationEligibility::Unknown;
+    let anchored = candidate(1, host, workspace.clone(), true);
+    let mut recovered = Vec::new();
+    let selected = select_continue_from(
+        [checkpoint.clone(), anchored],
+        host,
+        &workspace,
+        |session| {
+            recovered.push(session.session_id);
+            true
+        },
+    );
+    assert_eq!(selected, Some(checkpoint.session_id));
+    assert_eq!(recovered, [checkpoint.session_id]);
+}
+
+// 복구 불가능한 Unknown은 실행 후보가 아니며 기존 eligible Session의 순서가 보존됩니다.
+#[test]
+fn continue_skips_broken_unknown_history_without_promoting_it() {
+    let host = WorkspaceHostId::new().unwrap();
+    let workspace = HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap();
+    let mut broken = candidate(2, host, workspace.clone(), false);
+    broken.eligibility = ContinuationEligibility::Unknown;
+    let anchored = candidate(1, host, workspace.clone(), true);
+    assert_eq!(
+        select_continue_from([broken, anchored.clone()], host, &workspace, |_| false),
+        Some(anchored.session_id)
+    );
+}
+
+// 다른 Host/workspace와 명시적 unavailable은 Unknown fallback의 읽기를 유발하지 않습니다.
+#[test]
+fn continue_recovers_unknown_only_after_execution_identity_matches() {
+    let host = WorkspaceHostId::new().unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let workspace = HostWorkspacePath::normalize_local(&cwd).unwrap();
+    let mut foreign = candidate(3, WorkspaceHostId::new().unwrap(), workspace.clone(), false);
+    foreign.eligibility = ContinuationEligibility::Unknown;
+    let mut elsewhere = candidate(
+        2,
+        host,
+        HostWorkspacePath::normalize_local(cwd.parent().unwrap()).unwrap(),
+        false,
+    );
+    elsewhere.eligibility = ContinuationEligibility::Unknown;
+    let unavailable = candidate(1, host, workspace.clone(), false);
+    assert_eq!(
+        select_continue_from(
+            [foreign, elsewhere, unavailable],
+            host,
+            &workspace,
+            |_| panic!("unrelated history must not be read")
+        ),
+        None
+    );
 }
 
 // writer lease 획득부터 native backend 재개까지 어느 단계에서 실패해도 명시적
@@ -108,7 +178,11 @@ fn candidate(
 ) -> ContinueCandidate {
     ContinueCandidate {
         session_id: format!("01890f00-0000-7000-8000-{id:012}").parse().unwrap(),
-        eligible,
+        eligibility: if eligible {
+            ContinuationEligibility::Eligible
+        } else {
+            ContinuationEligibility::Unavailable
+        },
         host,
         workspace,
     }

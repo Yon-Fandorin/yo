@@ -19,6 +19,304 @@ fn final_usage(id: &str) -> String {
     }))
 }
 
+fn accounting_usage(id: &str, reason: &str, delta: Value) -> Value {
+    json!({
+        "id": id,
+        "choices": [{"index":0,"delta":delta,"finish_reason":reason,"native_finish_reason":"stop"}],
+        "usage": {"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}
+    })
+}
+
+fn stopped_decoder() -> ChatCompletionsSseDecoder {
+    let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+    decoder
+        .push(
+            event(json!({
+                "id":"accounting",
+                "choices":[{"index":0,"delta":{"content":"visible"},"finish_reason":"stop"}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap();
+    decoder
+}
+
+// accounting choice의 빈 content는 관찰을 재발행하지 않고 transport 분할에도 영향받지 않습니다.
+#[test]
+fn decodes_accounting_choice_at_every_transport_split_without_extra_observations() {
+    let stream = [
+        event(json!({"id":"accounting","choices":[{"index":0,"delta":{"content":"한글 🦀"},"finish_reason":null}]})),
+        event(json!({"id":"accounting","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})),
+        event(accounting_usage("accounting", "stop", json!({"role":"assistant","content":""}))),
+        "data: [DONE]\n\n".to_owned(),
+    ].concat();
+    let mut whole = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+    let mut expected = whole.push(stream.as_bytes()).unwrap();
+    expected.extend(whole.finish().unwrap());
+    assert_eq!(
+        expected
+            .iter()
+            .filter(|e| matches!(e, ModelConnectorEvent::TextDelta { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        expected
+            .iter()
+            .filter(|e| matches!(e, ModelConnectorEvent::MessageDone { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        expected
+            .iter()
+            .filter(|e| matches!(e, ModelConnectorEvent::Terminal { .. }))
+            .count(),
+        1
+    );
+    for split in 0..=stream.len() {
+        let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+        let mut observed = decoder.push(&stream.as_bytes()[..split]).unwrap();
+        observed.extend(decoder.push(&stream.as_bytes()[split..]).unwrap());
+        observed.extend(decoder.finish().unwrap());
+        assert_eq!(observed, expected, "split {split}");
+    }
+}
+
+// role/content omission·null·허용된 빈 문자열 조합 모두 새 output 없이 usage만 저장합니다.
+#[test]
+fn accepts_only_the_allowed_empty_accounting_delta_combinations() {
+    for role in [None, Some(Value::Null), Some(json!("assistant"))] {
+        for content in [None, Some(Value::Null), Some(json!(""))] {
+            let mut delta = serde_json::Map::new();
+            if let Some(role) = &role {
+                delta.insert("role".into(), role.clone());
+            }
+            if let Some(content) = content {
+                delta.insert("content".into(), content);
+            }
+            let mut decoder = stopped_decoder();
+            let observations = decoder
+                .push(
+                    event(accounting_usage("accounting", "stop", Value::Object(delta))).as_bytes(),
+                )
+                .unwrap();
+            assert!(observations.is_empty());
+            assert!(decoder.push(b"data: [DONE]\n\n").unwrap().is_empty());
+            let terminal = decoder.finish().unwrap();
+            assert!(
+                matches!(terminal.as_slice(), [ModelConnectorEvent::Terminal { status:ModelConnectorTerminal::Completed, usage, .. }] if usage.input_tokens == Some(4) && usage.output_tokens == Some(3) && usage.total_tokens == Some(7))
+            );
+        }
+    }
+}
+
+// semantic finish에서 이미 관찰한 tool call은 accounting choice로 다시 실행될 수 없습니다.
+#[test]
+fn accounting_choice_does_not_repeat_tool_call_or_message_completion() {
+    let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+    let observations = decoder.push(event(json!({
+        "id":"tools-accounting",
+        "choices":[{"index":0,"delta":{"content":"checking","tool_calls":[{
+            "index":0,"id":"call-once","type":"function","function":{"name":"read_file","arguments":"{}"}
+        }]},"finish_reason":"tool_calls"}]
+    })).as_bytes()).unwrap();
+    assert_eq!(
+        observations
+            .iter()
+            .filter(|e| matches!(e, ModelConnectorEvent::FunctionCallStarted { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        observations
+            .iter()
+            .filter(|e| matches!(e, ModelConnectorEvent::FunctionCallDone { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        observations
+            .iter()
+            .filter(|e| matches!(e, ModelConnectorEvent::MessageDone { .. }))
+            .count(),
+        1
+    );
+    assert!(
+        decoder
+            .push(
+                event(accounting_usage(
+                    "tools-accounting",
+                    "tool_calls",
+                    json!({})
+                ))
+                .as_bytes()
+            )
+            .unwrap()
+            .is_empty()
+    );
+    decoder.push(b"data: [DONE]\n\n").unwrap();
+    assert!(matches!(
+        decoder.finish().unwrap().as_slice(),
+        [ModelConnectorEvent::Terminal {
+            status: ModelConnectorTerminal::Completed,
+            ..
+        }]
+    ));
+}
+
+// null을 포함한 금지 필드와 잘못된 role/content는 usage 저장이나 output 관찰 전에 거절합니다.
+#[test]
+fn rejects_prohibited_and_malformed_accounting_deltas() {
+    let mut deltas = vec![
+        json!(null),
+        json!([]),
+        json!({"role":"user"}),
+        json!({"role":""}),
+        json!({"role":1}),
+        json!({"content":" "}),
+        json!({"content":"output"}),
+        json!({"content":1}),
+        json!({"content":[]}),
+    ];
+    for name in [
+        "refusal",
+        "reasoning_content",
+        "reasoning",
+        "tool_calls",
+        "unknown",
+    ] {
+        for value in [Value::Null, json!("")] {
+            let mut delta = serde_json::Map::new();
+            delta.insert(name.into(), value);
+            deltas.push(Value::Object(delta));
+        }
+    }
+    for delta in deltas {
+        let mut decoder = stopped_decoder();
+        let batch = decoder
+            .push_batch(event(accounting_usage("accounting", "stop", delta.clone())).as_bytes());
+        assert!(batch.events.is_empty(), "delta {delta}");
+        assert_eq!(
+            batch.failure.unwrap().kind(),
+            ConnectorFailureKind::Protocol,
+            "delta {delta}"
+        );
+        assert!(decoder.usage.is_none());
+    }
+}
+
+// 같은 응답·index·finish·합계만 허용하고, 선행/동시 usage는 새 finish가 될 수 없습니다.
+#[test]
+fn rejects_accounting_identity_finish_and_usage_mismatches() {
+    let good = accounting_usage("accounting", "stop", json!({}));
+    let mut bad = Vec::new();
+    for id in [json!("different"), json!(null)] {
+        let mut v = good.clone();
+        v["id"] = id;
+        bad.push(v);
+    }
+    for index in [json!(1), json!(-1), json!(null), json!(0.5)] {
+        let mut v = good.clone();
+        v["choices"][0]["index"] = index;
+        bad.push(v);
+    }
+    for reason in [json!("length"), json!("tool_calls"), json!(null), json!(3)] {
+        let mut v = good.clone();
+        v["choices"][0]["finish_reason"] = reason;
+        bad.push(v);
+    }
+    let mut omitted = good.clone();
+    omitted["choices"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("finish_reason");
+    bad.push(omitted);
+    let mut two = good.clone();
+    two["choices"]
+        .as_array_mut()
+        .unwrap()
+        .push(good["choices"][0].clone());
+    bad.push(two);
+    for usage in [
+        json!({}),
+        json!({"prompt_tokens":-1,"completion_tokens":3,"total_tokens":2}),
+        json!({"prompt_tokens":4,"completion_tokens":3,"total_tokens":8}),
+        json!({"prompt_tokens":"4","completion_tokens":3,"total_tokens":7}),
+    ] {
+        let mut v = good.clone();
+        v["usage"] = usage;
+        bad.push(v);
+    }
+    for value in bad {
+        let mut decoder = stopped_decoder();
+        assert_eq!(
+            decoder
+                .push(event(value.clone()).as_bytes())
+                .unwrap_err()
+                .kind(),
+            ConnectorFailureKind::Protocol,
+            "chunk {value}"
+        );
+        assert!(decoder.usage.is_none());
+    }
+    for delta in [json!({}), json!({"content":"same-frame finish"})] {
+        let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+        assert_eq!(
+            decoder
+                .push(event(accounting_usage("accounting", "stop", delta)).as_bytes())
+                .unwrap_err()
+                .kind(),
+            ConnectorFailureKind::Protocol
+        );
+        assert!(decoder.finish.is_none());
+    }
+}
+
+// empty-choice와 accounting-choice 어느 조합으로도 usage는 정확히 한 번만 허용합니다.
+#[test]
+fn rejects_duplicate_usage_in_either_or_mixed_accounting_shapes() {
+    let empty = final_usage("accounting");
+    let choice = event(accounting_usage("accounting", "stop", json!({})));
+    for first in [&empty, &choice] {
+        for second in [&empty, &choice] {
+            let mut decoder = stopped_decoder();
+            assert!(decoder.push(first.as_bytes()).unwrap().is_empty());
+            assert_eq!(
+                decoder.push(second.as_bytes()).unwrap_err().kind(),
+                ConnectorFailureKind::Protocol
+            );
+        }
+    }
+    let mut decoder = stopped_decoder();
+    decoder.push(choice.as_bytes()).unwrap();
+    let ordinary = event(
+        json!({"id":"accounting","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}),
+    );
+    assert_eq!(
+        decoder.push(ordinary.as_bytes()).unwrap_err().kind(),
+        ConnectorFailureKind::Protocol
+    );
+}
+
+// accounting 수용 뒤에도 DONE 누락·조기 도착·sentinel 뒤 data는 실패입니다.
+#[test]
+fn accounting_usage_keeps_done_and_trailing_data_requirements() {
+    let usage = event(accounting_usage("accounting", "stop", json!({})));
+    let mut missing = stopped_decoder();
+    missing.push(usage.as_bytes()).unwrap();
+    assert!(missing.finish().is_err());
+    let mut early = stopped_decoder();
+    assert!(early.push(b"data: [DONE]\n\n").is_err());
+    let mut trailing = stopped_decoder();
+    trailing.push(usage.as_bytes()).unwrap();
+    trailing.push(b"data: [DONE]\n\n").unwrap();
+    assert_eq!(
+        trailing.push(usage.as_bytes()).unwrap_err().kind(),
+        ConnectorFailureKind::Protocol
+    );
+}
+
 // refusal delta와 finish·usage·DONE 순서를 모두 만족한 stream만 resumable terminal을 냅니다.
 #[test]
 fn decodes_visible_refusal_and_exact_terminal_sequence() {
@@ -272,7 +570,7 @@ fn rejects_missing_usage_changed_ids_and_truncated_streams() {
     assert!(truncated.finish().is_err());
 }
 
-// length와 content_filter는 partial message를 닫되 completed와 다른 terminal 종류를 유지합니다.
+// 두 accounting 모양 모두 length/content_filter의 partial message와 실패 terminal을 유지합니다.
 #[test]
 fn preserves_incomplete_and_failed_terminal_kinds() {
     for (finish_reason, expected) in [
@@ -291,29 +589,34 @@ fn preserves_incomplete_and_failed_terminal_kinds() {
             },
         ),
     ] {
-        let stream = [
+        for usage in [
+            final_usage("terminal-kind"),
+            event(accounting_usage("terminal-kind", finish_reason, json!({}))),
+        ] {
+            let stream = [
             event(json!({
                 "id":"terminal-kind",
                 "choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":finish_reason}]
             })),
-            final_usage("terminal-kind"),
+            usage,
             "data: [DONE]\n\n".to_owned(),
         ]
         .concat();
-        let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
-        let mut events = decoder.push(stream.as_bytes()).unwrap();
-        events.extend(decoder.finish().unwrap());
-        assert!(events.iter().any(|event| matches!(
-            event,
-            ModelConnectorEvent::MessageDone {
-                output_index: 0,
-                ..
-            }
-        )));
-        assert!(matches!(
-            events.last(),
-            Some(ModelConnectorEvent::Terminal { status, .. }) if status == &expected
-        ));
+            let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+            let mut events = decoder.push(stream.as_bytes()).unwrap();
+            events.extend(decoder.finish().unwrap());
+            assert!(events.iter().any(|event| matches!(
+                event,
+                ModelConnectorEvent::MessageDone {
+                    output_index: 0,
+                    ..
+                }
+            )));
+            assert!(matches!(
+                events.last(),
+                Some(ModelConnectorEvent::Terminal { status, .. }) if status == &expected
+            ));
+        }
     }
 }
 
