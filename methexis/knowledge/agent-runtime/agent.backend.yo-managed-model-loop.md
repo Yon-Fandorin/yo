@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:ca018906e2161173cf019fe64d7dce5c50a627405aad8b4414a6f401bc8f2583
+    revision: sha256:b696450be5be8dbeb14d1b5ec8c079b736d48935bd195defbca41e7871b8fa72
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -100,6 +100,32 @@ selected policy identity in every admission, pressure and checkpoint path.
 All preceding and following image-aware failure, protected-replay, recount,
 one-summary and persistence rules apply unchanged. This additional policy
 MUST activate with its matching service-binding and Chat Completions revisions.
+
+The additional policy `qwencloud-general-image-advisory/v1`, selected only by
+the admitted `qwencloud-general-png-advisory/v1` complete binding, uses the same
+explicit planning formula with its own policy identity. T is the selected
+Chat Connector's complete image-free tokenization projection count after final
+request-local tool exposure, selected output-cap and both declared boolean
+options have been serialized; N is every immutable PNG occurrence in that
+request, including repetitions, retained history and image-summary sources.
+Input estimate is the checked unsigned-64-bit sum T + 2000*N. Reserve is 1024
+when N is positive and zero otherwise, charged once for the complete request.
+Quality is `advisory_estimate` even with zero images. These constants remain a
+local planning heuristic, not measured usage, a calibrated visual tokenizer or
+an upper bound. No base64-as-text estimate or remote estimator is admitted.
+
+The backend selects the service-admitted typed policy without branching on
+Provider or Model and preserves its exact identity and four-field accounting
+result at every input, tool-result, approval, steering, summary, pressure,
+checkpoint, resume and replacement boundary. It applies the existing selected
+output-cap recount and planning-count-plus-cap fit check against the complete
+binding's 991808 local input limit; no server-acceptance guarantee follows.
+The Connector's independent complete-request media and encoded-byte bounds
+must also pass. Overflow rejects before dispatch. All preceding and following
+protected-replay, uncertain-Anchor, failure, one-summary, immutable-input and
+storage rules remain unchanged, and actual provider usage never relabels an
+advisory planning result or establishes a free billing class. This policy MUST
+activate with its exact compatible service-binding and Chat Connector revisions.
 
 Warning/trigger percentages and output-budget checks consume the complete
 planning count. A known output maximum retains the existing final selected-cap

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.connector-002
-    revision: sha256:d0b1a5b4bd1c43b88e6d626f9614532d5eac3948cc64a86b5ad0797af4d71cbd
+    revision: sha256:2c34fedc82a77240e11ed5c6a3765380077e711b7974e6ae7214f0156501f1ad
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -96,6 +96,51 @@ response or a stream error is a failed request, never a completed assistant
 response or evidence that images should be removed. The additional projection
 MUST activate with its compatible service-binding and managed-loop accounting
 revisions before it can admit image transport.
+
+### QwenCloud general PNG request policy
+
+The additional `qwencloud-general-png-advisory/v1` envelope is admitted only
+under the service-binding owner's exact endpoint, model and complete profile.
+It reuses the preceding ordered PNG, history, tool-result and image-summary
+projection with no new dialect. Both declared boolean options
+`enable_thinking: false` and `preserve_thinking: false` are serialized exactly
+at the top level on every request, including requests with zero images; neither
+SDK-only `extra_body` wrapping nor arbitrary optional-parameter passthrough is
+admitted. The image-free tokenization projection retains both options and all
+other final serialized non-image fields. Thinking and provider-private replay
+remain disabled; unexpected remote reasoning cannot become replay authority.
+
+For enabled request-local tool exposure, this envelope serializes the frozen
+function registry and exact `tool_choice: auto`; disabled exposure omits both.
+The existing OpenRouter image envelope continues to use automatic selection
+without explicit `tool_choice`, as required by its own admitted service policy.
+Selection comes from typed policy derived by complete-envelope admission, not
+a blanket rule for image-bearing requests or a Provider branch in the backend.
+The positive selected per-request output cap remains `max_tokens` and never
+exceeds the admitted 131072 maximum. Reasoning-effort overrides fail under this
+empty-reasoning envelope. No conflicting output/tool field or relaxed options
+may replace the admitted policy.
+
+In addition to the unchanged ordinary-input, replay and summary-source limits,
+the complete QwenCloud request admits at most 250 PNG occurrences, at most
+16,777,216 total canonical PNG bytes, and at most 33,554,432 encoded JSON request
+bytes. Counts include repetitions and retained history, not only the newest
+input. These finite local media/transport limits are checked on the actual
+complete projection before dispatch and also during tokenization/admission;
+image-free counting must not bypass them. A limit or checked-arithmetic overflow
+fails the request before transport. No truncation, image removal, splitting,
+fallback or resend repairs it. The already accepted separate summary cap of
+64 image occurrences and 16 MiB complete canonical source bytes still applies.
+Image preparation/admission failures preserve the existing draft behavior;
+failed historical replay or summary does not publish a fabricated successor.
+
+PNG support does not change the existing single-choice SSE grammar, exact
+correlation, mandatory final usage and `[DONE]`, deadlines, bounded decoding,
+cancellation or failed/incomplete-response Anchor exclusion. Its first
+activation MUST include the matching service-binding and managed-loop
+accounting revisions. Runtime support, projection tests and actual service
+evidence remain separate: direct API image success alone does not establish
+the Yo attachment, submission, compaction and fresh-resume journey.
 
 ## Rationale
 
