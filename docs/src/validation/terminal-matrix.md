@@ -176,9 +176,19 @@ the full workspace and Clippy passed. The binary SHA256 was
 The intermediary read the actual key only into memory from normal Yo credential
 storage; isolated Yo used a synthetic local key. The normal general API key and
 distinct Token Plan account were preserved. Disposable config, Sessions, socket,
-synthetic files, intermediary and TLS keys are removed after promoting the result.
+synthetic files, intermediary and TLS keys were removed after promoting the result.
 This is evidence for the bounded scenario, not a guarantee for every future
 summary or free-quota availability.
+
+Native Codex 0.154.0 reviewed implementation commit `d0a627cc` with
+`gpt-5.6-sol`, effort `high`, and returned `CLEAR` in Session
+`01a09ac4-b2b8-7e20-b2a5-c201131c69b4`. The first invocation failed while
+decoding the response body and produced no verdict; the user approved exactly
+one additional fresh-Session transmission of the same immutable 285,804-byte
+input (SHA256 `e366488e9fd3258b262f97ff86a830e566e0779e0ea9ab9fae9b5f53c4a2fcc5`).
+The chain used two native invocations, no reviewer tool calls, automatic retries,
+steer or fallback. The completed review reported 70,502 input and 2,077 output
+tokens; host cost was not reported. No finding-resolution round ran.
 
 ## QwenCloud free text summary and continuation
 

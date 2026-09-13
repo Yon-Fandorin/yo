@@ -164,8 +164,17 @@ managed backend 85개, core model service 176개와 전체 workspace·Clippy가 
 `ef9462786b6fb7dfccc40ad789bfa1a09440d3a880dcf54ffd60602f3ff4db46`다.
 실제 key는 일반 Yo 인증 저장소에서 메모리로만 읽었고 격리된 Yo는 합성 로컬 key를
 사용했다. 정상 일반 API key와 별도 Token Plan 계정은 보존했다. 임시 설정·Session·
-socket·합성 파일·중계·TLS key는 결과 승격 뒤 제거한다. 이 검증은 해당 제한
+socket·합성 파일·중계·TLS key는 결과 승격 뒤 제거했다. 이 검증은 해당 제한
 시나리오의 근거이며 모든 향후 요약이나 무료 쿼터 가용성을 보장하지 않는다.
+
+Native Codex 0.154.0이 구현 커밋 `d0a627cc`를 `gpt-5.6-sol`, effort `high`로
+검토하고 Session `01a09ac4-b2b8-7e20-b2a5-c201131c69b4`에서 `CLEAR`를 반환했다.
+첫 호출은 응답 본문 decoding 중 실패해 verdict가 없었다. 사용자는 같은 고정
+입력 285,804 bytes(SHA256
+`e366488e9fd3258b262f97ff86a830e566e0779e0ea9ab9fae9b5f53c4a2fcc5`)을 새 Session으로
+추가 1회 전송하도록 승인했다. 전체 native 호출은 2회였고 reviewer tool 호출·
+자동 재시도·steer·fallback은 없었다. 완료된 검토는 입력 70,502·출력 2,077 token을
+보고했으며 호스트 비용은 보고하지 않았다. Finding-resolution round는 없었다.
 
 ## QwenCloud 무료 텍스트 요약과 재개
 
