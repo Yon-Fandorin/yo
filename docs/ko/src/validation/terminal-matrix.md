@@ -24,6 +24,18 @@ cargo test -p yo-cli execution::process::termination::tests
 이 호스트 통합 검사는 일반 package test에 포함된다. 통과했다고 해서 tmux나
 SSH 동작까지 실행되었다는 뜻은 아니다.
 
+## 저장된 Mac의 큰 본문 페이지 검증
+
+2026-09-13에 clean 후보 `af16336de8836475af39022d08bf612d13955110`이
+저장된 Apple Silicon Mac의 `yo-tui` 검증 profile을 통과했다. 정확한 Git
+번들을 확인하고 pinned Rust toolchain으로 임시 checkout에서 빌드했다.
+Frame 테스트 6개, 크기 0 재진입 테스트 2개, all-target TUI 테스트 921개와
+통합 테스트 4개, all-target Clippy `-D warnings`가 통과했다. 개별 7만 행
+본문, 큰 표 값과 펼친 diff, 좁은 폭의 탐색, 완전한 페이지별 Inline 게시의
+실패 복구를 포함한다. 이 자동 Mac 검사는 실제 IME나 붙여넣기 키 검증을
+반복한 것은 아니다. 설치본과 정상 인증정보는 유지했고 소유한 checkout,
+번들과 runner는 제거했다.
+
 ## OpenRouter 이미지 사용 흐름
 
 [명시적 무료 이미지 정의](../workflows/provider-catalogs/openrouter.md#명시적-무료-이미지-연결)와
@@ -386,7 +398,7 @@ native 버전에서 비밀이 아닌 질문 두 개를 대기시킨 뒤 프로�
 
 ### 자동 거절과 네트워크 승인 범위
 
-같은 날 같은 Yo 바이너리와 공식 Codex `0.154.0`을 격리된 120×48 tmux TUI에서
+2026-09-11에 같은 Yo 바이너리와 공식 Codex `0.154.0`을 격리된 120×48 tmux TUI에서
 실행해 추가 Turn 열 번을 검증했다. 인증 정보 없는 로컬 Responses fixture가
 결정적인 도구 호출과 reviewer 응답을 제공했다. 로컬 model/reviewer HTTP 요청은
 20번이었고 실제 서비스 요청은 없었다. 이는 native 정책 실행, adapter 동작과

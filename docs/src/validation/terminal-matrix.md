@@ -25,6 +25,19 @@ cargo test -p yo-cli execution::process::termination::tests
 These host-integrated checks are part of the ordinary package test run. Their
 passing result does not imply that tmux or SSH behavior ran.
 
+## Large-body paging on the saved Mac
+
+On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`
+passed the saved Apple Silicon Mac's `yo-tui` validation profile. The exact
+Git bundle was checked and built in a disposable checkout with the pinned Rust
+toolchain. Frame tests (6), zero-size reentry tests (2), all-target TUI tests
+(921 unit and 4 integration tests) and all-target Clippy with `-D warnings`
+passed. The suite covers 70,000-row individual bodies, large table cells and
+expanded diffs, narrow-width navigation and complete paged Inline publication
+failure recovery. These automated Mac checks do not repeat physical IME or
+clipboard-key verification. The installed app and normal credentials were
+unchanged; the owned checkout, bundle and runner were removed.
+
 ## OpenRouter image journey
 
 Use the [explicit free image definition](../workflows/provider-catalogs/openrouter.md#explicit-free-image-connection)
@@ -424,7 +437,7 @@ persistence or transparent continuation of a dead request.
 
 ### Automatic refusal and network approval scopes
 
-On the same date, the same Yo binary and official Codex `0.154.0` passed ten
+On 2026-09-11, the same Yo binary and official Codex `0.154.0` passed ten
 additional turns through an isolated 120×48 tmux TUI. A credential-free local
 Responses fixture supplied deterministic tool calls and reviewer responses;
 there were 20 local model/reviewer HTTP requests and zero real-service requests.
