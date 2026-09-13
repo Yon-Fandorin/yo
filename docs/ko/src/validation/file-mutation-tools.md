@@ -87,6 +87,23 @@ cargo test --locked -p yo-cli write_file_rejects_nonregular_entries_without_repl
 수정한 오프라인 host SHA-256은
 `fe5a1a90f861e57925492829c724a9541fe81367b630472a4290b57b27712f30`이다.
 
+수정 candidate `1e98cba2`의 Linux CLI 전체 package는 unit·integration 그룹을
+합쳐 544개 통과·31개 ignored였다. 같은 candidate를 fingerprint가 확인된
+Apple Silicon Mac에서도 검사해 파일 도구 78개 통과·1개 ignored와 CLI
+all-target Clippy 통과를 확인했다. 정확한 임시 checkout·Git cache를 제거했다.
+Formatting·test 설명·workspace all-target Clippy·Unix compile·한영 문서
+검사가 통과했다. 다시 빌드한 stock Yo SHA-256은
+`22cb8cb9587a5fd1eebbb31e67372f8d3dc3cb73324c5b4afdbb95daa7e898a0`이다.
+
+네이티브 Codex `0.154.0`의 `gpt-5.6-sol`, effort `high`가 Session
+`01a0999f-8e2a-7880-a45e-a917bd3941e1`에서 정확한 수정 candidate를 독립적으로
+승인했다. 첫 리뷰 1회와 같은 Session의 지적 수정 검토 1회였으며 reviewer 도구
+호출은 없었다. 두 실행의 보고된 리뷰 usage 합계는 입력 233,144토큰(캐시
+72,192 포함), 출력 9,191토큰이었다. 인증된 리뷰 host는 무료 서비스 검증과
+별개이며 리뷰 비용 0을 주장하지 않는다. 서비스 검사 후 임시 일반 API 키와
+helper를 제거했다. 승인된 결과는 이 문서가 소유하며 로컬 실험·리뷰 captures는
+제거할 수 있는 cache다.
+
 원래 실제 matrix의 host SHA-256은
 `160e6367da5feb60a32ae420885ee0f979433ae50239b3ff2a31cc2e86fa9a51`이다.
 고정한 runner·bridge·fixture source SHA-256은 각각

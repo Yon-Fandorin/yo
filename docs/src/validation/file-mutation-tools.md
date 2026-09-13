@@ -98,6 +98,26 @@ cargo test --locked -p yo-cli write_file_rejects_nonregular_entries_without_repl
 The corrected offline host SHA-256 was
 `fe5a1a90f861e57925492829c724a9541fe81367b630472a4290b57b27712f30`.
 
+Fix candidate `1e98cba2` passed the full Linux CLI package: 544 tests passed,
+31 ignored across its unit and integration groups. The same candidate passed
+78 file-tool tests on the fingerprint-verified Apple Silicon Mac, with one
+ignored, and CLI all-target Clippy. Its exact temporary checkout and Git cache
+were removed. Formatting, test explanations, workspace all-target Clippy,
+Unix compile checks and EN/KO documentation checks passed. The rebuilt stock
+Yo SHA-256 was
+`22cb8cb9587a5fd1eebbb31e67372f8d3dc3cb73324c5b4afdbb95daa7e898a0`.
+
+Native Codex `0.154.0`, `gpt-5.6-sol` with effort `high`, independently
+accepted the exact fix candidate in Session
+`01a0999f-8e2a-7880-a45e-a917bd3941e1`. The chain contained one original
+review and one same-Session finding resolution, with zero reviewer tool calls.
+Reported review usage totaled 233,144 input tokens, including 72,192 cached,
+and 9,191 output tokens across both invocations. The authenticated review host
+is separate from the free service probes; no zero-cost review claim is made.
+The temporary general API key and its helpers were removed after the service
+checks. Accepted results are owned here; local experiment and review captures
+are disposable caches.
+
 The original live-matrix host SHA-256 was
 `160e6367da5feb60a32ae420885ee0f979433ae50239b3ff2a31cc2e86fa9a51`.
 Frozen runner, bridge and fixture source SHA-256 values were respectively
