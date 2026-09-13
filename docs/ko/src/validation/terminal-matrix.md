@@ -68,6 +68,24 @@ Connector test 34개와 managed backend test 84개가 통과했다.
 수정 없이 전달하고 구조적 사실과 usage만 기록했다. 일반 Yo 설정은 유지됐고
 임시 인증·Session state·합성 파일·socket·중계·TLS key는 제거했다.
 
+후속 제한 실행은 candidate `d2e48da0`에서 새 실제 요청 최대 4회 중 1회만
+사용하고 첫 Turn 실패로 중단했다. HTTP status 200을 관찰했지만 assistant
+내용과 최종 usage는 수집되지 않았다. Stream EOF만으로 의미적 정상 종료를
+판정하지 않는다. 요약이나 새 프로세스 재개에 도달하지 못했으므로 이전 marker
+누락 위치를 확인하지 못했으며 해당 요청의 보고 비용이 0이라고 주장하지 않는다.
+자동 재시도나 fallback 없이 중계와 격리된 상태를 제거했다.
+
+같은 candidate의 오프라인 실제 PTY 대조군은 서로 다른 Turn 3개, 이미지 인식
+checkpoint 1개와 새 프로세스 재개를 완료했다. 요약 입력·checkpoint 저장·재개
+입력의 정확한 marker를 비교했으며 재개 요청에 합성 요약 전체가 그대로 있었다.
+두 번의 종료 모두 status 0과 termios 복구를 확인했다. 이는 전송·복원 경계의
+검증이며 Provider 요약 충실도 검증은 아니다. 바이너리 SHA256은
+`266e7ba7a6d85271c7d42a91a68dbcac47e7ef5fee15fabac725fdaa0fdefaab`이며,
+managed context/replay 집중 test 26개도 통과했다.
+HTTP 200 안에 합성 SSE 오류 code 502를 전달한 음성 대조군도 실패한 Turn으로
+거절했다. termios를 복구하고 임시 상태를 제거했으며 HTTP status나 `[DONE]`만으로
+성공한 응답으로 집계하지 않았다.
+
 설정된 Mac은 profile compile·import, tmux 첨부와 SSH PTY lifecycle 검사를
 통과했다. 물리 키보드·IME·실제 Command-V는
 [직접 입력 검증](#현재-mac-직접-입력-검증)에서 통과했다. Mac 검사는 터미널
@@ -226,6 +244,11 @@ native 상태와 규칙을 제거하고 작업 폴더를 비웠으며, 소유한
 결정적인 도구 호출과 reviewer 응답을 제공했다. 로컬 model/reviewer HTTP 요청은
 20번이었고 실제 서비스 요청은 없었다. 이는 native 정책 실행, adapter 동작과
 TUI 표시 결과를 검증하며 서비스 model의 위험 분류 정확도를 측정하지 않는다.
+
+자동승인 위험 분류의 실제 서비스 검증은 미확인 상태이며 이 검사에 사용할 무료
+Codex 서비스 경로는 확인되지 않았다. 이는 작업에 맞는 독립 코드 리뷰 model을
+선택하는 일과 별개다. 기존 fixture 결과만으로 실제 reviewer가 같은 결정을
+내린다고 주장하지 않는다.
 
 네트워크 검사는 native proxy를 활성화한 이름 있는 permission profile과 격리된
 `[experimental_network]` requirements fixture를 사용했다. Mount namespace로 임시

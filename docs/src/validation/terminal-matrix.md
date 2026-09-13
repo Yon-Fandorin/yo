@@ -75,6 +75,26 @@ SSE unchanged, recording only structural facts and usage. Ordinary Yo
 configuration was unchanged, and temporary credentials, Session state, synthetic
 files, sockets, intermediary and TLS keys were removed.
 
+A bounded follow-up on candidate `d2e48da0` used one of at most four new live
+requests and stopped on a failed first Turn. HTTP status 200 was observed, but
+no assistant content or final usage was captured. Stream EOF alone is not a
+successful semantic terminal. The run never reached summary or fresh
+continuation, so it neither locates the earlier marker loss nor establishes
+zero reported cost for that request. No automatic retry or fallback ran, and
+the proxy and isolated state were removed.
+
+On the same candidate, an offline real-PTY oracle completed three distinct
+Turns, one image-aware checkpoint and fresh-process continuation. It compared
+the literal marker in summary input, checkpoint storage and resumed input;
+the exact synthetic summary was present in the resumed request. Both exits
+returned status 0 and restored termios. This verifies the transport and recovery
+seams, not provider summary fidelity. The binary SHA256 was
+`266e7ba7a6d85271c7d42a91a68dbcac47e7ef5fee15fabac725fdaa0fdefaab`, and all
+26 focused managed context/replay tests passed.
+An HTTP-200 response carrying a synthetic SSE error code 502 was also rejected
+as a failed Turn. The negative control restored termios and removed its state;
+it did not count the HTTP status or `[DONE]` alone as a successful response.
+
 The configured Mac also passed profile compile/import, tmux attachment and SSH
 PTY lifecycle checks. Physical keys, IME and actual Command-V passed the
 [direct input verification](#current-mac-direct-input-verification). These Mac
@@ -249,6 +269,11 @@ Responses fixture supplied deterministic tool calls and reviewer responses;
 there were 20 local model/reviewer HTTP requests and zero real-service requests.
 This verifies native policy execution, adapter behavior and visible TUI results;
 it does not measure the service model's risk classification.
+
+Actual-service automatic-approval risk classification remains unverified; no
+free Codex service route was established for this check. This is separate from
+choosing an independent code-review model for a task. The existing fixture
+results do not claim the real reviewer will make the same decisions.
 
 Network cases used a named permission profile with the native proxy enabled and
 an isolated `[experimental_network]` requirements fixture. A mount namespace
