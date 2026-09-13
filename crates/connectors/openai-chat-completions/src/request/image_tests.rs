@@ -5,6 +5,8 @@ use yo_core::{
 
 use super::*;
 
+mod qwen;
+
 const COMPLETE_BINDING: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../yo-core/src/model_service/tests/openrouter-binding.json"

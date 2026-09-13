@@ -57,57 +57,15 @@ once without repeating output or changing the earlier terminal status.
 `[DONE]`, sum validation, limits and rejection of duplicate/trailing data remain
 mandatory. Connector tests (34) and managed-backend tests (84) passed.
 
-The live binary SHA256 was
-`9e9a7e2443ec20009ca70cd339ba47974beef85d393b26207a2550331d952575`. Sixteen
-actual requests were recorded: twelve diagnostics before the selector correction
-and four requests validating the corrected implementation. Two earlier responses
-were cancelled by the harness and are excluded from completion evidence; their
-final usage was not observed. The initial harness replayed historical snapshot
-records and also blocked on undrained PTY output. The CLI now recovers matching
-checkpoint-only discovery candidates read-only before selecting them;
-unsupported, unavailable and unrelated execution identities are not promoted.
-The final scenario deduplicated Journal sequences and checked the exact new Turn
-id and response facts. The image colors survived; the final response did not
-contain the exact initial marker. Full summary fidelity is therefore not
-established, and no defect in replay serialization was established by this run.
-Every observed completed usage report had cost 0; all requests retained the
-closed free route. No provider retry or fallback ran. The intermediary forwarded
-SSE unchanged, recording only structural facts and usage. Ordinary Yo
-configuration was unchanged, and temporary credentials, Session state, synthetic
-files, sockets, intermediary and TLS keys were removed.
-
-A bounded follow-up on candidate `d2e48da0` used one of at most four new live
-requests and stopped on a failed first Turn. HTTP status 200 was observed, but
-no assistant content or final usage was captured. Stream EOF alone is not a
-successful semantic terminal. The run never reached summary or fresh
-continuation, so it neither locates the earlier marker loss nor establishes
-zero reported cost for that request. No automatic retry or fallback ran, and
-the proxy and isolated state were removed.
-
-A new remaining-work run on `06d3b4db` used two of its four-request ceiling
-and stopped on the second Turn. The first image response completed with the
-exact initial marker: 1,278 input + 139 output tokens, 1,417 total, reported
-cost 0. The second request returned HTTP 200 with an embedded SSE error code
-502, no semantic finish or final usage. Summary and continuation were not
-reached. The completed first answer does not locate the earlier summary marker
-loss. This run retained the exact NVIDIA-only free policy, with no automatic
-retry or fallback; its error ended the run. Yo exited zero and restored termios;
-the proxy and disposable state were removed. The current binary was the
-`78fa40e5…` artifact identified in the Qwen summary section below. On that same
-artifact, offline success and embedded-502 controls passed with zero inference
-requests and verified checkpoint/final-Journal byte equality.
-
-On the same candidate, an offline real-PTY oracle completed three distinct
-Turns, one image-aware checkpoint and fresh-process continuation. It compared
-the literal marker in summary input, checkpoint storage and resumed input;
-the exact synthetic summary was present in the resumed request. Both exits
-returned status 0 and restored termios. This verifies the transport and recovery
-seams, not provider summary fidelity. The binary SHA256 was
-`266e7ba7a6d85271c7d42a91a68dbcac47e7ef5fee15fabac725fdaa0fdefaab`, and all
-26 focused managed context/replay tests passed.
-An HTTP-200 response carrying a synthetic SSE error code 502 was also rejected
-as a failed Turn. The negative control restored termios and removed its state;
-it did not count the HTTP status or `[DONE]` alone as a successful response.
+Earlier diagnostics observed a missing marker, unobserved final usage for
+interrupted responses, and an embedded SSE error 502 despite HTTP 200. They did
+not establish a replay-serialization defect. The final run below establishes
+summary fidelity for its bounded scenario. The CLI validates matching
+checkpoint-only discovery candidates by read-only recovery; unsupported,
+unavailable and unrelated execution identities are not promoted. Offline real-PTY
+success and embedded-502 controls check exact checkpoint/final-Journal equality
+and termios restoration without inference. HTTP status or `[DONE]` alone never
+establishes successful semantic completion.
 
 The configured Mac also passed profile compile/import, tmux attachment and SSH
 PTY lifecycle checks. Physical keys, IME and actual Command-V passed the
@@ -165,11 +123,62 @@ answer. Response `resp_ebd49743-e297-4633-ad04-7b4f0154f692` reported 148 input
 and 56 output tokens, 204 total. This used the user-authorized subscription;
 no zero-cost or general-API free-quota claim is made.
 
-This passes Provider API image capability only. Yo has no admitted QwenCloud
-image profile, so attachment, TUI submission and image-aware continuation are
-unverified for this Provider. General-API free quota is separate from the
+This passes Provider API image capability only. The separate general API Yo
+image journey is verified below. General-API free quota is separate from the
 [Token Plan quota](https://www.alibabacloud.com/help/en/model-studio/new-free-quota).
 Temporary capability probes were removed after recording this result.
+
+## QwenCloud general image journey
+
+Use the [explicit general API image connection](../workflows/provider-catalogs/qwencloud.md#explicit-general-api-image-connection)
+and a real Linux PTY with the stock Fullscreen TUI to verify private-socket Ctrl+V,
+preview, submission, function tools, idle `/compact`, normal exit and fresh
+`--continue`. Keep the accepted exact Flash envelope without replacing it with
+a plan account or another model.
+
+On 2026-09-13, all five of the five permitted requests completed against
+`qwencloud:general:qwen3.8-flash` at the international Chat endpoint.
+Authenticated read-only quota checks observed `Free quota only` on both before
+and after execution. Free capacity decreased from 988,173 to 982,591 tokens,
+exactly matching completed usage. No provider setting change, redirect, retry
+or fallback ran. Responses had no cost field; no zero reported-cost claim is made.
+
+| Request | Input tokens | Output tokens | Total tokens |
+|---|---:|---:|---:|
+| PNG and real file tool call | 1024 | 48 | 1072 |
+| Correlated tool result and first answer | 1139 | 22 | 1161 |
+| Second Turn | 1207 | 22 | 1229 |
+| Image-bearing idle summary | 589 | 265 | 854 |
+| Fresh-process continuation | 1245 | 21 | 1266 |
+| Total | 5204 | 378 | 5582 |
+
+The synthetic 64 × 32 PNG's red-left/blue-right pixels were checked independently.
+A real `read_files` call id matched its completed result and the exact workspace
+marker contents. `YO_QWEN_IMAGE_LITERAL_81C64E2A` and both colors survived summary
+source, response, stored checkpoint, resumed input and the final sealed Journal.
+The checkpoint equalled the complete summary bytes; resumed input contained that
+exact summary, and the final Journal equalled the final response bytes. The first
+four requests each carried the same canonical PNG once; the resumed request had none.
+
+Both thinking options were exact boolean `false` on all five requests. Enabled
+tools used explicit `tool_choice: auto`; summary omitted tools and tool_choice.
+Every positive output cap was 131072. Each stream completed index 0, semantic
+finish, final usage and mandatory `[DONE]`. Three distinct Turns and one
+checkpoint completed. Both processes exited 0, left Fullscreen and restored
+exact termios. All four accounting fields survived the checkpoint; the
+image-free successor retained Qwen advisory policy with reserve 0.
+
+Offline success and HTTP-200 embedded-502 controls passed on the same binary
+without inference; the failed Turn never counted as a successful response.
+Chat Connector tests (39), managed backend (85), core model service (176),
+the full workspace and Clippy passed. The binary SHA256 was
+`ef9462786b6fb7dfccc40ad789bfa1a09440d3a880dcf54ffd60602f3ff4db46`.
+The intermediary read the actual key only into memory from normal Yo credential
+storage; isolated Yo used a synthetic local key. The normal general API key and
+distinct Token Plan account were preserved. Disposable config, Sessions, socket,
+synthetic files, intermediary and TLS keys are removed after promoting the result.
+This is evidence for the bounded scenario, not a guarantee for every future
+summary or free-quota availability.
 
 ## QwenCloud free text summary and continuation
 
@@ -214,8 +223,8 @@ The tested binary SHA-256 was
 Both live TUI exits were zero and restored terminal settings. The proxy, owned
 probe state, temporary key and review packet were removed; normal Yo/Codex
 configuration and credential files were unchanged during the live test. This
-passes the shared text summary/checkpoint/replay path. OpenRouter-specific
-marker loss and image-aware summary fidelity still require their own evidence.
+passes the shared text summary/checkpoint/replay path. Image-aware summary
+fidelity has separate OpenRouter and QwenCloud evidence on this page.
 
 ## Diagnose a managed request failure
 

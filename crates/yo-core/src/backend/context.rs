@@ -8,6 +8,9 @@ const IMAGE_CONTEXT_PRESSURE_SCHEMA: &str = "yo.context-pressure/v2alpha1";
 /// Reviewed advisory accounting identity, separate from input-image capability.
 pub const OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE: &str = "openrouter-free-image-advisory/v1";
 
+/// General API image estimates remain advisory even for an image-free request.
+pub const QWENCLOUD_GENERAL_IMAGE_ACCOUNTING_PROFILE: &str = "qwencloud-general-image-advisory/v1";
+
 /// Reviewed Kimi advisory accounting identity, separate from input-image capability.
 pub const KIMI_CODE_IMAGE_ACCOUNTING_PROFILE: &str = "kimi-code-image-advisory/v1";
 
@@ -61,7 +64,9 @@ impl ContextAccounting {
     ) -> Result<Self, &'static str> {
         if !matches!(
             policy.as_str(),
-            KIMI_CODE_IMAGE_ACCOUNTING_PROFILE | OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE
+            KIMI_CODE_IMAGE_ACCOUNTING_PROFILE
+                | OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE
+                | QWENCLOUD_GENERAL_IMAGE_ACCOUNTING_PROFILE
         ) || quality != ContextAccountingQuality::AdvisoryEstimate
             || !matches!(reserve_tokens, 0 | 1024)
             || input_estimate.checked_add(reserve_tokens).is_none()
@@ -422,6 +427,19 @@ mod tests {
         ] {
             assert!(ContextPressureObservation::from_snapshot_json(&malformed).is_none());
         }
+        let qwen_wire = wire.replace(
+            KIMI_CODE_IMAGE_ACCOUNTING_PROFILE,
+            QWENCLOUD_GENERAL_IMAGE_ACCOUNTING_PROFILE,
+        );
+        let qwen = ContextPressureObservation::from_snapshot_json(&qwen_wire).unwrap();
+        assert_eq!(qwen.to_snapshot_json(), qwen_wire);
+        assert_eq!(qwen.accounting().unwrap().reserve_tokens(), 0);
+        assert!(
+            ContextPressureObservation::from_snapshot_json(
+                &qwen_wire.replace("advisory_estimate", "verified_upper_bound")
+            )
+            .is_none()
+        );
     }
 
     // 완전한 요청 planning 합의 overflow·미승인 policy·호환되지 않는 quality는 거절한다.

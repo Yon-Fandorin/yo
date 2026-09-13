@@ -274,3 +274,74 @@ fn openrouter_image_binding_rejects_relaxed_routing_and_profile_changes() {
     assert_ne!(text, binding);
     assert!(text.profile().image_accounting_policy().is_none());
 }
+
+// 일반 API의 정확한 Flash envelope만 승인하고 aliases·Token Plan·thinking variant를 거절한다.
+#[test]
+fn qwencloud_image_binding_is_explicit_and_closed() {
+    let value: Value = serde_json::from_str(include_str!("qwencloud-image-binding.json")).unwrap();
+    let image = CompleteModelBinding::from_durable_json(&value.to_string()).unwrap();
+    let admitted = crate::admit_standard_complete_binding(&image).unwrap();
+    assert_eq!(
+        admitted.chat_image_policy(),
+        Some(crate::AdmittedChatImagePolicy::QwenCloudGeneralPng)
+    );
+    assert_eq!(
+        image.profile().image_accounting_policy().unwrap().as_str(),
+        crate::QWENCLOUD_GENERAL_IMAGE_ACCOUNTING_PROFILE
+    );
+    for (pointer, replacement) in [
+        ("/provider", json!("other")),
+        ("/account", json!("")),
+        (
+            "/base_url",
+            json!("https://coding-intl.dashscope.aliyuncs.com/v1"),
+        ),
+        (
+            "/base_url",
+            json!("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        ),
+        ("/model", json!("qwen3.8-max-0902")),
+        ("/model", json!("qwen3.8-flash-latest")),
+        ("/connector", json!("openai-responses")),
+        ("/input_token_limit", json!(991809)),
+        ("/max_output_tokens", json!(131073)),
+        ("/tokenizer_profile", json!("o200k_base/v1")),
+        ("/reasoning_parameters", json!({"effort":"high"})),
+        ("/replay_profile", json!("kimi-private-local-plaintext/v1")),
+        ("/optional_request_parameters", json!({})),
+        (
+            "/optional_request_parameters",
+            json!({"enable_thinking":false,"preserve_thinking":false,"extra":false}),
+        ),
+        ("/optional_request_parameters/enable_thinking", json!(true)),
+        ("/optional_request_parameters/enable_thinking", json!(0)),
+        (
+            "/optional_request_parameters/preserve_thinking",
+            json!(null),
+        ),
+        (
+            "/optional_request_parameters/preserve_thinking",
+            json!("false"),
+        ),
+    ] {
+        let mut changed = value.clone();
+        *changed.pointer_mut(pointer).unwrap() = replacement;
+        assert!(
+            CompleteModelBinding::from_durable_json(&changed.to_string()).is_err(),
+            "{pointer}"
+        );
+    }
+    let mut text = value;
+    text.as_object_mut().unwrap().remove("image_input_profile");
+    text["optional_request_parameters"] = json!({});
+    let text = CompleteModelBinding::from_durable_json(&text.to_string()).unwrap();
+    assert_eq!(text.binding(), image.binding());
+    assert_ne!(text, image);
+    assert!(text.profile().image_accounting_policy().is_none());
+    assert!(
+        crate::admit_standard_complete_binding(&text)
+            .unwrap()
+            .chat_image_policy()
+            .is_none()
+    );
+}

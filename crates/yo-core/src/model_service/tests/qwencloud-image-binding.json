@@ -1,0 +1,19 @@
+{
+  "provider": "qwencloud",
+  "account": "general",
+  "model": "qwen3.8-flash",
+  "connector": "openai-chat-completions",
+  "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  "api_dialect": "openai-chat-completions",
+  "tokenizer_profile": "utf8-bytes/v1",
+  "input_token_limit": 991808,
+  "max_output_tokens": 131072,
+  "reasoning_parameters": {},
+  "optional_request_parameters": {
+    "enable_thinking": false,
+    "preserve_thinking": false
+  },
+  "tool_capability_policy": "no-tools/v1",
+  "replay_profile": "semantic-only/v1",
+  "image_input_profile": "qwencloud-general-png-advisory/v1"
+}

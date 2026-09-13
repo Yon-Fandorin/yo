@@ -133,6 +133,10 @@ yo가 Ctrl+V 때 직접 연결하고 종료하므로 별도 실행기나 상시 
 OpenRouter의 NVIDIA Nemotron 3 Nano Omni 무료 모델도 명시적 이미지 연결로 사용할 수 있다.
 [연결 정의와 사용법](docs/ko/src/workflows/provider-catalogs/openrouter.md#명시적-무료-이미지-연결)에
 따라 추가한다. 이미지가 없는 요청에도 무료 경로 제한을 유지하며 자동 재시도하지 않는다.
+QwenCloud 일반 API의 `qwen3.8-flash`도
+[명시적 이미지 연결](docs/ko/src/workflows/provider-catalogs/qwencloud.md#explicit-general-api-image-connection)로
+사용할 수 있다. 일반 API key를 Yo에 저장해 재사용하며 Token Plan 계정과 분리한다.
+일반 API는 종량제이므로 무료 검증 전에 해당 모델의 무료 쿼터와 `Free quota only`를 확인한다.
 터미널의 픽셀 표시 지원은 모델의 이미지 입력 지원과 별개다.
 SSH에서 `/attach`의 경로는 yo를 실행하는 원격 호스트에 있어야 한다.
 이미지 연결의 컨텍스트 수치는 추정값과 요청당 여유분을 구분해 표시하며, 실제 사용량으로 간주하지 않는다.

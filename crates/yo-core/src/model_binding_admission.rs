@@ -38,10 +38,18 @@ pub enum AdmittedReplayProfile {
     ProviderPrivateLocalPlaintext,
 }
 
+/// Wire behavior selected only after validating the complete Chat service envelope.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdmittedChatImagePolicy {
+    OpenRouterFreePng,
+    QwenCloudGeneralPng,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AdmittedCompleteBinding {
     profile: AdmittedModelProfile,
     replay_profile: AdmittedReplayProfile,
+    chat_image_policy: Option<AdmittedChatImagePolicy>,
 }
 
 impl AdmittedCompleteBinding {
@@ -52,6 +60,7 @@ impl AdmittedCompleteBinding {
         Self {
             profile,
             replay_profile,
+            chat_image_policy: None,
         }
     }
 
@@ -61,6 +70,16 @@ impl AdmittedCompleteBinding {
 
     pub const fn replay_profile(self) -> AdmittedReplayProfile {
         self.replay_profile
+    }
+
+    /// Reports a trusted validator's Chat image outcome; does not validate a binding.
+    pub const fn with_chat_image_policy(mut self, policy: AdmittedChatImagePolicy) -> Self {
+        self.chat_image_policy = Some(policy);
+        self
+    }
+
+    pub const fn chat_image_policy(self) -> Option<AdmittedChatImagePolicy> {
+        self.chat_image_policy
     }
 }
 

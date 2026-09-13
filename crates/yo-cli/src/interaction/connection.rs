@@ -163,6 +163,23 @@ impl ProfileDetails {
                 style,
             )?;
         }
+        if image_input == yo_core::QWENCLOUD_GENERAL_IMAGE_INPUT_PROFILE {
+            push_detail_field(output, "Image endpoint", &self.endpoint, width, style)?;
+            push_detail_field(
+                output,
+                "Thinking",
+                "Disabled; semantic replay only",
+                width,
+                style,
+            )?;
+            push_detail_field(
+                output,
+                "Metering",
+                "General API is metered; free quota availability is determined by QwenCloud",
+                width,
+                style,
+            )?;
+        }
         Ok(())
     }
 

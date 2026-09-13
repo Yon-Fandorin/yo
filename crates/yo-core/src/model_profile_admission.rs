@@ -75,10 +75,16 @@ pub fn admit_standard_complete_binding(
     {
         return Err("Kimi complete bindings require connector-owned admission".to_owned());
     }
-    let admitted_profile = if profile
-        .image_input_profile()
-        .is_some_and(|image| image.as_str() == crate::OPENROUTER_FREE_IMAGE_INPUT_PROFILE)
-    {
+    let chat_images = match profile.image_input_profile().map(|image| image.as_str()) {
+        Some(crate::OPENROUTER_FREE_IMAGE_INPUT_PROFILE) => {
+            Some(crate::AdmittedChatImagePolicy::OpenRouterFreePng)
+        },
+        Some(crate::QWENCLOUD_GENERAL_IMAGE_INPUT_PROFILE) => {
+            Some(crate::AdmittedChatImagePolicy::QwenCloudGeneralPng)
+        },
+        _ => None,
+    };
+    let admitted_profile = if chat_images.is_some() {
         // CompleteModelBinding already checked the entire closed service envelope.
         let tools = match profile.tool_capability_policy().as_str() {
             LOCAL_TOOLS_PROFILE => AdmittedToolPolicy::LocalTools,
@@ -92,8 +98,7 @@ pub fn admit_standard_complete_binding(
     if profile.replay_profile().as_str() != SEMANTIC_REPLAY_PROFILE {
         return Err("non-Kimi complete bindings require exact semantic-only/v1 replay".to_owned());
     }
-    Ok(AdmittedCompleteBinding::new(
-        admitted_profile,
-        AdmittedReplayProfile::SemanticOnly,
-    ))
+    let admitted =
+        AdmittedCompleteBinding::new(admitted_profile, AdmittedReplayProfile::SemanticOnly);
+    Ok(chat_images.map_or(admitted, |policy| admitted.with_chat_image_policy(policy)))
 }

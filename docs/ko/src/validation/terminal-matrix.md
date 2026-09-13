@@ -54,49 +54,13 @@ usage를 한 번 기록하고 출력 중복이나 이전 종료 상태 변경은
 `[DONE]`, 합계 검증, 한도와 중복·후행 데이터 거절은 유지한다.
 Connector test 34개와 managed backend test 84개가 통과했다.
 
-실제 검증 바이너리 SHA256은
-`9e9a7e2443ec20009ca70cd339ba47974beef85d393b26207a2550331d952575`다.
-선택 수정 전 진단 12회와 수정 후 검증 4회로 총 16회 실제 요청을 기록했다.
-이전 harness는 snapshot의 과거 기록을 중복 집계하고 PTY 출력 소비 없이
-입력하며 막혔다. 취소된 이전 응답 2회는 완료 증거에서 제외하며 최종 usage를
-관찰하지 못했다. CLI는 같은 실행 identity의 checkpoint-only 후보를 읽기 전용
-복원으로 검증한 뒤 선택한다. 미지원·unavailable·다른 실행 identity는 승격하지 않는다.
-최종 시나리오는 Journal sequence를 중복 제거하고 정확한 새 Turn id와 응답의
-사실을 확인했다. 이미지 색상은 유지됐지만 최종 응답에 최초 marker가 정확히
-포함되지 않았다. 전체 요약 충실도는 증명되지 않았으며 이 실행만으로 replay
-직렬화 결함을 확정하지 않는다. 관찰한 모든 완료 usage의 보고 비용은 0이며 모든 요청이
-닫힌 무료 경로를 유지했다. Provider 재시도나 fallback은 없었다. 중계는 SSE를
-수정 없이 전달하고 구조적 사실과 usage만 기록했다. 일반 Yo 설정은 유지됐고
-임시 인증·Session state·합성 파일·socket·중계·TLS key는 제거했다.
-
-후속 제한 실행은 candidate `d2e48da0`에서 새 실제 요청 최대 4회 중 1회만
-사용하고 첫 Turn 실패로 중단했다. HTTP status 200을 관찰했지만 assistant
-내용과 최종 usage는 수집되지 않았다. Stream EOF만으로 의미적 정상 종료를
-판정하지 않는다. 요약이나 새 프로세스 재개에 도달하지 못했으므로 이전 marker
-누락 위치를 확인하지 못했으며 해당 요청의 보고 비용이 0이라고 주장하지 않는다.
-자동 재시도나 fallback 없이 중계와 격리된 상태를 제거했다.
-
-남은 작업 요청에 따른 새 `06d3b4db` 검증은 최대 4회 중 2회 요청을 사용하고
-두 번째 Turn에서 중단됐다. 첫 이미지 응답은 정확한 초기 marker를 포함해 완료됐으며
-입력 1,278 + 출력 139 = 전체 1,417토큰과 비용 0을 보고했다. 두 번째 요청은
-HTTP 200 안에 SSE 오류 code 502를 반환했고 semantic finish·최종 usage는 없었다.
-요약과 재개에는 도달하지 못했으므로 이전 요약의 marker 손실 위치를 확정하지 않는다.
-정확한 NVIDIA 단일 무료 정책을 유지하고 자동 재시도·fallback 없이 오류로 run을
-끝냈다. Yo 종료 status 0·termios 복원을 확인했으며 중계와 임시 상태를 제거했다.
-실행 파일은 아래 Qwen 요약 절에 명시한 `78fa40e5…` artifact다. 같은 artifact의
-오프라인 정상·embedded 502 대조군은 외부 추론 없이 통과했으며 checkpoint와
-최종 Journal의 정확한 bytes 일치를 확인했다.
-
-같은 candidate의 오프라인 실제 PTY 대조군은 서로 다른 Turn 3개, 이미지 인식
-checkpoint 1개와 새 프로세스 재개를 완료했다. 요약 입력·checkpoint 저장·재개
-입력의 정확한 marker를 비교했으며 재개 요청에 합성 요약 전체가 그대로 있었다.
-두 번의 종료 모두 status 0과 termios 복구를 확인했다. 이는 전송·복원 경계의
-검증이며 Provider 요약 충실도 검증은 아니다. 바이너리 SHA256은
-`266e7ba7a6d85271c7d42a91a68dbcac47e7ef5fee15fabac725fdaa0fdefaab`이며,
-managed context/replay 집중 test 26개도 통과했다.
-HTTP 200 안에 합성 SSE 오류 code 502를 전달한 음성 대조군도 실패한 Turn으로
-거절했다. termios를 복구하고 임시 상태를 제거했으며 HTTP status나 `[DONE]`만으로
-성공한 응답으로 집계하지 않았다.
+이전 진단에서 marker 누락, 중단된 응답의 최종 usage 미확인, HTTP 200 안의
+SSE 오류 502를 관찰했다. 오류만으로 replay 직렬화 결함을 확정하지 않는다.
+아래 최종 실행은 해당 제한 시나리오의 요약 충실도를 검증한다. CLI는 같은 실행
+identity의 checkpoint-only 후보를 읽기 전용 복구로 검증한 뒤 선택하며, 미지원·
+unavailable·다른 identity는 승격하지 않는다. 오프라인 정상·embedded 502
+실제 PTY 대조군은 외부 추론 없이 정확한 checkpoint·최종 Journal 일치와 termios
+복구를 확인한다. HTTP status나 `[DONE]`만으로 성공을 판정하지 않는다.
 
 설정된 Mac은 profile compile·import, tmux 첨부와 SSH PTY lifecycle 검사를
 통과했다. 물리 키보드·IME·실제 Command-V는
@@ -151,11 +115,57 @@ PNG의 왼쪽 빨강·오른쪽 파랑에 대해 HTTP 200, status `completed`인
 합계 204 token이었다. 사용자가 승인한 구독을 사용했으며 비용 0이나 일반 API
 무료 쿼터 사용을 주장하지 않는다.
 
-이는 Provider API의 이미지 기능만 통과한 결과다. Yo에는 승인된 QwenCloud
-image profile이 없어 이 Provider의 첨부·TUI 제출·이미지 인식 재개는 미검증이다.
+이는 Provider API의 이미지 기능만 통과한 결과다. Yo의 일반 API 이미지 사용 흐름은
+아래 별도 검증을 참고한다.
 일반 API 무료 쿼터는
 [Token Plan 쿼터와 별개다](https://www.alibabacloud.com/help/en/model-studio/new-free-quota).
 결과 기록 후 임시 기능 probe는 제거했다.
+
+## QwenCloud general image journey
+
+[명시적 일반 API 이미지 연결](../workflows/provider-catalogs/qwencloud.md#explicit-general-api-image-connection)을
+사용해 stock Fullscreen TUI의 실제 Linux PTY에서 private socket Ctrl+V·미리보기·
+제출·function tool 실행·idle `/compact`·정상 종료·새 `--continue`를 검증한다.
+현재 승인된 정확한 Flash envelope를 사용하고 plan 계정이나 다른 model로 대체하지 않는다.
+
+2026-09-13 `qwencloud:general:qwen3.8-flash`와 국제 Chat endpoint에서 최대 5회
+요청을 모두 완료했다. 인증된 읽기 전용 quota 확인에서 `Free quota only`는 실행 전후
+켜져 있었고 무료 잔여량은 988,173에서 982,591토큰으로 감소했다. 이 차이는 완료된
+usage 합계와 정확히 같다. Provider 설정 변경·redirect·재시도·fallback은 없었다.
+응답에 비용 필드는 없어 보고 비용을 0이라고 주장하지 않는다.
+
+| 요청 | 입력 토큰 | 출력 토큰 | 전체 토큰 |
+|---|---:|---:|---:|
+| PNG·실제 파일 tool 호출 | 1024 | 48 | 1072 |
+| 연결된 tool 결과·첫 답변 | 1139 | 22 | 1161 |
+| 두 번째 Turn | 1207 | 22 | 1229 |
+| 이미지가 포함된 idle 요약 | 589 | 265 | 854 |
+| 새 프로세스 재개 | 1245 | 21 | 1266 |
+| 합계 | 5204 | 378 | 5582 |
+
+합성 64 × 32 PNG의 왼쪽 빨강·오른쪽 파랑을 독립 확인했다. 실제 `read_files`의
+call id와 완료 결과를 연결하고 workspace의 정확한 marker 내용도 확인했다.
+`YO_QWEN_IMAGE_LITERAL_81C64E2A`와 두 색상이 요약 source·응답·저장 checkpoint·
+재개 입력·최종 봉인된 Journal까지 유지됐다. Checkpoint 본문은 전체 요약 bytes와
+같았고 재개 입력은 그 요약을 그대로 포함했으며 최종 Journal도 최종 응답 bytes와 같았다.
+앞선 요청 4개에는 같은 canonical PNG가 각각 1회 있었고 재개 요청에는 없었다.
+
+요청 5개 모두 두 thinking 옵션이 정확한 boolean `false`였다. 활성 tools는 명시적
+`tool_choice: auto`, 요약은 tools와 tool_choice 생략을 확인했다. 양수 output cap은
+매번 131072였다. 모든 stream은 index 0, semantic finish, 최종 usage, 필수 `[DONE]`을
+완료했다. 서로 다른 Turn 3개·checkpoint 1개가 완료됐고 두 프로세스는 exit 0,
+Fullscreen 해제와 정확한 termios 복구를 확인했다. Checkpoint 전후 네 accounting
+필드를 보존했고 압축 후 이미지가 없어도 Qwen advisory policy와 reserve 0을 유지했다.
+
+같은 바이너리의 오프라인 정상·HTTP-200 embedded-502 대조군은 외부 추론 0회로
+통과했다. 실패 Turn을 정상 응답으로 집계하지 않았다. Chat Connector 39개,
+managed backend 85개, core model service 176개와 전체 workspace·Clippy가 통과했다.
+바이너리 SHA256은
+`ef9462786b6fb7dfccc40ad789bfa1a09440d3a880dcf54ffd60602f3ff4db46`다.
+실제 key는 일반 Yo 인증 저장소에서 메모리로만 읽었고 격리된 Yo는 합성 로컬 key를
+사용했다. 정상 일반 API key와 별도 Token Plan 계정은 보존했다. 임시 설정·Session·
+socket·합성 파일·중계·TLS key는 결과 승격 뒤 제거한다. 이 검증은 해당 제한
+시나리오의 근거이며 모든 향후 요약이나 무료 쿼터 가용성을 보장하지 않는다.
 
 ## QwenCloud 무료 텍스트 요약과 재개
 
@@ -195,8 +205,8 @@ Managed backend test 85개가 모두 통과했다. 자동·idle 압축과 disk r
 
 실제 TUI 종료 2회는 exit 0이며 터미널 설정을 복원했다. Proxy·이번 probe 상태·
 임시 key·검토 패킷은 제거했고 실제 검사 중 일반 Yo/Codex 설정·인증 파일은
-바뀌지 않았다. 공통 텍스트 요약·checkpoint·replay 경로는 통과했으며 OpenRouter
-고유의 marker 누락과 이미지 인식 요약 충실도는 별도 증거가 필요하다.
+바뀌지 않았다. 공통 텍스트 요약·checkpoint·replay 경로는 통과했으며 이미지 인식
+요약 충실도는 이 페이지의 OpenRouter·QwenCloud 별도 검증을 참고한다.
 
 ## Managed 요청 실패 진단
 

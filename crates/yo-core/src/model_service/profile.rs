@@ -303,6 +303,9 @@ pub const KIMI_PRIVATE_REPLAY_PROFILE: &str = "kimi-private-local-plaintext/v1";
 /// Explicit image profile for the reviewed free OpenRouter envelope.
 pub const OPENROUTER_FREE_IMAGE_INPUT_PROFILE: &str = "openrouter-free-png-advisory/v1";
 
+/// Explicit PNG and advisory-accounting profile for the reviewed general API envelope.
+pub const QWENCLOUD_GENERAL_IMAGE_INPUT_PROFILE: &str = "qwencloud-general-png-advisory/v1";
+
 /// Explicit image and advisory-accounting profile for the reviewed Kimi Code envelope.
 pub const KIMI_CODE_IMAGE_INPUT_PROFILE: &str = "kimi-code-png-advisory/v1";
 
@@ -405,7 +408,9 @@ impl EffectiveModelProfile {
         if image_input_profile.as_ref().is_some_and(|profile| {
             !matches!(
                 profile.as_str(),
-                KIMI_CODE_IMAGE_INPUT_PROFILE | OPENROUTER_FREE_IMAGE_INPUT_PROFILE
+                KIMI_CODE_IMAGE_INPUT_PROFILE
+                    | OPENROUTER_FREE_IMAGE_INPUT_PROFILE
+                    | QWENCLOUD_GENERAL_IMAGE_INPUT_PROFILE
             )
         }) {
             return Err(ModelServiceError::new("unsupported image_input_profile"));
@@ -462,6 +467,9 @@ impl EffectiveModelProfile {
         let policy = match self.image_input_profile()?.as_str() {
             KIMI_CODE_IMAGE_INPUT_PROFILE => crate::KIMI_CODE_IMAGE_ACCOUNTING_PROFILE,
             OPENROUTER_FREE_IMAGE_INPUT_PROFILE => crate::OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE,
+            QWENCLOUD_GENERAL_IMAGE_INPUT_PROFILE => {
+                crate::QWENCLOUD_GENERAL_IMAGE_ACCOUNTING_PROFILE
+            },
             _ => return None,
         };
         Some(VersionedProfileId::new(policy).expect("reviewed accounting identity"))

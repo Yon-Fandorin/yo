@@ -359,3 +359,38 @@ fn openrouter_image_profile_round_trips_and_keeps_free_parameters() {
         assert_eq!(fs::read_to_string(repository.path()).unwrap(), changed);
     }
 }
+
+// 연결 저장 뒤 새 reader도 같은 이미지 identity와 boolean variant를 복원하고 잘못된 variant는
+// 거절한다.
+#[test]
+fn qwencloud_general_image_profile_survives_connection_storage() {
+    let (_directory, repository) = repository("qwencloud-image-profile");
+    let complete = CompleteModelBinding::from_durable_json(include_str!(
+        "../../tests/qwencloud-image-binding.json"
+    ))
+    .unwrap();
+    let account = ConnectionAccount::new(
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("general").unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    let binding = StoredModelBinding::new(complete, None).unwrap();
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_model_upsert(account, binding.clone())
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    let reopened = LocalConnectionRepository::new(repository.path().to_path_buf());
+    assert_eq!(reopened.capture().unwrap().models(), &[binding]);
+    let encoded = fs::read_to_string(repository.path()).unwrap();
+    assert!(encoded.contains("image_input_profile: qwencloud-general-png-advisory/v1"));
+    assert!(encoded.contains("enable_thinking: false"));
+    assert!(encoded.contains("preserve_thinking: false"));
+    let changed = encoded.replace("preserve_thinking: false", "preserve_thinking: 0");
+    fs::write(repository.path(), &changed).unwrap();
+    assert!(reopened.capture().is_err());
+}

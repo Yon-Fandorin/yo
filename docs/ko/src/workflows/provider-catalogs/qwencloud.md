@@ -64,3 +64,68 @@ cargo test --locked -p yo-cli command::connect::picker
 이 갱신 경로는 QwenCloud plan을 열거하는 network request를 의도적으로 수행하지
 않는다. 공식 authenticated account inventory를 authority로 사용하려면 static
 table을 임시로 확장하지 말고 새로운 discovery 설계로 취급한다.
+
+## Explicit general API image connection
+
+승인된 일반 API 이미지 envelope는 plan 카탈로그와 별개다. 국제 Chat endpoint의
+정확한 `qwen3.8-flash`를 선택한다. 기존 텍스트 binding은 명시적인 complete-definition
+import 전까지 동작을 유지하며 catalog capability flag로 이미지 입력을 켜지 않는다.
+닫힌 envelope는 승인된
+[service binding](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.model.service-binding.md)과
+[Chat request contract](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.connector.openai-chat-completions.md),
+현재 공식
+[Flash guide](https://docs.qwencloud.com/developer-guides/getting-started/latest-model)를 참고한다.
+
+다음 공개 definition을 절대 경로에 저장하고
+`yo connect --from /absolute/qwen-image.yaml`을 실행한다. 확인 전에 endpoint·model·
+advisory 이미지 계산·비활성 thinking·semantic replay·일반 API 종량제를 검토하고,
+숨김 입력창에 일반 API key를 입력한다.
+
+```yaml
+provider: qwencloud
+provider_display_name: QwenCloud
+account: general
+account_display_name: General API
+base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+profile:
+  api_dialect: openai-chat-completions
+  tokenizer_profile: utf8-bytes/v1
+  input_token_limit: 991808
+  max_output_tokens: 131072
+  reasoning_parameters: {}
+  optional_request_parameters:
+    enable_thinking: false
+    preserve_thinking: false
+  tool_capability_policy: local-tools/v1
+  replay_profile: semantic-only/v1
+  image_input_profile: qwencloud-general-png-advisory/v1
+models:
+  - model: qwen3.8-flash
+```
+
+Yo는 선택된 `config.yaml` 옆의 `credentials.yaml`에 Provider `qwencloud`, Account
+`general`로 key를 저장하고 공개 binding은 `connections.yaml`에 저장한다. Linux의
+기본 디렉터리는 `~/.config/yo`다. 이 파일은 소유자 전용 권한을 가진 로컬 평문 YAML이며
+암호화된 vault가 아니다. 일반 시작·복구는 저장된 key를 재사용한다. 검증은 key를 보존하고
+임시 probe 파일에 복사하거나 다시 입력해 달라고 요청하지 않는다. 별도
+`qwencloud:default` plan 계정은 분리해 유지한다.
+
+`yo --model qwencloud:general:qwen3.8-flash`로 시작해 Ctrl+V 또는 기존 파일 이미지
+흐름으로 PNG를 첨부하고 제출한다. Qwen은 활성화된 function tools와 명시적
+`tool_choice: auto`를 보내며 idle `/compact`는 tools를 생략한다. 압축과 새 프로세스의
+`yo --continue` 뒤에도 request option은 비활성 상태다. 전체 흐름과 무료 서비스 근거는
+[terminal checks](../../validation/terminal-matrix.md#qwencloud-general-image-journey)를 참고한다.
+
+일반 API는 종량제다. 무료 실제 서비스 검증은 전송 전에 이 정확한 model의 현재 무료
+쿼터와 [`Free quota only`](https://docs.qwencloud.com/resources/free-quota) 보호를
+별도로 확인한다. Yo는 쿼터를 조회하거나 Provider 설정을 켜지 않으며 advisory 이미지
+계산은 무료 entitlement를 입증하지 않는다.
+
+집중 구현 검사:
+
+```bash
+cargo test --locked -p yo-core model_service
+cargo test --locked -p yo-connector-openai-chat-completions
+cargo test --locked -p yo-backend-managed
+cargo test --locked -p yo-cli
+```

@@ -1,9 +1,11 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Map, Value, json};
 use yo_core::{
-    ConnectorError, ConnectorFailureKind, ModelConnectorInputItem, ModelConnectorInputRole,
-    ModelConnectorRequest,
+    AdmittedChatImagePolicy, ConnectorError, ConnectorFailureKind, ModelConnectorInputItem,
+    ModelConnectorInputRole, ModelConnectorRequest,
 };
+
+mod limits;
 
 /// Service-admitted request options; never inferred from a provider name at dispatch.
 #[derive(Clone)]
@@ -11,6 +13,7 @@ pub(super) struct ImageWirePolicy {
     parameters: Value,
     maximum_output: u64,
     local_tools: bool,
+    chat_images: AdmittedChatImagePolicy,
 }
 
 impl ImageWirePolicy {
@@ -30,6 +33,9 @@ impl ImageWirePolicy {
             })?,
             local_tools: admitted.profile().tool_policy()
                 == yo_core::AdmittedToolPolicy::LocalTools,
+            chat_images: admitted.chat_image_policy().ok_or_else(|| {
+                configuration_failure("image profile has no admitted Chat wire policy")
+            })?,
         }))
     }
 }
@@ -43,6 +49,27 @@ pub(super) fn wire_body(
 }
 
 pub(super) fn projected_body(
+    request: &ModelConnectorRequest,
+    model: &str,
+    images: Option<&ImageWirePolicy>,
+    tokenization: bool,
+) -> Result<Value, ConnectorError> {
+    if images
+        .is_some_and(|policy| policy.chat_images == AdmittedChatImagePolicy::QwenCloudGeneralPng)
+    {
+        limits::validate_media(request)?;
+        let complete = body_projection(request, model, images, false)?;
+        limits::validate_encoded_body(&complete)?;
+        return if tokenization {
+            body_projection(request, model, images, true)
+        } else {
+            Ok(complete)
+        };
+    }
+    body_projection(request, model, images, tokenization)
+}
+
+fn body_projection(
     request: &ModelConnectorRequest,
     model: &str,
     images: Option<&ImageWirePolicy>,
@@ -142,9 +169,10 @@ pub(super) fn projected_body(
                 })
                 .collect(),
         );
-        // The admitted image route uses the API's automatic default. Its endpoint
-        // rejects an explicit tool_choice even though it accepts function tools.
-        if images.is_none() {
+        // Preserve the admitted route's automatic selection convention.
+        if !images
+            .is_some_and(|policy| policy.chat_images == AdmittedChatImagePolicy::OpenRouterFreePng)
+        {
             body["tool_choice"] = Value::String("auto".to_owned());
         }
     }

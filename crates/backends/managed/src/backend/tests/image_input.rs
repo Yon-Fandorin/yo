@@ -37,7 +37,13 @@ fn final_request_cap_and_pressure_use_one_complete_image_estimate() {
         "/../../yo-core/src/model_service/tests/openrouter-binding.json"
     )))
     .unwrap();
-    for complete in [complete, openrouter] {
+    let qwen = CompleteModelBinding::from_durable_json(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yo-core/src/model_service/tests/qwencloud-image-binding.json"
+    )))
+    .unwrap();
+    for complete in [complete, openrouter, qwen] {
+        let text_count = complete.profile().context().input_token_limit() - 27000;
         for image_count in [0, 1, 2] {
             let requests = Arc::new(Mutex::new(Vec::new()));
             let config = NativeModelBackendConfig {
@@ -70,7 +76,7 @@ fn final_request_cap_and_pressure_use_one_complete_image_estimate() {
                     }),
                     None,
                     Box::new(MockHost::default()),
-                    Box::new(FixedTokenCounter(235000)),
+                    Box::new(FixedTokenCounter(text_count)),
                 ),
                 complete.profile().context().clone(),
                 Some(complete.profile().clone()),
@@ -91,7 +97,7 @@ fn final_request_cap_and_pressure_use_one_complete_image_estimate() {
                     .unwrap(),
                 BackendCommandEvidence::RequestAccepted(_)
             ));
-            let estimate = 235000 + 2000 * image_count as u64;
+            let estimate = text_count + 2000 * image_count as u64;
             let reserve = if image_count == 0 { 0 } else { 1024 };
             {
                 let requests = requests.lock().unwrap();

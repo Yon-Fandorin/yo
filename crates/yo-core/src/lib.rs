@@ -36,8 +36,8 @@ pub use backend::{
     InputImageSnapshot, InputImageSnapshotError, KIMI_CODE_IMAGE_ACCOUNTING_PROFILE,
     ModelInputPart, ModelReplay, ModelReplayBudget, ModelReplayContract, ModelReplayDelta,
     ModelReplayItem, ModelReplayRole, ModelReplayTool, OPENROUTER_FREE_IMAGE_ACCOUNTING_PROFILE,
-    ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
-    provider_private_schema,
+    ProviderPrivateReplayEnvelope, QWENCLOUD_GENERAL_IMAGE_ACCOUNTING_PROFILE, ReplayExecutor,
+    ReplayProfile, ScriptedBackend, provider_private_schema,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
@@ -68,8 +68,8 @@ pub use journal::{
 };
 #[doc(hidden)]
 pub use model_binding_admission::{
-    AdmittedCompleteBinding, AdmittedModelProfile, AdmittedReplayProfile, AdmittedToolPolicy,
-    ModelBindingAdmission,
+    AdmittedChatImagePolicy, AdmittedCompleteBinding, AdmittedModelProfile, AdmittedReplayProfile,
+    AdmittedToolPolicy, ModelBindingAdmission,
 };
 pub use model_connector::{
     CacheReadInputTokens, ConnectorError, ConnectorFailureKind, FunctionTool, ImageSummarySource,
@@ -105,10 +105,10 @@ pub use model_service::{
     ModelServiceErrorKind, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint,
     OPENROUTER_FREE_IMAGE_INPUT_PROFILE, PreparedAccountSessionMutation,
     PreparedConnectionMutation, PreparedCredentialMutation, PreparedExternalConnection,
-    PreparedExternalDisconnect, ProviderId, SEMANTIC_REPLAY_PROFILE, StartupPolicy,
-    StartupSelectionSources, StartupTarget, StoredModelBinding, VersionedProfileId,
-    derive_host_account_id, derive_host_catalog_revision, plan_connection_recovery,
-    resolve_startup_target,
+    PreparedExternalDisconnect, ProviderId, QWENCLOUD_GENERAL_IMAGE_INPUT_PROFILE,
+    SEMANTIC_REPLAY_PROFILE, StartupPolicy, StartupSelectionSources, StartupTarget,
+    StoredModelBinding, VersionedProfileId, derive_host_account_id, derive_host_catalog_revision,
+    plan_connection_recovery, resolve_startup_target,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
