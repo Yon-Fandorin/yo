@@ -91,6 +91,29 @@ HTTP 200 안에 합성 SSE 오류 code 502를 전달한 음성 대조군도 실�
 [직접 입력 검증](#현재-mac-직접-입력-검증)에서 통과했다. Mac 검사는 터미널
 동작 검증이며 위 실제 Provider 검사는 Linux에서 수행했다.
 
+## QwenCloud 재구독과 이미지 기능
+
+2026-09-13 candidate `9eb0bbf9`에서 기존 인증된 QwenCloud 계정을 새로 조회해
+재구독된 Standard Token Plan을 확인했다. 이 조회는 일반 계정 용량 cache를
+갱신했으며 추론 요청은 아니었다. QwenCloud provider test 12개와 Responses
+connector test 57개가 통과했다.
+
+직접 Responses API 요청 1회는 설정된 `qwen3.8-max`와 정확한 국제 Token Plan
+endpoint를 사용했으며 redirect·재시도·종량제 fallback은 없었다. 합성 64 × 32
+PNG의 왼쪽 빨강·오른쪽 파랑에 대해 HTTP 200, status `completed`인
+`response.completed`, 정확한 색상 답변을 확인했다. Response
+`resp_ebd49743-e297-4633-ad04-7b4f0154f692`의 보고량은 입력 148·출력 56,
+합계 204 token이었다. 사용자가 승인한 구독을 사용했으며 비용 0이나 일반 API
+무료 쿼터 사용을 주장하지 않는다.
+
+이는 Provider API의 이미지 기능만 통과한 결과다. Yo에는 승인된 QwenCloud
+image profile이 없어 이 Provider의 첨부·TUI 제출·이미지 인식 재개는 미검증이다.
+무료 범위의 텍스트 요약 비교는 별도 일반 API key, 해당 model의 남은 무료 쿼터와
+`Free quota only` 설정을 기다린다.
+[Token Plan key는 해당 무료 쿼터를 사용하지 않는다](https://www.alibabacloud.com/help/en/model-studio/new-free-quota).
+Qwen 텍스트 비교는 공통 요약·replay 동작을 검사하며 OpenRouter 고유의 marker
+누락과 이미지 흐름은 별도 증거가 필요하다. 결과 기록 후 임시 기능 probe는 제거했다.
+
 ## Managed 요청 실패 진단
 
 Provider 계정 없이 요청 수락 전 실패 경로를 결정적인 fixture로 검사한다.
@@ -249,6 +272,22 @@ TUI 표시 결과를 검증하며 서비스 model의 위험 분류 정확도를 
 Codex 서비스 경로는 확인되지 않았다. 이는 작업에 맞는 독립 코드 리뷰 model을
 선택하는 일과 별개다. 기존 fixture 결과만으로 실제 reviewer가 같은 결정을
 내린다고 주장하지 않는다.
+
+2026-09-13 별도 native Codex `0.154.0` app-server probe는 사용자가 승인한
+재구독 QwenCloud Token Plan을 사용했다. Main agent의 도구 호출은 로컬 fixture이며
+자동 검토는 명시적인 custom-provider catalog로 `qwen3.8-max`를 선택했다.
+Offline 승인·거부 대조군은 정확한 검토·thread·Turn·명령과 독립 확인한 파일 결과가
+일치했으며 실제 서비스 요청은 없었다.
+
+실제 승인 사례는 검토 요청을 수정 없이 정확한 Qwen Responses endpoint로 1회
+전달했다. HTTP 200을 관찰했지만 정상 분류 완료와 최종 usage는 확인하지 못했다.
+두 번째 로컬 검토 요청은 실제 전달 없이 차단했다. Native host는 실패 시 실행을
+차단했다. `decisionSource: "agent"`, `denied`, 위험도 high·승인 범위 unknown인
+검토 뒤 같은 명령이 `declined`가 됐고 marker 파일은 생성되지 않았다. 이는 실패
+처리 증거이며 Qwen 위험 분류 성공이 아니다. 실제 거부 사례나 다른 서비스로의
+재시도·fallback 없이 실행을 중단했다. 임시 native state·로컬 더미 인증·script·
+process를 제거했으며 일반 Codex 설정은 유지했다. 이 직접 native 검사는 새로운
+Yo TUI 자동 검토 흐름을 검증하지 않는다.
 
 네트워크 검사는 native proxy를 활성화한 이름 있는 permission profile과 격리된
 `[experimental_network]` requirements fixture를 사용했다. Mount namespace로 임시

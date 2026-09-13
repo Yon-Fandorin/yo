@@ -100,6 +100,30 @@ PTY lifecycle checks. Physical keys, IME and actual Command-V passed the
 [direct input verification](#current-mac-direct-input-verification). These Mac
 checks establish terminal behavior; the live provider checks above ran on Linux.
 
+## QwenCloud renewal and image capability
+
+On 2026-09-13, candidate `9eb0bbf9` refreshed the existing authenticated
+QwenCloud account and observed its renewed Standard Token Plan. The refresh
+updated the normal account-capacity cache; it was not an inference request.
+All 12 QwenCloud provider tests and 57 Responses connector tests passed.
+
+One direct Responses API request used the configured `qwen3.8-max` model and
+the exact international Token Plan endpoint, without redirects, retries or
+pay-as-you-go fallback. A synthetic 64 × 32 red-left/blue-right PNG produced
+HTTP 200, `response.completed` with status `completed`, and the exact color
+answer. Response `resp_ebd49743-e297-4633-ad04-7b4f0154f692` reported 148 input
+and 56 output tokens, 204 total. This used the user-authorized subscription;
+no zero-cost or general-API free-quota claim is made.
+
+This passes Provider API image capability only. Yo has no admitted QwenCloud
+image profile, so attachment, TUI submission and image-aware continuation are
+unverified for this Provider. The free-only text summary comparison awaits a
+separate general API key, an eligible model quota and `Free quota only`;
+the [Token Plan key does not consume that free quota](https://www.alibabacloud.com/help/en/model-studio/new-free-quota).
+A Qwen text comparison would test shared summary/replay behavior, while the
+OpenRouter-specific marker loss and image journey would still require their own
+evidence. Temporary capability probes were removed after recording this result.
+
 ## Diagnose a managed request failure
 
 Run the deterministic pre-acceptance failure check without a provider account:
@@ -274,6 +298,25 @@ Actual-service automatic-approval risk classification remains unverified; no
 free Codex service route was established for this check. This is separate from
 choosing an independent code-review model for a task. The existing fixture
 results do not claim the real reviewer will make the same decisions.
+
+On 2026-09-13, a separate native Codex `0.154.0` app-server probe used the
+user-authorized renewed QwenCloud Token Plan. Its main-agent tool call was a
+local fixture; the automatic review used an explicit custom-provider catalog
+selecting `qwen3.8-max`. Offline allow and deny controls matched the exact
+review, thread, Turn, command and independently checked file outcome, with
+zero service requests.
+
+The live allow case forwarded one unchanged reviewer request to the exact
+configured Qwen Responses endpoint. HTTP 200 was observed, but no completed
+assessment or final usage was established. A second local reviewer request was
+blocked without forwarding. The native host failed closed with
+`decisionSource: "agent"`, `denied`, high risk and unknown authorization, followed by the
+correlated `declined` command; the marker file remained absent. This is failure
+handling evidence, not a successful Qwen risk classification. No additional
+request was forwarded to any service, and the live deny case did not run. Temporary
+native state, dummy local authentication, scripts and processes were removed;
+ordinary Codex configuration was unchanged. This direct native check does not
+establish a new Yo TUI automatic-review journey.
 
 Network cases used a named permission profile with the native proxy enabled and
 an isolated `[experimental_network]` requirements fixture. A mount namespace
