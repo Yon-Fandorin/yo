@@ -35,6 +35,7 @@ SSH 동작까지 실행되었다는 뜻은 아니다.
 
 2026-09-13 실제 Linux PTY의 Fullscreen TUI로
 `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`에서 다음을 확인했다.
+표에는 아래에 설명한 최종 제한 요약 충실도 검증 결과를 반영했다.
 
 | 검사 | 결과 |
 |---|---|
@@ -43,7 +44,7 @@ SSH 동작까지 실행되었다는 뜻은 아니다.
 | 실제 `read_file` 1회·독립 확인한 marker와 연결된 결과 | 통과 |
 | 두 번째 Turn·이미지 인식 idle summary checkpoint | 통과 |
 | 요약 후 새 프로세스 재개·이미지 색상 유지 | 통과 |
-| 실제 요약 뒤 최초 marker 정확히 반환 | 실패 |
+| 실제 요약 뒤 최초 marker 정확히 반환 | 최종 제한 실행에서 통과 |
 | 최종 정상 TUI 종료·termios 복구 | 통과 |
 
 이 이미지 profile의 함수 도구 선택은 명시적 `tool_choice: auto` 없이 자동
@@ -101,6 +102,39 @@ HTTP 200 안에 합성 SSE 오류 code 502를 전달한 음성 대조군도 실�
 통과했다. 물리 키보드·IME·실제 Command-V는
 [직접 입력 검증](#현재-mac-직접-입력-검증)에서 통과했다. Mac 검사는 터미널
 동작 검증이며 위 실제 Provider 검사는 Linux에서 수행했다.
+
+### 이미지 요약 충실도 검증 완료
+
+사용자가 요청한 새 검증은 깨끗한 candidate `0197d6f4`에서 허용된 최대 4회
+요청을 모두 완료했다. 같은 NVIDIA 단일·가격 상한 0 이미지 경로를 유지했다.
+일반 바이너리 SHA256은
+`22cb8cb9587a5fd1eebbb31e67372f8d3dc3cb73324c5b4afdbb95daa7e898a0`다.
+요청 전에 현재 공식 모델·endpoint 목록에서 이미지 입력, 함수 도구와
+prompt/completion 가격 0인 유일한 NVIDIA 경로를 확인했다. Chat Connector
+test 34개와 managed backend test 85개가 통과했다. 같은 바이너리의 오프라인
+정상·embedded SSE 502 대조군도 외부 추론 없이 통과했다.
+
+| 요청 | 입력 토큰 | 출력 토큰 | 전체 토큰 | 보고 비용 |
+|---|---:|---:|---:|---:|
+| 이미지 입력·초기 식별자 | 1278 | 143 | 1421 | 0 |
+| 두 번째 Turn | 1337 | 24 | 1361 | 0 |
+| 이미지가 포함된 idle 요약 | 621 | 1344 | 1965 | 0 |
+| 새 프로세스 재개 | 1277 | 240 | 1517 | 0 |
+| 합계 | 4513 | 1751 | 6264 | 0 |
+
+모든 stream에서 semantic `stop`, 필수 `[DONE]`과 최종 usage를 확인했고
+도구 호출은 없었다. 최초 요청과 요약 요청에는 canonical PNG가 각각 포함됐다.
+식별자 `YO_FIDELITY_LITERAL_6D82A31F`가 요약 입력·출력, 저장된 checkpoint,
+재개 입력과 최종 완료 Journal message에 정확히 있었다. Checkpoint의 portable
+body는 요약 응답 전체와 bytes가 일치했고 재개 요청에도 그 요약 전체가 있었다.
+최종 Journal bytes는 최종 응답과 일치했으며 답변에는 식별자와 이미지 색상명
+빨강·파랑이 유지됐다. 서로 다른 Turn 3개와 checkpoint 1개가 완료됐고
+두 TUI 프로세스 모두 status 0으로 종료하며 termios를 복구했다.
+
+이 제한 시나리오로 미완료였던 실제 이미지 요약 충실도 검증을 닫는다. 위의
+이전 marker 손실·502 관찰을 없애거나 모든 요약의 충실도와 이후 무료 경로의
+가용성을 보장하는 결과는 아니다. 자동 재시도·fallback·경로 상한 변경·추가
+추론 요청은 없었다. 중계·합성 파일·격리된 인증·Session state·TLS key를 제거했다.
 
 ## QwenCloud 재구독과 이미지 기능
 

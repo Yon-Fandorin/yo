@@ -36,7 +36,8 @@ fallback on every request. Unit tests and a local fixture establish projection
 and recovery; actual provider execution requires a live run.
 
 On 2026-09-13, the stock Fullscreen TUI and a real Linux PTY completed the
-following checks against `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`:
+following checks against `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`.
+The table includes the final bounded fidelity run described below:
 
 | Check | Result |
 |---|---|
@@ -45,7 +46,7 @@ following checks against `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`:
 | One real `read_file` call and independently checked marker/result | Passed |
 | Second Turn and image-aware idle summary checkpoint | Passed |
 | Fresh continuation after summary and retained image colors | Passed |
-| Exact initial marker returned after the live summary | Failed |
+| Exact initial marker returned after the live summary | Passed in final bounded run |
 | Final successful TUI exit and termios restoration | Passed |
 
 The connector retains automatic function-tool selection without explicit
@@ -112,6 +113,42 @@ The configured Mac also passed profile compile/import, tmux attachment and SSH
 PTY lifecycle checks. Physical keys, IME and actual Command-V passed the
 [direct input verification](#current-mac-direct-input-verification). These Mac
 checks establish terminal behavior; the live provider checks above ran on Linux.
+
+### Completed image-summary fidelity
+
+The user-requested run on clean candidate `0197d6f4` completed all four of its
+four permitted requests against the same NVIDIA-only zero-price image route.
+The stock binary SHA256 was
+`22cb8cb9587a5fd1eebbb31e67372f8d3dc3cb73324c5b4afdbb95daa7e898a0`.
+Current official model and endpoint inventory confirmed image input, function
+tools and the sole NVIDIA route with prompt/completion price 0 before dispatch.
+All 34 Chat Connector and 85 managed-backend tests passed. On this same binary,
+offline success and embedded-SSE-502 controls passed without external inference.
+
+| Request | Input tokens | Output tokens | Total tokens | Reported cost |
+|---|---:|---:|---:|---:|
+| Image input and initial literal reference | 1278 | 143 | 1421 | 0 |
+| Second Turn | 1337 | 24 | 1361 | 0 |
+| Image-bearing idle summary | 621 | 1344 | 1965 | 0 |
+| Fresh-process continuation | 1277 | 240 | 1517 | 0 |
+| Total | 4513 | 1751 | 6264 | 0 |
+
+Every stream had semantic `stop`, mandatory `[DONE]` and final usage, with no
+tool call. The initial and summary requests each carried the canonical PNG.
+The literal `YO_FIDELITY_LITERAL_6D82A31F` was present in summary input, summary
+output, stored checkpoint, resumed input and final completed Journal message.
+The checkpoint's portable body equalled the complete summary response exactly;
+the resumed request included that exact summary, and the final Journal bytes
+equalled the final response. That final answer retained both the literal and
+the image color names red and blue. Three distinct Turns and one checkpoint
+completed; both TUI processes exited 0 and restored termios.
+
+This closes the outstanding live image-summary fidelity check for this bounded
+scenario. It does not erase the earlier marker-loss or 502 observations above,
+establish universal summary fidelity, or guarantee future free-route capacity.
+There were no automatic retries, fallback, changed routing caps or additional
+inference requests. The proxy, synthetic files, isolated credentials, Session
+state and TLS keys were removed.
 
 ## QwenCloud renewal and image capability
 
