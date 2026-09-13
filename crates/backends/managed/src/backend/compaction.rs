@@ -14,6 +14,22 @@ use super::{
     failure, map_connector_cleanup, map_connector_turn, replay::replay_input,
 };
 
+// Reasoning items can precede the one semantic summary message. Bind that message
+// by both its provider output slot and item identity rather than assuming slot zero.
+fn bind_summary_message(
+    identity: &mut Option<(usize, String)>,
+    output_index: usize,
+    item_id: &str,
+) -> bool {
+    match identity {
+        Some((index, id)) => *index == output_index && id == item_id,
+        None => {
+            *identity = Some((output_index, item_id.to_owned()));
+            true
+        },
+    }
+}
+
 impl NativeModelBackend {
     pub(super) fn admit_or_start_compaction(
         &mut self,
@@ -169,6 +185,7 @@ impl NativeModelBackend {
             retained_groups,
             body: String::new(),
             response_id: None,
+            message_identity: None,
             message_done: false,
         });
         Ok(())
@@ -279,6 +296,7 @@ impl NativeModelBackend {
             retained_groups,
             body: String::new(),
             response_id: None,
+            message_identity: None,
             message_done: false,
             stream,
         });
@@ -311,12 +329,15 @@ impl NativeModelBackend {
             },
             ModelConnectorEvent::TextDelta {
                 output_index,
+                item_id,
                 content_index,
                 delta,
-                ..
             } => {
                 let Some(CompactionState::Summarizing {
-                    body, message_done, ..
+                    body,
+                    message_identity,
+                    message_done,
+                    ..
                 }) = state.compaction.as_mut()
                 else {
                     return Err(failure(
@@ -324,7 +345,10 @@ impl NativeModelBackend {
                         "context summary text arrived outside summary collection",
                     ));
                 };
-                if output_index != 0 || content_index != 0 || *message_done {
+                if content_index != 0
+                    || *message_done
+                    || !bind_summary_message(message_identity, output_index, &item_id)
+                {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "context summary must contain exactly one text message",
@@ -338,21 +362,29 @@ impl NativeModelBackend {
                     ));
                 }
             },
-            ModelConnectorEvent::MessageDone { output_index, .. } => {
-                let Some(CompactionState::Summarizing { message_done, .. }) =
-                    state.compaction.as_mut()
+            ModelConnectorEvent::MessageDone {
+                output_index,
+                item_id,
+            } => {
+                let Some(CompactionState::Summarizing {
+                    message_identity,
+                    message_done,
+                    ..
+                }) = state.compaction.as_mut()
                 else {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "context summary completion arrived outside summary collection",
                     ));
                 };
-                if output_index != 0 || std::mem::replace(message_done, true) {
+                if *message_done || !bind_summary_message(message_identity, output_index, &item_id)
+                {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "context summary completed more than one message",
                     ));
                 }
+                *message_done = true;
             },
             ModelConnectorEvent::ReasoningDelta { .. }
             | ModelConnectorEvent::ProviderPrivateAssistant { .. } => {},
@@ -368,6 +400,7 @@ impl NativeModelBackend {
                     body,
                     response_id: created_response_id,
                     message_done,
+                    ..
                 }) = state.compaction.take()
                 else {
                     return Err(failure(
@@ -555,12 +588,15 @@ impl NativeModelBackend {
             },
             ModelConnectorEvent::TextDelta {
                 output_index,
+                item_id,
                 content_index,
                 delta,
-                ..
             } => {
                 let Some(IdleCompactionState::Summarizing {
-                    body, message_done, ..
+                    body,
+                    message_identity,
+                    message_done,
+                    ..
                 }) = self.idle_compaction.as_mut()
                 else {
                     return Err(failure(
@@ -568,7 +604,10 @@ impl NativeModelBackend {
                         "idle context summary text arrived outside summary collection",
                     ));
                 };
-                if output_index != 0 || content_index != 0 || *message_done {
+                if content_index != 0
+                    || *message_done
+                    || !bind_summary_message(message_identity, output_index, &item_id)
+                {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "idle context summary must contain exactly one text message",
@@ -582,21 +621,29 @@ impl NativeModelBackend {
                     ));
                 }
             },
-            ModelConnectorEvent::MessageDone { output_index, .. } => {
-                let Some(IdleCompactionState::Summarizing { message_done, .. }) =
-                    self.idle_compaction.as_mut()
+            ModelConnectorEvent::MessageDone {
+                output_index,
+                item_id,
+            } => {
+                let Some(IdleCompactionState::Summarizing {
+                    message_identity,
+                    message_done,
+                    ..
+                }) = self.idle_compaction.as_mut()
                 else {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "idle context summary completion arrived outside summary collection",
                     ));
                 };
-                if output_index != 0 || std::mem::replace(message_done, true) {
+                if *message_done || !bind_summary_message(message_identity, output_index, &item_id)
+                {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "idle context summary completed more than one message",
                     ));
                 }
+                *message_done = true;
             },
             ModelConnectorEvent::ReasoningDelta { .. }
             | ModelConnectorEvent::ProviderPrivateAssistant { .. } => {},
@@ -613,6 +660,7 @@ impl NativeModelBackend {
                     response_id: created_response_id,
                     message_done,
                     mut stream,
+                    ..
                 }) = self.idle_compaction.take()
                 else {
                     return Err(failure(

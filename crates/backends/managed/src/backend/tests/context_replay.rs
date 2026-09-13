@@ -78,6 +78,40 @@ fn completed_text_round(response_id: &str, text: &str) -> Vec<ModelConnectorEven
     ]
 }
 
+fn completed_summary_round(
+    response_id: &str,
+    text: &str,
+    output_index: usize,
+) -> Vec<ModelConnectorEvent> {
+    let mut events = completed_text_round(response_id, text);
+    for event in &mut events {
+        match event {
+            ModelConnectorEvent::TextDelta {
+                output_index: index,
+                ..
+            }
+            | ModelConnectorEvent::MessageDone {
+                output_index: index,
+                ..
+            } => *index = output_index,
+            _ => {},
+        }
+    }
+    if output_index > 0 {
+        events.insert(
+            1,
+            ModelConnectorEvent::ReasoningDelta {
+                output_index: 0,
+                item_id: format!("{response_id}-reasoning"),
+                channel: yo_core::ReasoningChannel::Text,
+                part_index: 0,
+                delta: "Synthetic reasoning excluded from the checkpoint.".to_owned(),
+            },
+        );
+    }
+    events
+}
+
 fn private_summary_event() -> ModelConnectorEvent {
     ModelConnectorEvent::ProviderPrivateAssistant {
         output_index: 1,
@@ -435,10 +469,20 @@ fn bounded_selector_uses_at_most_three_strictly_decreasing_exact_counts() {
 // 자동 압축이 한 번만 실행되고 checkpoint commit 전에는 후속 요청을 보내지 않음을 검증합니다.
 #[test]
 fn pressure_compaction_summarizes_once_then_waits_for_checkpoint_before_dispatch() {
+    for output_index in [0, 1] {
+        check_pressure_compaction_summarizes_once_then_waits_for_checkpoint_before_dispatch(
+            output_index,
+        );
+    }
+}
+
+fn check_pressure_compaction_summarizes_once_then_waits_for_checkpoint_before_dispatch(
+    output_index: usize,
+) {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let payloads = Arc::new(Mutex::new(Vec::new()));
     let summary = portable_summary();
-    let mut summary_round = completed_text_round("summary-1", &summary);
+    let mut summary_round = completed_summary_round("summary-1", &summary, output_index);
     summary_round.insert(1, private_summary_event());
     let Some(ModelConnectorEvent::Terminal { usage, .. }) = summary_round.last_mut() else {
         unreachable!("a completed text round ends in a terminal event")
@@ -555,10 +599,16 @@ fn pressure_compaction_summarizes_once_then_waits_for_checkpoint_before_dispatch
 // 명시적 idle 압축도 자동 압축과 동일한 bounded summary·checkpoint 파이프라인을 사용합니다.
 #[test]
 fn explicit_idle_compaction_uses_the_same_bounded_summary_pipeline() {
+    for output_index in [0, 1] {
+        check_explicit_idle_compaction_uses_the_same_bounded_summary_pipeline(output_index);
+    }
+}
+
+fn check_explicit_idle_compaction_uses_the_same_bounded_summary_pipeline(output_index: usize) {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let payloads = Arc::new(Mutex::new(Vec::new()));
     let summary = portable_summary();
-    let mut summary_round = completed_text_round("manual-summary", &summary);
+    let mut summary_round = completed_summary_round("manual-summary", &summary, output_index);
     summary_round.insert(1, private_summary_event());
     let Some(ModelConnectorEvent::Terminal { usage, .. }) = summary_round.last_mut() else {
         unreachable!("a completed text round ends in a terminal event")
@@ -654,6 +704,137 @@ fn explicit_idle_compaction_uses_the_same_bounded_summary_pipeline() {
         })
     );
     assert_eq!(payloads.lock().unwrap().len(), 5);
+}
+
+// 추론 뒤 첫 텍스트 메시지를 허용해도 다른 메시지·완료 identity·추가 content나
+// 완료 뒤 텍스트는 자동/수동 압축 모두 checkpoint 없이 fail-closed 처리한다.
+#[test]
+fn compaction_rejects_mismatched_or_extra_summary_message_events() {
+    let delta = |output_index, item_id: &str, content_index| ModelConnectorEvent::TextDelta {
+        output_index,
+        item_id: item_id.to_owned(),
+        content_index,
+        delta: "must not enter a checkpoint".to_owned(),
+    };
+    let done = |output_index, item_id: &str| ModelConnectorEvent::MessageDone {
+        output_index,
+        item_id: item_id.to_owned(),
+    };
+    let cases = [
+        ("second output slot", vec![delta(2, "invalid-item", 0)]),
+        ("second item identity", vec![delta(1, "other-item", 0)]),
+        ("second content part", vec![delta(1, "invalid-item", 1)]),
+        ("mismatched done slot", vec![done(2, "invalid-item")]),
+        ("mismatched done identity", vec![done(1, "other-item")]),
+        (
+            "duplicate completion",
+            vec![done(1, "invalid-item"), done(1, "invalid-item")],
+        ),
+        (
+            "text after completion",
+            vec![done(1, "invalid-item"), delta(1, "invalid-item", 0)],
+        ),
+    ];
+    for idle in [false, true] {
+        for (name, invalid_events) in &cases {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let mut summary_round = completed_summary_round("invalid", &portable_summary(), 1);
+            summary_round.splice(3..3, invalid_events.clone());
+            let mut backend = NativeModelBackend::with_connector(
+                Box::new(MockConnector {
+                    rounds: event_rounds(vec![
+                        completed_text_round("one", "first"),
+                        completed_text_round("two", "second"),
+                        summary_round,
+                    ]),
+                    requests: Arc::clone(&requests),
+                }),
+                binding(),
+                registry(ToolApprovalRequirement::Automatic),
+                NativeModelBackendServices::new(
+                    Box::new(yo_core::admit_standard_complete_binding),
+                    Some(Box::new(ExactAdmission)),
+                    Box::new(MockHost::default()),
+                    Box::new(SequenceTokenCounter::new(
+                        [10, 10, if idle { 70 } else { 90 }, 20],
+                        Arc::new(Mutex::new(Vec::new())),
+                    )),
+                ),
+                yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+                NativeModelBackendConfig::default(),
+            )
+            .unwrap();
+            backend
+                .execute_command(AgentCommand::CreateSession {
+                    session_id: turn().session_id(),
+                })
+                .unwrap();
+            for number in [1, 2] {
+                backend
+                    .execute_command(AgentCommand::StartTurn {
+                        turn: turn_number(number),
+                        input: UserInput::from(format!("input-{number}")),
+                    })
+                    .unwrap();
+                assert!(matches!(
+                    drain_until_turn(&mut backend),
+                    BackendEvent::ResumableTurnFinished { .. }
+                ));
+            }
+            let original_replay = backend.replay.clone();
+            if idle {
+                backend
+                    .execute_command(AgentCommand::CompactContext { guidance: None })
+                    .unwrap();
+            } else {
+                backend
+                    .execute_command(AgentCommand::StartTurn {
+                        turn: turn_number(3),
+                        input: UserInput::from("input-3"),
+                    })
+                    .unwrap();
+            }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                assert!(
+                    Instant::now() < deadline,
+                    "{name}, idle={idle}: missing failure"
+                );
+                match backend.poll_event() {
+                    Err(error) => {
+                        assert!(idle, "automatic compaction must finish its Turn");
+                        assert_eq!(error.kind(), BackendFailureKind::ContextExhausted);
+                        break;
+                    },
+                    Ok(BackendPoll::Event(BackendEvent::TurnFinished {
+                        outcome: TurnOutcome::Failed(error),
+                        ..
+                    })) => {
+                        assert!(!idle);
+                        assert_eq!(error.code(), Some("context_exhausted"));
+                        break;
+                    },
+                    Ok(BackendPoll::Event(BackendEvent::ContextCheckpointPrepared { .. })) => {
+                        panic!("{name}, idle={idle}: invalid checkpoint")
+                    },
+                    Ok(BackendPoll::Closed) => panic!("{name}, idle={idle}: missing typed failure"),
+                    _ => thread::yield_now(),
+                }
+            }
+            assert_eq!(requests.lock().unwrap().len(), 3);
+            assert_eq!(backend.replay, original_replay);
+            assert!(backend.context_exhausted);
+            let error = backend
+                .execute_command(AgentCommand::StartTurn {
+                    turn: turn_number(4),
+                    input: UserInput::from("must not dispatch"),
+                })
+                .unwrap_err();
+            assert_eq!(error.kind(), BackendFailureKind::ContextExhausted);
+            assert_eq!(requests.lock().unwrap().len(), 3);
+            backend.shutdown().unwrap();
+        }
+    }
 }
 
 // idle 압축 command를 수락한 순간부터 checkpoint가 durable하게 적용될 때까지 다음
@@ -1314,6 +1495,16 @@ fn replay_exhaustion_finishes_non_resumably_and_latches_the_binding() {
 // 검증한다.
 #[test]
 fn automatic_compaction_survives_disk_resume_with_exact_retained_connector_input() {
+    for output_index in [0, 1] {
+        check_automatic_compaction_survives_disk_resume_with_exact_retained_connector_input(
+            output_index,
+        );
+    }
+}
+
+fn check_automatic_compaction_survives_disk_resume_with_exact_retained_connector_input(
+    output_index: usize,
+) {
     use std::{fs, path::PathBuf};
 
     use yo_core::{
@@ -1416,7 +1607,7 @@ fn automatic_compaction_survives_disk_resume_with_exact_retained_connector_input
         .unwrap()
     };
     let summary = portable_summary();
-    let mut summary_round = completed_text_round("summary-once", &summary);
+    let mut summary_round = completed_summary_round("summary-once", &summary, output_index);
     summary_round.insert(1, private_summary_event());
     let Some(ModelConnectorEvent::Terminal { usage, .. }) = summary_round.last_mut() else {
         unreachable!()

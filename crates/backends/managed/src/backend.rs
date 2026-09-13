@@ -159,6 +159,7 @@ enum CompactionState {
         retained_groups: Vec<Vec<ModelReplayItem>>,
         body: String,
         response_id: Option<String>,
+        message_identity: Option<(usize, String)>,
         message_done: bool,
     },
     AwaitingCheckpoint {
@@ -173,6 +174,7 @@ enum IdleCompactionState {
         retained_groups: Vec<Vec<ModelReplayItem>>,
         body: String,
         response_id: Option<String>,
+        message_identity: Option<(usize, String)>,
         message_done: bool,
         stream: Box<dyn ModelConnectorStreamPort>,
     },
