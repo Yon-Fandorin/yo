@@ -13,6 +13,102 @@ fn rows(prepared: &PreparedMarkdown) -> Vec<String> {
     rows
 }
 
+// 페이지 렌더도 기존 Markdown의 강조·링크·코드·diff 색상 및 빈 행 배경을
+// 보존하며, 비연속 페이지에서 같은 셀을 생성하는지 비교합니다.
+#[test]
+fn paged_markdown_preserves_existing_cells_styles_and_links() {
+    for source in [
+        "# Result\n\n**bold and *nested*** [link](https://example.com)\n\n> quote\n\n- 한글 item",
+        "```rust\n  let value = \"literal\";\n\n\tprintln!(\"é 🙂\");\n```",
+        "```diff\n@@ -1 +1 @@\n-old\n+new\n unchanged\n```",
+        "| A | B |\n|---|---|\n| one | **two** |",
+    ] {
+        for columns in [8, 20, 80] {
+            let width = NonZeroU16::new(columns).unwrap();
+            let old = prepare(source, width).unwrap();
+            let paged = PagedMarkdown::new(
+                source,
+                width,
+                true,
+                NonZeroU16::new(64).unwrap(),
+                true,
+                None,
+                1,
+            )
+            .unwrap();
+            assert_eq!(paged.height, usize::from(old.height));
+            for first in 0..paged.height {
+                let page = paged.window(first, NonZeroU16::new(3).unwrap());
+                for glyph in &old.glyphs {
+                    if !(first..first + 3).contains(&usize::from(glyph.point.y)) {
+                        continue;
+                    }
+                    let y = glyph.point.y - first as u16;
+                    let actual = page
+                        .glyphs
+                        .iter()
+                        .find(|g| g.point == Point::new(glyph.point.x, y))
+                        .unwrap();
+                    assert_eq!(actual.grapheme, glyph.grapheme, "{source:?} {columns}");
+                    assert_eq!(actual.decoration, glyph.decoration, "{source:?} {columns}");
+                    assert_eq!(actual.hyperlink, glyph.hyperlink);
+                }
+                let old_styles: Vec<_> = old
+                    .row_styles
+                    .iter()
+                    .filter(|(row, _)| (first..first + 3).contains(&usize::from(*row)))
+                    .map(|(row, style)| (*row - first as u16, *style))
+                    .collect();
+                assert_eq!(page.row_styles, old_styles);
+            }
+        }
+    }
+}
+
+// 하나의 긴 코드 블록도 전체 셀 배열 없이 마지막 페이지와 diff 의미 색상을
+// 유지하고 65,535행 다음 위치까지 탐색할 수 있어야 합니다.
+#[test]
+fn paged_markdown_reads_large_code_blocks_without_cell_retention() {
+    let source = format!("```diff\n{}+END\n```", "+한글\n".repeat(70_000));
+    let width = NonZeroU16::new(20).unwrap();
+    let paged = PagedMarkdown::new(&source, width, false, width, false, None, 1).unwrap();
+    assert_eq!(paged.height, 70_003);
+    let page = paged.window(70_000, NonZeroU16::new(3).unwrap());
+    assert!(rows(&page).iter().any(|row| row.contains("+END")));
+    assert!(page.glyphs.len() < 40);
+    let end = page
+        .glyphs
+        .iter()
+        .find(|glyph| glyph.grapheme.as_str() == "E")
+        .unwrap();
+    assert_eq!(end.decoration.role, Role::DiffAdded);
+}
+
+// 한 표 값이 65,535행을 넘어도 정규화·열 배치에서 잘리지 않고 마지막 글자를 읽습니다.
+#[test]
+fn paged_markdown_preserves_large_table_cells() {
+    let source = format!("| A |\n| --- |\n| {}END |", "x".repeat(300_000));
+    let pages = PagedMarkdown::new(
+        &source,
+        NonZeroU16::new(4).unwrap(),
+        false,
+        NonZeroU16::new(64).unwrap(),
+        false,
+        None,
+        1,
+    )
+    .unwrap();
+    assert!(pages.height > usize::from(u16::MAX));
+    let tail = pages.window(pages.height - 4, NonZeroU16::new(4).unwrap());
+    let text = tail
+        .glyphs
+        .iter()
+        .map(|g| g.grapheme.as_str())
+        .collect::<String>();
+    assert!(text.contains("END"), "{text}");
+    assert!(tail.glyphs.len() <= 16);
+}
+
 // 좁은 코드 패널은 좌우 여백 안에서 줄바꿈하고 장식 선 없이 원문 부호를 보존한다.
 #[test]
 fn narrow_code_wraps_with_padding_without_decorative_rails() {

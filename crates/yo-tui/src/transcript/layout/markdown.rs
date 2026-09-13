@@ -10,14 +10,15 @@ mod chart;
 mod code;
 mod diagram;
 mod image;
+mod paged;
 mod table;
-
 use std::{collections::BTreeMap, num::NonZeroU16};
 
 use chart::{ChartKind, chart_blocks};
 use code::highlight_code;
 use diagram::diagram_blocks;
 use image::{image_blocks, pixel_color};
+pub(super) use paged::PagedMarkdown;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use crate::{
@@ -188,7 +189,7 @@ pub(super) struct PreparedMarkdown {
     pub(super) rasters: Vec<RasterImage>,
 }
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum BlockFormat {
     #[default]
     Prose,
@@ -289,6 +290,16 @@ pub(super) fn prepare_with_links(
     resolver: Option<&LinkResolver>,
     code_padding: u16,
 ) -> Result<PreparedMarkdown, TextFlowError> {
+    let document = parse_document(source, width, resolver, code_padding);
+    prepare_document(document, width, show_images, image_max_width, show_diagrams)
+}
+
+fn parse_document(
+    source: &str,
+    width: NonZeroU16,
+    resolver: Option<&LinkResolver>,
+    code_padding: u16,
+) -> Document {
     let mut document = Document {
         link_resolver: resolver.cloned(),
         code_padding: code_padding.min(width.get().saturating_sub(2)),
@@ -302,7 +313,7 @@ pub(super) fn prepare_with_links(
         document.event(event);
     }
     document.flush();
-    prepare_document(document, width, show_images, image_max_width, show_diagrams)
+    document
 }
 
 fn diff_role(line: &str) -> Role {
@@ -357,8 +368,34 @@ fn prepare_document(
         height: 0,
         rasters: Vec::new(),
     };
+    let blocks = expand_blocks(
+        document.blocks,
+        width,
+        show_images,
+        image_max_width,
+        show_diagrams,
+    )?;
+    for block in blocks {
+        prepare_block(
+            &mut result,
+            block,
+            width,
+            document.code_padding,
+            &document.hyperlink_targets,
+        )?;
+    }
+    Ok(result)
+}
+
+fn expand_blocks(
+    source: Vec<DocumentBlock>,
+    width: NonZeroU16,
+    show_images: bool,
+    image_max_width: NonZeroU16,
+    show_diagrams: bool,
+) -> Result<Vec<Block>, TextFlowError> {
     let mut blocks = Vec::new();
-    for block in document.blocks {
+    for block in source {
         match block {
             DocumentBlock::Text(block) => blocks.push(block),
             DocumentBlock::Diagram(block) => {
@@ -384,127 +421,133 @@ fn prepare_document(
             },
         }
     }
-    for block in blocks {
-        if block.gap && result.height > 0 {
-            result.height = result
-                .height
-                .checked_add(1)
-                .ok_or(TextFlowError::HeightOverflow)?;
-        }
-        // Keep at least two cells for wide body graphemes. On a one-cell body,
-        // retain the existing explicit GraphemeTooWide failure.
-        let prefix_limit = width.get().saturating_sub(2);
-        let prefix: String = block
-            .prefix
-            .chars()
-            .take(usize::from(prefix_limit))
-            .collect();
-        let indent = u16::try_from(prefix.chars().count())
-            .expect("Markdown prefixes are single-cell glyphs");
-        if let Some(mut raster) = block.raster.clone() {
-            raster.area.origin = Point::new(indent, result.height);
-            result.rasters.push(raster);
-        }
-        let right_padding = if block.format.is_code() {
-            (width.get() - indent)
-                .saturating_sub(4)
-                .min(document.code_padding)
-        } else {
-            0
-        };
-        let body_width = NonZeroU16::new(width.get() - indent - right_padding)
-            .expect("code padding reserves at least two body cells");
-        let text = if block.format.is_code() {
-            block.text.strip_suffix('\n').unwrap_or(&block.text)
-        } else {
-            &block.text
-        };
-        let flow = if block.format.is_code() {
-            flow_code(text, body_width)?
-        } else if block.format != BlockFormat::Prose {
-            flow_text(text, body_width)?
-        } else {
-            flow_prose(text, body_width)?
-        };
-        let height = flow.height.max(1);
-        let end = result
+    Ok(blocks)
+}
+
+fn prepare_block(
+    result: &mut PreparedMarkdown,
+    block: Block,
+    width: NonZeroU16,
+    code_padding: u16,
+    hyperlink_targets: &[Hyperlink],
+) -> Result<(), TextFlowError> {
+    if block.gap && result.height > 0 {
+        result.height = result
             .height
-            .checked_add(height)
+            .checked_add(1)
             .ok_or(TextFlowError::HeightOverflow)?;
-        let mut glyphs = Vec::new();
-        for row in 0..height {
-            let prefix = if row == 0 || block.format.is_code() {
-                prefix.clone()
-            } else {
-                prefix
-                    .chars()
-                    .map(|c| if c == '>' { '>' } else { ' ' })
-                    .collect()
-            };
-            for glyph in flow_text(&prefix, width)?.glyphs {
-                glyphs.push(MarkdownGlyph {
-                    point: Point::new(glyph.point.x, result.height + row),
-                    grapheme: glyph.grapheme,
-                    hyperlink: None,
-                    decoration: Decoration::role(if block.format.is_code() {
-                        Role::CodeLabel
-                    } else {
-                        Role::Quote
-                    }),
-                });
-            }
-        }
-        let mut row_roles = vec![
-            if block.format == BlockFormat::CodeEdge {
-                Role::CodeLabel
-            } else {
-                Role::Code
-            };
-            usize::from(height)
-        ];
-        let mut span = 0;
-        for glyph in flow.glyphs {
-            while block
-                .spans
-                .get(span + 1)
-                .is_some_and(|(start, _)| *start <= glyph.byte_index)
-            {
-                span += 1;
-            }
-            let decoration = block
-                .spans
-                .get(span)
-                .map_or(Decoration::default(), |(_, d)| *d);
-            row_roles[usize::from(glyph.point.y)] = if matches!(decoration.role, Role::Syntax(_)) {
-                Role::Code
-            } else {
-                decoration.role
-            };
+    }
+    // Keep at least two cells for wide body graphemes. On a one-cell body,
+    // retain the existing explicit GraphemeTooWide failure.
+    let prefix_limit = width.get().saturating_sub(2);
+    let prefix: String = block
+        .prefix
+        .chars()
+        .take(usize::from(prefix_limit))
+        .collect();
+    let indent =
+        u16::try_from(prefix.chars().count()).expect("Markdown prefixes are single-cell glyphs");
+    if let Some(mut raster) = block.raster.clone() {
+        raster.area.origin = Point::new(indent, result.height);
+        result.rasters.push(raster);
+    }
+    let right_padding = if block.format.is_code() {
+        (width.get() - indent).saturating_sub(4).min(code_padding)
+    } else {
+        0
+    };
+    let body_width = NonZeroU16::new(width.get() - indent - right_padding)
+        .expect("code padding reserves at least two body cells");
+    let text = if block.format.is_code() {
+        block.text.strip_suffix('\n').unwrap_or(&block.text)
+    } else {
+        &block.text
+    };
+    let flow = if block.format.is_code() {
+        flow_code(text, body_width)?
+    } else if block.format != BlockFormat::Prose {
+        flow_text(text, body_width)?
+    } else {
+        flow_prose(text, body_width)?
+    };
+    let height = flow.height.max(1);
+    let end = result
+        .height
+        .checked_add(height)
+        .ok_or(TextFlowError::HeightOverflow)?;
+    let mut glyphs = Vec::new();
+    for row in 0..height {
+        let prefix = if row == 0 || block.format.is_code() {
+            prefix.clone()
+        } else {
+            prefix
+                .chars()
+                .map(|c| if c == '>' { '>' } else { ' ' })
+                .collect()
+        };
+        for glyph in flow_text(&prefix, width)?.glyphs {
             glyphs.push(MarkdownGlyph {
-                point: Point::new(indent + glyph.point.x, result.height + glyph.point.y),
+                point: Point::new(glyph.point.x, result.height + row),
                 grapheme: glyph.grapheme,
-                hyperlink: decoration
-                    .hyperlink
-                    .and_then(|index| document.hyperlink_targets.get(index))
-                    .cloned(),
-                decoration,
+                hyperlink: None,
+                decoration: Decoration::role(if block.format.is_code() {
+                    Role::CodeLabel
+                } else {
+                    Role::Quote
+                }),
             });
         }
-        if block.format.is_code() || block.format == BlockFormat::CodeEdge {
-            result
-                .row_styles
-                .extend(row_roles.into_iter().enumerate().map(|(row, role)| {
-                    (
-                        result.height + u16::try_from(row).expect("bounded code row"),
-                        Decoration::role(role),
-                    )
-                }));
-        }
-        glyphs.sort_by_key(|glyph| (glyph.point.y, glyph.point.x));
-        result.glyphs.extend(glyphs);
-        result.height = end;
     }
-    Ok(result)
+    let mut row_roles = vec![
+        if block.format == BlockFormat::CodeEdge {
+            Role::CodeLabel
+        } else {
+            Role::Code
+        };
+        usize::from(height)
+    ];
+    let mut span = 0;
+    for glyph in flow.glyphs {
+        while block
+            .spans
+            .get(span + 1)
+            .is_some_and(|(start, _)| *start <= glyph.byte_index)
+        {
+            span += 1;
+        }
+        let decoration = block
+            .spans
+            .get(span)
+            .map_or(Decoration::default(), |(_, d)| *d);
+        row_roles[usize::from(glyph.point.y)] = if matches!(decoration.role, Role::Syntax(_)) {
+            Role::Code
+        } else {
+            decoration.role
+        };
+        glyphs.push(MarkdownGlyph {
+            point: Point::new(indent + glyph.point.x, result.height + glyph.point.y),
+            grapheme: glyph.grapheme,
+            hyperlink: decoration
+                .hyperlink
+                .and_then(|index| hyperlink_targets.get(index))
+                .cloned(),
+            decoration,
+        });
+    }
+    if block.format.is_code() || block.format == BlockFormat::CodeEdge {
+        result
+            .row_styles
+            .extend(row_roles.into_iter().enumerate().map(|(row, role)| {
+                (
+                    result.height + u16::try_from(row).expect("bounded code row"),
+                    Decoration::role(role),
+                )
+            }));
+    }
+    glyphs.sort_by_key(|glyph| (glyph.point.y, glyph.point.x));
+    result.glyphs.extend(glyphs);
+    result.height = end;
+    Ok(())
 }
 
 // Remove sentence punctuation and unmatched closing delimiters, retaining URL pairs

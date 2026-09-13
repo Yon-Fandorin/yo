@@ -12,6 +12,137 @@ fn long_transcript() -> TranscriptState {
     transcript
 }
 
+// 일반 입력·Markdown·펼친 도구·diff의 단일 대형 본문을 끝까지 읽으며,
+// 좁은 폭 왕복과 Home/End 뒤에도 원문과 내보내기를 보존하는지 확인합니다.
+#[test]
+fn large_individual_bodies_page_visible_cells_without_losing_source() {
+    use yo_core::{
+        ActivityDocument, ActivityKind, ActivityPlan, PlanStep, PlanStepStatus, ToolOutput,
+    };
+
+    use crate::transcript::{TranscriptActivityOutcome, TranscriptBody, prepare};
+    let text = format!("{}END", "한글\n".repeat(70_000));
+    for kind in 0..6 {
+        let mut transcript = TranscriptState::new();
+        match kind {
+            0 => transcript.push_user(id(1), text.clone()).unwrap(),
+            1 => {
+                transcript.start_markdown_assistant(id(1)).unwrap();
+                transcript
+                    .append_text(id(1), &format!("```text\n{text}\n```"))
+                    .unwrap();
+            },
+            2 => {
+                let snapshot = ToolOutput {
+                    tool: "run_command".into(),
+                    server: None,
+                    arguments: None,
+                    result: Some(serde_json::json!({
+                        "content": [{"type": "text", "text": text}]
+                    })),
+                    content_items: None,
+                    error: None,
+                    plain_text: text.clone(),
+                }
+                .to_snapshot()
+                .unwrap();
+                transcript
+                    .start_typed_activity_message(id(1), ActivityKind::ToolResult)
+                    .unwrap();
+                transcript
+                    .append_text(id(1), &format!("Tool failed\n{snapshot}"))
+                    .unwrap();
+                transcript
+                    .finish_activity_message(
+                        id(1),
+                        TranscriptActivityOutcome::Failed,
+                        Some("\nFailure: exit 1"),
+                    )
+                    .unwrap();
+            },
+            3 => {
+                transcript.start_file_change_message(id(1)).unwrap();
+                transcript
+                    .append_text(
+                        id(1),
+                        &format!("File change\n{}+END", "+한글\n".repeat(70_000)),
+                    )
+                    .unwrap();
+            },
+            _ => {
+                let snapshot = if kind == 4 {
+                    ActivityDocument {
+                        title: "Long document".into(),
+                        markdown: format!("```text\n{text}\n```"),
+                    }
+                    .to_snapshot()
+                    .unwrap()
+                } else {
+                    ActivityPlan {
+                        explanation: None,
+                        steps: vec![PlanStep {
+                            text: text.clone(),
+                            status: PlanStepStatus::Pending,
+                        }],
+                    }
+                    .to_snapshot()
+                    .unwrap()
+                };
+                transcript
+                    .start_typed_activity_message(id(1), ActivityKind::ModelWork)
+                    .unwrap();
+                transcript
+                    .append_text(id(1), &format!("Model work\n{snapshot}"))
+                    .unwrap();
+            },
+        }
+        let config = TranscriptLayoutConfig::default().with_compact_activities(false);
+        let TranscriptBody::Message(message) = transcript.items()[0].body();
+        let original = message.text().to_owned();
+        let export = transcript.plain_output(&config).unwrap();
+        let mut state = TranscriptViewState::default();
+        for columns in [40, 8, 40] {
+            let prepared = prepare(&transcript, columns, &config).unwrap();
+            assert!(
+                prepared.content_height() > usize::from(u16::MAX),
+                "kind {kind}, width {columns}: {} rows",
+                prepared.content_height()
+            );
+            assert!(
+                prepared.layout.glyphs.len() < 100,
+                "offscreen body cells were retained"
+            );
+            let (tail, frame) = render_into(
+                &transcript,
+                Size::new(columns, 12),
+                &config,
+                &mut state,
+                Some(TranscriptScrollCommand::JumpToTail),
+            );
+            assert!(frame.first_visible_row > usize::from(u16::MAX));
+            let shown = (0..12)
+                .map(|row| rendered_row(&tail, row))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                shown.split_whitespace().collect::<String>().contains("END"),
+                "{kind} {columns}: {shown}"
+            );
+            let (_, head) = render_into(
+                &transcript,
+                Size::new(columns, 12),
+                &config,
+                &mut state,
+                Some(TranscriptScrollCommand::JumpToStart),
+            );
+            assert_eq!(head.first_visible_row, 0);
+        }
+        let TranscriptBody::Message(message) = transcript.items()[0].body();
+        assert_eq!(message.text(), original);
+        assert_eq!(transcript.plain_output(&config).unwrap(), export);
+    }
+}
+
 // 기본 FollowTail은 마지막 행을 붙잡고 새 content가 추가되어도 tail을 계속 보여준다.
 #[test]
 fn follows_the_tail_by_default() {

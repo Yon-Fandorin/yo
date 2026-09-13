@@ -194,7 +194,7 @@ pub(super) fn prepare_notice(
     Some(body)
 }
 
-fn plan_heading(plan: &ActivityPlan) -> String {
+pub(super) fn plan_heading(plan: &ActivityPlan) -> String {
     let completed = plan
         .steps
         .iter()
@@ -207,7 +207,7 @@ fn plan_heading(plan: &ActivityPlan) -> String {
     }
 }
 
-fn plan_marker(status: PlanStepStatus) -> &'static str {
+pub(super) fn plan_marker(status: PlanStepStatus) -> &'static str {
     match status {
         PlanStepStatus::Completed => "[x] ",
         PlanStepStatus::InProgress => "[>] ",
@@ -289,17 +289,17 @@ pub(super) fn prepare_plan(message: &TranscriptMessage, width: NonZeroU16) -> Op
     Some(body)
 }
 
-struct DocumentSource {
-    heading: String,
-    content: String,
-    tokens_before: Option<u64>,
-    reasoning: bool,
-    empty_hint: &'static str,
-    hidden_hint: &'static str,
+pub(super) struct DocumentSource {
+    pub(super) heading: String,
+    pub(super) content: String,
+    pub(super) tokens_before: Option<u64>,
+    pub(super) reasoning: bool,
+    pub(super) empty_hint: &'static str,
+    pub(super) hidden_hint: &'static str,
 }
 
 impl DocumentSource {
-    fn parse(source: &str) -> Option<Self> {
+    pub(super) fn parse(source: &str) -> Option<Self> {
         if let Some(reasoning) = ActivityReasoning::from_snapshot(source) {
             return Some(Self {
                 heading: "Agent reasoning".to_owned(),
@@ -503,6 +503,83 @@ pub(super) fn prepare_tool(
     format_markdown: bool,
 ) -> Option<PreparedBody> {
     let activity = message.activity?;
+    let (heading, source, footer, rendered, skip_activity_folding) =
+        tool_presentation(config, message, width, format_markdown)?;
+    let prepared = rendered.and_then(|rendered| {
+        markdown::prepare_with_links(
+            &rendered,
+            width,
+            config.show_images,
+            config.image_max_width,
+            config.show_diagrams,
+            config.active_link_resolver(),
+            config.code_padding,
+        )
+        .ok()
+    });
+    let mut body = PreparedBody {
+        skip_activity_folding,
+        rasters: Vec::new(),
+        glyphs: Vec::new(),
+        row_styles: Vec::new(),
+        height: 0,
+    };
+    append_plain(
+        &mut body,
+        &heading,
+        width,
+        GlyphRole::ActivityHeading(activity.outcome),
+    )
+    .ok()?;
+    if let Some(prepared) = prepared {
+        let offset = body.height;
+        body.height = body.height.checked_add(prepared.height)?;
+        body.glyphs
+            .extend(prepared.glyphs.into_iter().map(|mut glyph| {
+                glyph.point.y += offset;
+                PositionedTranscriptGrapheme {
+                    point: glyph.point,
+                    grapheme: glyph.grapheme,
+                    role: GlyphRole::ActivityBody,
+                    decoration: glyph.decoration,
+                    hyperlink: glyph.hyperlink,
+                }
+            }));
+        body.row_styles.extend(
+            prepared
+                .row_styles
+                .into_iter()
+                .map(|(row, style)| (row + offset, style)),
+        );
+        body.rasters
+            .extend(prepared.rasters.into_iter().map(|mut raster| {
+                raster.area.origin.y += offset;
+                raster
+            }));
+    } else {
+        append_plain(&mut body, &source, width, GlyphRole::ActivityBody).ok()?;
+    }
+    if !footer.is_empty() {
+        append_plain(
+            &mut body,
+            &footer,
+            width,
+            GlyphRole::ActivityOutcome(activity.outcome),
+        )
+        .ok()?;
+    }
+    Some(body)
+}
+
+// Both eager and paged rendering consume this exact presentation, including the
+// selected custom renderer and shell-tail policy. Source/export stays separate.
+pub(super) fn tool_presentation(
+    config: &TranscriptLayoutConfig,
+    message: &TranscriptMessage,
+    width: NonZeroU16,
+    format_markdown: bool,
+) -> Option<(String, String, String, Option<String>, bool)> {
+    let activity = message.activity?;
     let kind = activity
         .kind
         .filter(|kind| matches!(kind, ActivityKind::ToolCall | ActivityKind::ToolResult))?;
@@ -546,70 +623,13 @@ pub(super) fn prepare_tool(
     if rendered.is_none() && output.is_none() {
         return None;
     }
-    let prepared = rendered.and_then(|rendered| {
-        markdown::prepare_with_links(
-            &rendered,
-            width,
-            config.show_images,
-            config.image_max_width,
-            config.show_diagrams,
-            config.active_link_resolver(),
-            config.code_padding,
-        )
-        .ok()
-    });
-    let mut body = PreparedBody {
+    Some((
+        text[..header_end].to_owned(),
+        source.to_owned(),
+        text[footer_start..].trim_start_matches('\n').to_owned(),
+        rendered,
         skip_activity_folding,
-        rasters: Vec::new(),
-        glyphs: Vec::new(),
-        row_styles: Vec::new(),
-        height: 0,
-    };
-    append_plain(
-        &mut body,
-        &text[..header_end],
-        width,
-        GlyphRole::ActivityHeading(activity.outcome),
-    )
-    .ok()?;
-    if let Some(prepared) = prepared {
-        let offset = body.height;
-        body.height = body.height.checked_add(prepared.height)?;
-        body.glyphs
-            .extend(prepared.glyphs.into_iter().map(|mut glyph| {
-                glyph.point.y += offset;
-                PositionedTranscriptGrapheme {
-                    point: glyph.point,
-                    grapheme: glyph.grapheme,
-                    role: GlyphRole::ActivityBody,
-                    decoration: glyph.decoration,
-                    hyperlink: glyph.hyperlink,
-                }
-            }));
-        body.row_styles.extend(
-            prepared
-                .row_styles
-                .into_iter()
-                .map(|(row, style)| (row + offset, style)),
-        );
-        body.rasters
-            .extend(prepared.rasters.into_iter().map(|mut raster| {
-                raster.area.origin.y += offset;
-                raster
-            }));
-    } else {
-        append_plain(&mut body, source, width, GlyphRole::ActivityBody).ok()?;
-    }
-    if footer_start < text.len() {
-        append_plain(
-            &mut body,
-            text[footer_start..].trim_start_matches('\n'),
-            width,
-            GlyphRole::ActivityOutcome(activity.outcome),
-        )
-        .ok()?;
-    }
-    Some(body)
+    ))
 }
 
 // The source projection shares profile interpretation with the visual renderers.

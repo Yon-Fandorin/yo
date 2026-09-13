@@ -452,13 +452,14 @@ impl LivePresenter<Backend> for Presenter {
         previous: Option<&Surface>,
         current: &Surface,
         _cursor: Point,
-        publication: Option<&Surface>,
+        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
         _terminal_size: Size,
     ) -> Result<super::super::unix::RenderReceipt, LoopError> {
         self.previous_on_render.push(previous.is_some());
         self.frames.push(current.clone());
         if let Some(publication) = publication {
-            self.publications.push(publication.clone());
+            self.publications
+                .extend(publication.pages().iter().cloned());
         }
         self.render_count.set(self.render_count.get() + 1);
         Ok(super::super::unix::RenderReceipt {

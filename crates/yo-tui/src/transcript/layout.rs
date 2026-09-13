@@ -8,6 +8,7 @@ pub(crate) use markdown::MarkdownStyles;
 
 use crate::surface::RasterImage;
 mod output;
+mod paged;
 use std::num::NonZeroU16;
 
 pub(crate) use config::{TranscriptLayoutConfig, TranscriptLayoutConfigError};
@@ -145,6 +146,7 @@ struct TranscriptLayout {
     glyphs: Vec<(usize, PositionedTranscriptGrapheme)>,
     items: Vec<PositionedTranscriptItem>,
     height: usize,
+    paged_bodies: Vec<(usize, u16, paged::PagedBody)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,17 +163,6 @@ pub(crate) fn measure(
     config: &TranscriptLayoutConfig,
 ) -> Result<TranscriptMeasure, TranscriptMeasureError> {
     let prepared = prepare(transcript, width, config)?;
-    Ok(TranscriptMeasure {
-        content_height: prepared.content_height(),
-    })
-}
-
-pub(crate) fn measure_slice(
-    transcript: TranscriptSlice<'_>,
-    width: u16,
-    config: &TranscriptLayoutConfig,
-) -> Result<TranscriptMeasure, TranscriptMeasureError> {
-    let prepared = prepare_slice(transcript, width, config)?;
     Ok(TranscriptMeasure {
         content_height: prepared.content_height(),
     })
@@ -284,6 +275,16 @@ pub(crate) fn paint_prepared_commands(
     state: &mut TranscriptViewState,
     commands: &[TranscriptScrollCommand],
 ) -> Result<TranscriptRenderFrame, TranscriptPaintError> {
+    paint_indexed_commands(&prepared, view, styles, state, commands)
+}
+
+pub(crate) fn paint_indexed_commands(
+    prepared: &PreparedTranscript,
+    view: &mut SurfaceView<'_>,
+    styles: TranscriptStyles,
+    state: &mut TranscriptViewState,
+    commands: &[TranscriptScrollCommand],
+) -> Result<TranscriptRenderFrame, TranscriptPaintError> {
     if view.size().width != prepared.width.get() {
         return Err(TranscriptPaintError::WidthMismatch {
             prepared: prepared.width.get(),
@@ -315,6 +316,34 @@ pub(crate) fn paint_prepared_commands(
     );
     let context_item = prepared.layout.context_item(visible);
 
+    // Surface dimensions are applied only after logical scrolling is resolved.
+    let mut page_glyphs = Vec::new();
+    let mut page_bands = Vec::new();
+    for &(start, indent, ref body) in &prepared.layout.paged_bodies {
+        if start >= visible.end() || start + body.height.max(1) <= visible.first() {
+            continue;
+        }
+        let from = visible.first().saturating_sub(start);
+        let page_start = start + from;
+        let page_height = NonZeroU16::new(
+            u16::try_from(visible.end() - page_start).expect("visible page height"),
+        )
+        .expect("visible page");
+        let page = body.window(from, page_height);
+        let hyperlinks = body.hyperlinks;
+        page_glyphs.extend(page.glyphs.into_iter().map(|mut g| {
+            g.point.x += indent;
+            g.hyperlink = g.hyperlink.filter(|_| hyperlinks);
+            (page_start + usize::from(g.point.y), g)
+        }));
+        let width = body.width.get();
+        page_bands.extend(
+            page.row_styles
+                .into_iter()
+                .map(|(row, style)| (page_start + usize::from(row), indent, width, style)),
+        );
+    }
+
     if styles.user_body.background != Color::Default {
         for item in &prepared.layout.items {
             if item.role != MessageRole::User {
@@ -332,7 +361,7 @@ pub(crate) fn paint_prepared_commands(
     }
 
     let mut row_backgrounds = vec![None; usize::from(view.size().height)];
-    for &(row, indent, width, decoration) in &prepared.layout.row_bands {
+    for &(row, indent, width, decoration) in prepared.layout.row_bands.iter().chain(&page_bands) {
         if visible.contains(row) {
             let y = visible.translate(0, row).y;
             let style = styles.markdown.resolve(decoration, styles.assistant_body);
@@ -344,11 +373,11 @@ pub(crate) fn paint_prepared_commands(
         }
     }
 
-    let rasters = prepared.layout.rasters;
-    for (row, positioned) in prepared
+    for &(row, ref positioned) in prepared
         .layout
         .glyphs
-        .into_iter()
+        .iter()
+        .chain(&page_glyphs)
         .filter(|(row, _)| visible.contains(*row))
     {
         let point = visible.translate(positioned.point.x, row);
@@ -362,8 +391,9 @@ pub(crate) fn paint_prepared_commands(
         }
         let grapheme = styles
             .markdown
-            .display_glyph(positioned.decoration, positioned.grapheme);
-        if view.write_linked(point, grapheme, style, positioned.hyperlink) == WriteOutcome::Clipped
+            .display_glyph(positioned.decoration, positioned.grapheme.clone());
+        if view.write_linked(point, grapheme, style, positioned.hyperlink.clone())
+            == WriteOutcome::Clipped
         {
             unreachable!("validated transcript layout must fit its cleared view");
         }
@@ -371,9 +401,10 @@ pub(crate) fn paint_prepared_commands(
 
     *state = visible.next_state();
     if styles.markdown.rich_media && styles.markdown.pixel_color_capability != Color::Default {
-        for (row, mut raster) in rasters {
+        for &(row, ref raster) in &prepared.layout.rasters {
             let end = row.checked_add(usize::from(raster.area.size.height));
             if visible.contains(row) && end.is_some_and(|end| end <= visible.end()) {
+                let mut raster = raster.clone();
                 raster.area.origin = visible.translate(raster.area.origin.x, row);
                 view.place_raster(raster);
             }
@@ -414,6 +445,10 @@ fn render_error(error: TranscriptMeasureError) -> TranscriptRenderError {
 impl PreparedTranscript {
     pub(crate) const fn content_height(&self) -> usize {
         self.layout.height
+    }
+
+    pub(crate) const fn width(&self) -> u16 {
+        self.width.get()
     }
 }
 
@@ -641,6 +676,7 @@ fn layout(
     let mut rasters = Vec::new();
     let mut items = Vec::new();
     let mut height = 0_usize;
+    let mut paged_bodies = Vec::new();
     let mut has_visible_item = transcript.has_visible_predecessor();
 
     for item in transcript.items() {
@@ -650,7 +686,19 @@ fn layout(
         if message.text().is_empty() && item.phase() == TranscriptPhase::Streaming {
             continue;
         }
-        let flow = if message.text().is_empty() {
+        let paged = if message.text().is_empty() {
+            None
+        } else {
+            let width = configured_body_width(available_body_width, config.max_body_width())?;
+            paged::prepare(
+                config,
+                message,
+                width,
+                format_markdown,
+                item.phase() == TranscriptPhase::Final,
+            )?
+        };
+        let flow = if message.text().is_empty() || paged.is_some() {
             None
         } else {
             let body_width = configured_body_width(available_body_width, config.max_body_width())?;
@@ -701,7 +749,21 @@ fn layout(
             }
         }
         glyphs.extend(markers.into_iter().map(|marker| (item_y, marker)));
-        if let Some(flow) = flow {
+        if let Some(body) = paged {
+            for (row, mut raster) in body.raster_rows() {
+                raster.area.origin.x += config.body_indent();
+                rasters.push((
+                    item_y
+                        .checked_add(row)
+                        .ok_or(TranscriptRenderError::HeightOverflow)?,
+                    raster,
+                ));
+            }
+            height = item_y
+                .checked_add(body.height.max(1))
+                .ok_or(TranscriptRenderError::HeightOverflow)?;
+            paged_bodies.push((item_y, config.body_indent(), body));
+        } else if let Some(flow) = flow {
             for mut raster in flow.rasters {
                 raster.area.origin.x += config.body_indent();
                 let row = item_y
@@ -763,6 +825,7 @@ fn layout(
         glyphs,
         items,
         height,
+        paged_bodies,
     })
 }
 

@@ -104,11 +104,14 @@ fn reversible_restart_does_not_repeat_completed_owned_row_cleanup() {
 }
 
 // terminal 높이와 remembered anchor가 세 persistent 행 뒤의 실제 scroll을 확정한
-// operation 경계에서 다음 write가 0-byte로 실패하면, native history prefix를 지우거나
+// operation·페이지 경계에서 다음 write가 0-byte로 실패하면, native history prefix를 지우거나
 // 재생하지 않고 남은 operation suffix만 이어 쓴다.
 #[test]
 fn operation_boundary_failure_preserves_prefix_and_resumes_suffix() {
-    let publication = publication_surface(&["first", "second", "third", "fourth"]);
+    let publication = vec![
+        publication_surface(&["first", "second", "third"]),
+        publication_surface(&["fourth"]),
+    ];
     let live = Surface::new(Size::new(12, 1)).unwrap();
     let previous = live.clone();
     let mut viewport = InlineViewport::default();
@@ -196,15 +199,18 @@ fn possible_scroll_without_exact_anchor_refuses_recovery() {
     ));
 }
 
-// self-delimiting operation 한가운데 일부 byte가 admission된 뒤 실패하면 parser/effect
-// 경계를 추측하지 않고 bounded recovery를 중단하며 viewport 소유권도 확정하지 않는다.
+// 다음 페이지의 self-delimiting operation 한가운데 일부 byte가 admission된 뒤 실패하면
+// parser/effect 경계를 추측하지 않고 bounded recovery를 중단하며 viewport 소유권도 확정하지 않는다.
 #[test]
 fn partial_operation_failure_is_fatal_and_leaves_live_ownership_untrusted() {
-    let publication = publication_surface(&["partial"]);
+    let publication = vec![
+        publication_surface(&["previous"]),
+        publication_surface(&["partial"]),
+    ];
     let live = Surface::new(Size::new(12, 1)).unwrap();
     let mut viewport = InlineViewport::default();
     let pending = viewport.begin_frame(live.size());
-    let mut renderer = InlineRenderer::new(FaultWriter::partial_write_at(1, 4));
+    let mut renderer = InlineRenderer::new(FaultWriter::partial_write_at(2, 4));
 
     let error = renderer
         .render(pending, None, &live, Some(&publication), TERMINAL_SIZE)

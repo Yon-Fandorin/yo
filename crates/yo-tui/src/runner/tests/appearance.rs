@@ -872,7 +872,7 @@ fn tool_renderer_fallback_and_replacement_invalidate_layout() {
         ),
         (ToolRenderer::new(|_| None), "original payload"),
         (
-            ToolRenderer::new(|_| Some("x\n\n".repeat(32769))),
+            ToolRenderer::new(|_| Some("\u{301}".into())),
             "original payload",
         ),
     ] {
@@ -5340,11 +5340,13 @@ fn document_renderer_preserves_ownership_source_and_fallback() {
             "Replacement body",
         ),
         (
-            Some(DocumentRenderer::new(|_| Some("x\n\n".repeat(32769)))),
+            Some(DocumentRenderer::new(|_| Some("\u{301}".into()))),
             "Original document body",
         ),
         (
-            Some(DocumentRenderer::new(|_| Some("x\n\n".repeat(32768)))),
+            Some(DocumentRenderer::new(|_| {
+                Some("x".repeat(yo_core::ToolOutput::MAX_SNAPSHOT_BYTES + 1))
+            })),
             "Original document body",
         ),
         (
@@ -6394,7 +6396,7 @@ fn assistant_renderer_preserves_outcomes_roles_source_and_reflow() {
             "Second presentation",
         ),
         (
-            Some(AssistantRenderer::new(|_| Some("x\n\n".repeat(32768)))),
+            Some(AssistantRenderer::new(|_| Some("\u{301}".into()))),
             "Original answer",
         ),
         (

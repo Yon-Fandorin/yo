@@ -122,7 +122,7 @@ impl<Writer: Write> InlineRenderer<Writer> {
         pending: PendingFrame<'_>,
         previous: Option<&Surface>,
         current: &Surface,
-        publication: Option<&Surface>,
+        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
         terminal_size: Size,
     ) -> Result<InlineRenderReceipt, InlineRenderError> {
         if self.hyperlink_dirty {
@@ -145,7 +145,7 @@ impl<Writer: Write> InlineRenderer<Writer> {
         pending: PendingFrame<'_>,
         previous: Option<&Surface>,
         current: &Surface,
-        publication: Option<&Surface>,
+        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
         terminal_size: Size,
     ) -> Result<InlineRenderReceipt, InlineRenderError> {
         let Some(publication) = publication else {
@@ -155,10 +155,20 @@ impl<Writer: Write> InlineRenderer<Writer> {
                 recovery: None,
             });
         };
-        if publication.size().width != current.size().width {
+        if publication
+            .pages()
+            .iter()
+            .any(|page| page.size().width != current.size().width)
+        {
             return Err(InlineFrameError::PublicationWidthMismatch {
                 expected: current.size().width,
-                actual: publication.size().width,
+                actual: publication
+                    .pages()
+                    .iter()
+                    .find(|page| page.size().width != current.size().width)
+                    .expect("mismatched page")
+                    .size()
+                    .width,
             }
             .into());
         }
@@ -175,7 +185,8 @@ impl<Writer: Write> InlineRenderer<Writer> {
         let operations = TerminalOps::from_diff(&pending.redraw_diff(previous, current)?);
         let transaction =
             PublicationTransaction::compile(plan, terminal_size, publication, &operations);
-        self.hyperlink_dirty = current.has_hyperlinks() || publication.has_hyperlinks();
+        self.hyperlink_dirty =
+            current.has_hyperlinks() || publication.pages().iter().any(Surface::has_hyperlinks);
         let first = transaction.execute_from(self.ansi.writer_mut(), 0);
         let recovery = match first {
             Ok(()) => None,

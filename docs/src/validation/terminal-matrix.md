@@ -397,6 +397,31 @@ authentication, native state and rules were removed; workspaces were emptied,
 owned tmux servers closed and no owned processes remained. The four `turn/start`
 calls do not count internal model or reviewer requests.
 
+On 2026-09-13, the reusable Linux command
+`python3 tools/validation/codex-policy-persistence.py /absolute/path/to/codex`
+reconfirmed exact Codex `0.154.0` policy writes and restart reload in a
+loopback-only user/network namespace. The host offered and accepted one exact
+`acceptWithExecpolicyAmendment` argv prefix, wrote its native rule and executed
+one owned marker append. After closing the app-server and starting a new
+process, `thread/resume` and the identical command appended a second marker
+without approval; the rule bytes were unchanged. A distinct command offered
+`cancel`, which interrupted the Turn, left its marker absent and wrote no rule.
+Five local synthetic Responses requests and zero external model requests were
+used. `gpt-5.5` selects the native fixture's tool configuration only; no OpenAI
+model service was called. Normal user state was unchanged and all owned test
+state and processes were removed. This direct native probe supplements the
+actual Yo TUI journey above and does not add a persistent command-denial choice.
+
+The separate command
+`python3 tools/validation/codex-interview-resume.py /absolute/path/to/codex`
+created two nonsecret pending questions on the same exact native version,
+closed its process, started a new one and resumed the disk thread. The old Turn
+was `interrupted`, and no pending question RPC was replayed. Its one local
+fixture request made zero external model requests; owned temporary state was
+removed and normal user state was unchanged. This validates the recovery
+constraint behind the proposed interview feature, not implemented draft
+persistence or transparent continuation of a dead request.
+
 ### Automatic refusal and network approval scopes
 
 On the same date, the same Yo binary and official Codex `0.154.0` passed ten

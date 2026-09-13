@@ -51,7 +51,7 @@ fn final_prefix_waits_for_acknowledgement_and_stops_before_streaming() {
         .as_ref()
         .expect("the Final user item is eligible");
 
-    assert_eq!(plain_surface(&publication.surface), "❯ question");
+    assert_eq!(plain_publication(&publication.surfaces), "❯ question");
     assert!(plain_surface(&frame.surface).contains("• Thinking…"));
     assert!(plain_surface(&frame.surface).contains("❯ later final"));
     assert!(frame.surface.size().height < 20);
@@ -86,7 +86,7 @@ fn final_prefix_waits_for_acknowledgement_and_stops_before_streaming() {
         .prepare_frame_for_geometry(Size::new(32, 20), &appearance, Duration::ZERO, 7)
         .unwrap();
     assert_eq!(
-        plain_surface(&next.publication.as_ref().unwrap().surface),
+        plain_publication(&next.publication.as_ref().unwrap().surfaces),
         "\n• Model work completed\n\n\n❯ later final"
     );
 }
@@ -214,7 +214,7 @@ fn read_only_views_freeze_publication_until_chat_returns() {
         .prepare_frame_for_geometry(Size::new(28, 10), &appearance, Duration::ZERO, 0)
         .unwrap();
     assert_eq!(
-        plain_surface(&chat.publication.as_ref().unwrap().surface),
+        plain_publication(&chat.publication.as_ref().unwrap().surfaces),
         "❯ still unpublished"
     );
 }
@@ -275,10 +275,10 @@ fn large_unpublished_history_clamps_only_the_physical_live_surface() {
     assert!(plain_surface(&frame.surface).contains("last3"));
 }
 
-// persistent Surface의 마지막 허용 행은 보존하고 첫 초과 후보는 반복 준비에도 cursor를
-// 전진시키지 않는다. 같은 대화의 Fullscreen 렌더는 논리 높이로 계속 동작한다.
+// persistent 후보의 마지막 u16 행과 첫 초과 행을 모두 페이지로 발행하며,
+// 실제 완료 receipt 전에는 cursor를 전진시키지 않는지 확인합니다.
 #[test]
-fn persistent_publication_keeps_its_surface_bound_without_limiting_fullscreen_history() {
+fn persistent_publication_pages_cross_the_surface_height_boundary() {
     for total in [65_535_usize, 65_536] {
         let mut state = TuiState::new();
         for rows in [32_768, total - 32_770] {
@@ -286,32 +286,52 @@ fn persistent_publication_keeps_its_surface_bound_without_limiting_fullscreen_hi
                 .observe_record(TranscriptRecord::CommandCommitted(
                     AgentCommand::StartTurn {
                         turn: turn(),
-                        input: UserInput::from(format!("{}x", "x\n".repeat(rows - 1))),
+                        input: UserInput::from(format!("{}END", "x\n".repeat(rows - 1))),
                     },
                 ))
                 .unwrap();
         }
         let appearance = AppearanceState::default().pin();
-        let size = Size::new(3, 12);
-        if total == 65_535 {
+        let size = Size::new(8, 12);
+        for _ in 0..2 {
             let frame = state
                 .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
                 .unwrap();
-            assert_eq!(frame.publication.unwrap().surface.size().height, u16::MAX);
-        } else {
-            for _ in 0..2 {
-                assert!(
-                    state
-                        .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
-                        .is_err()
-                );
-            }
-            state.set_presentation_mode(PresentationMode::Fullscreen);
-            let frame = state
-                .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
-                .unwrap();
-            assert!(frame.publication.is_none());
-            assert_eq!(frame.surface.size(), size);
+            let pages = &frame.publication.as_ref().unwrap().surfaces;
+            assert!(pages.iter().all(|page| page.size().height <= size.height));
+            assert_eq!(
+                pages
+                    .iter()
+                    .map(|page| usize::from(page.size().height))
+                    .sum::<usize>(),
+                total
+            );
+            assert!(plain_surface(pages.last().unwrap()).contains("END"));
         }
+        let frame = state
+            .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
+            .unwrap();
+        assert!(state.acknowledge_publication(&frame));
+        assert!(
+            state
+                .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
+                .unwrap()
+                .publication
+                .is_none()
+        );
+        state.set_presentation_mode(PresentationMode::Fullscreen);
+        let frame = state
+            .prepare_frame_for_geometry(size, &appearance, Duration::ZERO, 1)
+            .unwrap();
+        assert!(frame.publication.is_none());
+        assert!(plain_surface(&frame.surface).contains("END"));
     }
+}
+
+fn plain_publication(pages: &[Surface]) -> String {
+    pages
+        .iter()
+        .map(plain_surface)
+        .collect::<Vec<_>>()
+        .join("\n")
 }

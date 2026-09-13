@@ -8,12 +8,12 @@ use crate::{
     surface::{Point, Rect, Size, Surface, SurfaceError},
     transcript::{
         TranscriptMeasureError, TranscriptRenderError, TranscriptSlice, TranscriptViewState,
-        measure_slice, render_slice,
+        paint_indexed_commands, prepare_slice,
     },
 };
 
 pub(super) struct PreparedPublication {
-    pub(super) surface: Surface,
+    pub(super) surfaces: Vec<Surface>,
     pub(super) observed_terminal_size: Size,
     pub(super) geometry_epoch: u64,
     pub(super) appearance_revision: AppearanceRevision,
@@ -57,31 +57,35 @@ pub(super) fn prepare(
     appearance_revision: AppearanceRevision,
     appearance: &AppearanceSnapshot,
 ) -> Result<PreparedPublication, PublicationPrepareError> {
-    let height = measure_slice(
+    let prepared = prepare_slice(
         transcript,
         observed_terminal_size.width,
         appearance.transcript_config(),
     )
-    .map_err(|error| PublicationPrepareError::Transcript(render_error(error)))?
-    .content_height;
-    let height = u16::try_from(height)
-        .map_err(|_| PublicationPrepareError::Transcript(TranscriptRenderError::HeightOverflow))?;
-    let mut surface = Surface::new(Size::new(observed_terminal_size.width, height))
-        .map_err(PublicationPrepareError::Allocate)?;
-    let mut view = surface
-        .view(Rect::new(Point::new(0, 0), surface.size()))
-        .expect("the complete publication Surface is a valid view");
-    render_slice(
-        transcript,
-        &mut view,
-        appearance.transcript_config(),
-        appearance.styles().transcript,
-        &mut TranscriptViewState::default(),
-        None,
-    )
-    .map_err(PublicationPrepareError::Transcript)?;
+    .map_err(|error| PublicationPrepareError::Transcript(render_error(error)))?;
+    let height = prepared.content_height();
+    let mut surfaces = Vec::new();
+    let page_height = usize::from(observed_terminal_size.height.max(1));
+    for first in (0..height).step_by(page_height) {
+        let rows =
+            u16::try_from((height - first).min(page_height)).expect("publication page height");
+        let mut surface = Surface::new(Size::new(prepared.width(), rows))
+            .map_err(PublicationPrepareError::Allocate)?;
+        let mut view = surface
+            .view(Rect::new(Point::new(0, 0), surface.size()))
+            .expect("the complete publication Surface is a valid view");
+        paint_indexed_commands(
+            &prepared,
+            &mut view,
+            appearance.styles().transcript,
+            &mut TranscriptViewState::at_row(first),
+            &[],
+        )
+        .expect("publication pages match the validated index geometry");
+        surfaces.push(surface);
+    }
     Ok(PreparedPublication {
-        surface,
+        surfaces,
         observed_terminal_size,
         geometry_epoch,
         appearance_revision,

@@ -9,6 +9,22 @@ pub(crate) use renderer::{
 
 use crate::surface::{FrameDiff, Point, Size, Surface};
 
+pub(crate) trait PublicationSource {
+    fn pages(&self) -> &[Surface];
+}
+
+impl PublicationSource for Surface {
+    fn pages(&self) -> &[Surface] {
+        std::slice::from_ref(self)
+    }
+}
+
+impl PublicationSource for Vec<Surface> {
+    fn pages(&self) -> &[Surface] {
+        self.as_slice()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InlineFramePlan {
     Initialize {

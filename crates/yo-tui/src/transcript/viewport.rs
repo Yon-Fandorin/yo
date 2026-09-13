@@ -18,6 +18,12 @@ pub(crate) struct TranscriptViewState {
 }
 
 impl TranscriptViewState {
+    pub(crate) const fn at_row(first_visible_row: usize) -> Self {
+        Self {
+            mode: TranscriptViewMode::Detached,
+            first_visible_row,
+        }
+    }
     pub(crate) const fn mode(self) -> TranscriptViewMode {
         self.mode
     }

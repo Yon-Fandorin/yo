@@ -7,6 +7,86 @@ fn width(value: u16) -> NonZeroU16 {
     NonZeroU16::new(value).unwrap()
 }
 
+// 페이지 경로도 기존 단어 단위 줄바꿈·탭·제어문자·한글과 빈 줄의 최종 셀 및
+// 원본 byte 위치를 보존해야 하므로 작은 입력의 전체 흐름과 독립 비교합니다.
+#[test]
+fn prose_pages_match_existing_word_wrapping_and_source_positions() {
+    for source in [
+        "  alpha beta\n\n  γδ 🙂 é",
+        "  let theme = \"selected\";\n\n\t한글 é 🙂  \r\nend",
+        "  longwordlongword trailing \u{1b} [DONE]\n\n",
+        "\t\tword\t next\n    ",
+    ] {
+        for columns in [2, 6, 10, 20, 80] {
+            for (indent, spaces) in [(false, false), (true, false), (true, true)] {
+                let old =
+                    super::flow_prose_with_indent(source, width(columns), indent, spaces).unwrap();
+                let pages =
+                    super::TextPages::prose(source, width(columns), indent, spaces).unwrap();
+                assert_eq!(
+                    pages.row_count(),
+                    usize::from(old.height),
+                    "{source:?} {columns} {indent} {spaces}"
+                );
+                let projected =
+                    flow_text(pages.window(0, width(u16::MAX)), width(columns)).unwrap();
+                let cells = |flow: &super::TextFlow| {
+                    let mut rows =
+                        vec![vec![" ".to_owned(); usize::from(columns)]; usize::from(old.height)];
+                    for g in &flow.glyphs {
+                        rows[usize::from(g.point.y)][usize::from(g.point.x)] =
+                            g.grapheme.as_str().to_owned();
+                    }
+                    rows
+                };
+                assert_eq!(
+                    cells(&old),
+                    cells(&projected),
+                    "{source:?} {columns} {indent} {spaces}"
+                );
+                for glyph in projected
+                    .glyphs
+                    .iter()
+                    .filter(|g| !g.grapheme.as_str().chars().all(char::is_whitespace))
+                {
+                    let original = old.glyphs.iter().find(|g| g.point == glyph.point).unwrap();
+                    assert_eq!(pages.source_byte_at(glyph.byte_index), original.byte_index);
+                }
+            }
+        }
+    }
+}
+
+// 16bit 한도를 넘는 한 문단과 한 코드 줄을 잘라내지 않고 페이지로 읽으며,
+// 끝의 원문 offset과 마지막 marker까지 유지하는지 검사합니다.
+#[test]
+fn prose_pages_handle_large_bodies_and_single_lines() {
+    for source in [
+        format!("{}END", "한글\n".repeat(70_000)),
+        format!("{} END", "a".repeat(140_000)),
+    ] {
+        let pages = super::TextPages::prose(&source, width(2), true, true).unwrap();
+        assert!(pages.row_count() > usize::from(u16::MAX));
+        let start = pages.row_count() - 3;
+        let window = pages.window(start, width(3));
+        assert!(window.replace('\n', "").ends_with("END"));
+        let shown = flow_text(window, width(2)).unwrap();
+        let last = shown.glyphs.last().unwrap();
+        assert_eq!(
+            pages.source_byte_at(pages.window_offset(start) + last.byte_index),
+            source.len() - 1
+        );
+    }
+    let source = format!("{}END", "abc ".repeat(70_000));
+    let pages = super::TextPages::prose(&source, width(4), false, false).unwrap();
+    assert_eq!(pages.row_count(), 70_001);
+    assert_eq!(pages.window(70_000, width(1)), "END");
+    assert_eq!(
+        pages.source_byte_at(pages.window_offset(70_000)),
+        source.len() - 3
+    );
+}
+
 fn positions(flow: &super::TextFlow) -> Vec<(&str, Point)> {
     flow.glyphs
         .iter()

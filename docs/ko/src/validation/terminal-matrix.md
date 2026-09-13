@@ -363,6 +363,27 @@ native 상태와 규칙을 제거하고 작업 폴더를 비웠으며, 소유한
 남은 소유 프로세스가 없음을 확인했다. `turn/start` 네 번은 내부 model이나 reviewer
 요청 횟수를 뜻하지 않는다.
 
+2026-09-13에 반복 가능한 Linux 명령
+`python3 tools/validation/codex-policy-persistence.py /absolute/path/to/codex`으로
+loopback 전용 사용자·네트워크 namespace에서 정확한 Codex `0.154.0`의 실제 정책
+저장과 재시작 후 적용을 재확인했다. 호스트가 제공한 정확한 argv prefix의
+`acceptWithExecpolicyAmendment`를 선택하자 native 규칙을 저장하고 소유한 marker에
+한 번 추가했다. app-server 종료·새 프로세스 시작 후 `thread/resume`으로 같은 명령을
+실행했을 때 재승인 없이 두 번째 marker를 추가했고 규칙 byte는 같았다. 다른 명령은
+`cancel`을 제공했으며 Turn을 중단하고 marker와 새 규칙을 만들지 않았다. 로컬 합성
+Responses 요청은 다섯 번이고 외부 모델 요청은 없다. `gpt-5.5`는 native fixture의 도구
+구성을 선택할 뿐 OpenAI 모델 서비스를 호출하지 않았다. 정상 사용자 상태를 보존하고
+소유한 임시 상태와 프로세스를 정리했다. 직접 native 검증으로 위 실제 Yo TUI 경로를
+보완하며 영구 명령 거부 선택지를 추가하지 않는다.
+
+별도 명령
+`python3 tools/validation/codex-interview-resume.py /absolute/path/to/codex`은 같은
+native 버전에서 비밀이 아닌 질문 두 개를 대기시킨 뒤 프로세스를 종료·재시작하고
+디스크 thread를 복원했다. 예전 Turn은 `interrupted`였고 대기 중 질문 RPC는 재발행되지
+않았다. 로컬 fixture 요청 한 번으로 외부 모델 요청 없이 확인하고 소유한 임시 상태를
+정리했으며 정상 사용자 상태는 보존했다. 제안 중인 인터뷰 기능의 복원 제약을 확인한
+것으로, 초안 영속화나 종료된 요청의 투명한 재개를 구현했다는 의미는 아니다.
+
 ### 자동 거절과 네트워크 승인 범위
 
 같은 날 같은 Yo 바이너리와 공식 Codex `0.154.0`을 격리된 120×48 tmux TUI에서

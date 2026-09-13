@@ -27,7 +27,7 @@ where
         previous: Option<&Surface>,
         current: &Surface,
         cursor: Point,
-        publication: Option<&Surface>,
+        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
         terminal_size: Size,
     ) -> Result<RenderReceipt, LoopError>;
 }
@@ -103,7 +103,7 @@ where
         previous: Option<&Surface>,
         current: &Surface,
         cursor: Point,
-        publication: Option<&Surface>,
+        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
         terminal_size: Size,
     ) -> Result<RenderReceipt, LoopError> {
         render_inline(
@@ -140,7 +140,7 @@ where
         previous: Option<&Surface>,
         current: &Surface,
         cursor: Point,
-        _publication: Option<&Surface>,
+        _publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
         _terminal_size: Size,
     ) -> Result<RenderReceipt, LoopError> {
         render_fullscreen(session, self, previous, current, cursor)
@@ -191,10 +191,9 @@ where
         presentation.previous.as_ref(),
         &frame.surface,
         frame.cursor,
-        frame
-            .publication
-            .as_ref()
-            .map(|publication| &publication.surface),
+        frame.publication.as_ref().map(|publication| {
+            &publication.surfaces as &dyn crate::terminal::mode::inline::PublicationSource
+        }),
         presentation.size,
     )?;
     if let Some(recovery) = receipt.publication_recovery {

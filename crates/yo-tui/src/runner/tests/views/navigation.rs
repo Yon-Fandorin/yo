@@ -961,7 +961,7 @@ fn inline_diff_capacity_keeps_the_last_row_and_routes_the_first_excess_to_review
     }
 }
 
-// 두 diff를 전체 펼쳤을 때 누적 8만 행을 넘겨도 실제 Chat frame·history 위치·End가 유지된다.
+// 단일 8만 행 diff와 누적 12만 행을 펼쳐도 실제 Chat frame·history 위치·End가 유지된다.
 #[test]
 fn expanded_chat_keeps_large_accumulated_diffs_scrollable() {
     let mut state = TuiState::new();
@@ -974,7 +974,7 @@ fn expanded_chat_keeps_large_accumulated_diffs_scrollable() {
             .unwrap();
         let source = format!(
             "update: file{number}.rs\n{}",
-            (0..40000)
+            (0..if number == 1 { 80_000 } else { 40_000 })
                 .map(|row| format!("+file{number} row{row:05}\n"))
                 .collect::<String>()
         );

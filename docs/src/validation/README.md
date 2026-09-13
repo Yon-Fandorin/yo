@@ -226,7 +226,16 @@ Managed and Grok adapters reject offered
 ordinals they do not support before consuming their approval state. A decision receipt
 is published only after the response write succeeds, using customizable activity styles.
 The offline `approval-scopes` fixture exercises scoped choices without changing any
-permission, policy, or file. Live provider policy persistence remains unverified here.
+permission, policy, or file. Installed Codex command-rule persistence is verified
+by the [terminal matrix](terminal-matrix.md#saved-command-rules-and-automatic-approval).
+The repeatable Linux check is
+`python3 tools/validation/codex-policy-persistence.py /absolute/path/to/codex`.
+It requires exact Codex 0.154.0 and Linux user/network namespaces, exercises actual
+native rule writes and fresh-process reload with five loopback-only Responses
+fixtures, and makes zero external model requests. It changes only owned temporary
+native state, verifies the exact allowed command's effect and a separately cancelled
+command's absent effect, and removes that state. It does not add a permanent
+command-denial choice or prove live-service classification.
 
 ### Static comparison fixtures
 
@@ -443,24 +452,33 @@ line offsets preserve addition/deletion/hunk styles across wrapping, including r
 backgrounds and padding; the same diff role classifier serves Markdown and review.
 Theme changes resolve fresh styles without rebuilding source pages. End follows new
 snapshots, detached navigation anchors to source bytes across width changes, and a
-file switch starts at its heading. Chat displays a large-diff summary and `/changes`
-hint before an individual diff exceeds its inline u16 height budget. This applies even when inline
-activities are expanded; retained source/export and full review stay available.
+file switch starts at its heading. Compact Chat retains the large-diff summary
+and `/changes` hint; expanding an activity now reads an individual diff beyond
+65,535 rows directly in Chat. Retained source and exports stay complete.
 Tests cover 70,000 lines, failed-frame navigation retry, appended snapshots, file
 switches, continuation backgrounds, custom colors and width round trips.
 
 Accumulated Chat/Transcript/Request layout and scrolling use usize document rows.
-Glyphs, code bands, user backgrounds, context-item lookup and raster placements map
-only visible logical rows into the unchanged u16 Surface coordinates. Natural live
-height is also measured in usize and clamped to the actual terminal height at the
-inline live composition boundary. Arithmetic overflow still produces typed errors.
-Tests cover totals of 65,535, 65,536 and 98,308 rows, Home/End and positions near
-usize::MAX, expanded 80,000-row Chat diffs, code/diff/image placement after long
-history, and a large unpublished inline suffix. This removes the combined-message
-height ceiling; it does not remove individual rich-message layout limits or make
-one persistent inline publication Surface exceed u16. Oversized publication remains
-an explicit preparation failure before cursor acknowledgement. Layout still prepares
-all retained items; fully virtualizing individual message bodies remains separate work.
+Individual user/plain bodies, assistant Markdown, tool output, documents, notices,
+interview text and plans index display bytes and source spans without retaining a
+cell per offscreen grapheme. Only the visible page acquires u16 Surface coordinates,
+styles and hyperlinks. Code and table cells share the word/grapheme wrapping engine;
+source offsets preserve decorations across wrapping, tabs and controls. Compact
+output retains its head, expansion hint and tail; Ctrl+O expands the same source.
+Home/End, width round trips and export do not mutate retained text. Tests cover
+individual 70,000-row bodies, 75,000-row table cells, a single 80,000-row expanded
+diff and 120,000 accumulated diff rows, plus original cell/style/link parity.
+
+Inline publication prepares terminal-height Surface pages for the complete eligible
+item prefix, retaining its expected cell rows and typed operation/effect evidence
+until the entire write and flush succeed. A page boundary does not acknowledge part
+of an item or reset the effect ledger. The 65,535th and 65,536th publication rows
+both remain available. A zero-byte failure after scrolling resumes the exact suffix;
+a partial operation remains fatal with an unchanged semantic publication cursor.
+Physical Surface dimensions stay u16. Parsing/indexing still retain display bytes
+and row metadata proportional to the source, and a publication transaction retains
+its complete expected rows; this is not a constant-memory claim. Arithmetic overflow,
+allocation failure and existing snapshot/storage limits remain explicit.
 
 Codex `turn/plan/updated` replaces one ModelWork activity per turn and closes it
 before turn completion; late plan updates cannot reopen it. Remaining steps are

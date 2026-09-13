@@ -1027,7 +1027,9 @@ The useful inspection points are:
    the maximal contiguous prefix of complete unpublished items as persistent
    output, then composes only the remaining transcript suffix, prompt, chrome,
    and overlay into a natural-height live `Surface`. `terminal/mode/inline`
-   compiles the persistent rows and live update into retained typed
+   prepares persistent rows in terminal-height Surface pages; logical row indices
+   can exceed u16 while the complete candidate remains one transaction. It
+   compiles those pages and the live update into retained typed
    `TerminalOp` groups before the shared ANSI encoder and direct unbuffered Unix
    transport. The effect ledger carries the observed terminal geometry plus
    cursor ranges and distinguishes an addressable prefix, definite scrolling,

@@ -5,9 +5,9 @@ use std::mem::take;
 use pulldown_cmark::Alignment;
 
 use super::{
-    Attributes, Block, BlockFormat, Decoration, NonZeroU16, Role, TextFlowError, flow_prose,
-    flow_text,
+    Attributes, Block, BlockFormat, Decoration, NonZeroU16, Role, TextFlowError, flow_text,
 };
+use crate::text::flow::TextPages;
 
 pub(super) struct Table {
     alignments: Vec<Alignment>,
@@ -132,29 +132,37 @@ fn fit_widths(widths: &mut [u16], available: usize) {
 // Normalize tabs and controls within each cell before column alignment. Flow's
 // source offsets preserve styles even when one source grapheme expands to cells.
 fn normalize(block: Block) -> Result<Cell, TextFlowError> {
-    let flow = flow_text(&block.text, NonZeroU16::new(u16::MAX).unwrap())?;
+    let pages = TextPages::new(&block.text, NonZeroU16::new(u16::MAX).unwrap())?;
     let mut normalized = Block::default();
     let mut width = 0;
     let mut row = 0;
     let mut span = 0;
-    for glyph in flow.glyphs {
-        while row < glyph.point.y {
-            append(&mut normalized, "\n", Decoration::default());
-            row += 1;
+    for display_row in 0..pages.row_count() {
+        let flow = flow_text(
+            pages.window(display_row, NonZeroU16::MIN),
+            NonZeroU16::new(u16::MAX).unwrap(),
+        )?;
+        for mut glyph in flow.glyphs {
+            glyph.byte_index =
+                pages.source_byte_at(pages.window_offset(display_row) + glyph.byte_index);
+            while row < display_row {
+                append(&mut normalized, "\n", Decoration::default());
+                row += 1;
+            }
+            while block
+                .spans
+                .get(span + 1)
+                .is_some_and(|(start, _)| *start <= glyph.byte_index)
+            {
+                span += 1;
+            }
+            let decoration = block
+                .spans
+                .get(span)
+                .map_or(Decoration::default(), |(_, decoration)| *decoration);
+            append(&mut normalized, glyph.grapheme.as_str(), decoration);
+            width = width.max(glyph.point.x + glyph.grapheme.width().get());
         }
-        while block
-            .spans
-            .get(span + 1)
-            .is_some_and(|(start, _)| *start <= glyph.byte_index)
-        {
-            span += 1;
-        }
-        let decoration = block
-            .spans
-            .get(span)
-            .map_or(Decoration::default(), |(_, decoration)| *decoration);
-        append(&mut normalized, glyph.grapheme.as_str(), decoration);
-        width = width.max(glyph.point.x + glyph.grapheme.width().get());
     }
     Ok(Cell {
         block: normalized,
@@ -176,28 +184,37 @@ fn grid(
                 let Some(cell) = cells.get(index) else {
                     return Ok(vec![Block::default()]);
                 };
-                let flow = flow_prose(&cell.block.text, NonZeroU16::new(width).unwrap())?;
-                let mut lines = vec![Block::default(); usize::from(flow.height.max(1))];
+                let pages = TextPages::prose(
+                    &cell.block.text,
+                    NonZeroU16::new(width).unwrap(),
+                    false,
+                    false,
+                )?;
+                let mut lines = vec![Block::default(); pages.row_count().max(1)];
                 let mut span = 0;
-                for glyph in flow.glyphs {
-                    while cell
-                        .block
-                        .spans
-                        .get(span + 1)
-                        .is_some_and(|(start, _)| *start <= glyph.byte_index)
-                    {
-                        span += 1;
+                for (row, line) in lines.iter_mut().enumerate() {
+                    let flow = flow_text(
+                        pages.window(row, NonZeroU16::MIN),
+                        NonZeroU16::new(width).unwrap(),
+                    )?;
+                    for mut glyph in flow.glyphs {
+                        glyph.byte_index =
+                            pages.source_byte_at(pages.window_offset(row) + glyph.byte_index);
+                        while cell
+                            .block
+                            .spans
+                            .get(span + 1)
+                            .is_some_and(|(start, _)| *start <= glyph.byte_index)
+                        {
+                            span += 1;
+                        }
+                        let decoration = cell
+                            .block
+                            .spans
+                            .get(span)
+                            .map_or(Decoration::default(), |(_, d)| *d);
+                        append(line, glyph.grapheme.as_str(), decoration);
                     }
-                    let decoration = cell
-                        .block
-                        .spans
-                        .get(span)
-                        .map_or(Decoration::default(), |(_, d)| *d);
-                    append(
-                        &mut lines[usize::from(glyph.point.y)],
-                        glyph.grapheme.as_str(),
-                        decoration,
-                    );
                 }
                 Ok(lines)
             })

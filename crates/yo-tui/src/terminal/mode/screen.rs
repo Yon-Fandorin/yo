@@ -58,7 +58,7 @@ pub(crate) fn render_inline<B>(
     previous: Option<&Surface>,
     current: &Surface,
     cursor: Point,
-    publication: Option<&Surface>,
+    publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
     terminal_size: crate::surface::Size,
 ) -> Result<InlineRenderReceipt, InlineRenderError>
 where

@@ -24,8 +24,8 @@ mod viewport;
 pub(crate) use layout::{
     MarkdownStyles, TranscriptActivityStyles, TranscriptLayoutConfig, TranscriptLayoutConfigError,
     TranscriptMeasure, TranscriptMeasureError, TranscriptPaintError, TranscriptRenderError,
-    TranscriptRenderFrame, TranscriptStyles, measure, measure_slice, paint_prepared,
-    paint_prepared_commands, prepare, prepare_slice, render, render_commands, render_slice,
+    TranscriptRenderFrame, TranscriptStyles, measure, paint_indexed_commands, paint_prepared,
+    paint_prepared_commands, prepare, prepare_slice, render, render_commands,
 };
 pub(crate) use viewport::{TranscriptScrollCommand, TranscriptViewMode, TranscriptViewState};
 

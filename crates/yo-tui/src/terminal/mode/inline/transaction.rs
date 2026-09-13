@@ -8,7 +8,7 @@ use std::{io, io::Write as _, num::NonZeroU16};
 
 use ledger::{EffectEvidence, Ledger, ScrollEvidence};
 
-use super::InlineFramePlan;
+use super::{InlineFramePlan, PublicationSource};
 use crate::{
     surface::{CellContent, Point, Size, Style, Surface},
     terminal::{AnsiEncoder, TerminalOp, TerminalOps},
@@ -18,7 +18,7 @@ use crate::{
 enum PhysicalEffect {
     CursorVisibility,
     AddressableOwnedRows { rows: u16 },
-    PublicationRow { row: u16 },
+    PublicationRow { row: usize },
     LiveTail,
 }
 
@@ -54,7 +54,7 @@ impl<'frame> PublicationTransaction<'frame> {
     pub(super) fn compile(
         plan: InlineFramePlan,
         terminal_size: Size,
-        publication: &'frame Surface,
+        publication: &'frame dyn PublicationSource,
         live_operations: &TerminalOps<'frame>,
     ) -> Self {
         let mut ledger = Ledger::new(plan, terminal_size);
@@ -77,13 +77,19 @@ impl<'frame> PublicationTransaction<'frame> {
             );
         }
         let first_publication = operations.len();
-        for row in 0..publication.size().height {
-            push(
-                &mut operations,
-                &mut ledger,
-                publication_row(publication, row),
-                PhysicalEffect::PublicationRow { row },
-            );
+        let mut first = 0;
+        for page in publication.pages() {
+            for row in 0..page.size().height {
+                push(
+                    &mut operations,
+                    &mut ledger,
+                    publication_row(page, row),
+                    PhysicalEffect::PublicationRow {
+                        row: first + usize::from(row),
+                    },
+                );
+            }
+            first += usize::from(page.size().height);
         }
 
         // The live suffix is one self-delimiting operation. A zero-byte failure at

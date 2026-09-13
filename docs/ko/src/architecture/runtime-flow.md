@@ -933,7 +933,9 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
    완료된 unpublished item의 최대 연속 prefix를 persistent 출력으로
    선택하고, 나머지 transcript suffix·prompt·chrome·overlay만 자연 높이의
    live `Surface`로 조합한다. `terminal/mode/inline`은 persistent 행과 live
-   update를 공유 ANSI encoder 이전에 보존되는 typed `TerminalOp` group으로
+   update를 준비한다. persistent 행은 실제 터미널 높이별 Surface 페이지로 나누므로
+   논리 행 위치가 u16을 넘어도 전체 후보는 하나의 transaction으로 유지한다. 각 페이지와
+   live update를 공유 ANSI encoder 이전에 보존되는 typed `TerminalOp` group으로
    compile한 뒤 direct unbuffered Unix transport로 출력한다. effect ledger는
    관찰한 terminal geometry, cursor 범위, addressable prefix, 확정 scroll, anchor가
    정확하지 않은 possible-scroll 상태를 구분한다. 정확한 downstream 진행률이

@@ -250,12 +250,13 @@ fn scan(
 }
 
 /// Display text indexed at sparse row checkpoints, independent of surface height.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TextPages {
     text: String,
     checkpoints: Vec<usize>,
     source_rows: Vec<usize>,
     rows: usize,
+    source_map: Vec<(usize, usize)>,
 }
 
 impl TextPages {
@@ -267,6 +268,7 @@ impl TextPages {
             checkpoints: vec![0],
             source_rows: vec![0],
             rows: 0,
+            source_map: vec![(0, 0)],
         };
         let (height, _) = scan(source, None, width, &mut pages)?;
         if height > 0 {
@@ -313,6 +315,141 @@ impl TextPages {
 
     pub(crate) const fn row_count(&self) -> usize {
         self.rows
+    }
+
+    /// Original source position for a projected display glyph. Only discontinuities
+    /// (wrapping, expanded controls, omitted prose spaces) need a mapping entry.
+    pub(crate) fn source_byte_at(&self, display_byte: usize) -> usize {
+        let next = self
+            .source_map
+            .partition_point(|(display, _)| *display <= display_byte);
+        let (display, source) = self.source_map[next.saturating_sub(1)];
+        source + display_byte.saturating_sub(display)
+    }
+
+    pub(crate) fn window_offset(&self, row: usize) -> usize {
+        if row >= self.rows {
+            self.text.len()
+        } else {
+            self.row_offset(row)
+        }
+    }
+
+    pub(crate) fn prose(
+        source: &str,
+        width: NonZeroU16,
+        preserve_indent: bool,
+        preserve_spaces: bool,
+    ) -> Result<Self, TextFlowError> {
+        let mut pages = Self {
+            text: String::new(),
+            checkpoints: vec![0],
+            source_rows: vec![0],
+            rows: 0,
+            source_map: vec![(0, 0)],
+        };
+        let mut row = 0_usize;
+        let mut offset = 0_usize;
+        for (line_index, line) in source.split('\n').enumerate() {
+            if line_index > 0 {
+                row = row.checked_add(1).ok_or(TextFlowError::HeightOverflow)?;
+                pages.hard_break(row, offset);
+            }
+            let mut input = ExpandedLine::new(line, width);
+            let continuation_indent = if preserve_spaces {
+                let mut indent = 0_usize;
+                for glyph in input.clone() {
+                    let (_, glyph) = glyph.map_err(|error| offset_error(error, offset))?;
+                    if !glyph.as_str().chars().all(char::is_whitespace) {
+                        break;
+                    }
+                    indent += usize::from(glyph.width().get());
+                }
+                indent.min(usize::from(width.get() / 4)) as u16
+            } else {
+                0
+            };
+            let mut column = 0_u16;
+            let mut leading = true;
+            let mut previous_space = true;
+            while let Some(glyph) = input.next() {
+                let (byte, glyph) = glyph.map_err(|error| offset_error(error, offset))?;
+                let is_space = glyph.as_str().chars().all(char::is_whitespace);
+                if !is_space && previous_space && column > 0 && !(preserve_indent && leading) {
+                    let mut word_width = usize::from(glyph.width().get());
+                    for next in input.clone() {
+                        let (_, next) = next.map_err(|error| offset_error(error, offset))?;
+                        if next.as_str().chars().all(char::is_whitespace) {
+                            break;
+                        }
+                        word_width = word_width
+                            .checked_add(usize::from(next.width().get()))
+                            .ok_or(TextFlowError::HeightOverflow)?;
+                    }
+                    if word_width <= usize::from(width.get() - continuation_indent)
+                        && word_width > usize::from(width.get() - column)
+                    {
+                        if !preserve_spaces {
+                            pages.trim_row_spaces(row);
+                        }
+                        column = continuation_indent;
+                        row = row.checked_add(1).ok_or(TextFlowError::HeightOverflow)?;
+                    }
+                }
+                previous_space = is_space;
+                if !preserve_spaces
+                    && is_space
+                    && (column == 0 || column == width.get())
+                    && !(preserve_indent && leading)
+                {
+                    continue;
+                }
+                leading &= is_space;
+                if column
+                    .checked_add(glyph.width().get())
+                    .is_none_or(|end| end > width.get())
+                {
+                    column = continuation_indent;
+                    row = row.checked_add(1).ok_or(TextFlowError::HeightOverflow)?;
+                }
+                pages.advance_to(row);
+                if pages.text.ends_with('\n') || pages.text.is_empty() {
+                    pages
+                        .text
+                        .extend(std::iter::repeat_n(' ', usize::from(column)));
+                }
+                let glyph_width = glyph.width().get();
+                pages.push(row, offset + byte, column, glyph)?;
+                column += glyph_width;
+            }
+            offset += line.len() + 1;
+        }
+        let height = if source.is_empty() {
+            0
+        } else {
+            row.checked_add(1).ok_or(TextFlowError::HeightOverflow)?
+        };
+        if height > 0 {
+            pages.advance_to(height - 1);
+        }
+        pages.rows = height;
+        Ok(pages)
+    }
+
+    fn trim_row_spaces(&mut self, row: usize) {
+        if self.rows != row {
+            return;
+        }
+        let beginning = self.text.rfind('\n').map_or(0, |offset| offset + 1);
+        let end = beginning
+            + self.text[beginning..]
+                .trim_end_matches(char::is_whitespace)
+                .len();
+        self.text.truncate(end);
+        let retained = self
+            .source_map
+            .partition_point(|(display, _)| *display <= end);
+        self.source_map.truncate(retained);
     }
 
     /// Original byte offset at the first grapheme of a display row, including empty rows.
@@ -380,8 +517,110 @@ impl FlowSink for TextPages {
     ) -> Result<(), TextFlowError> {
         self.source_rows.resize(row + 1, byte_index);
         self.advance_to(row);
+        let display = self.text.len();
+        if self.source_byte_at(display) != byte_index {
+            self.source_map.push((display, byte_index));
+        }
         self.text.push_str(grapheme.as_str());
         Ok(())
+    }
+}
+
+fn offset_error(error: TextFlowError, offset: usize) -> TextFlowError {
+    match error {
+        TextFlowError::GraphemeTooWide { byte_index, width } => TextFlowError::GraphemeTooWide {
+            byte_index: offset + byte_index,
+            width,
+        },
+        TextFlowError::UnrenderableGrapheme { byte_index, cause } => {
+            TextFlowError::UnrenderableGrapheme {
+                byte_index: offset + byte_index,
+                cause,
+            }
+        },
+        error => error,
+    }
+}
+
+/// The literal scanner's glyph projection without retaining a line's cell array.
+/// A clone supports bounded word lookahead; tabs/control notation use at most a
+/// handful of pending glyphs, even when one source line wraps past 65,535 rows.
+#[derive(Clone)]
+struct ExpandedLine<'a> {
+    input: unicode_segmentation::GraphemeIndices<'a>,
+    pending: VecDeque<(usize, Grapheme)>,
+    column: u16,
+    width: NonZeroU16,
+}
+
+impl<'a> ExpandedLine<'a> {
+    fn new(source: &'a str, width: NonZeroU16) -> Self {
+        Self {
+            input: source.grapheme_indices(true),
+            pending: VecDeque::new(),
+            column: 0,
+            width,
+        }
+    }
+}
+
+impl Iterator for ExpandedLine<'_> {
+    type Item = Result<(usize, Grapheme), TextFlowError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some((byte, glyph)) = self.pending.pop_front() {
+                if self
+                    .column
+                    .checked_add(glyph.width().get())
+                    .is_none_or(|end| end > self.width.get())
+                {
+                    self.column = 0;
+                }
+                self.column += glyph.width().get();
+                return Some(Ok((byte, glyph)));
+            }
+            let (byte, text) = self.input.next()?;
+            if is_hard_break(text) {
+                self.column = 0;
+                continue;
+            }
+            if text == "\t" {
+                if self.column == self.width.get() {
+                    self.column = 0;
+                }
+                for _ in 0..tab_spaces(self.column) {
+                    self.pending
+                        .push_back((byte, Grapheme::try_from(" ").expect("ASCII space")));
+                }
+            } else if let Some(notation) = control_notation(text) {
+                for character in notation.chars() {
+                    let mut encoded = [0; 4];
+                    let text = character.encode_utf8(&mut encoded);
+                    self.pending.push_back((
+                        byte,
+                        Grapheme::try_from(&*text).expect("ASCII control notation"),
+                    ));
+                }
+            } else {
+                let glyph = match Grapheme::try_from(text) {
+                    Ok(glyph) => glyph,
+                    Err(cause) => {
+                        return Some(Err(TextFlowError::UnrenderableGrapheme {
+                            byte_index: byte,
+                            cause,
+                        }));
+                    },
+                };
+                if glyph.width() > self.width {
+                    return Some(Err(TextFlowError::GraphemeTooWide {
+                        byte_index: byte,
+                        width: glyph.width(),
+                    }));
+                }
+                self.pending.push_back((byte, glyph));
+            }
+        }
     }
 }
 

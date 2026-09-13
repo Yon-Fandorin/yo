@@ -205,7 +205,15 @@ Codex 0.145.0·0.146.0·0.149.0에서 확인한 기본 규칙을 적용한다. �
 [파일 승인 메뉴](https://github.com/openai/codex/blob/rust-v0.149.0/codex-rs/tui/src/bottom_pane/approval_overlay.rs)를 참고한다. Managed·Grok은 미지원 선택지 번호를 승인 상태 소비 전에
 거부한다. 응답 쓰기가 성공한 뒤에만 범위를 포함한 결정 기록을 게시하며 사용자 지정 가능한
 activity 스타일을 적용한다. 오프라인 `approval-scopes`는 권한·정책·파일 변경 없이 범위별
-선택을 확인한다. 실제 provider의 정책 영속 적용은 아직 검증하지 않았다.
+선택을 확인한다. 설치된 Codex의 명령 규칙 저장·재시작 검증은
+[터미널 검증표](terminal-matrix.md#저장된-명령-규칙과-자동-승인)에 있다.
+반복 가능한 Linux 검사는
+`python3 tools/validation/codex-policy-persistence.py /absolute/path/to/codex`이다.
+정확한 Codex 0.154.0과 Linux 사용자·네트워크 namespace가 필요하다. loopback Responses
+fixture 다섯 번으로 실제 native 규칙 저장과 새 프로세스의 재적용을 확인하며 외부 모델
+요청은 없다. 소유한 임시 native 상태만 변경하고 정확히 허용한 명령의 실행 결과와 별도로
+취소한 명령의 미실행을 검사한 뒤 정리한다. 영구 명령 거부 선택지를 추가하거나 실제
+서비스의 위험 분류를 입증하는 검사는 아니다.
 
 ### 정적 비교 fixture
 
@@ -350,20 +358,28 @@ Codex 추가·삭제 payload는 파일 원문이므로 `+`/`-` 줄과 마지막 
 판정하므로 줄바꿈된 행에도 배경과 여백이 유지된다. Markdown과 검토 화면은 같은 diff
 분류를 사용한다. 테마 변경은 원문 페이지를 다시 만들지 않고 새 스타일을 반영한다.
 End는 새 snapshot의 끝을 따르고, 과거 위치는 폭 변경 시 원문 byte 위치로 복원하며
-파일 전환은 제목부터 시작한다. 개별 diff가 inline u16 높이 예산을 넘으면 변경 요약과
-`/changes` 안내를 표시한다. inline 펼침 상태에도 적용하며 보존 원문·내보내기와 전체
-검토 화면은 유지한다. 테스트는 7만 행, 실패한 frame 뒤 이동 재시도, snapshot 추가,
+파일 전환은 제목부터 시작한다. 접힌 Chat은 큰 diff 요약과 `/changes` 안내를 유지하며,
+활동을 펼치면 이제 단일 65,535행 초과 diff도 Chat에서 직접 읽는다. 보존 원문과 내보내기는
+완전하게 유지한다. 테스트는 7만 행, 실패한 frame 뒤 이동 재시도, snapshot 추가,
 파일 전환, 줄바꿈 배경, 사용자 색상과 폭 왕복을 검증한다.
 
 Chat·Transcript·Request의 누적 레이아웃과 스크롤 위치는 usize 문서 행을 사용한다.
-보이는 논리 행만 기존 u16 Surface 좌표로 바꿔 glyph·코드 띠·사용자 배경·문맥 항목·이미지를
-배치한다. live 자연 높이도 usize로 측정하고 inline live 합성 경계에서 실제 터미널 높이로
-제한한다. 산술 오버플로는 typed 오류로 남긴다. 테스트는 누적 65,535·65,536·98,308행,
-Home/End, usize::MAX 근처 위치, 두 diff를 펼친 8만 행 Chat, 긴 대화 뒤의 코드·diff·이미지,
-큰 미게시 inline suffix를 검증한다. 여러 메시지의 합산 높이 제한을 없앤 것으로, 단일
-rich 메시지 내부의 배치 한도나 하나의 persistent inline 게시 Surface가 갖는 u16 한도를
-없앤 것은 아니다. 너무 큰 게시 후보는 cursor 승인 전에 명시적으로 실패한다. 현재도
-보존 항목 전체를 준비하며 단일 메시지 본문까지 완전히 가상화하는 작업은 별도로 남는다.
+개별 사용자·일반 본문, assistant Markdown, 도구 출력, 문서, 알림, 인터뷰 텍스트와 계획은
+화면 밖 grapheme마다 cell을 보존하지 않고 표시 byte와 원문 span을 색인한다. 보이는 페이지만
+u16 Surface 좌표·스타일·링크로 바꾼다. 코드와 표 값은 같은 단어·grapheme 줄바꿈 엔진을
+사용하며 원문 위치로 줄바꿈·탭·제어 문자 확장 뒤에도 장식을 보존한다. 접힌 출력은 앞부분,
+펼침 안내와 끝부분을 유지하고 Ctrl+O로 같은 원문을 펼친다. Home/End, 폭 왕복과 내보내기는
+보존 텍스트를 변경하지 않는다. 개별 7만 행 본문, 7만 5천 행 표 값, 단일 8만 행 diff와
+누적 12만 행 diff, 기존 cell·스타일·링크 일치를 검증한다.
+
+Inline 게시는 완전한 게시 후보의 실제 터미널 높이별 Surface 페이지를 준비하고 전체
+write·flush 성공까지 예상 cell 행과 typed operation·effect 근거를 보존한다. 페이지 경계는
+항목 일부를 승인하거나 effect ledger를 초기화하지 않는다. 65,535번째와 65,536번째 게시
+행을 모두 보존한다. 스크롤 뒤 0-byte 실패는 정확한 suffix만 재개하고 부분 operation 실패는
+semantic 게시 cursor를 전진시키지 않는 치명적 오류로 유지한다. 물리 Surface 크기는 u16이다.
+파싱·색인은 원문 크기에 비례하는 표시 byte·행 metadata를 보존하고 게시 transaction은 전체
+예상 행을 보존하므로 메모리 사용량이 일정하다는 보장은 아니다. 산술 오버플로, 할당 실패와
+기존 snapshot·저장 한도는 명시적으로 유지한다.
 
 Codex `turn/plan/updated`는 Turn별 ModelWork 하나를 갱신하고 Turn 완료 전에 종료한다.
 늦게 도착한 계획은 재개하지 않으며 남은 단계를 임의로 완료하지 않는다. `plan`은 같은
