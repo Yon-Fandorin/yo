@@ -60,14 +60,34 @@ adapter를 production에 추가하거나 기본 편집을 교체할 근거는 �
 
 ## 검증 식별 정보
 
-Candidate에서 production-host bridge를 다시 빌드했다. 오프라인 real-host
-fixture 6개와 모호한 대상·경로 이탈·symlink·namespace·패치 파서·무료 admission
-대조 검사가 통과했다. 변경하지 않은 production 도구의 기존 package 검증은
-76개 통과·1개 ignored이며 ignored 항목은 검증으로 세지 않는다. 모든 셀의 임시
-workspace를 제거했다. 실제 API 키를 Rust host에 전달하지 않았으며 이 보고서에
-인증 정보·모델 원문·비공개 추론은 보존하지 않는다.
+실제 matrix는 아래 식별 정보의 candidate host를 사용했다. 원래 오프라인 symlink
+oracle은 `write_file`이 link 자체를 교체하도록 잘못 기대했다. 독립 검토는 승인된
+nonregular target 계약에 따라 이를 거절했다. 파일 유형의 bit 포함 검사 때문에
+symlink·socket도 일반 파일로 허용됐다. 수정 host는 target capture·descriptor
+admission·scratch 검증에서 전체 유형 field를 마스킹한 뒤 일반 파일 유형과
+정확히 비교한다.
 
-검증한 host SHA-256은
+새 production-host 회귀 검사는 이전 실패를 재현하며 일반 파일·dangling·credential
+symlink와 directory·FIFO·socket을 확인한다. 모든 시도는 정확한 `unavailable`
+출력으로 실패하고 entry identity·mode·link 대상·참조 bytes를 보존하며 scratch를
+남기지 않는다. 수정 bridge에서 오프라인 작업 fixture 6개와 모호한 대상·경로 이탈·
+symlink entry 보존·namespace·파서·무료 admission 대조 검사가 통과했다.
+Tools package는 77개 통과·1개 ignored였으며 ignored 항목은 검증으로 세지 않는다.
+실제 matrix는 일반 파일만 사용했다. 원래 결과의 candidate·host identity를 유지하며
+다시 서비스 요청을 보내거나 새 모델 artifact를 검증했다고 주장하지 않는다.
+모든 셀의 임시 workspace를 제거했다. 실제 API 키를 Rust host에 전달하지 않았으며
+이 보고서에 인증 정보·모델 원문·비공개 추론은 보존하지 않는다.
+
+Production host 회귀 검사는 다음과 같다.
+
+```bash
+cargo test --locked -p yo-cli write_file_rejects_nonregular_entries_without_replacing_them
+```
+
+수정한 오프라인 host SHA-256은
+`fe5a1a90f861e57925492829c724a9541fe81367b630472a4290b57b27712f30`이다.
+
+원래 실제 matrix의 host SHA-256은
 `160e6367da5feb60a32ae420885ee0f979433ae50239b3ff2a31cc2e86fa9a51`이다.
 고정한 runner·bridge·fixture source SHA-256은 각각
 `57110c6a5e3f1bb206e23bd9459d400fe37451c0fff8546ac22ee09a65dc6dcf`,

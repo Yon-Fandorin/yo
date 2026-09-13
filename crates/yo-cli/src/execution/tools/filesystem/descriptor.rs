@@ -65,7 +65,7 @@ pub(super) fn open_regular_file(
     let descriptor = open_beneath(workspace, components, OFlag::O_RDONLY | OFlag::O_NONBLOCK)
         .map_err(|_| OpenRegularError::Unavailable)?;
     let metadata = fstat(&descriptor).map_err(|_| OpenRegularError::Unavailable)?;
-    if !SFlag::from_bits_truncate(metadata.st_mode).contains(SFlag::S_IFREG) {
+    if SFlag::from_bits_truncate(metadata.st_mode) & SFlag::S_IFMT != SFlag::S_IFREG {
         return Err(OpenRegularError::NotRegular);
     }
     if denied_credential

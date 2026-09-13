@@ -560,7 +560,7 @@ impl Scratch {
             device: normalize_device_id(metadata.st_dev),
             inode: metadata.st_ino,
         };
-        SFlag::from_bits_truncate(metadata.st_mode).contains(SFlag::S_IFREG)
+        SFlag::from_bits_truncate(metadata.st_mode) & SFlag::S_IFMT == SFlag::S_IFREG
             && identity == self.identity
             && denied_credential != Some(identity)
     }
@@ -641,7 +641,7 @@ fn existing_target_mode(
         device: normalize_device_id(metadata.st_dev),
         inode: metadata.st_ino,
     };
-    if !SFlag::from_bits_truncate(metadata.st_mode).contains(SFlag::S_IFREG)
+    if SFlag::from_bits_truncate(metadata.st_mode) & SFlag::S_IFMT != SFlag::S_IFREG
         || denied_credential == Some(identity)
     {
         return Err(());

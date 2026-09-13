@@ -334,6 +334,88 @@ fn mutation_failures_preserve_targets_and_credential_identity() {
     assert_eq!(fs::read_to_string(&credential).unwrap(), "secret");
 }
 
+// write_file은 정상·dangling symlink와 디렉터리·FIFO·socket을 unavailable로 거절하고
+// 기존 entry identity, link 대상 및 workspace 밖 bytes를 모두 보존합니다.
+#[test]
+fn write_file_rejects_nonregular_entries_without_replacing_them() {
+    use std::os::unix::{
+        fs::{MetadataExt, symlink},
+        net::UnixListener,
+    };
+
+    use nix::{sys::stat::Mode, unistd::mkfifo};
+
+    let directory = TestDirectory::new();
+    let outside = TestDirectory::new();
+    let credential = directory.0.join("credentials.yaml");
+    let source = outside.0.join("source.txt");
+    fs::write(&source, "outside unchanged").unwrap();
+    fs::write(&credential, "synthetic credential").unwrap();
+    symlink(&source, directory.0.join("regular-link")).unwrap();
+    symlink(outside.0.join("absent"), directory.0.join("dangling-link")).unwrap();
+    symlink(&credential, directory.0.join("credential-link")).unwrap();
+    fs::create_dir(directory.0.join("directory")).unwrap();
+    fs::write(directory.0.join("directory/keep.txt"), "keep").unwrap();
+    mkfifo(&directory.0.join("fifo"), Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+    let _listener = UnixListener::bind(directory.0.join("socket")).unwrap();
+    let registry = registry(LocalToolRegistryRevision::BasicFiles).unwrap();
+    let mut host = LocalToolHost::new(&directory.0, &credential).unwrap();
+
+    for name in [
+        "regular-link",
+        "dangling-link",
+        "credential-link",
+        "directory",
+        "fifo",
+        "socket",
+    ] {
+        let path = directory.0.join(name);
+        let before = fs::symlink_metadata(&path).unwrap();
+        let link = before
+            .file_type()
+            .is_symlink()
+            .then(|| fs::read_link(&path).unwrap());
+        let arguments = serde_json::json!({"path": name, "content": "replacement"}).to_string();
+        let mut execution = host
+            .start(request(&registry, "write_file", &arguments))
+            .unwrap();
+        let result = finish(execution.as_mut());
+
+        assert_eq!(result.outcome(), ToolExecutionOutcome::Failed, "{name}");
+        assert_eq!(
+            result.output(),
+            format!(r#"{{"path":"{name}","status":"error","error":"unavailable"}}"#)
+        );
+        assert!(!result.truncated());
+        let after = fs::symlink_metadata(&path).unwrap();
+        assert_eq!(
+            (after.dev(), after.ino(), after.mode()),
+            (before.dev(), before.ino(), before.mode()),
+            "{name}"
+        );
+        if let Some(link) = link {
+            assert_eq!(fs::read_link(&path).unwrap(), link);
+        }
+        assert_eq!(fs::read_to_string(&source).unwrap(), "outside unchanged");
+        assert_eq!(
+            fs::read_to_string(&credential).unwrap(),
+            "synthetic credential"
+        );
+        assert_eq!(
+            fs::read_to_string(directory.0.join("directory/keep.txt")).unwrap(),
+            "keep"
+        );
+        assert!(!outside.0.join("absent").exists());
+        assert!(fs::read_dir(&directory.0).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".yo-write-")
+        }));
+    }
+}
+
 // 진행 중 두 스트림을 각각 승인하고 JSON framing 앞에 숨은 미완성 credential도 먼저 내보내지
 // 않는다.
 #[test]

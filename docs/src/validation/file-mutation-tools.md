@@ -68,15 +68,37 @@ and interrupted OpenRouter trials are excluded from these aggregates.
 
 ## Validation identity
 
-The production-host bridge was rebuilt on the candidate. Six offline
-real-host fixtures and ambiguity, traversal, symlink, namespace, patch-parser,
-and free-admission controls passed. The unchanged production tools retain
-their previously passing package evidence: 76 passed, one ignored; that
-ignored check is not counted as verified. All disposable cell workspaces were
-removed. No real API key entered the Rust host, and no credentials, raw model
-transcripts or private reasoning are retained in this report.
+The live matrix used the candidate host identified below. Its original offline
+symlink oracle incorrectly expected `write_file` to replace the link itself;
+independent review rejected that expectation against the accepted nonregular
+target contract. File-type bit containment admitted symlinks and sockets as
+regular targets. The corrected host masks the complete type field and compares
+it exactly with the regular-file type at target capture, descriptor admission
+and scratch verification.
 
-The tested host SHA-256 was
+The new production-host regression reproduces the earlier failure and checks
+regular-target, dangling and credential symlinks, directories, FIFOs and sockets.
+Every attempt now fails with exact `unavailable` output while preserving entry
+identity, mode, link destination and referenced bytes, with no scratch residue.
+The corrected bridge passed all six offline task fixtures and ambiguity,
+traversal, symlink-entry preservation, namespace, parser and free-admission
+controls. The tools package passed 77 tests, with one ignored. That ignored
+check is not counted as verified. The live matrix used regular files only;
+its original results are retained under their original candidate and host
+identity, without a live rerun or a claim about a newly tested model artifact.
+All disposable cell workspaces were removed. No real API key entered the Rust
+host; no credentials, raw transcripts or private reasoning are retained here.
+
+Run the regression through the production host with:
+
+```bash
+cargo test --locked -p yo-cli write_file_rejects_nonregular_entries_without_replacing_them
+```
+
+The corrected offline host SHA-256 was
+`fe5a1a90f861e57925492829c724a9541fe81367b630472a4290b57b27712f30`.
+
+The original live-matrix host SHA-256 was
 `160e6367da5feb60a32ae420885ee0f979433ae50239b3ff2a31cc2e86fa9a51`.
 Frozen runner, bridge and fixture source SHA-256 values were respectively
 `57110c6a5e3f1bb206e23bd9459d400fe37451c0fff8546ac22ee09a65dc6dcf`,
