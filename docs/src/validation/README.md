@@ -22,6 +22,9 @@ An ignored or unavailable environment check is **unverified**, not passed.
 Record the missing command, host, credential, or platform instead of weakening
 the assertion or silently skipping it.
 
+For the completed real-host basic/structured editing experiment, see the
+[file mutation tool comparison](./file-mutation-tools.md).
+
 ## Start from the changed boundary
 
 | Change area | First useful command | Closest evidence |
@@ -1876,7 +1879,8 @@ original label and, when nonblank, a separate `user_note: <trimmed notes>` answe
 the pinned request_user_input renderer. Empty notes emit only the label. Tests cover
 capability defaults, invalid choice zero/first excess/u32 maximum, exact wire IDs,
 sequential replies, stale presentation, 24-column frames, literal notes and journal
-codec round trips. Secret input and returning to previously submitted questions remain gaps.
+codec round trips. Secret input, storage and recovery are future features.
+Reopening already transmitted questions remains unsupported.
 
 ### Host status line
 
@@ -2023,7 +2027,7 @@ preserved. Tests cover 80/24/80 frames, custom colors, literal text, export, seq
 question IDs, partial interview interruption and response-write failure. The offline
 interview preview emits the same activity kind and labels its local receipt as offline.
 This follows the pinned Codex history_cell/request_user_input.rs field separation;
-secret input remains separate work.
+secret input, storage and recovery remain future features.
 
 ### Incomplete interview summaries
 

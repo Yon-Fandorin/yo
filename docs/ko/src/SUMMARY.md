@@ -15,3 +15,4 @@
 - [계정 잔여량 조회](./workflows/account-capacity.md)
 - [검증](./validation/README.md)
   - [터미널 환경 매트릭스](./validation/terminal-matrix.md)
+  - [파일 수정 도구 비교](./validation/file-mutation-tools.md)
