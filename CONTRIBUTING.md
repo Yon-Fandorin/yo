@@ -25,23 +25,25 @@ release boundary. Do not fetch, switch dirty work, or rewrite history for ceremo
 
 ## Decisions and memory
 
-A task request authorizes necessary review transmission and service checks on
-configured, authenticated targets within the user's scope and constraints.
-Resolve in-scope details and fixes; ask only for a missing product/contract choice
-or effect outside that scope. Preserve authorization across continuations.
+A task request approves necessary implementation, fixes, reviews, transfers and
+checks on configured, authenticated targets within the user's constraints.
+Approval follows corrected candidates and continuations; record its task origin.
+New hashes or worktrees require no confirmation. Ask only for missing product
+decisions or effects outside scope.
 Push and destructive recovery require their own user authorization.
 
-Before asking, check the conversation and handoff. A short affirmative reply
-approves the concrete proposal's scope, including its stated integration and
-activation. Compaction, continuation, a worktree or approval record does not
-expire authorization. Replace stale approval-wait notes with the approved scope
-and next action. Ask again only for a material effect outside that scope or an
-actual revocation, and identify the delta.
+Check the conversation and handoff before asking. A short affirmative approves
+the concrete proposal, including stated integration and activation. Compaction,
+continuation and worktrees do not expire approval. Replace stale approval-wait
+notes with scope and next action. Ask again only about a material effect outside
+scope or revocation; identify the delta.
 
-Goal tracking is not permission. Continue approved work without recreating the
-goal, marking unfinished work complete, or restarting approval on continuation.
-If an additional effect needs approval, finish independent authorized work and
-make that effect concrete before asking only about the delta.
+Execution-environment approval checks remain controlling. Report rejected
+actions and their stated reasons; never bypass them.
+
+Goal tracking does not grant permission or expire approval. Continue approved
+work; do not mark unfinished work complete. If an additional effect needs
+approval, finish independent work and ask only about that concrete delta.
 
 Code and tests own actual behavior; Methexis owns accepted design; Developer
 Docs own navigation and checks; this page owns work practices. Update the

@@ -56,6 +56,14 @@ tool and request limits without a separate transmission question. A request to
 continue carries the earlier authorization; authentication alone supplies no
 task scope. Explicit user constraints and revocation remain controlling.
 
+This approval follows in-scope corrected candidates and their new packet bytes,
+including finding-resolution reviews, and temporary SSH/tmux verification on a
+saved, authenticated host. Record the originating request, actual target,
+candidate/payload and conservative bounds before execution, including before an
+environment permission check. Do not ask the user to approve each commit hash,
+packet revision or temporary checkout. Changed hosts, credentials, publication,
+explicit user limits and missing product decisions still require their own basis.
+
 Resolve the exact target and conservative limits, then record the task request's
 human origin in the existing machine-readable authorization format before
 delivery. The record binds an authorized operation; it is not another approval
@@ -63,8 +71,9 @@ step and does not require the user to recite routes, hashes or schema fields.
 Plan the bounded review chain before its first delivery. Once a delivery is
 claimed, keep its authorization bytes immutable through that chain, except for
 revocation. Do not replace the record to restart the same review, reset request
-counts, substitute a failed route or increase its limits. Runtime checks the
-current record; it does not enforce an aggregate budget across replacements.
+counts, substitute a failed route or increase its limits. Frozen Yo schemas and
+already claimed native chains retain their original execution limits. Runtime
+checks the current record; it does not enforce an aggregate budget across replacements.
 Check it against the exact published packet:
 
 ```json
@@ -104,6 +113,27 @@ unsupported second delta, changed lens, replacement route or oversized packet
 stays ineligible; task authorization does not widen frozen execution semantics.
 Report an exhausted or incompatible chain rather than resetting its record.
 Ask only about an effect outside the authorized task or an explicit limit change.
+
+For future native Codex chains outside the frozen Yo delivery runner, materialize
+a task-origin authorization and execution record before the first invocation.
+Use the canonical active authorization's admitted route and packet/token bounds;
+the native record binds its exact selector, controls and whole-chain counts.
+Unless the user supplied tighter counts, reserve one original invocation and up
+to eight direct same-Session finding-resolution invocations for completing that
+task. The task request authorizes this planned chain, including corrected
+candidates; each resolution must address the preceding verdict and preserve its
+lens, model and target. This native budget does not change v1 Yo eligibility or
+expand an already claimed chain. Retain exclusive claims and count failed or
+cancelled invocations; never retry a claimed attempt, reset counts, enable tools,
+steer, fall back or switch providers. At exhaustion, report the remaining review
+and finish independent authorized work. Any extension requires actual human
+authority for the limit change recorded separately from the immutable chain.
+
+Repository task authorization and execution-environment approval checks are
+separate. Do not claim to disable or automatically approve those checks. If a
+check rejects an action, stop that action, retain the diagnostic and complete
+unaffected work. Report the rejected effect and the stated reason; do not route
+the same rejected effect through another command or host to evade the check.
 
 For an authenticated host, run only the applicable target-admission schema's
 request-free probe, then perform the needed review or service test. Do not add
