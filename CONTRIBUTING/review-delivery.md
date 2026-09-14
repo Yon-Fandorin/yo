@@ -766,12 +766,17 @@ frozen path-string transition rule so an old alias-shaped chain remains
 reproducible; accepting that legacy artifact does not permit a new v1 request.
 The verifier selects these semantics from the exact published manifest schema.
 
-The continuation payload and question are bounded. Policy does not impose a
-finding-resolution round count, but the verifier has a 64-hop safety limit; at
-that boundary, start a fresh review instead of extending the chain. Keep
+The continuation payload and question are bounded. Packet construction has no
+finding-resolution round count, but its verifier has a 64-hop safety limit.
+Packet capacity and Session context do not grant invocation authority. Actual
+delivery stays within the selected Yo schema or frozen native record, including
+the future native default of one original and at most eight direct resolutions.
+At either limit, stop and report it; do not automatically start a fresh review
+or reset counts. Keep
 reusing the session while it can identify the prior review and the
 remaining work without broad reconstruction. Start a compact fresh session
-when the lens or scope changes, the reviewer is unavailable, exact context is
+only when that invocation is separately admitted and the lens or scope changes,
+the reviewer is unavailable, exact context is
 lost, the reviewer begins broad repository or documentation reinspection, or
 the next finding introduces a new design question instead of resolving the
 reviewed one. Repeated tool calls that mostly reconstruct supplied evidence are
