@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 use yo_core::{
-    ActivityApproval, ActivityKind, ActivityOutcome, ActivityQuestion, ActivityRequestRef,
-    ActivityResponse, ActivityUpdate, AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision,
-    BackendFailureKind, RequestId, RuntimePoll, UserInput,
+    ActivityApproval, ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse,
+    ActivityUpdate, AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendFailureKind,
+    RequestId, RuntimePoll, UserInput,
 };
 
 use super::support::{activity, backend, id, session, submission, thread_start_response, turn};
@@ -187,13 +187,13 @@ fn answers_codex_questions_sequentially_with_exact_wire_ids() {
         else {
             panic!("question prompt")
         };
-        let question = ActivityQuestion::from_snapshot(&prompt).unwrap();
+        let question = display_question(&prompt).unwrap();
         assert_eq!(question.choices[1].label, "Runtime");
         assert_eq!(question.choices[1].description, "Events");
         assert!(question.plain_text.contains(
             "This answer is recorded locally. All answers are sent after the final question."
         ));
-        assert!(prompt.contains("Question 1 of 2"));
+        assert!(question.plain_text.contains("Question 1 of 2"));
         assert!(prompt.contains("2. Runtime"));
         runtime
             .execute_command(AgentCommand::RespondToActivity {
@@ -236,7 +236,7 @@ fn answers_codex_questions_sequentially_with_exact_wire_ids() {
         }
         let second = ActivityRequestRef::new(activity(active_turn, 3), RequestId::new(id(2)));
         assert!(
-            matches!(&continuation[5],RuntimePoll::Event(AgentEvent::ActivityUpdated{activity,update:ActivityUpdate::TextSnapshot(text)}) if *activity==second.activity() && text.contains("Question 2 of 2") && ActivityQuestion::from_snapshot(text).unwrap().plain_text.contains("Submitting this answer sends all 2 answers."))
+            matches!(&continuation[5],RuntimePoll::Event(AgentEvent::ActivityUpdated{activity,update:ActivityUpdate::TextSnapshot(text)}) if *activity==second.activity() && display_question(text).unwrap().plain_text.contains("Question 2 of 2") && display_question(text).unwrap().plain_text.contains("Submitting this answer sends all 2 answers."))
         );
         runtime
             .execute_command(AgentCommand::RespondToActivity {
@@ -270,8 +270,16 @@ fn answers_codex_questions_sequentially_with_exact_wire_ids() {
         else {
             panic!("final answer receipt missing")
         };
-        assert!(receipt.contains("Answer: Keep 한글 intact"));
-        assert!(receipt.contains("All question responses sent."));
+        let yo_core::interview::Capture::AcceptedAnswers {
+            answers,
+            final_request,
+            ..
+        } = yo_core::interview::Capture::from_snapshot(&receipt).unwrap()
+        else {
+            panic!("final genuine answer capture")
+        };
+        assert_eq!(final_request, second);
+        assert_eq!(answers[1].text, "Keep 한글 intact");
         assert!(!receipt.contains("remaining questions"));
         runtime.poll_event().unwrap();
         assert_eq!(
@@ -519,7 +527,7 @@ fn other_choice_matches_codex_semantics_and_preserves_free_text() {
         };
         let expected_count = count + usize::from(other && count > 0);
         if expected_count <= 64 {
-            let profile = ActivityQuestion::from_snapshot(&prompt).unwrap();
+            let profile = display_question(&prompt).unwrap();
             assert_eq!(profile.choices.len(), expected_count);
             assert_eq!(
                 profile
@@ -529,7 +537,7 @@ fn other_choice_matches_codex_semantics_and_preserves_free_text() {
                 other && count > 0
             );
         } else {
-            assert!(ActivityQuestion::from_snapshot(&prompt).is_none());
+            assert!(display_question(&prompt).is_none());
             assert!(prompt.contains("65. None of the above"));
         }
         let answer = if count == 0 {
@@ -613,6 +621,8 @@ fn answer_receipt_bounds_and_literal_fields_do_not_change_response_authority() {
 
     use super::super::{InputQuestion, InputQuestions};
     let questions = InputQuestions {
+        capture: None,
+        captured_answers: Vec::new(),
         questions: vec![InputQuestion {
             id: "q".into(),
             prompt: "Which?".into(),
@@ -707,6 +717,8 @@ fn failed_answer_transport_does_not_publish_a_sent_receipt() {
                 request_activity: request.activity(),
                 responded: false,
                 kind: RequestKind::Input(InputQuestions {
+                    capture: None,
+                    captured_answers: Vec::new(),
                     drafts: Default::default(),
                     current: recorded,
                     answers: (0..recorded)
@@ -766,6 +778,8 @@ fn incomplete_interview_summary_preserves_counts_at_exact_output_limit() {
 
     use super::super::{InputQuestion, InputQuestions};
     let mut questions = InputQuestions {
+        capture: None,
+        captured_answers: Vec::new(),
         questions: vec![InputQuestion {
             id: "q".into(),
             prompt: "Q".into(),
@@ -849,7 +863,10 @@ fn completed_interview_turn_closes_sent_request_without_incomplete_summary() {
     else {
         panic!("receipt missing")
     };
-    assert!(receipt.contains("All question responses sent."));
+    assert!(matches!(
+        yo_core::interview::Capture::from_snapshot(&receipt).unwrap(),
+        yo_core::interview::Capture::AcceptedAnswers { .. }
+    ));
     runtime.poll_event().unwrap();
     assert_eq!(
         runtime.poll_event().unwrap(),
@@ -1996,7 +2013,9 @@ fn revisits_questions_with_drafts_and_sends_only_final_answers() {
             submission(1),
         )
         .unwrap();
-    let next_question = |runtime: &mut AgentRuntime<_>| {
+    fn next_question<P: yo_backend::transport::JsonMessagePeer>(
+        runtime: &mut AgentRuntime<super::super::Backend<P>>,
+    ) -> (ActivityRequestRef, yo_core::ActivityQuestion) {
         let mut request = None;
         for _ in 0..12 {
             match runtime.poll_event().unwrap() {
@@ -2010,9 +2029,16 @@ fn revisits_questions_with_drafts_and_sends_only_final_answers() {
                     activity,
                     update: ActivityUpdate::TextSnapshot(text),
                 }) => {
-                    if let Some(question) = ActivityQuestion::from_snapshot(&text) {
+                    if let Some(mut question) = display_question(&text) {
                         let request = request.expect("fresh request before profile");
                         assert_eq!(request.activity(), activity);
+                        if let Some(super::super::RequestBinding {
+                            kind: super::super::RequestKind::Input(questions),
+                            ..
+                        }) = runtime.backend().requests.get(&request)
+                        {
+                            question = questions.question_profile(questions.current);
+                        }
                         return (request, question);
                     }
                 },
@@ -2020,7 +2046,7 @@ fn revisits_questions_with_drafts_and_sends_only_final_answers() {
             }
         }
         panic!("question was not presented")
-    };
+    }
     let (first, profile) = next_question(&mut runtime);
     assert!(!profile.previous_question);
     assert!(
@@ -2129,6 +2155,8 @@ fn previous_question_availability_respects_restored_profile_limit() {
 
     use super::super::{InputQuestion, InputQuestions};
     let mut questions = InputQuestions {
+        capture: None,
+        captured_answers: Vec::new(),
         questions: [("one", "First?"), ("two", "Second?")]
             .into_iter()
             .map(|(id, prompt)| InputQuestion {
@@ -2153,13 +2181,92 @@ fn previous_question_availability_respects_restored_profile_limit() {
         ToolOutput::MAX_SNAPSHOT_BYTES
     );
     assert!(
-        ActivityQuestion::from_snapshot(&questions.prompt())
+        display_question(&questions.prompt())
             .unwrap()
             .previous_question
     );
     questions.drafts.get_mut("one").unwrap().1.push('x');
-    let profile = ActivityQuestion::from_snapshot(&questions.prompt()).unwrap();
+    let profile = display_question(&questions.prompt()).unwrap();
     assert!(!profile.previous_question);
     assert!(profile.plain_text.contains("Second?"));
     assert!(profile.draft.is_none());
+}
+
+// 실제 질문 Activity에서 전달된 캡처를 기존 UI 프로필과 비교한다. 일반 텍스트의 표지는 권한이
+// 아니다.
+fn display_question(text: &str) -> Option<yo_core::ActivityQuestion> {
+    use yo_core::interview::Capture;
+    if let Some(profile) = yo_core::ActivityQuestion::from_snapshot(text) {
+        return Some(profile);
+    }
+    let capture = Capture::from_snapshot(text).ok()?;
+    match capture {
+        Capture::Batch { questions, .. } => {
+            let q = questions.first()?;
+            (q.options.len() <= 64).then(|| q.presentation(0, questions.len()))
+        },
+        Capture::Question { question, .. } => {
+            (question.options.len() <= 64).then(|| question.presentation(1, 2))
+        },
+        _ => None,
+    }
+}
+
+// wire 전송 성공 뒤 capture 상한 초과는 final seal을 위조하지 않고 회복 불가 원인을 명시한다.
+#[test]
+fn oversized_final_interview_capture_exposes_unavailability_after_wire_success() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let (backend, sent) = backend([
+        thread_start_response(2, "thread-a"),
+        json!({"id":3,"result":{"turn":{"id":"turn-a"}}}),
+        json!({"id":"seal-limit","method":"item/tool/requestUserInput","params":{"threadId":"thread-a","turnId":"turn-a","questions":[{"id":"q","header":"Q","question":"Answer?","options":null}]}}),
+    ]);
+    let mut runtime = AgentRuntime::new(backend);
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::new("ask"),
+            },
+            submission(1),
+        )
+        .unwrap();
+    runtime.poll_event().unwrap();
+    runtime.poll_event().unwrap();
+    let request = ActivityRequestRef::new(activity(active_turn, 1), RequestId::new(id(1)));
+    let answer = "x".repeat(yo_core::interview::CAPTURE_LIMIT + 1);
+    runtime
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::UserInput(UserInput::new(answer.clone())),
+        })
+        .unwrap();
+    assert_eq!(
+        sent.0.borrow().last().unwrap()["result"]["answers"]["q"]["answers"][0],
+        answer
+    );
+    let mut diagnosed = false;
+    for _ in 0..3 {
+        if let RuntimePoll::Event(AgentEvent::ActivityUpdated {
+            update: ActivityUpdate::TextSnapshot(text),
+            ..
+        }) = runtime.poll_event().unwrap()
+        {
+            assert!(text.starts_with(yo_core::interview::RECOVERY_UNAVAILABLE_RECEIPT_PREFIX));
+            assert!(text.contains("capture exceeds"));
+            diagnosed = true;
+        }
+    }
+    assert!(diagnosed);
+    let catalog = runtime.transcript_reader().interviews();
+    assert!(catalog.interviews()[0].submitted.is_none());
+    assert!(
+        catalog
+            .recovery_unavailable(request)
+            .is_some_and(|reason| reason.len() < 4096)
+    );
 }

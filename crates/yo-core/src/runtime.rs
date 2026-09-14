@@ -58,6 +58,9 @@ pub struct AgentRuntime<B> {
     active_context_source: Option<ContextActiveSource>,
     accepted_requests: HashMap<TurnRef, JournalSequence>,
     accepted_submissions: HashMap<TurnRef, SubmissionId>,
+    interview_start: Option<AgentEvent>,
+    interview_delivery: std::collections::VecDeque<AgentEvent>,
+    interview_backend: Option<BackendEvent>,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -91,6 +94,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
             active_context_source: None,
             accepted_requests: HashMap::new(),
             accepted_submissions: HashMap::new(),
+            interview_start: None,
+            interview_delivery: std::collections::VecDeque::new(),
+            interview_backend: None,
         }
     }
 
@@ -258,6 +264,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
     pub fn backend(&self) -> &B {
         &self.backend
+    }
+    pub fn transcript_reader(&self) -> crate::TranscriptReader {
+        self.journal.transcript_reader()
     }
 
     pub(crate) fn durability(&self) -> crate::JournalDurability {
@@ -566,9 +575,19 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
     /// Applies one available backend observation through the semantic engine.
     pub fn poll_event(&mut self) -> Result<RuntimePoll, RuntimeError> {
+        if let Some(event) = self.interview_delivery.pop_front() {
+            return Ok(RuntimePoll::Event(event));
+        }
+        if let Some(event) = self.interview_backend.take() {
+            return self.apply_backend_event(event);
+        }
         self.journal.flush_due();
         match self.backend.poll_event() {
             Ok(BackendPoll::Pending) => {
+                if let Some(event) = self.interview_start.take() {
+                    self.journal.append_events(std::slice::from_ref(&event));
+                    return Ok(RuntimePoll::Event(event));
+                }
                 if self.idle_context_checkpoint_committed {
                     self.idle_context_compaction_pending = false;
                     self.idle_context_checkpoint_committed = false;
@@ -634,6 +653,33 @@ impl<B: AgentBackend> AgentRuntime<B> {
     }
 
     fn apply_backend_event(&mut self, event: BackendEvent) -> Result<RuntimePoll, RuntimeError> {
+        if let Some(start) = self.interview_start.take() {
+            let matching = matches!((&start, &event),
+                (AgentEvent::ActivityStarted { activity: first, .. },
+                 BackendEvent::ActivityUpdated { activity, update: crate::ActivityUpdate::TextSnapshot(_) }) if first == activity);
+            if matching {
+                let BackendEvent::ActivityUpdated { activity, update } = event else {
+                    unreachable!()
+                };
+                match self.engine.update_activity(activity, update.clone()) {
+                    Ok(updated) => {
+                        self.journal
+                            .append_events(&[start.clone(), updated.clone()]);
+                        self.interview_delivery.push_back(updated);
+                    },
+                    Err(_) => {
+                        // Preserve the started observation before the ordinary update rejection.
+                        self.journal.append_events(std::slice::from_ref(&start));
+                        self.interview_backend =
+                            Some(BackendEvent::ActivityUpdated { activity, update });
+                    },
+                }
+            } else {
+                self.journal.append_events(std::slice::from_ref(&start));
+                self.interview_backend = Some(event);
+            }
+            return Ok(RuntimePoll::Event(start));
+        }
         if let BackendEvent::ContextPolicyChanged { policy } = event.clone() {
             let expected_revision = self
                 .context_policy
@@ -872,6 +918,30 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
         match result {
             Ok(event) => {
+                if matches!(
+                    event,
+                    AgentEvent::ActivityStarted {
+                        kind: crate::ActivityKind::UserInputRequest { .. },
+                        ..
+                    }
+                ) {
+                    self.interview_start = Some(event);
+                    return match self.backend.poll_event() {
+                        Ok(BackendPoll::Event(next)) => self.apply_backend_event(next),
+                        Ok(BackendPoll::Pending | BackendPoll::Closed) => {
+                            let start = self.interview_start.take().expect("held request start");
+                            self.journal.append_events(std::slice::from_ref(&start));
+                            Ok(RuntimePoll::Event(start))
+                        },
+                        Err(failure) => {
+                            let terminal_events = self.fail_active_turn(&failure);
+                            Err(RuntimeError::Backend {
+                                failure,
+                                terminal_events,
+                            })
+                        },
+                    };
+                }
                 self.clear_terminal_correlations(std::slice::from_ref(&event));
                 self.journal.append_events(std::slice::from_ref(&event));
                 Ok(RuntimePoll::Event(event))
@@ -904,6 +974,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
     }
 
     fn fail_active_turn(&mut self, failure: &crate::BackendFailure) -> Vec<AgentEvent> {
+        if let Some(start) = self.interview_start.take() {
+            self.journal.append_events(std::slice::from_ref(&start));
+        }
         let events = self
             .engine
             .fail_active_turn(Failure::new(failure.to_string()));

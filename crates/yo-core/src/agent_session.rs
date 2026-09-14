@@ -123,6 +123,18 @@ pub enum AgentSessionPoll {
 }
 
 impl AgentSession {
+    /// Current worker/input state for explicit creation of an independent conversation.
+    #[must_use]
+    pub fn is_idle_for_new_conversation(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished())
+            && self.lifecycle.load(Ordering::Acquire) == WORKER_IDLE
+            && !self.context_compaction_pending.load(Ordering::Acquire)
+            && self.state.try_lock().is_ok_and(|state| {
+                state.active_turn.is_none() && state.outstanding_requests.is_empty()
+            })
+    }
     /// Binds the execution authority once, before any input is queued in this live Session.
     /// Resumed history does not count as a new submission.
     pub fn configure_input_admission(

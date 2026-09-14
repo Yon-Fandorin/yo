@@ -6,10 +6,12 @@ use crate::{ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate};
 #[derive(Debug, Default)]
 pub(super) struct MessageTracker {
     messages: BTreeMap<ActivityRef, MessageSegmenter>,
+    kinds: BTreeMap<ActivityRef, ActivityKind>,
 }
 
 impl MessageTracker {
     pub(super) fn start(&mut self, activity: ActivityRef, kind: ActivityKind) -> bool {
+        self.kinds.insert(activity, kind);
         self.messages
             .insert(
                 activity,
@@ -29,12 +31,17 @@ impl MessageTracker {
             ActivityUpdate::TextDelta(text) => message.push_text(text, now),
             ActivityUpdate::TextSnapshot(text) => message.replace_text(text, now),
         };
-        Some(
-            segments
-                .into_iter()
-                .map(JournalRecord::MessageSegment)
-                .collect(),
-        )
+        let capture = matches!(
+            self.kinds.get(&activity),
+            Some(ActivityKind::UserInputRequest { .. } | ActivityKind::UserInputResponse { .. })
+        ) && matches!(update, ActivityUpdate::TextSnapshot(text) if crate::interview::Capture::from_snapshot(text).is_ok());
+        let boundary = capture.then(|| message.flush_boundary()).flatten();
+        let mut records = segments
+            .into_iter()
+            .map(JournalRecord::MessageSegment)
+            .collect::<Vec<_>>();
+        records.extend(boundary);
+        Some(records)
     }
 
     pub(super) fn finish(
@@ -43,6 +50,7 @@ impl MessageTracker {
         outcome: &ActivityOutcome,
     ) -> Option<JournalRecord> {
         let mut message = self.messages.remove(&activity)?;
+        self.kinds.remove(&activity);
         Some(message.finish(match outcome {
             ActivityOutcome::Completed => MessageOutcome::Completed,
             ActivityOutcome::Interrupted => MessageOutcome::Interrupted,

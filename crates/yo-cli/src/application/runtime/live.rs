@@ -116,6 +116,7 @@ pub(in crate::application) fn run_live_session(
             Ok(Ok(SessionStep::Continue)) => {},
             Ok(Ok(
                 SessionStep::New
+                | SessionStep::Interview(_)
                 | SessionStep::Fork
                 | SessionStep::ForkPicker
                 | SessionStep::ForkBoundary { .. }
@@ -193,7 +194,10 @@ fn run_generation(
         options.clone(),
     )?;
     match step {
-        SessionStep::New => start_new_session(termination, live, options, snapshots),
+        SessionStep::New => start_new_session(termination, live, options, snapshots, None),
+        SessionStep::Interview(intent) => {
+            start_new_session(termination, live, options, snapshots, Some(intent))
+        },
         SessionStep::Fork => fork_session(termination, live, options, snapshots, None),
         SessionStep::ForkPicker => {
             let current = live
@@ -228,10 +232,17 @@ fn start_new_session(
     live: &mut Option<LiveSession>,
     mut options: command::LiveOptions,
     snapshots: &mut StartupSnapshots<'_>,
+    interview: Option<yo_core::interview::NewConversation>,
 ) -> Result<SessionStep, AppError> {
     let current = live
         .as_mut()
         .expect("new Session requires an existing Session");
+    if interview.is_some() && !current.agent.is_idle_for_new_conversation() {
+        current
+            .tui
+            .report_interview_failure("Session is busy; editable interview and preview retained");
+        return Ok(SessionStep::Continue);
+    }
     if current
         .active_host
         .as_ref()
@@ -265,7 +276,7 @@ fn start_new_session(
         &mut selected_snapshots,
         current.active_host_model.as_ref(),
     );
-    let candidate = match prepared {
+    let mut candidate = match prepared {
         Ok(StartupOutcome::Ready(prepared)) => {
             match frontend::build_live_session(*prepared, snapshots.config, &options) {
                 Ok(candidate) => candidate,
@@ -281,6 +292,40 @@ fn start_new_session(
             return Ok(SessionStep::Continue);
         },
     };
+    if let Some(intent) = interview {
+        use yo_tui::AgentConnection;
+        match candidate
+            .agent
+            .dispatch(yo_core::AgentIntent::Submit(intent.submission.clone()))
+        {
+            Ok(yo_core::CommandAdmission::Queued) => {},
+            Ok(yo_core::CommandAdmission::Backpressured(pending)) => {
+                candidate.tui.retain_interview_backpressure(pending)
+            },
+            result => {
+                let detail = match result {
+                    Ok(yo_core::CommandAdmission::Rejected { rejection, .. }) => {
+                        rejection.message().to_owned()
+                    },
+                    Err(error) => error.to_string(),
+                    _ => unreachable!(),
+                };
+                current.tui.report_interview_failure(format!(
+                    "Interview submission unconfirmed: {detail}; editable copy retained"
+                ));
+                if let Err(error) = candidate.agent.shutdown() {
+                    current.tui.report_interview_failure(format!(
+                        "interview candidate cleanup failed: {error}"
+                    ));
+                }
+                return Ok(SessionStep::Continue);
+            },
+        }
+        let reader = candidate.agent.transcript_reader();
+        current
+            .tui
+            .transfer_interview_to(&mut candidate.tui, intent, reader);
+    }
     // Prepare a separate writer/backend first. Failure above leaves the old Session intact.
     let mut previous = live.replace(candidate);
     if let Err(error) = shutdown_live_session(&mut previous) {

@@ -18,6 +18,7 @@ use crate::transcript::{
 
 #[derive(Debug, Default)]
 pub(super) struct ChatProjection {
+    interviews: yo_core::interview::InterviewCatalog,
     transcript: TranscriptState,
     publication_cursor: PublicationCursor,
     next_item_id: u64,
@@ -95,6 +96,22 @@ impl ChatProjection {
 
     pub(super) fn question(&self, activity: ActivityRef) -> Option<&ActivityQuestion> {
         self.activities.get(&activity)?.question.as_ref()
+    }
+    pub(super) fn set_interview_draft(
+        &mut self,
+        activity: ActivityRef,
+        choice: Option<u32>,
+        draft: String,
+    ) {
+        if let Some(profile) = self
+            .activities
+            .get_mut(&activity)
+            .and_then(|a| a.question.as_mut())
+        {
+            profile.draft = Some(draft);
+            profile.draft_choice =
+                choice.filter(|choice| *choice as usize <= profile.choices.len());
+        }
     }
 
     pub(super) fn new() -> Self {
@@ -204,6 +221,7 @@ impl ChatProjection {
         &mut self,
         record: &TranscriptRecord,
     ) -> Result<ChatProjectionChange, StateError> {
+        self.interviews.observe_committed(record);
         match record {
             TranscriptRecord::CommandCommitted(
                 AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. },
@@ -302,6 +320,7 @@ impl ChatProjection {
                 Ok(ChatProjectionChange::VisibleItem(presentation.item))
             },
             ActivityUpdate::TextSnapshot(text) => {
+                let receipt = self.interviews.answer_receipt(activity);
                 presentation.approval =
                     matches!(presentation.kind, ActivityKind::ApprovalRequest { .. })
                         .then(|| ActivityApproval::from_snapshot(text))
@@ -309,7 +328,8 @@ impl ChatProjection {
                 presentation.question =
                     matches!(presentation.kind, ActivityKind::UserInputRequest { .. })
                         .then(|| ActivityQuestion::from_snapshot(text))
-                        .flatten();
+                        .flatten()
+                        .or_else(|| self.interviews.presentation(activity));
                 presentation.is_structured = presentation.kind == ActivityKind::ModelWork
                     && (ActivityNotice::from_snapshot(text).is_some()
                         || ActivitySummary::from_snapshot(text).is_some()
@@ -331,7 +351,7 @@ impl ChatProjection {
                             presentation.question.as_ref().map_or_else(
                                 || {
                                     presentation.approval.as_ref().map_or_else(
-                                        || text.clone(),
+                                        || receipt.clone().unwrap_or_else(|| text.clone()),
                                         |approval| {
                                             request_text(
                                                 &approval.plain_text,

@@ -49,6 +49,14 @@ pub(super) fn build_live_session(
     if let Some(skill_references) = skill_references {
         tui = tui.with_skill_references(skill_references);
     }
+    match crate::state::storage::open_interviews() {
+        Ok(repository) => {
+            tui = tui.with_interview_repository(repository, Box::new(super::interview::HistoryHost))
+        },
+        Err(error) => {
+            tui.report_interview_failure(format!("Interview recovery unavailable: {error}"))
+        },
+    }
     if let Some(history) = inherited_history {
         tui = match tui.with_inherited_history(&history) {
             Ok(tui) => tui,
@@ -126,6 +134,9 @@ pub(super) fn run_terminal_generation(
     match terminal {
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
         Ok(yo_tui::TerminalOutcome::NewSessionRequested) => return Ok(SessionStep::New),
+        Ok(yo_tui::TerminalOutcome::InterviewConversationRequested(intent)) => {
+            return Ok(SessionStep::Interview(intent));
+        },
         Ok(yo_tui::TerminalOutcome::ForkSessionRequested) => return Ok(SessionStep::Fork),
         Ok(yo_tui::TerminalOutcome::ForkPickerRequested) => return Ok(SessionStep::ForkPicker),
         Ok(yo_tui::TerminalOutcome::ForkBoundaryRequested { picker, index }) => {

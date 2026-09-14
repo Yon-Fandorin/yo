@@ -25,6 +25,12 @@ pub(crate) struct TuiAgentConnection {
 }
 
 impl TuiAgentConnection {
+    pub(crate) fn is_idle_for_new_conversation(&self) -> bool {
+        self.session.is_idle_for_new_conversation()
+    }
+    pub(crate) fn transcript_reader(&self) -> yo_core::TranscriptReader {
+        self.session.transcript_reader()
+    }
     pub(crate) fn capture_fork_source(
         &self,
         reader: &(impl StoredSessionReader + ?Sized),

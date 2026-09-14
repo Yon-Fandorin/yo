@@ -31,6 +31,12 @@ pub(crate) fn open_default_host_identity() -> Result<WorkspaceHostId, StorageCon
     open_host_identity_at(platform_state_root()?)
 }
 
+pub(crate) fn open_interviews() -> Result<yo_core::interview::InterviewRepository, String> {
+    let root = platform_state_root().map_err(|error| error.to_string())?;
+    yo_core::interview::InterviewRepository::open(&root.join("interviews"))
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Debug)]
 pub(crate) enum StorageConfigError {
     InvalidEnvironment { name: &'static str, reason: String },

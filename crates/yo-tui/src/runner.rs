@@ -5,10 +5,12 @@ mod archival;
 mod chat;
 mod error;
 mod frame;
+mod interview;
 mod model;
 mod preview_agent;
 mod publication;
 mod session;
+pub use interview::InterviewHistoryHost;
 mod skill;
 mod source_schedule;
 mod state;
@@ -105,6 +107,8 @@ pub enum TerminalOutcome {
     ModelSelectionRequested(yo_core::ModelPickerTarget),
     /// The idle frontend requested a new independent session after terminal restoration.
     NewSessionRequested,
+    /// Explicit immutable interview preview for the first Turn of a new Session.
+    InterviewConversationRequested(yo_core::interview::NewConversation),
     /// Requests an exact branch of the current durable conversation after terminal restoration.
     ForkSessionRequested,
     /// Requests a frozen catalog of historical boundaries for the current idle Session.

@@ -41,6 +41,8 @@ use crate::{
 };
 
 mod image;
+#[cfg(test)]
+mod interview_tests;
 mod presentation;
 mod preview;
 
@@ -75,6 +77,8 @@ pub(super) enum StateError {
 
 #[derive(Debug, Default)]
 pub(super) struct TuiState {
+    pub(super) interview: Option<super::interview::InterviewController>,
+    pub(super) interview_conversation: Option<yo_core::interview::NewConversation>,
     preview: Option<Box<preview::Preview>>,
     preview_mode: bool,
     chat: ChatProjection,
@@ -128,6 +132,97 @@ enum PendingRequest {
 }
 
 impl TuiState {
+    pub(super) fn chat_notice(&mut self, notice: String) -> Result<(), StateError> {
+        self.chat.push_notice(notice).map(|_| ())
+    }
+    pub(super) fn tick_interview(&mut self) -> Result<bool, StateError> {
+        let was_editing = self.is_editing_interview();
+        if let Some(controller) = &mut self.interview
+            && let Some(notice) = controller.tick()
+        {
+            let resumed = (!was_editing && controller.is_editing()).then(|| {
+                Ok(super::interview::InterviewCommand {
+                    document: notice.clone(),
+                    editor: Some(controller.editing_text()),
+                    conversation: None,
+                })
+            });
+            self.chat.push_notice(notice)?;
+            if let Some(command) = resumed {
+                self.apply_interview_command(command, "")?;
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    fn is_editing_interview(&self) -> bool {
+        self.interview
+            .as_ref()
+            .is_some_and(|controller| controller.is_editing())
+    }
+    fn handle_interview_command(
+        &mut self,
+        argument: &str,
+        draft: &str,
+    ) -> Result<StateEffect, StateError> {
+        let busy = self.active_turn.is_some()
+            || self.starting_submission.is_some()
+            || self.context_compaction_pending
+            || !self.pending_requests.is_empty()
+            || !self.pending_submissions.is_empty()
+            || self.pending_image.is_some()
+            || self.pending_model_selection.is_some()
+            || self.reserved_model_selection.is_some();
+        let result = self
+            .interview
+            .as_mut()
+            .ok_or_else(|| {
+                yo_core::interview::InterviewError::Invalid(
+                    "interview recovery storage is unavailable".into(),
+                )
+            })
+            .and_then(|controller| controller.command(argument, busy));
+        self.apply_interview_command(result, draft)
+    }
+    fn apply_interview_command(
+        &mut self,
+        result: Result<super::interview::InterviewCommand, yo_core::interview::InterviewError>,
+        draft: &str,
+    ) -> Result<StateEffect, StateError> {
+        match result {
+            Ok(command) => {
+                if let Some(editor) = command.editor {
+                    self.restore_draft(&editor);
+                } else {
+                    self.clear_editor();
+                }
+                if self.is_editing_interview() {
+                    self.prompt_assist.cancel();
+                    self.command_palette.close(&mut self.overlay);
+                    self.close_request_overlay();
+                    self.question_notes = None;
+                    self.question_notes_refresh = None;
+                    self.restored_question_draft = None;
+                }
+                self.sync_request_overlay()?;
+                if let Some(document) = TuiDocument::new(ActivityDocument {
+                    title: "Interview".into(),
+                    markdown: command.document,
+                }) {
+                    self.observe_document(document.with_expanded(true))?;
+                }
+                if let Some(conversation) = command.conversation {
+                    self.interview_conversation = Some(conversation);
+                    return Ok(StateEffect::Exit);
+                }
+            },
+            Err(error) => {
+                self.restore_draft(draft);
+                self.chat.push_notice(error.to_string())?;
+            },
+        }
+        Ok(StateEffect::Redraw)
+    }
     pub(super) fn set_prompt_templates(&mut self, templates: PromptTemplates) {
         self.prompt_templates = templates;
     }
@@ -169,7 +264,92 @@ impl TuiState {
         input: InputEvent,
         now: Duration,
     ) -> Result<StateEffect, StateError> {
+        let previous_text = self.editor.text().to_owned();
+        let previous_notes = self.question_notes;
+        let interview_command = previous_text.starts_with("/interview")
+            && matches!(&input,
+            InputEvent::Key(key) if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::NONE);
+        let selection_edit = matches!(&input, InputEvent::Key(key)
+            if matches!(key.code, KeyCode::Up | KeyCode::Down)
+                && key.modifiers == KeyModifiers::NONE);
         let effect = self.handle_input(input, now)?;
+        let request = self
+            .pending_requests
+            .front()
+            .and_then(|pending| match pending {
+                PendingRequest::UserInput(request) => Some(*request),
+                _ => None,
+            });
+        let choice = self.question_notes.map(|(_, choice)| choice).or_else(|| {
+            (selection_edit && self.editor.text().is_empty())
+                .then(|| {
+                    self.request_overlay.filter(|(owner, token)| {
+                        Some(owner.activity()) == request.map(|r| r.activity())
+                            && self.overlay.is_current(*token)
+                    })?;
+                    self.overlay
+                        .panel()?
+                        .selected_identity()?
+                        .as_str()
+                        .parse()
+                        .ok()
+                })
+                .flatten()
+        });
+        if let Some(controller) = &mut self.interview {
+            let response = match &effect {
+                StateEffect::Dispatch(AgentAction::RespondToUserInput { request, input }) => {
+                    Some((
+                        *request,
+                        yo_core::ActivityResponse::UserInput(UserInput::new(input)),
+                    ))
+                },
+                StateEffect::Dispatch(AgentAction::RespondToQuestion {
+                    request,
+                    choice,
+                    notes,
+                }) => Some((
+                    *request,
+                    yo_core::ActivityResponse::QuestionAnswer {
+                        choice: *choice,
+                        notes: UserInput::new(notes),
+                    },
+                )),
+                StateEffect::Dispatch(AgentAction::PreviousQuestion {
+                    request,
+                    choice,
+                    draft,
+                }) => Some((
+                    *request,
+                    yo_core::ActivityResponse::PreviousQuestion {
+                        choice: *choice,
+                        draft: UserInput::new(draft),
+                    },
+                )),
+                _ => None,
+            };
+            let notice = if let Some((request, response)) = response {
+                controller.retain_live_response(request, response)
+            } else if matches!(effect, StateEffect::Redraw)
+                && !interview_command
+                && (self.editor.text() != previous_text
+                    || previous_notes != self.question_notes
+                    || selection_edit)
+            {
+                controller.edit_text(self.editor.text(), request, choice);
+                None
+            } else if matches!(effect, StateEffect::Exit | StateEffect::Suspend) {
+                controller.flush()
+            } else {
+                None
+            };
+            if let Some(notice) = notice {
+                self.chat.push_notice(notice)?;
+                if matches!(effect, StateEffect::Exit | StateEffect::Suspend) {
+                    return Ok(StateEffect::Redraw);
+                }
+            }
+        }
         if let StateEffect::Dispatch(AgentAction::Submit(submission)) = &effect {
             self.starting_submission = Some(submission.id());
         }
@@ -206,6 +386,12 @@ impl TuiState {
             if key.action != KeyAction::Press {
                 return Ok(StateEffect::Unchanged);
             }
+            if self.is_editing_interview() {
+                self.chat.push_notice(
+                    "Interview copies accept plain text; paste text into the editor.".into(),
+                )?;
+                return Ok(StateEffect::Redraw);
+            }
             if self.views.active() == ObservabilityView::Chat {
                 return self.prepare_clipboard_image();
             }
@@ -236,7 +422,8 @@ impl TuiState {
             },
         }
 
-        if self.question_notes_refresh.is_some()
+        if !self.is_editing_interview()
+            && self.question_notes_refresh.is_some()
             && matches!(&input, InputEvent::Key(key) if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::NONE)
         {
             return Ok(StateEffect::Unchanged);
@@ -247,7 +434,8 @@ impl TuiState {
             .command_palette
             .exact_submission(self.editor.text(), self.editor.cursor_byte_index())
             .is_some_and(|command| command.effect() == CommandEffect::ReviewChanges);
-        if !reviewing_changes
+        if !self.is_editing_interview()
+            && !reviewing_changes
             && self.pending_requests.front().is_some_and(|request| {
                 matches!(request, PendingRequest::Approval(_))
                     && self.chat.approval(request.activity()).is_some()
@@ -261,7 +449,8 @@ impl TuiState {
         {
             return Ok(StateEffect::Unchanged);
         }
-        if self.views.active() == ObservabilityView::Chat
+        if !self.is_editing_interview()
+            && self.views.active() == ObservabilityView::Chat
             && matches!(&input, InputEvent::Key(key) if key.code == KeyCode::BackTab
                 && key.action == KeyAction::Press
                 && (key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT))
@@ -287,7 +476,13 @@ impl TuiState {
                 .question_notes
                 .take()
                 .filter(|(owner, _)| *owner == pending)
-                .map(|(_, choice)| choice);
+                .map(|(_, choice)| choice)
+                .or_else(|| {
+                    draft
+                        .is_empty()
+                        .then(|| self.interview.as_ref()?.live_draft(request.activity())?.0)
+                        .flatten()
+                });
             self.editor.replace_range(0..draft.len(), "");
             self.pending_requests.pop_front();
             self.close_request_overlay();
@@ -521,7 +716,8 @@ impl TuiState {
             ViewInputEffect::Redraw => return Ok(StateEffect::Redraw),
         }
 
-        if !self.has_pending_request()
+        if !self.is_editing_interview()
+            && !self.has_pending_request()
             && let InputEvent::Key(key) = &input
             && key.action == KeyAction::Press
             && key.modifiers == KeyModifiers::ALT
@@ -546,9 +742,11 @@ impl TuiState {
                     self.editor.text(),
                     self.editor.cursor_byte_index(),
                 );
-                let assist_eligible =
-                    self.views.active() == ObservabilityView::Chat && !self.has_pending_request();
+                let assist_eligible = self.views.active() == ObservabilityView::Chat
+                    && !self.has_pending_request()
+                    && !self.is_editing_interview();
                 let command_eligible = self.views.active() == ObservabilityView::Chat
+                    && !self.is_editing_interview()
                     && self.question_notes.is_none()
                     && !(self.restored_question_draft.is_some()
                         && self.restored_question_draft == self.pending_requests.front().copied());
@@ -574,9 +772,29 @@ impl TuiState {
                 )
             },
             EditorEffect::Submitted(text) => {
+                let local_literal = self.is_editing_interview() && text.starts_with("//");
                 let escaped_palette = self.command_palette.take_escape(&text);
                 let restored_answer = self.restored_question_draft.is_some()
                     && self.restored_question_draft == self.pending_requests.front().copied();
+                if !local_literal
+                    && !escaped_palette
+                    && !restored_answer
+                    && self.question_notes.is_none()
+                    && let Some(argument) = text
+                        .strip_prefix("/interview")
+                        .filter(|rest| rest.is_empty() || rest.starts_with(' '))
+                {
+                    self.command_palette.close(&mut self.overlay);
+                    return self.handle_interview_command(argument, &text);
+                }
+                if self.is_editing_interview() {
+                    let result = self
+                        .interview
+                        .as_mut()
+                        .expect("editing controller")
+                        .local_enter(if local_literal { &text[1..] } else { &text });
+                    return self.apply_interview_command(result, &text);
+                }
                 if !escaped_palette && attachment_argument(&text).is_some() {
                     self.command_palette.close(&mut self.overlay);
                     return self.prepare_image_command(&text);
@@ -687,6 +905,12 @@ impl TuiState {
         &mut self,
         outcome: SubmissionOutcome,
     ) -> Result<StateEffect, StateError> {
+        if let Some(controller) = &mut self.interview
+            && let Some(notice) = controller.observe_submission(&outcome)
+        {
+            self.chat.push_notice(notice)?;
+            return Ok(StateEffect::Redraw);
+        }
         let Some(index) = self
             .pending_submissions
             .iter()
@@ -799,6 +1023,7 @@ impl TuiState {
     /// Transfers only one idle, unpaused queued snapshot to the existing admission lane.
     pub(in crate::runner) fn next_follow_up(&mut self) -> Result<Option<AgentAction>, StateError> {
         if self.preview.is_some()
+            || self.is_editing_interview()
             || self.follow_ups_paused
             || self.active_turn.is_some()
             || self.has_pending_request()
@@ -868,8 +1093,20 @@ impl TuiState {
         &mut self,
         record: TranscriptRecord,
     ) -> Result<StateEffect, StateError> {
+        if let Some(controller) = &mut self.interview
+            && let Some(notice) = controller.observe(&record)
+        {
+            self.chat.push_notice(notice)?;
+        }
         let lifecycle_effect = self.observe_live_lifecycle(&record)?;
         let chat_change = self.chat.observe_record(&record)?;
+        if let TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated { activity, .. }) =
+            &record
+            && let Some(controller) = &self.interview
+            && let Some((choice, draft)) = controller.live_draft(*activity)
+        {
+            self.chat.set_interview_draft(*activity, choice, draft);
+        }
         if let TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated { activity, .. }) =
             &record
             && self
@@ -1466,6 +1703,7 @@ impl TuiState {
         draft: &str,
     ) -> Result<StateEffect, StateError> {
         match effect {
+            CommandEffect::Interview => self.handle_interview_command("", draft),
             CommandEffect::NewSession => {
                 if !self.allow_session_transition(draft)? {
                     return Ok(StateEffect::Redraw);
@@ -1711,6 +1949,10 @@ impl TuiState {
     }
 
     fn sync_request_overlay(&mut self) -> Result<(), StateError> {
+        if self.is_editing_interview() {
+            self.close_request_overlay();
+            return Ok(());
+        }
         let pending = self.pending_requests.front().copied();
         if self.question_notes_refresh != pending {
             self.question_notes_refresh = None;

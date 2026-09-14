@@ -20,6 +20,7 @@ fn command_filter_preserves_module_declared_order() {
             CommandId::Attach,
             CommandId::Exit,
             CommandId::New,
+            CommandId::Interview,
             CommandId::Fork,
             CommandId::Tree,
             CommandId::Resume,

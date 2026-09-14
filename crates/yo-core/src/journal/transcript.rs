@@ -31,6 +31,46 @@ impl fmt::Debug for TranscriptReader {
 }
 
 impl TranscriptReader {
+    /// Revalidates capture provenance against genuine committed commands and Activities.
+    #[must_use]
+    pub fn interviews(&self) -> crate::interview::InterviewCatalog {
+        let state = read_state(&self.state);
+        let records = state
+            .entries
+            .iter()
+            .filter_map(TranscriptRecord::from_journal)
+            .collect::<Vec<_>>();
+        crate::interview::InterviewCatalog::from_records(&records)
+    }
+
+    /// Actual accepted first-Turn request, distinct from successful Turn execution.
+    #[must_use]
+    pub fn accepted_initial_submission(
+        &self,
+        id: crate::SubmissionId,
+    ) -> Option<(crate::TurnRef, JournalSequence)> {
+        let state = read_state(&self.state);
+        crate::interview::initial_submission_evidence(&state.entries, id, state.durability)
+    }
+    /// Terminal first Turn or actual backend binding closure, including a volatile failure tail.
+    #[must_use]
+    pub fn initial_submission_terminated(&self, id: crate::SubmissionId) -> bool {
+        let state = read_state(&self.state);
+        let turn = state.entries.iter().find_map(|entry| match entry.record() {
+            SemanticRecord::CommandCommitted(command) if command.submission_id() == Some(id) => {
+                match command.command() {
+                    AgentCommand::StartTurn { turn, .. } => Some(*turn),
+                    _ => None,
+                }
+            },
+            _ => None,
+        });
+        state.entries.iter().any(|entry| match entry.record() {
+            SemanticRecord::EventCommitted(event) => matches!(event, AgentEvent::TurnFinished { turn: finished, .. } if Some(*finished) == turn),
+            SemanticRecord::BackendBindingClosed(_) => true,
+            _ => false,
+        })
+    }
     /// Reports whether the currently visible semantic suffix is durable.
     #[must_use]
     pub fn durability(&self) -> JournalDurability {

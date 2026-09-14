@@ -7,6 +7,7 @@ mod engine;
 mod event;
 mod host;
 mod input;
+pub mod interview;
 mod journal;
 mod model_binding_admission;
 mod model_connector;

@@ -185,6 +185,13 @@ struct InputQuestions {
     current: usize,
     answers: Map<String, Value>,
     drafts: HashMap<String, (Option<u32>, String)>,
+    capture: Option<Arc<yo_core::interview::Capture>>,
+    captured_answers: Vec<
+        Option<(
+            yo_core::interview::Answer,
+            yo_core::interview::AnswerResponse,
+        )>,
+    >,
 }
 
 #[derive(Clone)]
@@ -896,6 +903,7 @@ impl<P: JsonMessagePeer> Backend<P> {
         request: ActivityRequestRef,
         response: ActivityResponse,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
+        let response_activity = self.next_activity(request.activity().turn())?;
         let binding = self
             .requests
             .get(&request)
@@ -905,7 +913,9 @@ impl<P: JsonMessagePeer> Backend<P> {
             })?;
         let wire_id = binding.wire_id.clone();
         let mut next = None;
-        let response_text;
+        let mut response_text;
+        let mut answer_seal = None;
+        let mut seal_failure = None;
         let navigating = matches!(response, ActivityResponse::PreviousQuestion { .. });
         let (payload, response_kind) = match (&binding.kind, response) {
             (
@@ -973,14 +983,15 @@ impl<P: JsonMessagePeer> Backend<P> {
                     questions.questions[questions.current].id.clone(),
                     (choice, draft.as_str().to_owned()),
                 );
-                if questions
-                    .question_profile(questions.current)
-                    .to_snapshot()
-                    .is_none()
-                    || questions
-                        .question_profile(questions.current - 1)
+                if questions.capture.is_none()
+                    && (questions
+                        .question_profile(questions.current)
                         .to_snapshot()
                         .is_none()
+                        || questions
+                            .question_profile(questions.current - 1)
+                            .to_snapshot()
+                            .is_none())
                 {
                     return Err(protocol::protocol_failure(
                         "question draft exceeds the presentation limit",
@@ -1003,6 +1014,23 @@ impl<P: JsonMessagePeer> Backend<P> {
             ) => {
                 let mut questions = questions.clone();
                 let question = &questions.questions[questions.current];
+                if let Some(yo_core::interview::Capture::Batch {
+                    questions: captured,
+                    ..
+                }) = questions.capture.as_deref()
+                {
+                    let answer = captured[questions.current]
+                        .project_response(&response)
+                        .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+                    questions.captured_answers[questions.current] = Some((
+                        answer,
+                        yo_core::interview::AnswerResponse {
+                            question_id: question.id.clone(),
+                            request,
+                            response_activity,
+                        },
+                    ));
+                }
                 let draft = match &response {
                     ActivityResponse::UserInput(input) => (None, input.as_str().to_owned()),
                     ActivityResponse::QuestionAnswer { choice, notes } => {
@@ -1053,6 +1081,36 @@ impl<P: JsonMessagePeer> Backend<P> {
                     .insert(question.id.clone(), json!({"answers": answers}));
                 questions.current += 1;
                 let payload = if questions.current == questions.questions.len() {
+                    if let Some(yo_core::interview::Capture::Batch {
+                        interview,
+                        revision,
+                        ..
+                    }) = questions.capture.as_deref()
+                    {
+                        let pairs = questions
+                            .captured_answers
+                            .iter()
+                            .cloned()
+                            .collect::<Option<Vec<_>>>();
+                        if let Some(pairs) = pairs {
+                            let (answers, answer_responses) = pairs.into_iter().unzip();
+                            let seal = yo_core::interview::Capture::AcceptedAnswers {
+                                interview: *interview,
+                                revision: revision.clone(),
+                                answers,
+                                answer_responses,
+                                final_request: request,
+                                response_activity,
+                            }
+                            .to_snapshot();
+                            match seal {
+                                Ok(snapshot) => answer_seal = Some(snapshot),
+                                Err(error) => seal_failure = Some(error.to_string()),
+                            }
+                        } else {
+                            seal_failure = Some("ordered actual answers unavailable".into());
+                        }
+                    }
                     Some(json!({"answers": questions.answers}))
                 } else {
                     next = Some(questions);
@@ -1077,7 +1135,6 @@ impl<P: JsonMessagePeer> Backend<P> {
             },
             RequestKind::Approval { .. } => None,
         };
-        let response_activity = self.next_activity(request.activity().turn())?;
         let next = next
             .map(|questions| {
                 let activity = self.next_activity(request.activity().turn())?;
@@ -1107,6 +1164,14 @@ impl<P: JsonMessagePeer> Backend<P> {
                 .get_mut(&request)
                 .expect("validated request")
                 .responded = true;
+            if let Some(seal) = answer_seal {
+                response_text = seal;
+            } else if let Some(error) = seal_failure {
+                response_text = format!(
+                    "{} {error}\n{response_text}",
+                    yo_core::interview::RECOVERY_UNAVAILABLE_RECEIPT_PREFIX
+                );
+            }
         }
         if !navigating {
             self.pending_events

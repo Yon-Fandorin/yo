@@ -945,7 +945,7 @@ impl<P: JsonMessagePeer> Backend<P> {
         } else {
             None
         };
-        let kind = if !is_approval {
+        let mut kind = if !is_approval {
             match InputQuestions::parse(&params) {
                 Ok(questions) => RequestKind::Input(questions),
                 Err(error) => {
@@ -1030,6 +1030,35 @@ impl<P: JsonMessagePeer> Backend<P> {
         let activity = self.next_activity(turn)?;
         let request_id = self.next_request()?;
         let request = ActivityRequestRef::new(activity, request_id);
+        if let RequestKind::Input(questions) = &mut kind {
+            questions.capture = yo_core::interview::Capture::batch(
+                request,
+                questions
+                    .questions
+                    .iter()
+                    .map(|q| yo_core::interview::InterviewQuestion {
+                        id: q.id.clone(),
+                        prompt: q.prompt.clone(),
+                        question: q.question.clone(),
+                        options: q
+                            .choices
+                            .iter()
+                            .enumerate()
+                            .map(|(index, choice)| yo_core::interview::InterviewOption {
+                                id: (index + 1).to_string(),
+                                label: choice.label.clone(),
+                                description: choice.description.clone(),
+                            })
+                            .collect(),
+                        allow_free_text: true,
+                        allow_notes: true,
+                        is_secret: false,
+                    })
+                    .collect(),
+            )
+            .ok()
+            .map(std::sync::Arc::new);
+        }
         let wire_key = wire_key(&wire_id)?;
         if self.wire_requests.contains_key(&wire_key) {
             return Err(protocol::protocol_failure("duplicate Codex request id"));
@@ -2504,10 +2533,12 @@ impl InputQuestions {
             });
         }
         Ok(Self {
+            captured_answers: vec![None; parsed.len()],
             questions: parsed,
             current: 0,
             answers: Map::new(),
             drafts: HashMap::new(),
+            capture: None,
         })
     }
 
@@ -2632,13 +2663,42 @@ impl InputQuestions {
     }
 
     pub(super) fn prompt(&self) -> String {
+        if let Some(yo_core::interview::Capture::Batch {
+            interview,
+            revision,
+            questions,
+            ..
+        }) = self.capture.as_deref()
+        {
+            let capture = if self.current == 0 && self.answers.is_empty() && self.drafts.is_empty()
+            {
+                self.capture.as_deref().cloned().expect("present capture")
+            } else {
+                yo_core::interview::Capture::Question {
+                    interview: *interview,
+                    revision: revision.clone(),
+                    question: questions[self.current].clone(),
+                }
+            };
+            if let Ok(snapshot) = capture.to_snapshot() {
+                return snapshot;
+            }
+        }
         let mut profile = self.question_profile(self.current);
         profile.previous_question = self.current > 0
             && self
                 .question_profile(self.current - 1)
                 .to_snapshot()
                 .is_some();
-        profile.to_snapshot().unwrap_or(profile.plain_text)
+        let mut text = profile.to_snapshot().unwrap_or(profile.plain_text);
+        if self.capture.is_none() {
+            // Legacy/oversized batches still work live; unseen questions cannot be reconstructed.
+            text = text.replace(
+                "Esc interrupts the turn.",
+                "Complete interview recovery is unavailable. Esc interrupts the turn.",
+            );
+        }
+        text
     }
 }
 

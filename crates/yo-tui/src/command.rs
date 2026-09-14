@@ -8,6 +8,7 @@ mod definition;
 mod exit;
 mod fork;
 mod help;
+mod interview;
 mod model;
 mod new;
 mod output;

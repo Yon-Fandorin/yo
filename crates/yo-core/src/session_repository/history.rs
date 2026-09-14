@@ -175,9 +175,24 @@ pub struct StoredSessionHistory {
     records: Vec<TranscriptRecord>,
     request_trace: Vec<StoredRequestTraceEntry>,
     inherited_history: Option<Arc<InheritedSessionHistory>>,
+    accepted_initial: Option<(crate::SubmissionId, crate::TurnRef, JournalSequence)>,
 }
 
 impl StoredSessionHistory {
+    #[must_use]
+    pub fn accepted_initial_submission(
+        &self,
+        id: crate::SubmissionId,
+    ) -> Option<(crate::TurnRef, JournalSequence)> {
+        self.accepted_initial
+            .filter(|(actual, _, _)| *actual == id)
+            .map(|(_, turn, sequence)| (turn, sequence))
+    }
+    /// Revalidates durable question and answer provenance, excluding inherited archives.
+    #[must_use]
+    pub fn interviews(&self) -> crate::interview::InterviewCatalog {
+        crate::interview::InterviewCatalog::from_records(&self.records)
+    }
     #[must_use]
     pub const fn descriptor(&self) -> &SessionDescriptor {
         &self.descriptor
@@ -446,6 +461,31 @@ pub fn read_stored_session(
     let records = normalize(&recovered).map_err(invalid_stored)?;
     let request_trace = request_trace::project(&recovered);
     let inherited_history = project_inherited(&recovered).map_err(invalid_stored)?;
+    let semantic = recovered.semantic_entries();
+    let accepted_initial = semantic
+        .iter()
+        .find_map(|entry| match entry.record() {
+            crate::journal::SemanticRecord::CommandCommitted(command)
+                if matches!(command.command(), crate::AgentCommand::StartTurn { .. }) =>
+            {
+                command.submission_id()
+            },
+            _ => None,
+        })
+        .and_then(|id| {
+            crate::interview::initial_submission_evidence(
+                &semantic,
+                id,
+                crate::JournalDurability::Durable {
+                    journal_sequence: recovered.journal_cutoff(),
+                    repository_sequence: entries
+                        .last()
+                        .expect("recovered descriptor exists")
+                        .sequence(),
+                },
+            )
+            .map(|(turn, sequence)| (id, turn, sequence))
+        });
     Ok(StoredSessionHistory {
         descriptor,
         journal_cutoff: recovered.journal_cutoff(),
@@ -455,6 +495,7 @@ pub fn read_stored_session(
         records,
         request_trace,
         inherited_history,
+        accepted_initial,
     })
 }
 

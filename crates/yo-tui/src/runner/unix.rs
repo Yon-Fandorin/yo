@@ -202,6 +202,17 @@ where
     let outcome = finish(catch_owner_panic(AssertUnwindSafe(|| {
         run_routed(termination, agent, session, mode)
     })))?;
+    session.flush_interview();
+    if matches!(
+        outcome,
+        TerminalOutcome::Exited(RunOutcome {
+            reason: ExitReason::UserRequested,
+            ..
+        })
+    ) && let Some(intent) = session.take_interview_conversation()
+    {
+        return Ok(TerminalOutcome::InterviewConversationRequested(intent));
+    }
     if matches!(
         outcome,
         TerminalOutcome::Exited(RunOutcome {
@@ -432,6 +443,9 @@ where
             }
         }
         if state.tick_preview().map_err(LoopError::State)? {
+            frames.request(FrameRequest::Coalesced);
+        }
+        if state.tick_interview().map_err(LoopError::State)? {
             frames.request(FrameRequest::Coalesced);
         }
         request_due_motion(

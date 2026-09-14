@@ -4,6 +4,7 @@
 pub(crate) enum CommandId {
     Help,
     New,
+    Interview,
     Fork,
     Tree,
     Resume,
@@ -21,6 +22,7 @@ pub(crate) enum CommandId {
 pub(crate) enum CommandEffect {
     ShowHelp,
     NewSession,
+    Interview,
     ForkSession,
     ShowSessionTree,
     ResumeSession,

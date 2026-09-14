@@ -1850,8 +1850,7 @@ arguments do not leak through a redacting admission policy.
 ### Selectable interview choices
 
 ActivityQuestion (`yo.activity-question/v1`) carries a readable prompt and ordered
-QuestionChoice labels/descriptions for an active UserInputRequest. Codex sequential
-questions emit this optional profile; the existing numeric-to-label response mapping
+QuestionChoice labels/descriptions for an active UserInputRequest. Codex complete nonsecret captures are validated and projected into this presentation; the existing numeric-to-label response mapping
 and request IDs remain authoritative. A 64-choice and ToolOutput snapshot byte bound
 apply; larger presentations retain the existing plain-text question path. The TUI
 keeps readable prompt text in Chat/export and shows choices in the request panel.
@@ -1898,7 +1897,7 @@ the pinned request_user_input renderer. Empty notes emit only the label. Tests c
 capability defaults, invalid choice zero/first excess/u32 maximum, exact wire IDs,
 sequential replies, stale presentation, 24-column frames, literal notes and journal
 codec round trips. Secret input, storage and recovery are future features.
-Reopening already transmitted questions remains unsupported.
+Submitted nonsecret answers can be reopened as a separate editable copy and sent explicitly as a new conversation, as described under Nonsecret interview copies.
 
 ### Host status line
 
@@ -2010,14 +2009,13 @@ question's recorded value; the final question sends the complete updated answer 
 The first question and stale or out-of-range navigation are rejected. A previous draft
 that cannot fit the bounded question profile disables navigation to it. Grok does not
 offer this feature and rejects this response through its existing unsupported-input path.
-The common TUI never reads Codex wire fields or batch state.
+The common TUI never reads Codex wire fields; it consumes the validated backend-neutral capture.
 
 `/preview interview` supports the same gesture with isolated drafts and fresh request
 IDs. Exercise first answer → second draft → Shift+Tab → edit first answer → restored
 second draft → final submission, including 80/24/80 resize. Regression tests cover
 provider payloads, stale requests, optional-profile validation, draft restoration,
-source command round-trips and fresh-frame gating. Restarting a live provider interview
-and encrypted/secret drafts are not established by these tests.
+source command round-trips and fresh-frame gating. Editable nonsecret restart recovery uses the independent working-copy flow below; provider requests are not resumed. Encrypted/secret drafts remain deferred.
 
 ### Recorded interview answers
 
@@ -2032,9 +2030,9 @@ literal answer, and separately labelled notes. Intermediate responses say that t
 are recorded while remaining questions are pending; the final receipt is queued only
 after the JSON-RPC response write succeeds. A failed write creates no sent receipt
 and leaves the request unanswered. The wire answer array remains unchanged. The
-receipt is bounded by ToolOutput::MAX_SNAPSHOT_BYTES before allocation; an oversized
+intermediate and legacy receipt display is bounded by ToolOutput::MAX_SNAPSHOT_BYTES before allocation; an oversized
 receipt explicitly omits display content while the original response remains in the
-journal. Exact-limit and first-excess answer/note cases are tested.
+journal. Complete final captures use the 1 MiB limit described below. Exact-limit and first-excess answer/note cases are tested.
 
 The TUI retains these typed UserInputResponse activities with an “Answer recorded”
 heading using existing activity success/failure colors, body style and body-width
@@ -2089,3 +2087,19 @@ Hosts can emit `AgentPoll::Document(TuiDocument::new(ActivityDocument { title, m
 `TuiDocument::with_expanded(bool)` chooses an initial state for that document. Omission inherits the global activity expansion state. The option uses the existing item-identity override and inline-publication guard; Alt+O and Ctrl+O remain user controls. It never changes Markdown or source export. The session-document preview starts expanded so its table and code are immediately visible. Tests cover both global states, omitted/false/true initial settings and subsequent user override at80/24/80.
 
 The real `/help` command now emits an initially expanded TuiDocument. Command entries come from the existing registry; command/help.rs owns the reading/editing/approval/interview guidance. Existing DocumentRenderer and theme apply. It remains local, clears the command draft, starts no Turn and does not answer pending requests. Tests verify every registered command, key guidance,80/24/80 start/end navigation, no folded rows and unchanged source. Validate with `/help` outside offline preview as well as during pending request tests.
+
+### Nonsecret interview copies
+
+Codex captures the complete admitted nonsecret question batch in the first genuine UserInputRequest snapshot using `yo.interview-capture/v1`. Later question snapshots pin the same source and revision. The core checks every accepted answer against the actual committed response and completed UserInputResponse. The final aggregate seal is emitted only after the backend response write succeeds. ModelWork or tool-output lookalikes remain literal. Existing Journal envelopes and Activity kinds are unchanged. The initial request and complete capture publish together; the canonical capture limit is1MiB before envelope escaping. Unsupported, secret or excessive batches explicitly lack complete recovery.
+
+The TuiSession controller saves a separate `yo.interview-working-copy/v1` file under the platform Yo state directory's `interviews` directory. This stores public question source/revision, ordered editable answers, notes, navigation, user context and confirmed submission bookkeeping. It contains no backend wire IDs or credentials. Storage requires user-owned0700 directories and regular0600 files, rejects symlinks and unknown schemas, and uses an exclusive lease, generation CAS, an exclusive same-directory temporary file, file fsync, atomic rename and directory fsync. Conflict or failure preserves both published data and editable changes without claiming Saved. Edits schedule publication within one second; navigation, submission and graceful exit flush. Recovery reads the last durable publication, excluding crash-lost keystrokes.
+
+Use `/interview list` to find saved copy UUIDs, `/interview recover <UUID>` to restore an unsubmitted copy, or `/interview reopen <UUID>` to create a new UUID/generation1 copy of a submitted record while preserving the original. Type answers and press Enter to keep them locally. `/interview next` and `/interview previous` navigate; `/interview option <number>` selects an option, `/interview notes <text>` edits notes, and `/interview context <text>` adds explicit context. `/interview save` publishes pending edits; `/interview close` returns to the ordinary prompt. Saved/unsaved and unavailable states are explicit.
+
+`/interview preview` renders original questions and editable answers in order with only user context, then allows plain-text editing. Preview edits are retained in memory for this send; restart restores the saved answers/context. `/interview send` explicitly creates a new Session and its first Turn with the current backend/model and ordinary input admission. An active or pending Turn is busy and retains the copy. Backpressure retains the same immutable preview and SubmissionId. Ambiguous failure never retries automatically. The submitted marker requires the actual durable accepted initial StartTurn request with matching SubmissionId, new TurnRef and positive JournalSequence; acceptance does not mean execution completed. The preview limit is64KiB UTF-8 and the entire encoded copy limit is256KiB; first excess is rejected without truncation.
+
+Validation covers genuine-vs-lookalike provenance, all-answer/final completion correlation, stale answers and navigation, a multi-segment atomic initial capture, durable recovery, unsafe storage, generation conflicts/concurrent writers, separate reopening and UTF-8 limits. Live provider RPC replay and secret input/storage/recovery remain deferred. Corrected-build physical Mac validation is user-deferred backlog work.
+
+Literal answers beginning `/` use a doubled leading slash (`//interview ...`); the saved answer keeps exactly one slash. New edits retry autosave after a transient error. Only physically stored source captures claim recoverability; volatile captures expose unavailable status. An unconfirmed terminal first Turn restores the editable preview while retaining its immutable intent and never retries automatically. Known durable acceptance remains valid before a later known cutoff gap. Recognized private owned attempt files are reclaimed under the exclusive lease; unknown or unsafe files remain untouched. A successful wire answer with an invalid or oversized final seal explicitly reports complete recovery unavailable.
+
+Retained recovery diagnostics require a genuinely completed response and a first line at most4096 UTF-8 bytes; incomplete/interrupted/oversized diagnostics grant no recovery or submission status. Typed single-slash command prefixes never overwrite answers.

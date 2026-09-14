@@ -37,6 +37,7 @@ fn themed_preview_expands_tools_and_restores_real_pty() {
         "pty_tests::normal_exit::child_themed_preview",
         &[
             b"Ask anything",
+            b"/preview",
             b"PREVIEW",
             b"Ctrl+O expand",
             b"Check 03",
@@ -44,19 +45,26 @@ fn themed_preview_expands_tools_and_restores_real_pty() {
         ],
     );
     child.wait_until_ready();
-    child.input().write_all(b"/preview\r").unwrap();
+    // 전체 paste를 한 편집으로 넣고 표시된 palette를 기다려 stale-frame Enter를 피한다.
+    child
+        .input()
+        .write_all(b"\x1b[200~/preview\x1b[201~")
+        .unwrap();
     child.input().flush().unwrap();
     child.wait_until_ready_marker(1);
+    child.input().write_all(b"\r").unwrap();
+    child.input().flush().unwrap();
+    child.wait_until_ready_marker(2);
     child.input().write_all(b"long-tools\r").unwrap();
     child.input().flush().unwrap();
-    let folded = child.wait_until_ready_marker(2);
+    let folded = child.wait_until_ready_marker(3);
     child.resize(100, 30);
     child.input().write_all(&[0x0f]).unwrap();
     child.input().flush().unwrap();
-    let expanded = child.wait_until_ready_marker_after(3, folded);
+    let expanded = child.wait_until_ready_marker_after(4, folded);
     child.input().write_all(&[0x04]).unwrap();
     child.input().flush().unwrap();
-    child.wait_until_ready_marker_after(4, expanded);
+    child.wait_until_ready_marker_after(5, expanded);
     child.input().write_all(&[0x04]).unwrap();
     child.input().flush().unwrap();
     let (status, output) = child.finish();

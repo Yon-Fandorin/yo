@@ -30,6 +30,7 @@ pub(super) enum SessionStep {
     Suspend,
     Continue,
     New,
+    Interview(yo_core::interview::NewConversation),
     Fork,
     ForkPicker,
     ForkBoundary {

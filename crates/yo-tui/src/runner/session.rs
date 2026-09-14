@@ -219,6 +219,46 @@ pub(super) struct SessionParts<'session> {
 }
 
 impl TuiSession {
+    /// The session controller owns writes; the host resolves immutable Journal evidence only.
+    #[must_use]
+    pub fn with_interview_repository(
+        mut self,
+        repository: yo_core::interview::InterviewRepository,
+        host: Box<dyn super::InterviewHistoryHost>,
+    ) -> Self {
+        self.state.interview = Some(super::interview::InterviewController::new(repository, host));
+        self
+    }
+    /// Carries the editable copy and immutable preview into its new independently prepared Session.
+    pub fn transfer_interview_to(
+        &mut self,
+        candidate: &mut Self,
+        intent: yo_core::interview::NewConversation,
+        reader: yo_core::TranscriptReader,
+    ) {
+        if let Some(mut controller) = self.state.interview.take() {
+            controller.accepted_pending(intent, reader);
+            candidate.state.interview = Some(controller);
+        }
+    }
+    pub fn retain_interview_backpressure(&mut self, pending: PendingDispatch) {
+        self.pending_dispatch = Some(pending);
+    }
+    pub fn report_interview_failure(&mut self, detail: impl Into<String>) {
+        let _ = self.state.chat_notice(detail.into());
+    }
+    pub(super) fn take_interview_conversation(
+        &mut self,
+    ) -> Option<yo_core::interview::NewConversation> {
+        self.state.interview_conversation.take()
+    }
+    pub(super) fn flush_interview(&mut self) {
+        if let Some(controller) = &mut self.state.interview
+            && let Some(notice) = controller.flush()
+        {
+            self.report_interview_failure(notice);
+        }
+    }
     /// Connects the execution host's single asynchronous image preparation lane.
     pub fn with_image_preparation(mut self, host: Box<dyn ImagePreparationHost>) -> Self {
         self.image_preparation = Some(host);
