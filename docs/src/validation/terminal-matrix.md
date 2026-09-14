@@ -424,6 +424,8 @@ used. `gpt-5.5` selects the native fixture's tool configuration only; no OpenAI
 model service was called. Normal user state was unchanged and all owned test
 state and processes were removed. This direct native probe supplements the
 actual Yo TUI journey above and does not add a persistent command-denial choice.
+The runner requires the offered `cancel`, its recorded response and the
+`interrupted` outcome, and asserts exactly five fixture requests.
 
 The separate command
 `python3 tools/validation/codex-interview-resume.py /absolute/path/to/codex`
@@ -434,6 +436,9 @@ fixture request made zero external model requests; owned temporary state was
 removed and normal user state was unchanged. This validates the recovery
 constraint behind the proposed interview feature, not implemented draft
 persistence or transparent continuation of a dead request.
+The runner drains events after the resume response for a full one-second quiet
+period, within a three-second bound. Delayed question RPCs, protocol errors,
+reader EOF and process exit fail the probe; only a live, quiet app-server passes.
 
 ### Automatic refusal and network approval scopes
 

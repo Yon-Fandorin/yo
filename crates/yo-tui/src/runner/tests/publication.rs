@@ -6,10 +6,10 @@ use yo_core::{
 
 use super::{activity, key, turn};
 use crate::{
-    appearance::AppearanceState,
+    appearance::{AppearanceCandidate, AppearanceState, GlyphProfile},
     input::event::{KeyCode, KeyModifiers},
     runner::{PresentationMode, state::TuiState},
-    surface::{CellContent, Point, Size, Surface},
+    surface::{CellContent, Color, Point, Size, Surface},
 };
 
 // Final user 항목 뒤 Streaming assistant가 있으면 준비 단계는 Final prefix만 persistent
@@ -334,4 +334,50 @@ fn plain_publication(pages: &[Surface]) -> String {
         .map(plain_surface)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// 페이지 경계를 가로지르는 빈 separator와 본문 뒤 padding도 확정한 배경색으로
+// 발행되어 terminal의 EraseToLineEnd가 다른 배경을 기록하지 않는지 확인합니다.
+#[test]
+fn publication_blank_cells_keep_the_committed_transcript_background() {
+    let mut state = TuiState::new();
+    for text in ["first", "second"] {
+        state
+            .observe_record(TranscriptRecord::CommandCommitted(
+                AgentCommand::StartTurn {
+                    turn: turn(),
+                    input: UserInput::from(text),
+                },
+            ))
+            .unwrap();
+    }
+    let mut styles = AppearanceState::default().pin().snapshot().styles();
+    styles.transcript.background.background = Color::Indexed(17);
+    let appearance = AppearanceState::new(
+        AppearanceCandidate::for_profile(GlyphProfile::Ascii).with_styles_for_test(styles),
+    )
+    .unwrap()
+    .pin();
+    let frame = state
+        .prepare_frame_for_geometry(Size::new(16, 2), &appearance, Duration::ZERO, 1)
+        .unwrap();
+    let pages = &frame.publication.as_ref().unwrap().surfaces;
+    assert!(pages.len() > 1);
+    assert!(plain_publication(pages).contains("second"));
+    let mut blanks = 0;
+    for page in pages {
+        for y in 0..page.size().height {
+            for x in 0..page.size().width {
+                let cell = page.cell(Point::new(x, y)).unwrap();
+                if matches!(cell.content(), CellContent::Blank) {
+                    blanks += 1;
+                    assert_eq!(cell.style().background, Color::Indexed(17));
+                }
+            }
+        }
+    }
+    assert!(
+        blanks > 16,
+        "blank separators and trailing cells must both be covered"
+    );
 }

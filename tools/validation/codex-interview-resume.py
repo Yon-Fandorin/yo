@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import queue
 import socket
 import subprocess
 import tempfile
@@ -36,6 +37,30 @@ QUESTIONS = [
         ],
     },
 ]
+
+
+def assert_no_replayed_questions(client, thread_id, turn_id):
+    def check(event):
+        if event.get("method") == "error" or "error" in event:
+            raise RuntimeError("native protocol error during interview resume")
+        params = event.get("params", {})
+        if event.get("method") == "item/tool/requestUserInput" and (
+            params.get("threadId") == thread_id or params.get("turnId") == turn_id
+        ):
+            raise AssertionError("native disk resume replayed a pending question RPC")
+
+    for event in client.events:
+        check(event)
+    deadline = time.monotonic() + 3
+    while time.monotonic() + 1 <= deadline:
+        try:
+            event = client.receive(1)
+        except queue.Empty:
+            if client.process.poll() is not None:
+                raise RuntimeError("native app-server exited during the resume quiet period")
+            return
+        check(event)
+    raise RuntimeError("native resume did not reach a bounded quiet period")
 
 
 def run(codex):
@@ -163,9 +188,7 @@ def run(codex):
             resumed = client.call("thread/resume", {"threadId": thread_id})["thread"]
             old = next(turn for turn in resumed["turns"] if turn["id"] == turn_id)
             assert old["status"] == "interrupted", old
-            assert not any(
-                event.get("method") == "item/tool/requestUserInput" for event in client.events
-            )
+            assert_no_replayed_questions(client, thread_id, turn_id)
             assert len(requests) == 1 and not failures, failures
             client.close()
             client = None

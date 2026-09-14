@@ -242,9 +242,10 @@ def run(codex):
                             prefix = event["params"].get("proposedExecpolicyAmendment")
                             assert prefix == command, ("unexpected proposed scope", prefix)
                             response = {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": prefix}}
-                        elif decision == "decline":
+                        elif decision == "cancel":
                             offered = event["params"].get("availableDecisions")
-                            response = "decline" if offered is None or "decline" in offered else "cancel"
+                            assert offered is not None and "cancel" in offered, "native host did not offer cancel"
+                            response = "cancel"
                         else:
                             raise RuntimeError("persisted exact rule unexpectedly asked again")
                         offered = event["params"].get("availableDecisions")
@@ -278,10 +279,12 @@ def run(codex):
             assert marker.read_text() == "YO_POLICY_MARKER\nYO_POLICY_MARKER\n"
             assert policy.read_bytes() == original_policy
             fixture.command = [sys.executable, "-c", f"from pathlib import Path; Path({str(declined)!r}).write_text('SHOULD_NOT_EXIST')"]
-            approvals, status = turn(native, thread_id, "decline")
-            assert len(approvals) == 1 and not declined.exists()
+            approvals, status = turn(native, thread_id, "cancel")
+            assert len(approvals) == 1 and status == "interrupted" and not declined.exists()
+            assert native.responses == ["cancel"]
             assert policy.read_bytes() == original_policy
             assert not fixture.failure, fixture.failure
+            assert fixture.request_count == 5, fixture.request_count
             return {"version": version, "persistent_command_allow": "passed", "process_restart_reload": "passed",
                     "one_shot_non_grant_no_rule_write": "passed", "actual_non_grant_decision": native.responses[-1],
                     "non_granted_turn_status": status,

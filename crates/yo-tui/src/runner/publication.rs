@@ -5,7 +5,7 @@ use crate::{
     appearance::{AppearanceRevision, AppearanceSnapshot},
     input::editor::PromptEditor,
     shell::{AgentShellMeasureError, AgentShellRenderOptions, natural_height},
-    surface::{Point, Rect, Size, Surface, SurfaceError},
+    surface::{Point, Rect, Size, Surface, SurfaceError, WriteOutcome},
     transcript::{
         TranscriptMeasureError, TranscriptRenderError, TranscriptSlice, TranscriptViewState,
         paint_indexed_commands, prepare_slice,
@@ -74,6 +74,11 @@ pub(super) fn prepare(
         let mut view = surface
             .view(Rect::new(Point::new(0, 0), surface.size()))
             .expect("the complete publication Surface is a valid view");
+        if view.clear(appearance.styles().transcript.background) == WriteOutcome::Clipped {
+            return Err(PublicationPrepareError::Transcript(
+                TranscriptRenderError::SurfaceConflict,
+            ));
+        }
         paint_indexed_commands(
             &prepared,
             &mut view,

@@ -26,6 +26,17 @@ enum Section {
     PlanStep(TextPages, &'static str, NonZeroU16),
 }
 
+impl Section {
+    fn height(&self) -> usize {
+        match self {
+            Self::Literal(p, _) => p.row_count(),
+            Self::Markdown(p) => p.height,
+            Self::Rows(_, _, height) => *height,
+            Self::PlanStep(pages, _, _) => pages.row_count().max(1),
+        }
+    }
+}
+
 impl PagedBody {
     pub(super) fn raster_rows(&self) -> Vec<(usize, RasterImage)> {
         self.sections
@@ -75,12 +86,7 @@ impl PagedBody {
     }
 
     fn append(&mut self, section: Section, role: GlyphRole) -> Result<(), TranscriptRenderError> {
-        let height = match &section {
-            Section::Literal(p, _) => p.row_count(),
-            Section::Markdown(p) => p.height,
-            Section::Rows(_, _, height) => *height,
-            Section::PlanStep(pages, _, _) => pages.row_count().max(1),
-        };
+        let height = section.height();
         if height > 0 {
             self.sections.push((self.height, section, role));
             self.height = self
@@ -123,16 +129,14 @@ impl PagedBody {
             row_styles: Vec::new(),
             height: height.get(),
         };
-        for (start, section, role) in &self.sections {
-            let section_height = match section {
-                Section::Literal(p, _) => p.row_count(),
-                Section::Markdown(p) => p.height,
-                Section::Rows(_, _, height) => *height,
-                Section::PlanStep(pages, _, _) => pages.row_count().max(1),
-            };
-            if *start >= end || start + section_height <= first {
-                continue;
-            }
+        let first_section = self
+            .sections
+            .partition_point(|(start, section, _)| start + section.height() <= first);
+        for (start, section, role) in self.sections[first_section..]
+            .iter()
+            .take_while(|(start, _, _)| *start < end)
+        {
+            let section_height = section.height();
             let from = first.saturating_sub(*start);
             let offset =
                 u16::try_from(start.saturating_sub(first)).expect("visible section offset");
@@ -608,4 +612,30 @@ pub(super) fn prepare(
         return Ok(Some(body));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GlyphRole, NonZeroU16, PagedBody};
+
+    // 수많은 짧은 섹션의 마지막 화면에서도 앞선 섹션을 다시 flow하지 않고
+    // 보이는 행의 원문과 glyph 개수만 유지하는지 확인합니다.
+    #[test]
+    fn many_short_sections_render_the_last_window() {
+        let mut body = PagedBody::new(NonZeroU16::new(20).unwrap(), false);
+        for value in 0..25_000 {
+            body.literal(&format!("SECTION_{value}"), GlyphRole::ActivityBody, false)
+                .unwrap();
+        }
+        let page = body.window(body.height - 8, NonZeroU16::new(8).unwrap());
+        let text = page
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.grapheme.as_str())
+            .collect::<String>();
+        assert!(text.contains("SECTION_24999"));
+        assert!(!text.contains("SECTION_24991"));
+        assert!(page.glyphs.len() <= 8 * 20);
+        assert_eq!(page.height, 8);
+    }
 }

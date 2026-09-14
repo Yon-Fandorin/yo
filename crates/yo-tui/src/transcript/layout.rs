@@ -319,10 +319,14 @@ pub(crate) fn paint_indexed_commands(
     // Surface dimensions are applied only after logical scrolling is resolved.
     let mut page_glyphs = Vec::new();
     let mut page_bands = Vec::new();
-    for &(start, indent, ref body) in &prepared.layout.paged_bodies {
-        if start >= visible.end() || start + body.height.max(1) <= visible.first() {
-            continue;
-        }
+    let first_body = prepared
+        .layout
+        .paged_bodies
+        .partition_point(|(start, _, body)| start + body.height.max(1) <= visible.first());
+    for &(start, indent, ref body) in prepared.layout.paged_bodies[first_body..]
+        .iter()
+        .take_while(|(start, _, _)| *start < visible.end())
+    {
         let from = visible.first().saturating_sub(start);
         let page_start = start + from;
         let page_height = NonZeroU16::new(
@@ -345,7 +349,7 @@ pub(crate) fn paint_indexed_commands(
     }
 
     if styles.user_body.background != Color::Default {
-        for item in &prepared.layout.items {
+        for item in prepared.layout.visible_items(visible) {
             if item.role != MessageRole::User {
                 continue;
             }
@@ -361,7 +365,11 @@ pub(crate) fn paint_indexed_commands(
     }
 
     let mut row_backgrounds = vec![None; usize::from(view.size().height)];
-    for &(row, indent, width, decoration) in prepared.layout.row_bands.iter().chain(&page_bands) {
+    for &(row, indent, width, decoration) in
+        visible_row_entries(&prepared.layout.row_bands, visible, |entry| entry.0)
+            .iter()
+            .chain(&page_bands)
+    {
         if visible.contains(row) {
             let y = visible.translate(0, row).y;
             let style = styles.markdown.resolve(decoration, styles.assistant_body);
@@ -373,12 +381,10 @@ pub(crate) fn paint_indexed_commands(
         }
     }
 
-    for &(row, ref positioned) in prepared
-        .layout
-        .glyphs
-        .iter()
-        .chain(&page_glyphs)
-        .filter(|(row, _)| visible.contains(*row))
+    for &(row, ref positioned) in
+        visible_row_entries(&prepared.layout.glyphs, visible, |entry| entry.0)
+            .iter()
+            .chain(&page_glyphs)
     {
         let point = visible.translate(positioned.point.x, row);
         let mut style = styles
@@ -401,7 +407,9 @@ pub(crate) fn paint_indexed_commands(
 
     *state = visible.next_state();
     if styles.markdown.rich_media && styles.markdown.pixel_color_capability != Color::Default {
-        for &(row, ref raster) in &prepared.layout.rasters {
+        for &(row, ref raster) in
+            visible_row_entries(&prepared.layout.rasters, visible, |entry| entry.0)
+        {
             let end = row.checked_add(usize::from(raster.area.size.height));
             if visible.contains(row) && end.is_some_and(|end| end <= visible.end()) {
                 let mut raster = raster.clone();
@@ -819,6 +827,10 @@ fn layout(
         has_visible_item = true;
     }
 
+    // Stable row order preserves paint order within a row and allows bounded seeks.
+    glyphs.sort_by_key(|entry| entry.0);
+    row_bands.sort_by_key(|entry| entry.0);
+    rasters.sort_by_key(|entry| entry.0);
     Ok(TranscriptLayout {
         row_bands,
         rasters,
@@ -830,17 +842,29 @@ fn layout(
 }
 
 impl TranscriptLayout {
-    fn context_item(&self, visible: VisibleRows) -> Option<TranscriptItemId> {
-        let mut visible_items = self
+    fn visible_items(&self, visible: VisibleRows) -> &[PositionedTranscriptItem] {
+        let first = self
             .items
-            .iter()
-            .filter(|item| item.first_row < visible.end() && item.end_row > visible.first());
+            .partition_point(|item| item.end_row <= visible.first());
+        let end =
+            first + self.items[first..].partition_point(|item| item.first_row < visible.end());
+        &self.items[first..end]
+    }
+
+    fn context_item(&self, visible: VisibleRows) -> Option<TranscriptItemId> {
+        let visible_items = self.visible_items(visible);
         if visible.follows_tail() {
-            visible_items.next_back().map(|item| item.id)
+            visible_items.last().map(|item| item.id)
         } else {
-            visible_items.map(|item| item.id).next()
+            visible_items.first().map(|item| item.id)
         }
     }
+}
+
+fn visible_row_entries<T>(entries: &[T], visible: VisibleRows, row: impl Fn(&T) -> usize) -> &[T] {
+    let first = entries.partition_point(|entry| row(entry) < visible.first());
+    let end = first + entries[first..].partition_point(|entry| row(entry) < visible.end());
+    &entries[first..end]
 }
 
 fn configured_body_width(
