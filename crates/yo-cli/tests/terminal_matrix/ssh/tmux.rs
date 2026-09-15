@@ -1,8 +1,10 @@
 use std::{
     io::Read,
+    path,
     path::Path,
+    process,
     process::{Command, Output, Stdio},
-    thread,
+    thread, time,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -25,7 +27,7 @@ impl SshServer {
             .duration_since(UNIX_EPOCH)
             .expect("system clock is after the Unix epoch")
             .as_nanos();
-        let socket = self.fixture_path(&format!("tmux-{}-{unique}.sock", std::process::id()));
+        let socket = self.fixture_path(&format!("tmux-{}-{unique}.sock", process::id()));
         let session = "yo";
         let tmux = TmuxGuard::new(socket.clone());
 
@@ -85,11 +87,11 @@ impl SshServer {
 }
 
 struct TmuxGuard {
-    socket: std::path::PathBuf,
+    socket: path::PathBuf,
 }
 
 impl TmuxGuard {
-    fn new(socket: std::path::PathBuf) -> Self {
+    fn new(socket: path::PathBuf) -> Self {
         Self { socket }
     }
 
@@ -125,7 +127,7 @@ impl TmuxGuard {
                 Instant::now() < deadline,
                 "tmux inside SSH did not converge within {READY_TIMEOUT:?}: {context}"
             );
-            thread::sleep(std::time::Duration::from_millis(10));
+            thread::sleep(time::Duration::from_millis(10));
         }
     }
 
@@ -200,7 +202,7 @@ struct PaneState {
     status: Option<i32>,
     alternate_screen: bool,
     command: String,
-    tty: std::path::PathBuf,
+    tty: path::PathBuf,
     shell_pid: i32,
 }
 

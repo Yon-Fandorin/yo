@@ -1,19 +1,19 @@
-use std::path::Path;
+#[cfg(test)]
+use std::fs;
+use std::{env, path, path::Path};
 
 use yo_core::{
     CompleteModelBinding, LocalConnectionOperationRepositories, LocalConnectionRepository,
     ModelSelection, StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
-use crate::{AppError, state::config::Config};
+use crate::{AppError, execution::host, interaction::connection, state::config::Config};
 
-pub(crate) fn absolute_config_path(
-    path: std::path::PathBuf,
-) -> Result<std::path::PathBuf, AppError> {
+pub(crate) fn absolute_config_path(path: path::PathBuf) -> Result<path::PathBuf, AppError> {
     if path.is_absolute() {
         return Ok(path);
     }
-    std::env::current_dir()
+    env::current_dir()
         .map(|directory| directory.join(path))
         .map_err(|error| AppError::single("resolving the Yo configuration path", error))
 }
@@ -45,7 +45,7 @@ pub(crate) fn admit_target(config: &Config, reference: &str) -> Result<StartupTa
     .map_err(|error| AppError::single("admitting the startup target", error))?
     .ok_or_else(|| AppError::message("target admission returned no startup target"))?;
     if let StartupTarget::Host(host) = &target {
-        crate::execution::host::require_supported(host)?;
+        host::require_supported(host)?;
     }
     Ok(target)
 }
@@ -55,7 +55,7 @@ pub(crate) fn display_target(target: Option<&StartupTarget>) -> String {
         None => "unset".to_owned(),
         Some(StartupTarget::Host(host)) => host.reference(),
         Some(StartupTarget::Model(selection)) => {
-            crate::interaction::connection::escape_remote_text(&selection.canonical_reference())
+            connection::escape_remote_text(&selection.canonical_reference())
         },
     }
 }
@@ -70,13 +70,13 @@ pub(crate) fn selection_for_binding(binding: &yo_core::EffectiveModelBinding) ->
 
 pub(crate) fn complete_binding_details(
     complete: &CompleteModelBinding,
-) -> crate::interaction::connection::BindingDetails {
-    crate::interaction::connection::BindingDetails::from(complete)
+) -> connection::BindingDetails {
+    connection::BindingDetails::from(complete)
 }
 
 #[cfg(test)]
-pub(crate) fn canonical_test_temp_dir() -> std::path::PathBuf {
-    std::fs::canonicalize(std::env::temp_dir())
+pub(crate) fn canonical_test_temp_dir() -> path::PathBuf {
+    fs::canonicalize(env::temp_dir())
         .expect("the connection test temp directory must resolve to its physical path")
 }
 

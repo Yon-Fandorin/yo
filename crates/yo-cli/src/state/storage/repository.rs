@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, io, path::PathBuf};
 
 use yo_core::{
     LocalWorkspaceHostIdentity, WorkspaceHostId,
@@ -64,11 +64,11 @@ pub(super) fn open_reader_at(
     let workspace_host_id = LocalWorkspaceHostIdentity::open_existing(state_root.join("host"))
         .map_err(StorageConfigError::HostIdentity)?
         .map(LocalWorkspaceHostIdentity::id);
-    let reader = match std::fs::symlink_metadata(&repository_root) {
+    let reader = match fs::symlink_metadata(&repository_root) {
         Ok(_) => Some(
             LocalSessionReader::open(repository_root).map_err(StorageConfigError::Repository)?,
         ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(StorageConfigError::Repository(error.into())),
     };
     Ok(LocalReadStorage {

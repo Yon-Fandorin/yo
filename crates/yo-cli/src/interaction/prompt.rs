@@ -1,10 +1,17 @@
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
+    num,
 };
 
-use nix::sys::termios::{self, LocalFlags, SetArg, SpecialCharacterIndices, Termios, tcsetattr};
-use rustix::termios::{QueueSelector, tcflush};
+use nix::{
+    errno,
+    sys::termios::{self, LocalFlags, SetArg, SpecialCharacterIndices, Termios, tcsetattr},
+};
+use rustix::{
+    termios as terminal_termios,
+    termios::{QueueSelector, tcflush},
+};
 use yo_core::ApiCredential;
 
 use super::{
@@ -132,9 +139,9 @@ impl TtyPrompt {
     pub(crate) fn confirm(&mut self, preview: &dyn ConfirmationView) -> Result<bool, AppError> {
         let style = self.style;
         let terminal = self.terminal()?;
-        let width = rustix::termios::tcgetwinsize(&*terminal)
+        let width = terminal_termios::tcgetwinsize(&*terminal)
             .ok()
-            .and_then(|size| std::num::NonZeroU16::new(size.ws_col))
+            .and_then(|size| num::NonZeroU16::new(size.ws_col))
             .unwrap_or_else(default_width);
         let rendered = preview
             .render_styled(width, style)
@@ -169,7 +176,7 @@ impl EchoRestore<'_> {
 
     fn restore_with(
         mut self,
-        restore: impl FnOnce(&File, &Termios) -> Result<(), nix::errno::Errno>,
+        restore: impl FnOnce(&File, &Termios) -> Result<(), errno::Errno>,
     ) -> Result<(), AppError> {
         let original = self
             .original
@@ -194,14 +201,17 @@ impl Drop for EchoRestore<'_> {
 mod tests {
     use std::{
         fs::{self, File},
+        io,
         io::{Read, Write},
         path::PathBuf,
+        process,
         sync::mpsc,
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use nix::{
+        errno,
         fcntl::{FcntlArg, OFlag, fcntl},
         pty::openpty,
         sys::termios::{LocalFlags, SetArg, SpecialCharacterIndices, tcgetattr, tcsetattr},
@@ -235,7 +245,7 @@ mod tests {
             match master.read(&mut output[prompt_bytes..]) {
                 Ok(0) => panic!("credential prompt closed its PTY before completing"),
                 Ok(count) => prompt_bytes += count,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     assert!(
                         Instant::now() < deadline,
                         "credential prompt did not complete"
@@ -267,7 +277,7 @@ mod tests {
             match master.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => output.extend_from_slice(&buffer[..count]),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
                 Err(error) => panic!("reading PTY output failed: {error}"),
             }
         }
@@ -326,7 +336,7 @@ mod tests {
             match master.read(&mut observed[offset..]) {
                 Ok(0) => panic!("credential prompt closed its PTY before completing"),
                 Ok(count) => offset += count,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     assert!(
                         Instant::now() < deadline,
                         "credential prompt did not complete"
@@ -344,7 +354,7 @@ mod tests {
             match file.write(bytes) {
                 Ok(0) => panic!("PTY stopped accepting credential input"),
                 Ok(count) => bytes = &bytes[count..],
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     assert!(
                         Instant::now() < deadline,
                         "credential PTY write deadline expired"
@@ -477,7 +487,7 @@ mod tests {
         fcntl(&observed, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).unwrap();
         let mut residue = [0_u8; 64];
         let residue = observed.read(&mut residue).unwrap_err();
-        assert_eq!(residue.kind(), std::io::ErrorKind::WouldBlock);
+        assert_eq!(residue.kind(), io::ErrorKind::WouldBlock);
     }
 
     // 입력 한도를 넘긴 descriptor가 TTY가 아니어서 TCIFLUSH 자체가 실패하면 size error와
@@ -490,7 +500,7 @@ mod tests {
             .as_nanos();
         let path = PathBuf::from(format!(
             "/tmp/yo-terminal-overflow-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         fs::write(&path, vec![b'a'; MAX_INPUT_BYTES + 1]).unwrap();
         let file = File::open(&path).unwrap();
@@ -555,7 +565,7 @@ mod tests {
             terminal: &terminal,
             original: Some(original.clone()),
         }
-        .restore_with(|_, _| Err(nix::errno::Errno::EIO))
+        .restore_with(|_, _| Err(errno::Errno::EIO))
         .expect_err("the injected explicit restore must fail");
 
         assert!(

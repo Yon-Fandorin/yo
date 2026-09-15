@@ -1,4 +1,5 @@
 use std::{
+    env,
     ffi::OsString,
     path::{Path, PathBuf},
 };
@@ -8,7 +9,7 @@ use super::StorageConfigError;
 const DEFAULT_CAPACITY_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub(super) fn platform_state_root() -> Result<PathBuf, StorageConfigError> {
-    platform_state_root_from(std::env::var_os("XDG_STATE_HOME"), std::env::var_os("HOME"))
+    platform_state_root_from(env::var_os("XDG_STATE_HOME"), env::var_os("HOME"))
 }
 
 pub(super) fn repository_root_from(
@@ -42,7 +43,7 @@ fn platform_state_root_from(
 }
 
 pub(super) fn capacity_bytes() -> Result<u64, StorageConfigError> {
-    capacity_bytes_from(std::env::var_os("YO_SESSION_CAPACITY_BYTES"))
+    capacity_bytes_from(env::var_os("YO_SESSION_CAPACITY_BYTES"))
 }
 
 fn capacity_bytes_from(value: Option<OsString>) -> Result<u64, StorageConfigError> {

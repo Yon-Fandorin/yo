@@ -1,10 +1,11 @@
 use std::{
-    fs,
+    env, fs, io,
     net::{TcpListener, TcpStream},
     ops::Deref,
     path::{Path, PathBuf},
+    process,
     process::{Child, Command, Stdio},
-    thread,
+    thread, time,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -32,7 +33,7 @@ impl SshServer {
             .expect("system clock is after the Unix epoch")
             .as_nanos();
         let root = FixtureRoot::create(
-            std::env::temp_dir().join(format!("yo-ssh-matrix-{}-{unique}", std::process::id())),
+            env::temp_dir().join(format!("yo-ssh-matrix-{}-{unique}", process::id())),
         );
         let host_key = root.join("host-key");
         let identity = root.join("client-key");
@@ -98,7 +99,7 @@ LogLevel ERROR
     pub(super) fn client(&self, allocate_pty: bool) -> Command {
         let destination = format!(
             "{}@127.0.0.1",
-            std::env::var("USER").expect("USER identifies the local SSH account")
+            env::var("USER").expect("USER identifies the local SSH account")
         );
         let mut command = Command::new("ssh");
         command
@@ -186,7 +187,7 @@ fn wait_until_ready(mut child: Child, port: u16) -> Result<Child, String> {
         }
         if let Some(status) = child.try_wait().expect("inspect sshd") {
             let mut stderr = String::new();
-            std::io::Read::read_to_string(
+            io::Read::read_to_string(
                 child.stderr.as_mut().expect("capture sshd stderr"),
                 &mut stderr,
             )
@@ -198,7 +199,7 @@ fn wait_until_ready(mut child: Child, port: u16) -> Result<Child, String> {
             let _ = child.wait();
             panic!("isolated sshd did not listen within {READY_TIMEOUT:?}");
         }
-        thread::sleep(std::time::Duration::from_millis(10));
+        thread::sleep(time::Duration::from_millis(10));
     }
 }
 

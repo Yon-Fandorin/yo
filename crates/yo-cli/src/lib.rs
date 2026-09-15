@@ -6,9 +6,11 @@ mod execution;
 mod interaction;
 mod state;
 
+use std::process;
+
 pub(crate) use interaction::diagnostic::AppError;
 
-pub fn run() -> std::process::ExitCode {
+pub fn run() -> process::ExitCode {
     application::run()
 }
 

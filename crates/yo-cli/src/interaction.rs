@@ -1,6 +1,6 @@
 //! Shared CLI diagnostics, prompts, and non-interactive presentation.
 
-use std::{env, io::IsTerminal as _};
+use std::{env, io, io::IsTerminal as _};
 
 use yo_tui::{
     GlyphProfile,
@@ -23,7 +23,7 @@ pub(crate) enum PresentationStyle {
 impl PresentationStyle {
     pub(crate) fn for_stdout() -> Self {
         Self::for_output(
-            std::io::stdout().is_terminal(),
+            io::stdout().is_terminal(),
             env::var_os("NO_COLOR").is_some(),
         )
     }

@@ -1,3 +1,5 @@
+use std::fs;
+
 use yo_tui::surface::cell_width;
 
 use super::*;
@@ -112,7 +114,7 @@ fn success_snapshot_uses_terminal_width_with_zero_and_redirected_fallbacks() {
         default_width()
     );
 
-    let redirected = std::fs::File::open("/dev/null").unwrap();
+    let redirected = fs::File::open("/dev/null").unwrap();
     assert_eq!(
         SuccessPresentation::for_output(&redirected, false, false),
         SuccessPresentation {

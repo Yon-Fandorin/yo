@@ -5,7 +5,10 @@ use std::{
 };
 
 use nix::{
-    sys::termios::{LocalFlags, Termios, tcgetattr},
+    sys::{
+        signal,
+        termios::{LocalFlags, Termios, tcgetattr},
+    },
     unistd::Pid,
 };
 
@@ -65,7 +68,7 @@ pub(crate) fn process_is_stopped(pid: Pid) -> bool {
 }
 
 pub(crate) fn process_exists(pid: Pid) -> bool {
-    nix::sys::signal::kill(pid, None).is_ok()
+    signal::kill(pid, None).is_ok()
 }
 
 #[cfg(target_os = "linux")]

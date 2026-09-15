@@ -1,10 +1,11 @@
 #![cfg(unix)]
 
 use std::{
-    fs,
+    env, fs,
     io::Read,
     os::unix::fs::PermissionsExt,
     path::PathBuf,
+    process,
     process::{Command, ExitStatus, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     thread,
@@ -104,10 +105,8 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "yo-print-stdout-e2e-{}-{sequence}",
-            std::process::id()
-        ));
+        let root =
+            env::temp_dir().join(format!("yo-print-stdout-e2e-{}-{sequence}", process::id()));
         let bin = root.join("bin");
         let workspace = root.join("workspace");
         for path in [

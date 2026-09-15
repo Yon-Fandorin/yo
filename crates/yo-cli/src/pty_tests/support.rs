@@ -2,34 +2,39 @@ pub(super) mod agent;
 pub(super) mod tui;
 
 use std::{
+    env, fmt,
     fs::File,
     io::Read,
+    os::fd,
+    process,
     process::{Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    thread,
+    thread, time,
     time::Duration,
 };
 
 use nix::{
-    libc,
+    errno, libc,
     pty::{Winsize, openpty},
     sys::{
         signal::{Signal, kill},
+        termios,
         termios::tcgetattr,
         wait::{WaitPidFlag, WaitStatus, waitpid},
     },
     unistd::Pid,
 };
+use rustix::termios as terminal_termios;
 pub(super) const CHILD_MARKER: &str = "YO_PTY_CHILD";
 pub(super) const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 pub(super) const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
 
 pub(super) struct PtyChild {
-    child: Option<std::process::Child>,
+    child: Option<process::Child>,
     input: Option<File>,
     output: Option<thread::JoinHandle<Vec<u8>>>,
     captured_output: Arc<Mutex<Vec<u8>>>,
@@ -38,16 +43,16 @@ pub(super) struct PtyChild {
     output_events: mpsc::Receiver<usize>,
     #[cfg(target_os = "linux")]
     screen_events: mpsc::Receiver<ScreenEvent>,
-    slave: Option<std::os::fd::OwnedFd>,
-    pub(super) original_termios: nix::sys::termios::Termios,
+    slave: Option<fd::OwnedFd>,
+    pub(super) original_termios: termios::Termios,
 }
 
 struct SpawnedChildGuard {
-    child: Option<std::process::Child>,
+    child: Option<process::Child>,
 }
 
 impl SpawnedChildGuard {
-    fn new(child: std::process::Child) -> Self {
+    fn new(child: process::Child) -> Self {
         Self { child: Some(child) }
     }
 
@@ -60,7 +65,7 @@ impl SpawnedChildGuard {
         .expect("the PTY child process ID must fit pid_t")
     }
 
-    fn transfer(mut self) -> std::process::Child {
+    fn transfer(mut self) -> process::Child {
         self.child
             .take()
             .expect("the setup guard must transfer its exact PTY child")
@@ -102,8 +107,8 @@ impl ReadinessWaitFailure {
     }
 }
 
-impl std::fmt::Display for ReadinessWaitFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ReadinessWaitFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
             "the readiness marker wait failed: {}; child cleanup: {}; PTY output:\n{}",
@@ -189,7 +194,7 @@ impl PtyChild {
         let stdin = File::from(pty.slave.try_clone().unwrap());
         let stdout = File::from(pty.slave.try_clone().unwrap());
         let stderr = File::from(pty.slave.try_clone().unwrap());
-        let child = Command::new(std::env::current_exe().unwrap())
+        let child = Command::new(env::current_exe().unwrap())
             .args(["--ignored", "--exact", test_name, "--nocapture"])
             .env(CHILD_MARKER, "1")
             .stdin(Stdio::from(stdin))
@@ -269,7 +274,7 @@ impl PtyChild {
             .expect("the PTY input must still be owned")
     }
 
-    pub(super) fn slave(&self) -> &std::os::fd::OwnedFd {
+    pub(super) fn slave(&self) -> &fd::OwnedFd {
         self.slave
             .as_ref()
             .expect("the PTY slave must still be owned")
@@ -308,9 +313,9 @@ impl PtyChild {
         offset: usize,
         timeout: Duration,
     ) -> Result<usize, ReadinessWaitFailure> {
-        let deadline = std::time::Instant::now() + timeout;
+        let deadline = time::Instant::now() + timeout;
         loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let remaining = deadline.saturating_duration_since(time::Instant::now());
             match self.ready_events[marker].recv_timeout(remaining) {
                 Ok(end_offset) if end_offset > offset => return Ok(end_offset),
                 Ok(_) => continue,
@@ -326,9 +331,9 @@ impl PtyChild {
     }
 
     pub(super) fn wait_until_output_reaches(&mut self, offset: usize) -> usize {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = time::Instant::now() + Duration::from_secs(5);
         loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let remaining = deadline.saturating_duration_since(time::Instant::now());
             match self.output_events.recv_timeout(remaining) {
                 Ok(end_offset) if end_offset >= offset => return end_offset,
                 Ok(_) => continue,
@@ -346,9 +351,9 @@ impl PtyChild {
 
     #[cfg(target_os = "linux")]
     pub(super) fn wait_for_screen(&mut self, expected: ScreenEvent) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = time::Instant::now() + Duration::from_secs(5);
         loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let remaining = deadline.saturating_duration_since(time::Instant::now());
             let event = match self.screen_events.recv_timeout(remaining) {
                 Ok(event) => event,
                 Err(error) => {
@@ -369,15 +374,15 @@ impl PtyChild {
     #[cfg(target_os = "linux")]
     pub(super) fn wait_until_stopped(&mut self) {
         let pid = self.pid();
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = time::Instant::now() + Duration::from_secs(5);
         loop {
             match waitpid(pid, Some(WaitPidFlag::WUNTRACED | WaitPidFlag::WNOHANG)) {
                 Ok(WaitStatus::Stopped(stopped, Signal::SIGTSTP)) if stopped == pid => return,
-                Ok(WaitStatus::StillAlive) | Err(nix::errno::Errno::EINTR) => {},
+                Ok(WaitStatus::StillAlive) | Err(errno::Errno::EINTR) => {},
                 Ok(status @ WaitStatus::Exited(..)) | Ok(status @ WaitStatus::Signaled(..)) => {
                     panic!("the child terminated before entering the stopped state: {status:?}");
                 },
-                Err(nix::errno::Errno::ECHILD) => {
+                Err(errno::Errno::ECHILD) => {
                     panic!("the child disappeared before entering the stopped state");
                 },
                 status => {
@@ -389,7 +394,7 @@ impl PtyChild {
                     );
                 },
             }
-            if std::time::Instant::now() >= deadline {
+            if time::Instant::now() >= deadline {
                 let cleanup = self
                     .terminate_child()
                     .map_or_else(|failure| failure, |receipt| format!("{receipt:?}"));
@@ -421,24 +426,24 @@ impl PtyChild {
     }
 
     pub(super) fn resize(&self, columns: u16, rows: u16) {
-        let size = rustix::termios::Winsize {
+        let size = terminal_termios::Winsize {
             ws_row: rows,
             ws_col: columns,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
-        rustix::termios::tcsetwinsize(self.slave(), size)
+        terminal_termios::tcsetwinsize(self.slave(), size)
             .expect("updating the PTY window size must succeed");
         assert_eq!(
-            rustix::termios::tcgetwinsize(self.slave())
+            terminal_termios::tcgetwinsize(self.slave())
                 .expect("reading back the PTY window size must succeed"),
             size,
             "the PTY kernel state must expose the requested resize before capture resumes"
         );
     }
 
-    pub(super) fn finish(mut self) -> (std::process::ExitStatus, Vec<u8>) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    pub(super) fn finish(mut self) -> (process::ExitStatus, Vec<u8>) {
+        let deadline = time::Instant::now() + Duration::from_secs(5);
         let (status, timeout_cleanup) = loop {
             if let Some(status) = self
                 .child
@@ -450,7 +455,7 @@ impl PtyChild {
                 self.child.take();
                 break (Some(status), None);
             }
-            if std::time::Instant::now() >= deadline {
+            if time::Instant::now() >= deadline {
                 break (None, Some(self.terminate_child()));
             }
             thread::sleep(Duration::from_millis(10));
@@ -521,24 +526,22 @@ impl Drop for PtyChild {
     }
 }
 
-fn child_pid(child: &std::process::Child) -> Result<Pid, String> {
+fn child_pid(child: &process::Child) -> Result<Pid, String> {
     i32::try_from(child.id())
         .map(Pid::from_raw)
         .map_err(|_| format!("PTY child process ID {} does not fit pid_t", child.id()))
 }
 
-fn terminate_owned_child(
-    child: &mut Option<std::process::Child>,
-) -> Result<ChildReapReceipt, String> {
+fn terminate_owned_child(child: &mut Option<process::Child>) -> Result<ChildReapReceipt, String> {
     let Some(owned_child) = child.as_ref() else {
         return Ok(ChildReapReceipt::AlreadyReaped);
     };
     let pid = child_pid(owned_child)?;
     let signal_error = match kill(pid, Signal::SIGKILL) {
-        Ok(()) | Err(nix::errno::Errno::ESRCH) => None,
+        Ok(()) | Err(errno::Errno::ESRCH) => None,
         Err(error) => Some(error),
     };
-    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let deadline = time::Instant::now() + Duration::from_secs(1);
 
     loop {
         match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
@@ -554,7 +557,7 @@ fn terminate_owned_child(
                 }
                 return Ok(ChildReapReceipt::Waitpid(status));
             },
-            Err(nix::errno::Errno::ECHILD) => {
+            Err(errno::Errno::ECHILD) => {
                 child.take();
                 if let Some(error) = signal_error {
                     return Err(format!(
@@ -563,14 +566,14 @@ fn terminate_owned_child(
                 }
                 return Ok(ChildReapReceipt::AlreadyReaped);
             },
-            Ok(WaitStatus::StillAlive) | Err(nix::errno::Errno::EINTR) => {},
+            Ok(WaitStatus::StillAlive) | Err(errno::Errno::EINTR) => {},
             result => {
                 return Err(format!(
                     "waiting for SIGKILL termination returned {result:?}"
                 ));
             },
         }
-        if std::time::Instant::now() >= deadline {
+        if time::Instant::now() >= deadline {
             return Err(
                 "waiting for SIGKILL termination exceeded the one-second reap deadline".to_owned(),
             );
@@ -586,10 +589,10 @@ fn cleanup_diagnostic(cleanup: &Result<ChildReapReceipt, String>) -> String {
 }
 
 pub(super) fn assert_child_is_gone(pid: Pid) {
-    assert_eq!(kill(pid, None), Err(nix::errno::Errno::ESRCH));
+    assert_eq!(kill(pid, None), Err(errno::Errno::ESRCH));
     assert_eq!(
         waitpid(pid, Some(WaitPidFlag::WNOHANG)),
-        Err(nix::errno::Errno::ECHILD)
+        Err(errno::Errno::ECHILD)
     );
 }
 

@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs, io,
     net::TcpListener,
+    path, process,
     process::{Command, Output},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -23,9 +24,9 @@ mod suspend;
 
 struct TmuxSession {
     name: String,
-    socket: std::path::PathBuf,
-    session_repository: std::path::PathBuf,
-    state_root: std::path::PathBuf,
+    socket: path::PathBuf,
+    session_repository: path::PathBuf,
+    state_root: path::PathBuf,
     inference_listener: TcpListener,
 }
 
@@ -43,9 +44,9 @@ impl TmuxSession {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let name = format!("yo-matrix-{}-{unique}", std::process::id());
-        let socket = std::env::temp_dir().join(format!("{name}.sock"));
-        let state_root = std::env::temp_dir().join(format!("{name}-state"));
+        let name = format!("yo-matrix-{}-{unique}", process::id());
+        let socket = env::temp_dir().join(format!("{name}.sock"));
+        let state_root = env::temp_dir().join(format!("{name}-state"));
         fs::create_dir_all(state_root.join("home")).unwrap();
         let state_root = state_root.canonicalize().unwrap();
         let session_repository = state_root.join("sessions");
@@ -94,7 +95,7 @@ impl TmuxSession {
             repository.to_str().expect("repository path is valid UTF-8"),
             "/usr/bin/env",
             "-i",
-            &format!("PATH={}", std::env::var("PATH").unwrap()),
+            &format!("PATH={}", env::var("PATH").unwrap()),
             "TERM=xterm-256color",
             &format!("HOME={}", self.state_root.join("home").display()),
             &format!("CODEX_HOME={}", self.state_root.join("codex").display()),
@@ -126,7 +127,7 @@ impl TmuxSession {
         // Readline may settle its prompt termios just after the prompt becomes visible.
         thread::sleep(Duration::from_secs(1));
         let baseline = self.termios().expect("read shell terminal state");
-        let yo = shell_quote(std::path::Path::new(env!("CARGO_BIN_EXE_yo")));
+        let yo = shell_quote(path::Path::new(env!("CARGO_BIN_EXE_yo")));
         let command = format!("{yo} {option} --model host:codex");
         self.send_literal(&command);
         self.send_enter();
@@ -170,7 +171,7 @@ impl TmuxSession {
         }
         let entries = match fs::read_dir(&self.session_repository) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return 0,
             Err(error) => panic!("read isolated Session repository: {error}"),
         };
         entries
@@ -216,7 +217,7 @@ impl TmuxSession {
         assert_eq!(self.journal_tag_count("backend_request_accepted"), 0);
         assert_eq!(self.journal_tag_count("turn_finished"), 0);
         assert!(
-            matches!(self.inference_listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            matches!(self.inference_listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock),
             "Codex contacted the offline inference endpoint without a submitted Turn"
         );
     }
@@ -314,7 +315,7 @@ impl TmuxSession {
         read_termios(&self.tty_path()?)
     }
 
-    fn tty_path(&self) -> Option<std::path::PathBuf> {
+    fn tty_path(&self) -> Option<path::PathBuf> {
         let output = self.tmux_output(&["display-message", "-p", "-t", &self.name, "#{pane_tty}"]);
         let path = String::from_utf8(output.stdout).ok()?;
         Some(path.trim_end().into())
@@ -454,11 +455,11 @@ impl PaneState {
     }
 }
 
-fn run_tmux(socket: &std::path::Path, arguments: &[&str]) {
+fn run_tmux(socket: &path::Path, arguments: &[&str]) {
     let _ = tmux_output(socket, arguments);
 }
 
-fn tmux_output(socket: &std::path::Path, arguments: &[&str]) -> Output {
+fn tmux_output(socket: &path::Path, arguments: &[&str]) -> Output {
     let output = Command::new("tmux")
         .args(["-f", "/dev/null"])
         .arg("-S")
@@ -474,7 +475,7 @@ fn tmux_output(socket: &std::path::Path, arguments: &[&str]) -> Output {
     output
 }
 
-fn assert_tmux_server_absent(socket: &std::path::Path, name: &str) {
+fn assert_tmux_server_absent(socket: &path::Path, name: &str) {
     let output = Command::new("tmux")
         .arg("-S")
         .arg(socket)

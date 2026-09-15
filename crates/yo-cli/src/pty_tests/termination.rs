@@ -1,3 +1,5 @@
+use std::env;
+
 use nix::sys::signal::{Signal, kill};
 
 use super::support::{
@@ -27,7 +29,7 @@ fn fullscreen_termination_restores_real_pty_before_signal_replay() {
 #[test]
 #[ignore]
 fn child_fullscreen_termination() {
-    if std::env::var_os(CHILD_MARKER).is_none() {
+    if env::var_os(CHILD_MARKER).is_none() {
         return;
     }
     let mut coordinator = TerminationCoordinator::install().unwrap();

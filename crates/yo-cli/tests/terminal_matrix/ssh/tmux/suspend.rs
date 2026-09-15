@@ -1,5 +1,6 @@
 use std::{
     path::Path,
+    process,
     process::Stdio,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -27,10 +28,7 @@ impl SshServer {
             .duration_since(UNIX_EPOCH)
             .expect("system clock is after the Unix epoch")
             .as_nanos();
-        let socket = self.fixture_path(&format!(
-            "tmux-suspend-{}-{unique}.sock",
-            std::process::id()
-        ));
+        let socket = self.fixture_path(&format!("tmux-suspend-{}-{unique}.sock", process::id()));
         let session = "yo";
         let tmux = TmuxGuard::new(socket.clone());
         let repository = repository_path();

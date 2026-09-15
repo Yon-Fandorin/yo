@@ -2,9 +2,10 @@ use std::{
     io::{Read, Write},
     ops::{Deref, DerefMut},
     path::Path,
+    process,
     process::{Child, Stdio},
     sync::{Arc, Mutex, mpsc},
-    thread,
+    thread, time,
     time::Instant,
 };
 
@@ -172,7 +173,7 @@ fn remote_command(repository: &Path, yo: &Path, codex: &Path, option: &str) -> S
     )
 }
 
-pub(super) fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
+pub(super) fn wait_for_exit(child: &mut Child) -> process::ExitStatus {
     let deadline = Instant::now() + EXIT_TIMEOUT;
     loop {
         if let Some(status) = child.try_wait().expect("inspect SSH child") {
@@ -183,7 +184,7 @@ pub(super) fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
             let status = child.wait().expect("wait for timed-out SSH child");
             panic!("SSH PTY command exceeded {EXIT_TIMEOUT:?}: {status}");
         }
-        thread::sleep(std::time::Duration::from_millis(10));
+        thread::sleep(time::Duration::from_millis(10));
     }
 }
 

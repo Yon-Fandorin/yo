@@ -1,4 +1,4 @@
-use std::{io::Write, panic::AssertUnwindSafe};
+use std::{env, io::Write, panic, panic::AssertUnwindSafe};
 
 use nix::{
     sys::{
@@ -14,7 +14,7 @@ use super::support::{
     agent::{PendingAgent, RetainedChatAgent},
     assert_child_is_gone,
 };
-use crate::execution::process::termination::TerminationCoordinator;
+use crate::execution::process::{job_control, termination::TerminationCoordinator};
 
 // 실제 Linux PTY에서 두 번 연속 Ctrl+Z로 terminal을 완전히 복구해 프로세스를 멈추고,
 // SIGCONT마다 같은 TUI state로 새 Fullscreen 세대를 획득한 뒤 정상 종료한다.
@@ -116,7 +116,7 @@ fn inline_repeated_suspend_resume_reacquires_a_fresh_viewport() {
 #[test]
 fn panic_unwind_reaps_a_stopped_pty_child() {
     let mut pid = None;
-    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    let panic = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut child = PtyChild::spawn(
             "pty_tests::suspend_resume::child_inline_repeated_suspend_resume",
             b"\x1b[?25l",
@@ -138,12 +138,12 @@ fn panic_unwind_reaps_a_stopped_pty_child() {
 #[test]
 #[ignore]
 fn child_fullscreen_repeated_suspend_resume() {
-    if std::env::var_os(CHILD_MARKER).is_none() {
+    if env::var_os(CHILD_MARKER).is_none() {
         return;
     }
     setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
     let mut coordinator = TerminationCoordinator::install().unwrap();
-    let mut job_control = crate::execution::process::job_control::JobControl::new();
+    let mut job_control = job_control::JobControl::new();
     let mut agent = PendingAgent;
     let mut tui = yo_tui::TuiSession::new(
         yo_tui::ColorCapability::Unknown,
@@ -176,12 +176,12 @@ fn child_fullscreen_repeated_suspend_resume() {
 #[test]
 #[ignore]
 fn child_inline_repeated_suspend_resume() {
-    if std::env::var_os(CHILD_MARKER).is_none() {
+    if env::var_os(CHILD_MARKER).is_none() {
         return;
     }
     setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
     let mut coordinator = TerminationCoordinator::install().unwrap();
-    let mut job_control = crate::execution::process::job_control::JobControl::new();
+    let mut job_control = job_control::JobControl::new();
     let mut agent = RetainedChatAgent::new();
     let mut tui = yo_tui::TuiSession::new(
         yo_tui::ColorCapability::Unknown,

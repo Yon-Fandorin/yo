@@ -1,8 +1,15 @@
 use std::{
-    env, fs, io,
-    os::unix::fs::{FileTypeExt, MetadataExt},
+    env, fs, io, num,
+    os::unix::{
+        fs as unix_fs,
+        fs::{FileTypeExt, MetadataExt},
+    },
+    panic, process,
     sync::atomic::{AtomicU64, Ordering},
+    thread,
 };
+
+use nix::{sys::stat, unistd};
 
 use super::{snapshot::MAX_CONFIG_BYTES, *};
 
@@ -18,10 +25,7 @@ impl TestDirectory {
     fn new_in(parent: &Path, label: &str) -> Self {
         loop {
             let fixture_id = NEXT_TEST_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
-            let path = parent.join(format!(
-                "yo-config-{label}-{}-{fixture_id}",
-                std::process::id()
-            ));
+            let path = parent.join(format!("yo-config-{label}-{}-{fixture_id}", process::id()));
             match fs::create_dir(&path) {
                 Ok(()) => return Self(path),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
@@ -50,11 +54,7 @@ fn expect_config_error(result: Result<(), ConfigError>) {
 
 fn assert_fifo_rejection(directory: &TestDirectory) {
     let path = directory.path().join("config.yaml");
-    nix::unistd::mkfifo(
-        &path,
-        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
-    )
-    .unwrap();
+    unistd::mkfifo(&path, stat::Mode::S_IRUSR | stat::Mode::S_IWUSR).unwrap();
 
     let error = load_from(&path).unwrap_err();
 
@@ -65,7 +65,7 @@ fn assert_symlink_rejection(directory: &TestDirectory) {
     let target = directory.path().join("target.yaml");
     let alias = directory.path().join("config.yaml");
     fs::write(&target, "").unwrap();
-    std::os::unix::fs::symlink(&target, &alias).unwrap();
+    unix_fs::symlink(&target, &alias).unwrap();
 
     let error = load_from(&alias).unwrap_err();
 
@@ -100,14 +100,10 @@ struct LegacyEntrySnapshot {
 fn create_legacy_entry(path: &Path, shape: LegacyEntryShape) {
     match shape {
         LegacyEntryShape::Symlink => {
-            std::os::unix::fs::symlink("retired-config-target.yaml", path).unwrap();
+            unix_fs::symlink("retired-config-target.yaml", path).unwrap();
         },
         LegacyEntryShape::Fifo => {
-            nix::unistd::mkfifo(
-                path,
-                nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
-            )
-            .unwrap();
+            unistd::mkfifo(path, stat::Mode::S_IRUSR | stat::Mode::S_IWUSR).unwrap();
         },
         LegacyEntryShape::Regular => fs::write(path, b"retired config fixture\n").unwrap(),
         LegacyEntryShape::Directory => {
@@ -215,7 +211,7 @@ fn relative_config_filename_uses_the_current_state_directory() {
 // 읽기 전용 명령은 설정 파일이 없어도 기본값을 사용하며 경로나 파일을 만들지 않습니다.
 #[test]
 fn missing_configuration_uses_defaults_without_creating_a_file() {
-    let root = env::temp_dir().join(format!("yo-config-missing-{}", std::process::id()));
+    let root = env::temp_dir().join(format!("yo-config-missing-{}", process::id()));
     let path = root.join("config.yaml");
 
     assert!(!path.exists());
@@ -261,7 +257,7 @@ fn invalid_date_format_is_rejected() {
 // 읽기 상한을 한 byte 넘는 파일은 YAML parser에 넘기기 전에 거절합니다.
 #[test]
 fn oversized_configuration_is_bounded_during_the_read() {
-    let path = env::temp_dir().join(format!("yo-config-large-{}", std::process::id()));
+    let path = env::temp_dir().join(format!("yo-config-large-{}", process::id()));
     fs::write(&path, vec![b'a'; MAX_CONFIG_BYTES as usize + 1]).unwrap();
 
     let error = load_from(&path).unwrap_err();
@@ -296,7 +292,7 @@ fn stale_legacy_entries_do_not_block_owned_config_fixtures() {
     for label in ["fifo", "symlink"] {
         let legacy_path = sandbox
             .path()
-            .join(format!("yo-config-{label}-{}", std::process::id()));
+            .join(format!("yo-config-{label}-{}", process::id()));
         for shape in [
             LegacyEntryShape::Symlink,
             LegacyEntryShape::Fifo,
@@ -331,7 +327,7 @@ fn parallel_config_fixtures_keep_unique_scoped_roots() {
     fs::write(&sentinel, b"outside every child fixture\n").unwrap();
     let parent = sandbox.path();
 
-    let mut roots = std::thread::scope(|scope| {
+    let mut roots = thread::scope(|scope| {
         let handles = (0..8)
             .map(|index| {
                 scope.spawn(move || {
@@ -392,16 +388,12 @@ fn config_fixture_cleanup_survives_unexpected_success_panics() {
     let directory = TestDirectory::new("panic-cleanup");
     let root = directory.path().to_owned();
 
-    let outcome = std::panic::catch_unwind(move || {
+    let outcome = panic::catch_unwind(move || {
         let fifo = directory.path().join("config.fifo");
-        nix::unistd::mkfifo(
-            &fifo,
-            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
-        )
-        .unwrap();
+        unistd::mkfifo(&fifo, stat::Mode::S_IRUSR | stat::Mode::S_IWUSR).unwrap();
         let target = directory.path().join("target.yaml");
         fs::write(&target, "session: {}\n").unwrap();
-        std::os::unix::fs::symlink(&target, directory.path().join("config.link")).unwrap();
+        unix_fs::symlink(&target, directory.path().join("config.link")).unwrap();
         fs::write(directory.path().join("replacement.yaml"), "session: {}\n").unwrap();
 
         expect_config_error(Ok(()));
@@ -738,7 +730,7 @@ fn clipboard_sources_parse_without_opening_target_paths() {
             reader: ClipboardReader::Macos,
             identity_file: Some(PathBuf::from("/missing/key")),
             known_hosts_file: Some(PathBuf::from("/missing/known_hosts")),
-            port: std::num::NonZeroU16::new(2222),
+            port: num::NonZeroU16::new(2222),
         })
     );
     for (reader, expected) in [

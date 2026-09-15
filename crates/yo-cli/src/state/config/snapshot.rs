@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    fs, io,
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
@@ -65,7 +65,7 @@ pub(super) fn capture_snapshot(path: &Path) -> Result<ConfigSnapshot, ConfigErro
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(ConfigSnapshot::absent());
         },
         Err(source) => {

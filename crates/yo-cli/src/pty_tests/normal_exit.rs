@@ -2,6 +2,7 @@ use std::{
     env::var_os,
     error::Error,
     io::Write,
+    panic,
     panic::AssertUnwindSafe,
     sync::{
         Arc,
@@ -9,10 +10,11 @@ use std::{
         mpsc,
     },
     task::{Context, Poll},
+    time,
     time::Duration,
 };
 
-use nix::sys::signal::Signal;
+use nix::sys::{signal::Signal, wait};
 use yo_tui::{
     ColorCapability, MotionPreference, PresentationMode, TerminalOutcome, TerminationEvent,
     TerminationSource, Theme, TuiSession, run_session_with_mode,
@@ -289,7 +291,7 @@ fn readiness_timeout_consumes_and_reaps_the_exact_child() {
     child.wait_until_ready_marker(0);
     let pid = child.pid();
 
-    let started = std::time::Instant::now();
+    let started = time::Instant::now();
     let error = child
         .wait_until_ready_marker_with_timeout(1, Duration::from_millis(100))
         .err()
@@ -301,7 +303,7 @@ fn readiness_timeout_consumes_and_reaps_the_exact_child() {
     assert!(
         matches!(
             error.cleanup(),
-            Ok(ChildReapReceipt::Waitpid(nix::sys::wait::WaitStatus::Signaled(
+            Ok(ChildReapReceipt::Waitpid(wait::WaitStatus::Signaled(
                 reaped,
                 Signal::SIGKILL,
                 _
@@ -328,7 +330,7 @@ fn readiness_timeout_consumes_and_reaps_the_exact_child() {
 #[test]
 fn panic_unwind_reaps_a_running_pty_child() {
     let mut pid = None;
-    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    let panic = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut child = PtyChild::spawn(
             "pty_tests::normal_exit::child_inline_empty_prompt",
             b"\x1b[?25l",
@@ -348,8 +350,8 @@ fn panic_unwind_reaps_a_running_pty_child() {
 fn post_spawn_setup_panic_reaps_before_capture_starts() {
     let (pid_tx, pid_rx) = mpsc::channel();
     let capture_started = Arc::new(AtomicBool::new(false));
-    let started = std::time::Instant::now();
-    let panic = std::panic::catch_unwind(AssertUnwindSafe({
+    let started = time::Instant::now();
+    let panic = panic::catch_unwind(AssertUnwindSafe({
         let capture_started = Arc::clone(&capture_started);
         move || {
             let _child = PtyChild::spawn_with_injected_post_spawn_failure(
@@ -375,7 +377,7 @@ fn post_spawn_setup_panic_reaps_before_capture_starts() {
 #[test]
 fn panic_unwind_releases_a_paused_pty_capture() {
     let mut pid = None;
-    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    let panic = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut child = PtyChild::spawn_with_capture_pause(
             "pty_tests::normal_exit::child_inline_retains_large_chat",
             &[b"YO_INLINE_RETAINED"],

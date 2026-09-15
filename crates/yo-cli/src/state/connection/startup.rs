@@ -21,10 +21,12 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
+        process,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
+    use crate::state::config;
 
     struct TestDirectory(PathBuf);
 
@@ -35,7 +37,7 @@ mod tests {
                 .unwrap()
                 .as_nanos();
             let path = super::super::operation::canonical_test_temp_dir()
-                .join(format!("yo-cli-startup-{nonce}-{}", std::process::id()));
+                .join(format!("yo-cli-startup-{nonce}-{}", process::id()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
@@ -80,7 +82,7 @@ mod tests {
             .unwrap();
         repository.commit(&mutation).unwrap();
 
-        let mut config = crate::state::config::load_from(&config_path).unwrap();
+        let mut config = config::load_from(&config_path).unwrap();
         let preference = load_startup_connections(&mut config).unwrap();
 
         assert!(matches!(preference, Some(StartupTarget::Model(_))));

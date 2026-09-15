@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,10 +15,7 @@ impl TestDirectory {
             .duration_since(UNIX_EPOCH)
             .expect("the system clock is after the Unix epoch")
             .as_nanos();
-        Self(std::env::temp_dir().join(format!(
-            "yo-cli-storage-{}-{name}-{nonce}",
-            std::process::id()
-        )))
+        Self(env::temp_dir().join(format!("yo-cli-storage-{}-{name}-{nonce}", process::id())))
     }
 
     fn path(&self) -> &Path {

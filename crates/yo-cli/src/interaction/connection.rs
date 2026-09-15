@@ -1,5 +1,8 @@
-use std::{fmt::Write as _, io::IsTerminal as _, num::NonZeroU16};
+use std::{
+    env, error, fmt, fmt::Write as _, io, io::IsTerminal as _, mem, num::NonZeroU16, os::fd,
+};
 
+use rustix::termios;
 use unicode_segmentation::UnicodeSegmentation;
 use yo_core::CompleteModelBinding;
 use yo_tui::surface::{Grapheme, GraphemeError};
@@ -288,8 +291,8 @@ pub(crate) enum PresentationError {
     InvalidPlan(&'static str),
 }
 
-impl std::fmt::Display for PresentationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for PresentationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsafeText(error) => write!(
                 formatter,
@@ -307,7 +310,7 @@ impl std::fmt::Display for PresentationError {
     }
 }
 
-impl std::error::Error for PresentationError {}
+impl error::Error for PresentationError {}
 
 impl From<GraphemeError> for PresentationError {
     fn from(error: GraphemeError) -> Self {
@@ -327,14 +330,14 @@ pub(crate) struct SuccessPresentation {
 
 impl SuccessPresentation {
     pub(crate) fn for_stdout() -> Self {
-        let stdout = std::io::stdout();
+        let stdout = io::stdout();
         let terminal = stdout.is_terminal();
-        Self::for_output(&stdout, terminal, std::env::var_os("NO_COLOR").is_some())
+        Self::for_output(&stdout, terminal, env::var_os("NO_COLOR").is_some())
     }
 
-    fn for_output(output: &impl std::os::fd::AsFd, terminal: bool, no_color: bool) -> Self {
+    fn for_output(output: &impl fd::AsFd, terminal: bool, no_color: bool) -> Self {
         let width = terminal
-            .then(|| rustix::termios::tcgetwinsize(output).ok())
+            .then(|| termios::tcgetwinsize(output).ok())
             .flatten()
             .and_then(|size| NonZeroU16::new(size.ws_col))
             .unwrap_or_else(default_width);
@@ -634,7 +637,7 @@ fn wrap_list(values: &[&str], width: usize) -> Result<Vec<String>, PresentationE
         let item_width = safe_width(&item)?;
         let separator_width = usize::from(!line.is_empty());
         if !line.is_empty() && used + separator_width + item_width > width {
-            lines.push(std::mem::take(&mut line));
+            lines.push(mem::take(&mut line));
             used = 0;
         }
         if item_width <= width {
@@ -647,7 +650,7 @@ fn wrap_list(values: &[&str], width: usize) -> Result<Vec<String>, PresentationE
             continue;
         }
         if !line.is_empty() {
-            lines.push(std::mem::take(&mut line));
+            lines.push(mem::take(&mut line));
         }
         let mut wrapped = wrap(&item, width)?;
         line = wrapped
@@ -719,7 +722,7 @@ pub(crate) fn wrap(value: &str, width: usize) -> Result<Vec<String>, Presentatio
             });
         }
         if !line.is_empty() && used + grapheme_width > width {
-            lines.push(std::mem::take(&mut line));
+            lines.push(mem::take(&mut line));
             used = 0;
         }
         line.push_str(grapheme);

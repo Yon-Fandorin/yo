@@ -2,6 +2,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::Stdio,
+    str,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -163,7 +164,7 @@ fn parse_shell_pid(output: &[u8]) -> Option<Pid> {
         .take_while(|byte| byte.is_ascii_digit())
         .copied()
         .collect::<Vec<_>>();
-    let pid = std::str::from_utf8(&digits).ok()?.parse::<i32>().ok()?;
+    let pid = str::from_utf8(&digits).ok()?.parse::<i32>().ok()?;
     Some(Pid::from_raw(pid))
 }
 

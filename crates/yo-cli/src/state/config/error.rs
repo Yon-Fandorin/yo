@@ -1,11 +1,11 @@
-use std::{error::Error, fmt, path::PathBuf};
+use std::{error::Error, fmt, io, path::PathBuf, string};
 
 #[derive(Debug)]
 pub(crate) enum ConfigError {
     Environment(&'static str),
     Io {
         path: PathBuf,
-        source: std::io::Error,
+        source: io::Error,
     },
     UnsupportedFileType(PathBuf),
     TooLarge {
@@ -14,7 +14,7 @@ pub(crate) enum ConfigError {
     },
     InvalidUtf8 {
         path: PathBuf,
-        source: std::string::FromUtf8Error,
+        source: string::FromUtf8Error,
     },
     Changed(PathBuf),
     InvalidYaml {
