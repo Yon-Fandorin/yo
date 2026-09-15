@@ -90,7 +90,7 @@ fn usage_command(session_id: SessionId, glyph_profile: GlyphProfile) -> Command 
     Command {
         session_id,
         output: output::OutputOptions {
-            format: super::super::output::OutputFormat::Text,
+            format: output::OutputFormat::Text,
             glyph_profile,
         },
     }

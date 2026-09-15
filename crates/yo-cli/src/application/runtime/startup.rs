@@ -3,7 +3,6 @@ use std::{
     ffi::OsStr,
     fmt,
     os::unix::ffi::OsStrExt,
-    path,
     path::{Path, PathBuf},
 };
 
@@ -47,7 +46,7 @@ pub(super) struct PreparedAgent {
     pub(super) session_id: yo_core::SessionId,
     pub(super) inherited_history: Option<InheritedSessionHistory>,
     pub(super) agent: agent::TuiAgentConnection,
-    pub(super) workspace: path::PathBuf,
+    pub(super) workspace: PathBuf,
     pub(super) workspace_references: Option<yo_core::LocalWorkspaceReferenceProvider>,
     pub(super) skill_references: Option<Box<dyn SkillReferenceProvider>>,
     pub(super) image_preparation: Box<dyn ImagePreparationHost>,
