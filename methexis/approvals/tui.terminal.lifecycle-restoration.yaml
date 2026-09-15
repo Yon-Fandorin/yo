@@ -2,8 +2,8 @@ schema: methexis.approval/v1alpha1
 knowledge_id: tui.terminal.lifecycle-restoration
 revision: sha256:4403451e95ae089a621b9699d0801a6cb34300d73948a18a171ac722e06fbd19
 reviewer: tui-architecture
-reviewed_at: 2026-07-28T03:12:21Z
+reviewed_at: 2026-09-15T09:45:51Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:5883ce61e5d1dd577ed5a4bdd93d948e7406516ae1106cdfcacdc5c1c484c65b
-request_hash: sha256:f5060776973c57845ed563c8d0b37894c665a51537500b98ba9a55f974fa8a1c
+projection_hash: sha256:5469315680cdef7e73e41d28ad2c99114ddb35d71e481d62270c41bddbf08b18
+request_hash: sha256:3be2a122ac5619731f30c3e30f540bd55a9796558ebdeb3649197d8680ccd4cc
