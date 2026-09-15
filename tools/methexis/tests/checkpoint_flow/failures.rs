@@ -1,6 +1,5 @@
 //! Checkpoint request and active compare-and-swap failures.
-
-use std::fs;
+use std::{ffi, fs, path};
 
 use serde_json::json;
 
@@ -242,7 +241,7 @@ Replacement meaning.
     assert!(!repository.path.join("methexis/checkpoints").exists());
 }
 
-fn active_checkpoint_identity(repository: &GitRepository) -> (String, std::path::PathBuf) {
+fn active_checkpoint_identity(repository: &GitRepository) -> (String, path::PathBuf) {
     let active: serde_json::Value = serde_norway::from_slice(
         &fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap(),
     )
@@ -256,7 +255,7 @@ fn active_checkpoint_identity(repository: &GitRepository) -> (String, std::path:
     (checkpoint_id, checkpoint_path)
 }
 
-fn checkpoint_files(repository: &GitRepository) -> Vec<std::ffi::OsString> {
+fn checkpoint_files(repository: &GitRepository) -> Vec<ffi::OsString> {
     let directory = repository.path.join("methexis/checkpoints");
     let mut files = fs::read_dir(directory)
         .unwrap()

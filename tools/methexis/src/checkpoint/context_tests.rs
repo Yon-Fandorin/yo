@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -73,9 +74,9 @@ impl Repository {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "methexis-context-authority-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir(&path).unwrap();
         copy_directory(

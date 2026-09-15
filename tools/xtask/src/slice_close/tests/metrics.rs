@@ -1,18 +1,23 @@
+use std::fs;
+
 use super::{CloseFixture, close_metrics, output};
-use crate::slice_close::{apply, build_plan, identity};
+use crate::{
+    slice_close::{apply, build_plan, identity},
+    test_support,
+};
 
 // 표준 close-metrics 파일이 없거나 다른 candidate/accepted commit을 가리키면
 // plan이 수치 기록을 추측하거나 cleanup 계획을 발행하기 전에 각각 거부한다.
 #[test]
 fn plan_requires_metrics_for_the_exact_slice_transition() {
     let missing = CloseFixture::new();
-    std::fs::remove_file(&missing.metrics_path).unwrap();
+    fs::remove_file(&missing.metrics_path).unwrap();
     let missing_error = build_plan(&missing.repository.path, "sample").unwrap_err();
     assert!(missing_error.contains("cannot open Slice close metrics"));
 
     let stale = CloseFixture::new();
     let candidate = output(&stale.slice_worktree, &["rev-parse", "HEAD"]);
-    std::fs::write(
+    fs::write(
         &stale.metrics_path,
         close_metrics(&candidate, "0000000000000000000000000000000000000000"),
     )
@@ -27,10 +32,10 @@ fn plan_requires_metrics_for_the_exact_slice_transition() {
 fn plan_rejects_internally_inconsistent_lane_and_review_metrics() {
     let lane = CloseFixture::new();
     let mut lane_metrics: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&lane.metrics_path).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&lane.metrics_path).unwrap()).unwrap();
     lane_metrics["execution_lanes"][0]["mode"] = serde_json::json!("parallel");
     lane_metrics["execution_lanes"][0]["max_concurrency"] = serde_json::json!(2);
-    std::fs::write(
+    fs::write(
         &lane.metrics_path,
         serde_json::to_vec_pretty(&lane_metrics).unwrap(),
     )
@@ -43,9 +48,9 @@ fn plan_rejects_internally_inconsistent_lane_and_review_metrics() {
 
     let review = CloseFixture::new();
     let mut review_metrics: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&review.metrics_path).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&review.metrics_path).unwrap()).unwrap();
     review_metrics["review"]["findings"]["reported"] = serde_json::json!(1);
-    std::fs::write(
+    fs::write(
         &review.metrics_path,
         serde_json::to_vec_pretty(&review_metrics).unwrap(),
     )
@@ -61,9 +66,9 @@ fn apply_rejects_metrics_byte_drift_before_cleanup() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
     fixture.write_plan(&plan);
-    let mut metrics = std::fs::read(&fixture.metrics_path).unwrap();
+    let mut metrics = fs::read(&fixture.metrics_path).unwrap();
     metrics.push(b'\n');
-    std::fs::write(&fixture.metrics_path, metrics).unwrap();
+    fs::write(&fixture.metrics_path, metrics).unwrap();
 
     let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
 
@@ -77,8 +82,8 @@ fn apply_rejects_metrics_byte_drift_before_cleanup() {
 #[test]
 fn apply_rejects_rehashed_nonstandard_metrics_path() {
     let fixture = CloseFixture::new();
-    let alternate = crate::test_support::unique_path("alternate-close-metrics.json");
-    std::fs::copy(&fixture.metrics_path, &alternate).unwrap();
+    let alternate = test_support::unique_path("alternate-close-metrics.json");
+    fs::copy(&fixture.metrics_path, &alternate).unwrap();
     let mut plan = fixture.plan();
     plan.close_metrics.as_mut().unwrap().path = alternate.clone();
     plan.plan_id = identity(&plan).unwrap();
@@ -89,7 +94,7 @@ fn apply_rejects_rehashed_nonstandard_metrics_path() {
     assert!(error.contains("standard coordination path"));
     assert!(fixture.slice_worktree.exists());
     assert!(fixture.contract_path.exists());
-    std::fs::remove_file(alternate).unwrap();
+    fs::remove_file(alternate).unwrap();
 }
 
 // 사람의 exact-patch review처럼 packet 발행이 없는 경우에는 packet 합계를 0으로
@@ -98,7 +103,7 @@ fn apply_rejects_rehashed_nonstandard_metrics_path() {
 fn plan_accepts_packetless_review_and_explicit_unverified_environment() {
     let fixture = CloseFixture::new();
     let mut metrics: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&fixture.metrics_path).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&fixture.metrics_path).unwrap()).unwrap();
     metrics["review_packets"] = serde_json::json!({
         "publication_count": 0,
         "total_managed_tokens": 0,
@@ -108,7 +113,7 @@ fn plan_accepts_packetless_review_and_explicit_unverified_environment() {
     metrics["validation"][0]["runs"] = serde_json::json!(0);
     metrics["validation"][0]["status"] = serde_json::json!("unverified");
     metrics["known_unverified_environments"] = serde_json::json!(["macOS host was unavailable"]);
-    std::fs::write(
+    fs::write(
         &fixture.metrics_path,
         serde_json::to_vec_pretty(&metrics).unwrap(),
     )

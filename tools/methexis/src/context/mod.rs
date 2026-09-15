@@ -11,11 +11,12 @@ mod selection;
 mod storage;
 mod verify;
 mod wire;
-
 use std::path::Path;
 
 pub(crate) use refresh::{RefreshFailure, RefreshSuccess};
 pub(crate) use wire::{ProspectiveResolveSuccess, ResolveFailure, ResolveSuccess, VerifySuccess};
+
+use crate::publication;
 
 pub(crate) struct ContextService<'a> {
     repository_root: &'a Path,
@@ -23,7 +24,7 @@ pub(crate) struct ContextService<'a> {
 
 pub(crate) fn manifest_refresh_reader_guard(
     repository_root: &Path,
-) -> Result<crate::publication::RepositoryGuard, String> {
+) -> Result<publication::RepositoryGuard, String> {
     refresh::transaction_reader_guard(repository_root)
 }
 

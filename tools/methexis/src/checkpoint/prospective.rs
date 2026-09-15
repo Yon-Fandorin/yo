@@ -1,6 +1,5 @@
 //! Read-only validation for one exact staged Checkpoint activation transition.
-
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path};
 
 use serde::Serialize;
 
@@ -36,7 +35,7 @@ pub(crate) struct ProspectiveActivation {
 }
 
 pub(super) fn check_staged(
-    repository_root: &std::path::Path,
+    repository_root: &path::Path,
     trusted_ref: &str,
 ) -> Result<StagedTransition, OperationFailure> {
     let _transaction_guard =

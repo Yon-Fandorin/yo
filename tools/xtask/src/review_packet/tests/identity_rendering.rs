@@ -1,3 +1,5 @@
+use std::str;
+
 use super::{
     super::{
         PAYLOAD_SUFFIX, PREAMBLE, REVIEW_ID_DOMAIN,
@@ -86,7 +88,7 @@ fn section_wrapper_binds_exact_untruncated_bytes() {
     let text = String::from_utf8(packet).unwrap();
     assert!(text.contains(&format!("\"hash\":\"{}\"", digest(body))));
     assert!(text.contains(&format!("\"bytes\":{}", body.len())));
-    assert!(text.contains(std::str::from_utf8(body).unwrap()));
+    assert!(text.contains(str::from_utf8(body).unwrap()));
 }
 
 // tokenizer는 wrapper와 preamble을 포함한 canonical payload 전체를 세며 본문만
@@ -179,7 +181,7 @@ fn v1_alpha1_prefix_is_portable_across_worktree_paths() {
     assert_eq!(first_packet.input_prefix, second_packet.input_prefix);
     let prefix = first_packet.input_prefix.expect("v1alpha1 prefix exists");
     assert_eq!(prefix.hash, digest(&first_packet.bytes[..prefix.bytes]));
-    let text = std::str::from_utf8(&first_packet.bytes[..prefix.bytes]).unwrap();
+    let text = str::from_utf8(&first_packet.bytes[..prefix.bytes]).unwrap();
     assert!(text.contains("\"path\":\"context-request.json\""));
     assert!(!text.contains("/worktrees/first"));
 }
@@ -232,7 +234,7 @@ fn v1_alpha1_remains_unescaped_after_alpha2_is_added() {
     let plan = build_plan(&inputs);
     let review_id = domain_digest(REVIEW_ID_DOMAIN, &serde_json::to_vec(&plan).unwrap());
     let packet = render_packet_with_metadata(&review_id, &plan, &inputs).unwrap();
-    let text = std::str::from_utf8(&packet.bytes).unwrap();
+    let text = str::from_utf8(&packet.bytes).unwrap();
 
     assert_eq!(
         review_id,
@@ -245,7 +247,7 @@ fn v1_alpha1_remains_unescaped_after_alpha2_is_added() {
     );
 
     assert!(!text.contains("\"encoding\":\"yo.slice-review-sentinel-escape/v1\""));
-    assert!(text.contains(std::str::from_utf8(raw).unwrap()));
+    assert!(text.contains(str::from_utf8(raw).unwrap()));
     assert_eq!(text.matches("<<<YO-REVIEW-SECTION-END>>>").count(), 11);
     assert_eq!(text.matches("<<<YO-REVIEW-PAYLOAD-END>>>").count(), 3);
 }
@@ -269,7 +271,7 @@ fn v1_alpha2_escape_removes_in_body_sentinels_and_round_trips_exact_bytes() {
     let plan = build_plan(&inputs);
     let review_id = domain_digest(REVIEW_ID_DOMAIN, &serde_json::to_vec(&plan).unwrap());
     let packet = render_packet_with_metadata(&review_id, &plan, &inputs).unwrap();
-    let text = std::str::from_utf8(&packet.bytes).unwrap();
+    let text = str::from_utf8(&packet.bytes).unwrap();
 
     assert_eq!(text.matches("<<<YO-REVIEW-SECTION ").count(), 9);
     assert_eq!(text.matches("<<<YO-REVIEW-SECTION-END>>>").count(), 9);

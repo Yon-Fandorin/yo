@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{fs, path::PathBuf, str::FromStr};
 
 use jiff::Timestamp;
 use yo_core::{
@@ -7,6 +7,7 @@ use yo_core::{
 };
 
 use super::{model::ReviewTarget, validate_target};
+use crate::test_support;
 
 // 관리형 좌표와 위임형 host는 서로 다른 identity 공간을 사용하며 `host`를 Provider로
 // 위조하거나 임의의 실행 파일 이름을 외부 검토 대상으로 넓히지 않습니다.
@@ -187,10 +188,10 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
 // create/remove 권한을 증명하고 성공한 probe 파일을 남기지 않습니다.
 #[test]
 fn delegated_state_readiness_is_request_free_and_self_cleaning() {
-    let temporary = crate::test_support::unique_path("delegated-state-readiness");
-    std::fs::create_dir_all(&temporary).unwrap();
+    let temporary = test_support::unique_path("delegated-state-readiness");
+    fs::create_dir_all(&temporary).unwrap();
     super::probe_host_state_writable(&temporary).unwrap();
-    assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(&temporary).unwrap().count(), 0);
 
     let missing = temporary.join("missing");
     assert!(
@@ -198,18 +199,18 @@ fn delegated_state_readiness_is_request_free_and_self_cleaning() {
             .unwrap_err()
             .contains("cannot inspect")
     );
-    std::fs::remove_dir(&temporary).unwrap();
+    fs::remove_dir(&temporary).unwrap();
 }
 
 #[cfg(unix)]
 fn executable_script(label: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
-    let path = crate::test_support::unique_path(label);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    let path = test_support::unique_path(label);
+    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o700);
-    std::fs::set_permissions(&path, permissions).unwrap();
+    fs::set_permissions(&path, permissions).unwrap();
     path
 }
 
@@ -225,7 +226,7 @@ if IFS= read -r unexpected; then exit 8; fi
 exit 0"#,
     );
     super::probe_grok_read_only_startup(&script).unwrap();
-    std::fs::remove_file(script).unwrap();
+    fs::remove_file(script).unwrap();
 }
 
 #[cfg(unix)]
@@ -241,7 +242,7 @@ fn grok_profile_readiness_reports_sandbox_startup_failure() {
     assert!(error.contains("exited without success"));
     assert!(error.contains("cannot mask /run/containerd/containerd.sock"));
     assert!(error.contains("could not apply the read-only sandbox profile"));
-    std::fs::remove_file(script).unwrap();
+    fs::remove_file(script).unwrap();
 }
 
 // Provider가 공개한 account quota source가 없는 상태는 token 합계를 잔여량으로

@@ -1,5 +1,4 @@
 //! Immutable, create-if-absent ContextBuild publication and verified reuse.
-
 use std::path::{Path, PathBuf};
 
 use super::{
@@ -212,7 +211,7 @@ pub(super) fn relative(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
-        fs,
+        env, fs, process,
         sync::{Arc, mpsc},
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -240,10 +239,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = Arc::new(std::env::temp_dir().join(format!(
-            "methexis-context-reuse-{}-{unique}",
-            std::process::id()
-        )));
+        let root = Arc::new(
+            env::temp_dir().join(format!("methexis-context-reuse-{}-{unique}", process::id())),
+        );
         fs::create_dir(&*root).unwrap();
         assert_eq!(
             publish(&root, &artifacts(), || Ok(())).unwrap().status,

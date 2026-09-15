@@ -283,7 +283,9 @@ fn failure(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::{cell::RefCell, env, fs, path, process};
+
+    use crate::checkpoint;
 
     // filesystem 환경변수 hook 없이 publisher seam이 두 번째 write 실패 뒤 첫 항목을 되돌린다.
     #[test]
@@ -462,9 +464,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "methexis-refresh-capture-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir(&root).unwrap();
         let request_path = root.join("request.json");
@@ -492,9 +494,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "methexis-refresh-context-bytes-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir(&root).unwrap();
         let request_path = root.join("request.json");
@@ -521,9 +523,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "methexis-refresh-manifest-bytes-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir(&root).unwrap();
         let manifest_path = root.join("manifest.json");
@@ -612,8 +614,8 @@ mod tests {
             .path
             .join("methexis/sources/decision/tui.fixture.yaml");
         let replacement = source.with_extension("replacement");
-        std::fs::write(&replacement, std::fs::read(&source).unwrap()).unwrap();
-        std::fs::rename(replacement, source).unwrap();
+        fs::write(&replacement, fs::read(&source).unwrap()).unwrap();
+        fs::rename(replacement, source).unwrap();
 
         assert_actual_guard_failure(
             &repository,
@@ -627,8 +629,8 @@ mod tests {
     fn actual_proposal_guard_stops_refresh_before_publication() {
         let (repository, request, prospective) = prospective_fixture();
         let replacement = request.with_extension("replacement");
-        std::fs::write(&replacement, std::fs::read(&request).unwrap()).unwrap();
-        std::fs::rename(replacement, request).unwrap();
+        fs::write(&replacement, fs::read(&request).unwrap()).unwrap();
+        fs::rename(replacement, request).unwrap();
 
         assert_actual_guard_failure(
             &repository,
@@ -642,7 +644,7 @@ mod tests {
     #[test]
     fn actual_ref_guard_stops_refresh_before_publication() {
         let (repository, _request, prospective) = prospective_fixture();
-        std::fs::write(repository.path.join("advance.txt"), b"advance\n").unwrap();
+        fs::write(repository.path.join("advance.txt"), b"advance\n").unwrap();
         repository.git(&["add", "advance.txt"]);
         repository.git(&["commit", "-m", "advance trusted ref"]);
         repository.git(&["branch", "-f", "develop", "HEAD"]);
@@ -655,15 +657,15 @@ mod tests {
     }
 
     fn prospective_fixture() -> (
-        crate::checkpoint::TestRepository,
-        std::path::PathBuf,
-        crate::checkpoint::ProspectiveContext,
+        checkpoint::TestRepository,
+        path::PathBuf,
+        checkpoint::ProspectiveContext,
     ) {
         use serde_json::json;
 
-        let repository = crate::checkpoint::TestRepository::new();
+        let repository = checkpoint::TestRepository::new();
         repository.approve(&["tui.context.base", "tui.context.large"]);
-        let checkpoints = crate::checkpoint::CheckpointService::new(&repository.path);
+        let checkpoints = checkpoint::CheckpointService::new(&repository.path);
         let create = repository.request(
             "checkpoint.json",
             &json!({
@@ -682,14 +684,13 @@ mod tests {
             }),
         );
         checkpoints.propose_activation(&request).unwrap();
-        let prospective =
-            crate::checkpoint::prepare_context_refresh(&repository.path, &request).unwrap();
+        let prospective = checkpoint::prepare_context_refresh(&repository.path, &request).unwrap();
         (repository, request, prospective)
     }
 
     fn assert_actual_guard_failure(
-        repository: &crate::checkpoint::TestRepository,
-        prospective: &crate::checkpoint::ProspectiveContext,
+        repository: &checkpoint::TestRepository,
+        prospective: &checkpoint::ProspectiveContext,
         expected: &str,
     ) {
         let publication_ran = RefCell::new(false);
@@ -698,7 +699,7 @@ mod tests {
             || Ok(()),
             || {
                 *publication_ran.borrow_mut() = true;
-                Ok::<(), crate::checkpoint::OperationFailure>(())
+                Ok::<(), checkpoint::OperationFailure>(())
             },
         )
         .unwrap_err();
@@ -718,9 +719,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let prepared_root = std::env::temp_dir().join(format!(
+        let prepared_root = env::temp_dir().join(format!(
             "methexis-refresh-prepared-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir(&prepared_root).unwrap();
         let prepared_entries = super::registry::manifest_paths()
@@ -761,9 +762,9 @@ mod tests {
         assert!(!journal_path.exists());
         fs::remove_dir_all(&prepared_root).unwrap();
 
-        let committed_root = std::env::temp_dir().join(format!(
+        let committed_root = env::temp_dir().join(format!(
             "methexis-refresh-committed-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir(&committed_root).unwrap();
         let committed_entries = super::registry::manifest_paths()
@@ -817,9 +818,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "methexis-refresh-conflict-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir(&root).unwrap();
         let entries = super::registry::manifest_paths()
@@ -868,8 +869,8 @@ mod tests {
     fn child_is_killed_during_a_prepared_transaction() {
         use std::{fs, path::PathBuf, thread, time::Duration};
 
-        let root = PathBuf::from(std::env::var_os("METHEXIS_CRASH_TEST_ROOT").unwrap());
-        let ready = PathBuf::from(std::env::var_os("METHEXIS_CRASH_TEST_READY").unwrap());
+        let root = PathBuf::from(env::var_os("METHEXIS_CRASH_TEST_ROOT").unwrap());
+        let ready = PathBuf::from(env::var_os("METHEXIS_CRASH_TEST_READY").unwrap());
         let paths = super::registry::manifest_paths().collect::<Vec<_>>();
         let journal = super::transaction::BatchJournal {
             schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
@@ -914,9 +915,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "methexis-crash-recovery-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
         for path in super::registry::manifest_paths() {
             let target = root.join(path);
@@ -924,7 +925,7 @@ mod tests {
             fs::write(target, format!("old:{path}\n")).unwrap();
         }
         let ready = root.join("ready");
-        let mut child = Command::new(std::env::current_exe().unwrap())
+        let mut child = Command::new(env::current_exe().unwrap())
             .args([
                 "--exact",
                 "context::refresh::tests::child_is_killed_during_a_prepared_transaction",
@@ -973,10 +974,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "methexis-reader-guard-{}-{unique}",
-            std::process::id()
-        ));
+        let root =
+            env::temp_dir().join(format!("methexis-reader-guard-{}-{unique}", process::id()));
         fs::create_dir(&root).unwrap();
 
         let guard = super::transaction_reader_guard(&root).unwrap();

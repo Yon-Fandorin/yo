@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{fs, io::Write};
 
 use sha2::{Digest, Sha256};
 
@@ -13,10 +13,10 @@ use crate::test_support;
 #[test]
 fn exact_hash_removal_is_bounded_and_idempotent() {
     let directory = test_support::unique_path("bounded-file-remove-exact");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let bytes = b"exact\n";
-    std::fs::write(&target, bytes).unwrap();
+    fs::write(&target, bytes).unwrap();
     let hash = format!(
         "sha256:{}",
         Sha256::digest(bytes)
@@ -27,7 +27,7 @@ fn exact_hash_removal_is_bounded_and_idempotent() {
 
     assert!(remove_regular_matching_sha256(&target, &hash, 1024, "test file").unwrap());
     assert!(!remove_regular_matching_sha256(&target, &hash, 1024, "test file").unwrap());
-    std::fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // plan에 묶인 hash와 현재 bytes가 다르면 삭제하지 않아 사람이 변경 원인을
@@ -35,9 +35,9 @@ fn exact_hash_removal_is_bounded_and_idempotent() {
 #[test]
 fn hash_mismatch_preserves_the_target() {
     let directory = test_support::unique_path("bounded-file-remove-mismatch");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
-    std::fs::write(&target, b"changed\n").unwrap();
+    fs::write(&target, b"changed\n").unwrap();
 
     let error = remove_regular_matching_sha256(
         &target,
@@ -49,7 +49,7 @@ fn hash_mismatch_preserves_the_target() {
 
     assert!(error.contains("hash changed"));
     assert!(target.exists());
-    std::fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // initial hash 확인 직후 pathname bytes가 바뀌어도 atomic claim 뒤 다시
@@ -57,10 +57,10 @@ fn hash_mismatch_preserves_the_target() {
 #[test]
 fn replacement_between_hash_and_claim_is_preserved() {
     let directory = test_support::unique_path("bounded-file-remove-race");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let bytes = b"exact\n";
-    std::fs::write(&target, bytes).unwrap();
+    fs::write(&target, bytes).unwrap();
     let hash = format!(
         "sha256:{}",
         Sha256::digest(bytes)
@@ -74,14 +74,14 @@ fn replacement_between_hash_and_claim_is_preserved() {
         &hash,
         1024,
         "test file",
-        || std::fs::write(&target, b"changed\n").map_err(|error| error.to_string()),
+        || fs::write(&target, b"changed\n").map_err(|error| error.to_string()),
         |parent| super::sync_directory(parent, "test file"),
     )
     .unwrap_err();
 
     assert!(error.contains("hash changed"));
-    assert_eq!(std::fs::read(&target).unwrap(), b"changed\n");
-    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"changed\n");
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // claim 직후 parent sync가 실패해도 hash-addressed claimed name이 남아
@@ -89,10 +89,10 @@ fn replacement_between_hash_and_claim_is_preserved() {
 #[test]
 fn retry_finishes_an_unsynced_claim() {
     let directory = test_support::unique_path("bounded-file-remove-claim-sync");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let bytes = b"exact\n";
-    std::fs::write(&target, bytes).unwrap();
+    fs::write(&target, bytes).unwrap();
     let hash = format!(
         "sha256:{}",
         Sha256::digest(bytes)
@@ -115,7 +115,7 @@ fn retry_finishes_an_unsynced_claim() {
 
     assert!(remove_regular_matching_sha256(&target, &hash, 1024, "test file").unwrap());
     assert!(!target.exists());
-    std::fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[cfg(unix)]
@@ -126,12 +126,12 @@ fn symlink_replacement_during_claim_is_restored() {
     use std::os::unix::fs::symlink;
 
     let directory = test_support::unique_path("bounded-file-remove-symlink-race");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let outside = directory.join("outside.json");
     let bytes = b"exact\n";
-    std::fs::write(&target, bytes).unwrap();
-    std::fs::write(&outside, b"outside\n").unwrap();
+    fs::write(&target, bytes).unwrap();
+    fs::write(&outside, b"outside\n").unwrap();
     let hash = format!(
         "sha256:{}",
         Sha256::digest(bytes)
@@ -146,7 +146,7 @@ fn symlink_replacement_during_claim_is_restored() {
         1024,
         "test file",
         || {
-            std::fs::remove_file(&target).map_err(|error| error.to_string())?;
+            fs::remove_file(&target).map_err(|error| error.to_string())?;
             symlink(&outside, &target).map_err(|error| error.to_string())
         },
         |parent| super::sync_directory(parent, "test file"),
@@ -155,14 +155,14 @@ fn symlink_replacement_during_claim_is_restored() {
 
     assert!(error.contains("cannot open test file"));
     assert!(
-        std::fs::symlink_metadata(&target)
+        fs::symlink_metadata(&target)
             .unwrap()
             .file_type()
             .is_symlink()
     );
-    assert_eq!(std::fs::read(&outside).unwrap(), b"outside\n");
-    std::fs::remove_file(&target).unwrap();
-    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(fs::read(&outside).unwrap(), b"outside\n");
+    fs::remove_file(&target).unwrap();
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // unlink 뒤 parent sync가 실패해도 재실행은 absent 상태에서 parent를 다시
@@ -170,10 +170,10 @@ fn symlink_replacement_during_claim_is_restored() {
 #[test]
 fn retry_resyncs_an_unlinked_target() {
     let directory = test_support::unique_path("bounded-file-remove-resync");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let bytes = b"exact\n";
-    std::fs::write(&target, bytes).unwrap();
+    fs::write(&target, bytes).unwrap();
     let hash = format!(
         "sha256:{}",
         Sha256::digest(bytes)
@@ -218,7 +218,7 @@ fn retry_resyncs_an_unlinked_target() {
         .unwrap()
     );
     assert_eq!(retry_syncs, 1);
-    std::fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // 이전 실행이 write 중 중단되어 partial prepared file을 남겨도 고유한 새
@@ -226,15 +226,15 @@ fn retry_resyncs_an_unlinked_target() {
 #[test]
 fn retry_ignores_a_partial_prepared_file() {
     let directory = test_support::unique_path("bounded-file-recovery");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let prepared = directory.join(".contract.json.yo-prepare-stale");
-    std::fs::write(&prepared, b"part").unwrap();
+    fs::write(&prepared, b"part").unwrap();
 
     assert!(publish_new_or_exact(&target, b"exact\n", 1024, "test file").unwrap());
-    assert_eq!(std::fs::read(&target).unwrap(), b"exact\n");
-    assert_eq!(std::fs::read(&prepared).unwrap(), b"part");
-    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"exact\n");
+    assert_eq!(fs::read(&prepared).unwrap(), b"part");
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // 실제 write가 일부 bytes 뒤 실패해 helper-owned temp가 남은 경우에도
@@ -242,7 +242,7 @@ fn retry_ignores_a_partial_prepared_file() {
 #[test]
 fn retry_converges_after_an_injected_partial_write_failure() {
     let directory = test_support::unique_path("bounded-file-write-failure");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let error = publish_new_or_exact_with(&target, b"exact\n", 1024, "test file", |file, bytes| {
         file.write_all(&bytes[..2]).unwrap();
@@ -252,8 +252,8 @@ fn retry_converges_after_an_injected_partial_write_failure() {
     assert!(error.contains("injected write failure"));
 
     assert!(publish_new_or_exact(&target, b"exact\n", 1024, "test file").unwrap());
-    assert_eq!(std::fs::read(&target).unwrap(), b"exact\n");
-    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"exact\n");
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // complete bytes를 쓴 뒤 sync 단계가 실패한 것처럼 중단되어도 그 temp를
@@ -261,7 +261,7 @@ fn retry_converges_after_an_injected_partial_write_failure() {
 #[test]
 fn retry_converges_after_an_injected_sync_failure() {
     let directory = test_support::unique_path("bounded-file-sync-failure");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let error = publish_new_or_exact_with(&target, b"exact\n", 1024, "test file", |file, bytes| {
         file.write_all(bytes).unwrap();
@@ -271,8 +271,8 @@ fn retry_converges_after_an_injected_sync_failure() {
     assert!(error.contains("injected sync failure"));
 
     assert!(publish_new_or_exact(&target, b"exact\n", 1024, "test file").unwrap());
-    assert_eq!(std::fs::read(&target).unwrap(), b"exact\n");
-    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"exact\n");
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // rename 뒤 parent directory sync가 실패하면 target은 보일 수 있지만 durable
@@ -280,7 +280,7 @@ fn retry_converges_after_an_injected_sync_failure() {
 #[test]
 fn retry_resyncs_parent_after_an_injected_post_rename_failure() {
     let directory = test_support::unique_path("bounded-file-parent-sync-failure");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let error = publish_new_or_exact_with_hooks(
         &target,
@@ -295,7 +295,7 @@ fn retry_resyncs_parent_after_an_injected_post_rename_failure() {
     )
     .unwrap_err();
     assert!(error.contains("injected parent sync failure"));
-    assert_eq!(std::fs::read(&target).unwrap(), b"exact\n");
+    assert_eq!(fs::read(&target).unwrap(), b"exact\n");
 
     let mut resynced = false;
     assert!(
@@ -313,7 +313,7 @@ fn retry_resyncs_parent_after_an_injected_post_rename_failure() {
         .unwrap()
     );
     assert!(resynced);
-    std::fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // 경쟁 publisher가 exact target을 먼저 rename한 EEXIST 경로도 현재 호출이
@@ -321,7 +321,7 @@ fn retry_resyncs_parent_after_an_injected_post_rename_failure() {
 #[test]
 fn exact_rename_collision_syncs_the_parent_before_reuse() {
     let directory = test_support::unique_path("bounded-file-rename-collision");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
     let mut synced = false;
 
@@ -333,7 +333,7 @@ fn exact_rename_collision_syncs_the_parent_before_reuse() {
         |file, bytes| {
             file.write_all(bytes).unwrap();
             file.sync_all().unwrap();
-            std::fs::write(&target, bytes).unwrap();
+            fs::write(&target, bytes).unwrap();
             Ok(())
         },
         |_| {
@@ -345,8 +345,8 @@ fn exact_rename_collision_syncs_the_parent_before_reuse() {
 
     assert!(!created);
     assert!(synced);
-    assert_eq!(std::fs::read(&target).unwrap(), b"exact\n");
-    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"exact\n");
+    fs::remove_dir_all(directory).unwrap();
 }
 
 // target 자체가 다른 bytes면 새 prepared artifact를 만들거나 기존 계약을
@@ -354,13 +354,13 @@ fn exact_rename_collision_syncs_the_parent_before_reuse() {
 #[test]
 fn retry_rejects_conflicting_target_bytes() {
     let directory = test_support::unique_path("bounded-file-conflict");
-    std::fs::create_dir(&directory).unwrap();
+    fs::create_dir(&directory).unwrap();
     let target = directory.join("contract.json");
-    std::fs::write(&target, b"other\n").unwrap();
+    fs::write(&target, b"other\n").unwrap();
 
     let error = publish_new_or_exact(&target, b"exact\n", 1024, "test file").unwrap_err();
 
     assert!(error.contains("already contains different bytes"));
-    assert_eq!(std::fs::read(&target).unwrap(), b"other\n");
-    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"other\n");
+    fs::remove_dir_all(directory).unwrap();
 }

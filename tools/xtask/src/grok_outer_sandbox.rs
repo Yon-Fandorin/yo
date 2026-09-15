@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeSet,
-    fs,
+    env, fs, io,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -175,14 +175,14 @@ fn build_command(
 }
 
 fn grok_state_directory() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("GROK_HOME") {
+    if let Some(path) = env::var_os("GROK_HOME") {
         let path = PathBuf::from(path);
         if path.is_absolute() {
             return Ok(path);
         }
         return Err("GROK_HOME must be absolute for outer-sandbox review".to_owned());
     }
-    let home = std::env::var_os("HOME")
+    let home = env::var_os("HOME")
         .ok_or_else(|| "HOME is unavailable for outer-sandbox review".to_owned())?;
     let home = PathBuf::from(home);
     if !home.is_absolute() {
@@ -196,7 +196,7 @@ fn runtime_sockets() -> Result<Vec<PathBuf>, String> {
         .iter()
         .map(PathBuf::from)
         .collect::<Vec<_>>();
-    if let Some(home) = std::env::var_os("HOME") {
+    if let Some(home) = env::var_os("HOME") {
         let home = PathBuf::from(home);
         if home.is_absolute() {
             candidates.extend([
@@ -224,7 +224,7 @@ fn runtime_sockets() -> Result<Vec<PathBuf>, String> {
             Ok(_) => {
                 sockets.insert(candidate);
             },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {},
             Err(error) => {
                 return Err(format!(
                     "cannot inspect outer-sandbox runtime endpoint {}: {error}",
@@ -237,9 +237,9 @@ fn runtime_sockets() -> Result<Vec<PathBuf>, String> {
 }
 
 fn resolve_executable(name: &str) -> Result<PathBuf, String> {
-    let path = std::env::var_os("PATH")
+    let path = env::var_os("PATH")
         .ok_or_else(|| "PATH is unavailable for outer-sandbox review".to_owned())?;
-    for directory in std::env::split_paths(&path) {
+    for directory in env::split_paths(&path) {
         if !directory.is_absolute() {
             continue;
         }

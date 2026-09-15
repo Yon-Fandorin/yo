@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, str};
 
 use super::model::{
     CanonicalApprovalReviewCarry, CanonicalApprovalReviewCarryResult, REVIEW_CARRY_SCHEMA,
@@ -200,11 +200,11 @@ fn optional_blob(repository: &Path, commit: &str, path: &str) -> Result<Option<V
         .collect::<Vec<_>>();
     let metadata = fields
         .first()
-        .and_then(|value| std::str::from_utf8(value).ok())
+        .and_then(|value| str::from_utf8(value).ok())
         .ok_or_else(|| "Git tree entry metadata is not UTF-8".to_owned())?;
     let recorded_path = fields
         .get(1)
-        .and_then(|value| std::str::from_utf8(value).ok())
+        .and_then(|value| str::from_utf8(value).ok())
         .ok_or_else(|| "Git tree entry path is not UTF-8".to_owned())?;
     let metadata = metadata.split_ascii_whitespace().collect::<Vec<_>>();
     if metadata.len() != 3

@@ -6,7 +6,6 @@
 //! shape. It only emits the request: it never writes `methexis/approvals/` and
 //! never records an approval, so human authorization remains the separate
 //! explicit `approve` step.
-
 use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
@@ -143,6 +142,7 @@ fn format_utc(epoch_seconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::review;
 
     // epoch 0과 알려진 2026-07-24T12:00:00Z가 승인 기록과 같은 UTC 형식으로 렌더링되는지 확인한다.
     #[test]
@@ -150,6 +150,6 @@ mod tests {
         assert_eq!(format_utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(format_utc(1_784_894_400), "2026-07-24T12:00:00Z");
         assert_eq!(format_utc(86_399), "1970-01-01T23:59:59Z");
-        assert!(crate::review::valid_review_time(&format_utc(1_784_894_400)));
+        assert!(review::valid_review_time(&format_utc(1_784_894_400)));
     }
 }

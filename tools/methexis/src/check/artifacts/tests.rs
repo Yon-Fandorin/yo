@@ -1,10 +1,11 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::checkpoint::ActiveCheckpoint;
+use crate::{checkpoint::ActiveCheckpoint, context};
 
 struct TemporaryRepository(PathBuf);
 
@@ -14,11 +15,11 @@ impl TemporaryRepository {
             .duration_since(UNIX_EPOCH)
             .expect("system clock is after the Unix epoch")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "methexis-artifact-check-{}-{unique}",
-            std::process::id()
+            process::id()
         ));
-        for relative in crate::context::registry::manifest_paths() {
+        for relative in context::registry::manifest_paths() {
             fs::create_dir_all(
                 root.join(relative)
                     .parent()
@@ -43,7 +44,7 @@ impl TemporaryRepository {
                 }
             }
         });
-        for relative in crate::context::registry::manifest_paths() {
+        for relative in context::registry::manifest_paths() {
             fs::write(
                 self.0.join(relative),
                 serde_json::to_vec(&manifest).expect("encode manifest"),
@@ -107,7 +108,7 @@ fn symlinked_tracked_artifact_is_rejected() {
     fs::write(&target, b"{}").expect("write symlink target");
     let artifact = repository
         .root()
-        .join(crate::context::registry::REGISTRATIONS[0].manifest);
+        .join(context::registry::REGISTRATIONS[0].manifest);
     fs::remove_file(&artifact).expect("remove regular artifact");
     symlink(&target, &artifact).expect("create artifact symlink");
 
@@ -127,7 +128,7 @@ fn oversized_tracked_artifact_is_bounded() {
     fs::write(
         repository
             .root()
-            .join(crate::context::registry::REGISTRATIONS[0].manifest),
+            .join(context::registry::REGISTRATIONS[0].manifest),
         vec![b' '; super::MAX_ARTIFACT_BYTES + 1],
     )
     .expect("write oversized artifact");
@@ -147,7 +148,7 @@ fn partial_registration_requires_every_tracked_artifact() {
     fs::remove_file(
         repository
             .root()
-            .join(crate::context::registry::REGISTRATIONS[1].manifest),
+            .join(context::registry::REGISTRATIONS[1].manifest),
     )
     .expect("remove one registered artifact");
 

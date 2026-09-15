@@ -1,10 +1,12 @@
 //! Exact Git-object snapshot resolution without checkout mutation.
-
 use std::{
+    env,
     ffi::OsStr,
-    fs,
+    fs, io,
     path::{Component, Path, PathBuf},
+    process,
     process::Command,
+    str,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -195,7 +197,7 @@ fn materialize(
                 )
             })?;
         let (header, raw_path) = (&entry[..separator], &entry[separator + 1..]);
-        let header = std::str::from_utf8(header)
+        let header = str::from_utf8(header)
             .map_err(|error| failure(operation, commit, "invalid_git_tree", &error.to_string()))?;
         let fields = header.split_ascii_whitespace().collect::<Vec<_>>();
         if fields.len() != 4 || fields[1] != "blob" || fields[0] != "100644" {
@@ -217,7 +219,7 @@ fn materialize(
                 "trusted record exceeds the Pilot size limit",
             ));
         }
-        let path = std::str::from_utf8(raw_path)
+        let path = str::from_utf8(raw_path)
             .map_err(|error| failure(operation, commit, "invalid_git_path", &error.to_string()))?;
         let relative = Path::new(path);
         if !safe_relative(relative) {
@@ -286,14 +288,14 @@ fn create_snapshot_root(
 ) -> Result<PathBuf, OperationFailure> {
     for _ in 0..16 {
         let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "methexis-trusted-{}-{}-{sequence}",
-            std::process::id(),
+            process::id(),
             &commit[..12]
         ));
         match fs::create_dir(&path) {
             Ok(()) => return Ok(path),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
             Err(error) => {
                 return Err(failure(
                     operation,

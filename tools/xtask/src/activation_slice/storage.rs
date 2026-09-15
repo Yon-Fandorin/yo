@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, io, path::Path};
 
 use crate::bounded_file;
 
@@ -10,10 +10,10 @@ pub(super) fn read_request(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 pub(super) fn read_existing_contract(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match std::fs::symlink_metadata(path) {
+    match fs::symlink_metadata(path) {
         Ok(_) => bounded_file::read_regular(path, MAX_CONTRACT_BYTES, "activation Slice contract")
             .map(Some),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!("cannot inspect {}: {error}", path.display())),
     }
 }
@@ -32,9 +32,9 @@ pub(super) fn ensure_directory(path: &Path) -> Result<(), String> {
 }
 
 pub(super) fn path_entry_exists(path: &Path) -> Result<bool, String> {
-    match std::fs::symlink_metadata(path) {
+    match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!("cannot inspect {}: {error}", path.display())),
     }
 }

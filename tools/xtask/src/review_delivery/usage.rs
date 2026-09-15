@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::Path};
 use serde::Serialize;
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent, SessionId,
-    TranscriptRecord, TurnId,
+    TranscriptRecord, TurnId, session_repository as core_session_repository,
     session_repository::{
         LocalSessionReader, SessionUsageReceipt, SessionUsageSource, StoredRequestTraceRecord,
         UsageValue as StoredUsageValue, read_stored_session,
@@ -282,7 +282,7 @@ pub(super) fn project(
 }
 
 fn require_request_binding(
-    history: &yo_core::session_repository::StoredSessionHistory,
+    history: &core_session_repository::StoredSessionHistory,
     binding: &UsageBinding,
 ) -> Result<(), String> {
     let mut requests = Vec::new();

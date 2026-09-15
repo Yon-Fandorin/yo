@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use super::{
     MAX_INPUT_BYTES, MAX_PACKET_BYTES,
@@ -19,8 +19,11 @@ use super::{
     render::{count_tokens, render_packet_with_metadata},
     trusted_git::{trusted_git_succeeds, trusted_repository_root, trusted_resolve_commit},
 };
-use crate::review_protocol::{
-    Captured, digest, domain_digest, relative, require_commit, resolve_input_path,
+use crate::{
+    bounded_file,
+    review_protocol::{
+        Captured, digest, domain_digest, relative, require_commit, resolve_input_path,
+    },
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,7 +55,7 @@ pub(crate) fn verify_published(
     manifest_path: &Path,
     expected_manifest_hash: &str,
 ) -> Result<VerifiedReview, String> {
-    let manifest_bytes = crate::bounded_file::read_regular(
+    let manifest_bytes = bounded_file::read_regular(
         manifest_path,
         MAX_INPUT_BYTES,
         "published Slice review manifest",
@@ -83,9 +86,9 @@ pub(crate) fn verify_published(
         .join(".local-exclude/methexis/slice-reviews")
         .join(suffix)
         .join("manifest.json");
-    if std::fs::canonicalize(manifest_path)
+    if fs::canonicalize(manifest_path)
         .map_err(|error| format!("cannot resolve published review manifest: {error}"))?
-        != std::fs::canonicalize(&expected_path)
+        != fs::canonicalize(&expected_path)
             .map_err(|error| format!("cannot resolve published ReviewId directory: {error}"))?
     {
         return Err("manifest is not the exact published ReviewId artifact".to_owned());
@@ -105,7 +108,7 @@ pub(crate) fn verify_published(
     let (context, prospective) = if let Some(proposal) = &manifest.inputs.prospective_activation {
         let activation_request_path =
             resolve_input_path(&repository, &proposal.activation_request.path);
-        let activation_request_bytes = crate::bounded_file::read_regular(
+        let activation_request_bytes = bounded_file::read_regular(
             &activation_request_path,
             super::MAX_REQUEST_BYTES,
             "prospective activation request",
@@ -163,7 +166,7 @@ pub(crate) fn verify_published(
         &validation_requests,
     )?;
     let contract_path = resolve_input_path(&repository, &manifest.inputs.slice_contract.path);
-    let contract_bytes = crate::bounded_file::read_regular(
+    let contract_bytes = bounded_file::read_regular(
         &contract_path,
         super::MAX_REQUEST_BYTES,
         "Slice review contract",
@@ -199,11 +202,8 @@ pub(crate) fn verify_published(
         .parent()
         .expect("published manifest path has a parent")
         .join("packet.md");
-    let packet_bytes = crate::bounded_file::read_regular(
-        &packet_path,
-        MAX_PACKET_BYTES,
-        "published review packet",
-    )?;
+    let packet_bytes =
+        bounded_file::read_regular(&packet_path, MAX_PACKET_BYTES, "published review packet")?;
     verify_canonical_artifacts(&manifest, &manifest_bytes, &packet_bytes, &inputs)?;
 
     Ok(VerifiedReview {

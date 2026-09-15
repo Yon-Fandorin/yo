@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    env, fs, io, os,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -397,7 +400,7 @@ fn ensure_distinct_paths(
 
 fn temporary_output_paths(slice: &str, candidate: &str) -> (PathBuf, PathBuf) {
     let prefix = format!("yo-{slice}-{}", &candidate[..12]);
-    let directory = std::env::temp_dir();
+    let directory = env::temp_dir();
     (
         directory.join(format!("{prefix}-commit-message.txt")),
         directory.join(format!("{prefix}-close-plan.json")),
@@ -417,7 +420,7 @@ fn path_text(path: &Path) -> Result<String, String> {
 }
 
 fn preflight_publication(path: &Path, expected: &[u8], label: &str) -> Result<(), String> {
-    match std::fs::symlink_metadata(path) {
+    match fs::symlink_metadata(path) {
         Ok(metadata) if !metadata.file_type().is_file() || metadata.nlink() != 1 => {
             Err(format!("{label} must be a singly linked regular file"))
         },
@@ -425,7 +428,7 @@ fn preflight_publication(path: &Path, expected: &[u8], label: &str) -> Result<()
             let current = bounded_file::read_regular(path, INPUT_LIMIT, label)?;
             require_unchanged(&current, expected, &format!("existing {label}"))
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
             "cannot inspect {label} {}: {error}",
             path.display()
@@ -439,9 +442,9 @@ trait MetadataLinks {
 }
 
 #[cfg(unix)]
-impl MetadataLinks for std::fs::Metadata {
+impl MetadataLinks for fs::Metadata {
     fn nlink(&self) -> u64 {
-        std::os::unix::fs::MetadataExt::nlink(self)
+        os::unix::fs::MetadataExt::nlink(self)
     }
 }
 

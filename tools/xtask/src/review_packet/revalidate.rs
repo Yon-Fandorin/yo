@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use super::{
     MAX_INPUT_BYTES,
@@ -48,7 +48,7 @@ pub(super) fn final_revalidate(
     let contract_path = resolve_input_path(repository, &request.slice_contract_path);
     require_current_file(&contract_path, &inputs.slice_contract, "Slice contract")?;
     let bound = slice_contract::trusted_bound_slice(repository)?;
-    let canonical_contract = std::fs::canonicalize(&contract_path)
+    let canonical_contract = fs::canonicalize(&contract_path)
         .map_err(|error| format!("cannot resolve Slice contract: {error}"))?;
     if bound.contract_path != canonical_contract
         || bound.base != inputs.base_commit

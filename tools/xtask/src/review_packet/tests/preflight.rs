@@ -1,4 +1,4 @@
-use std::{path::Path, process::Command};
+use std::{env, fs, path, path::Path, process::Command};
 
 use serde_json::json;
 
@@ -17,6 +17,7 @@ use super::{
     support::{sample_inputs, sample_inputs_v1_alpha1},
 };
 use crate::{
+    git, review_protocol,
     review_protocol::domain_digest,
     slice_contract,
     test_support::{TestRepository, unique_path},
@@ -70,7 +71,7 @@ fn v1_alpha1_preflight_exposes_non_additive_input_prefix() {
     assert_eq!(measured.sections[4].kind, "review_plan");
     assert_eq!(
         prefix.hash,
-        crate::review_protocol::digest(&measured.bytes[..prefix.bytes])
+        review_protocol::digest(&measured.bytes[..prefix.bytes])
     );
     assert_eq!(
         prefix.standalone_tokens,
@@ -141,14 +142,14 @@ fn preflight_production_boundary_is_non_publishing_and_fails_closed() {
 }
 
 fn run_preflight_child() -> bool {
-    let Some(request_path) = std::env::var_os(CHILD_REQUEST) else {
+    let Some(request_path) = env::var_os(CHILD_REQUEST) else {
         return false;
     };
-    let output_path = std::env::var_os(CHILD_OUTPUT).expect("child output path is supplied");
-    let status_path = std::env::var_os(CHILD_STATUS).expect("child status path is supplied");
-    if let Some(path) = std::env::var_os(CHILD_MUTATION) {
+    let output_path = env::var_os(CHILD_OUTPUT).expect("child output path is supplied");
+    let status_path = env::var_os(CHILD_STATUS).expect("child status path is supplied");
+    if let Some(path) = env::var_os(CHILD_MUTATION) {
         set_preflight_test_hook(move || {
-            std::fs::write(
+            fs::write(
                 Path::new(&path),
                 br#"{"schema":"yo.validation-run-summary/v1","name":"fixture-validation","status":"failed","exit_code":1,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/preflight-fixture/validation.log"}
 "#,
@@ -159,20 +160,20 @@ fn run_preflight_child() -> bool {
 
     let mut output = Vec::new();
     let result = preflight(Path::new("."), Path::new(&request_path), &mut output);
-    std::fs::write(output_path, output).unwrap();
+    fs::write(output_path, output).unwrap();
     let status = match result {
         Ok(()) => "ok\n".to_owned(),
         Err(error) => format!("error: {error}\n"),
     };
-    std::fs::write(status_path, status).unwrap();
+    fs::write(status_path, status).unwrap();
     true
 }
 
 struct PreflightFixture {
     repository: TestRepository,
-    request_path: std::path::PathBuf,
-    validation_path: std::path::PathBuf,
-    review_root: std::path::PathBuf,
+    request_path: path::PathBuf,
+    validation_path: path::PathBuf,
+    review_root: path::PathBuf,
 }
 
 impl PreflightFixture {
@@ -182,7 +183,7 @@ impl PreflightFixture {
             .canonicalize()
             .unwrap();
         let path = unique_path("review-preflight-production");
-        let clone = crate::git::command_in(source.parent().unwrap(), false)
+        let clone = git::command_in(source.parent().unwrap(), false)
             .args(["clone", "--quiet", "--shared", "--branch", "develop"])
             .arg(&source)
             .arg(&path)
@@ -197,9 +198,9 @@ impl PreflightFixture {
         repository.git(["config", "user.name", "xtask Test"]);
         repository.git(["config", "user.email", "xtask@example.invalid"]);
         let hooks = repository.path.join(".git/disabled-hooks");
-        std::fs::create_dir_all(&hooks).unwrap();
+        fs::create_dir_all(&hooks).unwrap();
         repository.git(["config", "core.hooksPath", hooks.to_str().unwrap()]);
-        let base = crate::git::output_in(
+        let base = git::output_in(
             &repository.path,
             &["rev-parse", "refs/heads/develop"],
             false,
@@ -272,7 +273,7 @@ impl PreflightFixture {
             })),
         );
         assert!(
-            crate::git::output_in(&repository.path, &["status", "--porcelain"], false)
+            git::output_in(&repository.path, &["status", "--porcelain"], false)
                 .unwrap()
                 .is_empty()
         );
@@ -297,7 +298,7 @@ impl PreflightFixture {
             .repository
             .path
             .join(format!(".git/{label}-status.txt"));
-        let mut command = Command::new(std::env::current_exe().unwrap());
+        let mut command = Command::new(env::current_exe().unwrap());
         command
             .arg(CHILD_FILTER)
             .arg("--nocapture")
@@ -315,8 +316,8 @@ impl PreflightFixture {
             String::from_utf8_lossy(&child.stderr)
         );
         ChildResult {
-            output: std::fs::read(output_path).unwrap(),
-            status: std::fs::read_to_string(status_path).unwrap(),
+            output: fs::read(output_path).unwrap(),
+            status: fs::read_to_string(status_path).unwrap(),
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::{path::Path, process::Command};
+use std::{env, path::Path, process::Command};
 
 use serde::Deserialize;
 
@@ -747,15 +747,13 @@ fn verify_reuse_context_format(context: &ReuseContext) -> Result<(), String> {
 }
 
 fn verify_current_reuse_context(context: &ReuseContext) -> Result<(), String> {
-    if context.platform_os != std::env::consts::OS
-        || context.platform_arch != std::env::consts::ARCH
-    {
+    if context.platform_os != env::consts::OS || context.platform_arch != env::consts::ARCH {
         return Err(format!(
             "validation reuse context platform changed from {}/{} to {}/{}",
             context.platform_os,
             context.platform_arch,
-            std::env::consts::OS,
-            std::env::consts::ARCH
+            env::consts::OS,
+            env::consts::ARCH
         ));
     }
     let current_toolchain = current_toolchain_hash()?;
@@ -769,8 +767,8 @@ fn verify_current_reuse_context(context: &ReuseContext) -> Result<(), String> {
 }
 
 fn reusable_context_matches_current(context: &ReuseContext) -> Result<bool, String> {
-    Ok(context.platform_os == std::env::consts::OS
-        && context.platform_arch == std::env::consts::ARCH
+    Ok(context.platform_os == env::consts::OS
+        && context.platform_arch == env::consts::ARCH
         && context.toolchain_hash == current_toolchain_hash()?)
 }
 
@@ -855,6 +853,8 @@ pub(crate) fn argv_hash(argv: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, path};
+
     use serde_json::json;
 
     use super::{
@@ -900,8 +900,8 @@ mod tests {
             "reuse_policy": "reviewed-descendant-context/v1",
             "reuse_context": {
                 "schema": "yo.validation-reuse-context/v1alpha1",
-                "platform_os": std::env::consts::OS,
-                "platform_arch": std::env::consts::ARCH,
+                "platform_os": env::consts::OS,
+                "platform_arch": env::consts::ARCH,
                 "toolchain_hash": current_toolchain_hash().unwrap(),
                 "external_state": "none-declared"
             }
@@ -928,7 +928,7 @@ mod tests {
     fn review_input_binds_name_and_exact_candidate_before_publication() {
         let candidate = "a".repeat(40);
         let bytes = alpha2("yo-cli", &candidate);
-        let repository = std::path::Path::new(".");
+        let repository = path::Path::new(".");
 
         verify_review_input(repository, &bytes, "yo-cli", &candidate).unwrap();
         assert!(
@@ -947,7 +947,7 @@ mod tests {
     #[test]
     fn review_input_rejects_dirty_reused_or_unidentified_execution() {
         let candidate = "a".repeat(40);
-        let repository = std::path::Path::new(".");
+        let repository = path::Path::new(".");
         for (field, replacement, message) in [
             ("worktree_state", json!("dirty"), "worktree_state"),
             ("reused", json!(true), "reused:false"),
@@ -970,7 +970,7 @@ mod tests {
     #[test]
     fn alpha3_review_input_requires_a_closed_reuse_context() {
         let candidate = "a".repeat(40);
-        let repository = std::path::Path::new(".");
+        let repository = path::Path::new(".");
         let bytes = alpha3("yo-cli", &candidate);
         verify_review_input(repository, &bytes, "yo-cli", &candidate).unwrap();
 
@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn alpha4_review_input_requires_closed_resource_lease() {
         let candidate = "a".repeat(40);
-        let repository = std::path::Path::new(".");
+        let repository = path::Path::new(".");
         let bytes = alpha4("yo-cli", &candidate);
         verify_review_input(repository, &bytes, "yo-cli", &candidate).unwrap();
 
@@ -1030,8 +1030,8 @@ mod tests {
     fn alpha3_reuse_context_invalidates_platform_or_toolchain_changes() {
         let current = ReuseContext {
             schema: "yo.validation-reuse-context/v1alpha1".to_owned(),
-            platform_os: std::env::consts::OS.to_owned(),
-            platform_arch: std::env::consts::ARCH.to_owned(),
+            platform_os: env::consts::OS.to_owned(),
+            platform_arch: env::consts::ARCH.to_owned(),
             toolchain_hash: current_toolchain_hash().unwrap(),
             external_state: "none-declared".to_owned(),
         };

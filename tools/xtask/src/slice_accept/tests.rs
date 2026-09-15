@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use super::{
     ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA3, AcceptRequest,
@@ -6,7 +9,7 @@ use super::{
     compose_message, effect_scope, fast_commit_verification, fast_effect_scope,
     integrate_candidate_with, integration_worktree,
 };
-use crate::{slice_gate, slice_worktree, test_support::TestRepository};
+use crate::{git, slice_gate, slice_worktree, test_support, test_support::TestRepository};
 
 struct AcceptanceFixture {
     repository: TestRepository,
@@ -24,7 +27,7 @@ impl AcceptanceFixture {
         repository.git(["commit", "--quiet", "-m", "base"]);
         let integration_head = output(&repository.path, &["rev-parse", "HEAD"]);
         repository.git(["branch", "slice/direct/example"]);
-        let candidate = crate::test_support::unique_path(label);
+        let candidate = test_support::unique_path(label);
         repository.git([
             "worktree",
             "add",
@@ -33,12 +36,12 @@ impl AcceptanceFixture {
             "slice/direct/example",
         ]);
         let changed = candidate.join("tools/example.rs");
-        std::fs::create_dir_all(changed.parent().unwrap()).unwrap();
-        std::fs::write(&changed, "pub fn accepted() {}\n").unwrap();
+        fs::create_dir_all(changed.parent().unwrap()).unwrap();
+        fs::write(&changed, "pub fn accepted() {}\n").unwrap();
         git(&candidate, &["add", "tools/example.rs"]);
         git(&candidate, &["commit", "--quiet", "-m", "candidate"]);
         let candidate_head = output(&candidate, &["rev-parse", "HEAD"]);
-        let message = crate::test_support::unique_path(&format!("{label}-message"));
+        let message = test_support::unique_path(&format!("{label}-message"));
         Self {
             repository,
             candidate,
@@ -49,7 +52,7 @@ impl AcceptanceFixture {
     }
 
     fn write_message(&self, docs_impact: &str) {
-        std::fs::write(
+        fs::write(
             &self.message,
             format!(
                 "feat: accepted candidate\n\n\
@@ -81,11 +84,11 @@ impl AcceptanceFixture {
 
 impl Drop for AcceptanceFixture {
     fn drop(&mut self) {
-        let _ = crate::git::command_in(&self.repository.path, false)
+        let _ = git::command_in(&self.repository.path, false)
             .args(["worktree", "remove", "--force", "--"])
             .arg(&self.candidate)
             .status();
-        let _ = std::fs::remove_file(&self.message);
+        let _ = fs::remove_file(&self.message);
     }
 }
 
@@ -344,7 +347,7 @@ fn candidate_integration_roundtrip_commits_the_exact_diff() {
 
     let accepted = fixture
         .integrate(|repository, message| {
-            let status = crate::git::command_in(repository, false)
+            let status = git::command_in(repository, false)
                 .args(["commit", "--quiet", "--file"])
                 .arg(message)
                 .status()
@@ -368,14 +371,14 @@ fn candidate_integration_roundtrip_commits_the_exact_diff() {
 }
 
 fn output(repository: &Path, arguments: &[&str]) -> String {
-    crate::git::output_in(repository, arguments, false)
+    git::output_in(repository, arguments, false)
         .unwrap()
         .trim()
         .to_owned()
 }
 
 fn status(repository: &Path) -> Vec<u8> {
-    crate::git::output_bytes_in(
+    git::output_bytes_in(
         repository,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         false,
@@ -385,7 +388,7 @@ fn status(repository: &Path) -> Vec<u8> {
 
 fn git(repository: &Path, arguments: &[&str]) {
     assert!(
-        crate::git::command_in(repository, false)
+        git::command_in(repository, false)
             .args(arguments)
             .status()
             .unwrap()

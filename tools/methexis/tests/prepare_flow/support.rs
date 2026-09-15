@@ -1,10 +1,11 @@
 //! Git-backed isolated repository fixture and structured CLI assertions.
-
 use std::{
+    env,
     ffi::OsStr,
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    process,
     process::{Command, Output},
     sync::{
         OnceLock,
@@ -200,9 +201,9 @@ fn allocate_temporary_repository() -> PathBuf {
     });
     loop {
         let sequence = TEMPORARY_REPOSITORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "methexis-prepare-flow-{}-{nonce}-{sequence}",
-            std::process::id(),
+            process::id(),
         ));
         match fs::create_dir(&path) {
             Ok(()) => return path,

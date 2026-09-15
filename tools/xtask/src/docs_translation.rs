@@ -1,6 +1,8 @@
 use std::{
     collections::HashSet,
+    path,
     path::{Path, PathBuf},
+    str,
 };
 
 use sha2::{Digest, Sha256};
@@ -57,7 +59,7 @@ fn validated_page(page: &Path) -> Result<PathBuf, String> {
     }
     if page
         .components()
-        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        .any(|component| !matches!(component, path::Component::Normal(_)))
     {
         return Err("translation page must not be absolute or contain `.` or `..`".to_owned());
     }
@@ -73,8 +75,8 @@ fn validated_page(page: &Path) -> Result<PathBuf, String> {
 }
 
 fn update_manifest(manifest: &[u8], page: &str, digest: &str) -> Result<Vec<u8>, String> {
-    let manifest = std::str::from_utf8(manifest)
-        .map_err(|_| "docs/ko/source.sha256 must be UTF-8".to_owned())?;
+    let manifest =
+        str::from_utf8(manifest).map_err(|_| "docs/ko/source.sha256 must be UTF-8".to_owned())?;
     let mut updated = String::with_capacity(manifest.len());
     let mut seen = HashSet::new();
     let mut selected = false;

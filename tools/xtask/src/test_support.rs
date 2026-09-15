@@ -1,17 +1,19 @@
 use std::{
+    env,
     ffi::OsStr,
+    fs,
     path::{Path, PathBuf},
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
+
+use crate::git;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn unique_path(label: &str) -> PathBuf {
     let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "yo-xtask-{label}-{}-{sequence}",
-        std::process::id()
-    ))
+    env::temp_dir().join(format!("yo-xtask-{label}-{}-{sequence}", process::id()))
 }
 
 pub(crate) struct TestRepository {
@@ -21,13 +23,13 @@ pub(crate) struct TestRepository {
 impl TestRepository {
     pub(crate) fn new(label: &str) -> Self {
         let path = unique_path(label);
-        std::fs::create_dir_all(&path).unwrap();
+        fs::create_dir_all(&path).unwrap();
         let repository = Self { path };
         repository.git(["init", "--quiet", "-b", "develop"]);
         repository.git(["config", "--local", "user.name", "xtask Test"]);
         repository.git(["config", "--local", "user.email", "xtask@example.invalid"]);
         let hooks = repository.path.join(".git/disabled-hooks");
-        std::fs::create_dir_all(&hooks).unwrap();
+        fs::create_dir_all(&hooks).unwrap();
         repository.git([
             "config",
             "--local",
@@ -40,9 +42,9 @@ impl TestRepository {
     pub(crate) fn write(&self, relative: impl AsRef<Path>, content: &str) -> PathBuf {
         let path = self.path.join(relative);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
+            fs::create_dir_all(parent).unwrap();
         }
-        std::fs::write(&path, content).unwrap();
+        fs::write(&path, content).unwrap();
         path
     }
 
@@ -56,7 +58,7 @@ impl TestRepository {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let status = crate::git::test_command_in(&self.path)
+        let status = git::test_command_in(&self.path)
             .args(arguments)
             .status()
             .unwrap();
@@ -66,6 +68,6 @@ impl TestRepository {
 
 impl Drop for TestRepository {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        let _ = fs::remove_dir_all(&self.path);
     }
 }

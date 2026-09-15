@@ -4,11 +4,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Serialize;
+use serde::{Serialize, de};
 
-use crate::model::{
-    KNOWLEDGE_SCHEMA, KnowledgeKind, KnowledgeMetadata, KnowledgeUnit, OWNER_SCHEMA, Owner,
-    OwnerRecord, Relations, Source, UnitsById,
+#[cfg(test)]
+use crate::checkpoint;
+use crate::{
+    model::{
+        KNOWLEDGE_SCHEMA, KnowledgeKind, KnowledgeMetadata, KnowledgeUnit, OWNER_SCHEMA, Owner,
+        OwnerRecord, Relations, Source, UnitsById,
+    },
+    source,
 };
 
 const CHECK_SCHEMA: &str = "methexis.check/v1alpha1";
@@ -145,7 +150,7 @@ pub(crate) struct Foundation {
     pub(crate) units: Vec<KnowledgeUnit>,
     pub(crate) owners: Vec<Owner>,
     pub(crate) sources: Vec<Source>,
-    pub(crate) negative_records: crate::source::NegativeRecords,
+    pub(crate) negative_records: source::NegativeRecords,
 }
 
 pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
@@ -193,18 +198,18 @@ fn load_records(repository_root: &Path) -> Result<Foundation, Vec<Diagnostic>> {
         repository_root,
         &mut diagnostics,
     );
-    let sources = match crate::source::load(repository_root) {
+    let sources = match source::load(repository_root) {
         Ok(sources) => sources,
         Err(mut source_diagnostics) => {
             diagnostics.append(&mut source_diagnostics);
             Vec::new()
         },
     };
-    let negative_records = match crate::source::negative::load(repository_root) {
+    let negative_records = match source::negative::load(repository_root) {
         Ok(records) => records,
         Err(mut record_diagnostics) => {
             diagnostics.append(&mut record_diagnostics);
-            crate::source::NegativeRecords::empty()
+            source::NegativeRecords::empty()
         },
     };
 
@@ -268,7 +273,7 @@ fn authority_root_diagnostic(root: &Path, repository_root: &Path) -> Option<Diag
 }
 
 #[cfg(test)]
-pub(crate) fn failed_authority_report(failure: crate::checkpoint::AuthorityFailure) -> CheckReport {
+pub(crate) fn failed_authority_report(failure: checkpoint::AuthorityFailure) -> CheckReport {
     runner::failed_authority_report(failure)
 }
 
@@ -554,7 +559,7 @@ fn split_frontmatter(content: &str) -> Result<(&str, &str), String> {
 
 pub(crate) fn parse_yaml<T>(yaml: &str, path: &str, line_offset: u64) -> Result<T, Vec<Diagnostic>>
 where
-    T: serde::de::DeserializeOwned,
+    T: de::DeserializeOwned,
 {
     serde_norway::from_str(yaml).map_err(|error| {
         let location = error.location();
@@ -813,7 +818,7 @@ fn validate_global(
     units: &[KnowledgeUnit],
     owners: &[Owner],
     sources: &[Source],
-    negative_records: &crate::source::NegativeRecords,
+    negative_records: &source::NegativeRecords,
     repository_root: &Path,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
@@ -948,7 +953,7 @@ fn validate_global(
         "supersedes_cycle",
         |relations| relations.supersedes.clone(),
     ));
-    diagnostics.extend(crate::source::negative::validate_global(
+    diagnostics.extend(source::negative::validate_global(
         negative_records,
         units,
         owners,
@@ -1051,6 +1056,7 @@ mod tests {
         DiagnosticPhase, cycles::canonical_cycle, knowledge_revision, local_diagnostic, parse_yaml,
         sort_diagnostics, validate_metadata,
     };
+    use crate::{checkpoint, model};
 
     // YAML 키 순서와 줄바꿈(CRLF·LF)이 달라도 같은 내용의 revision은 동일하다.
     #[test]
@@ -1069,13 +1075,13 @@ mod tests {
     // 메타데이터가 같아도 본문이 다르면 revision이 달라진다.
     #[test]
     fn body_change_changes_revision() {
-        let metadata = crate::model::KnowledgeMetadata {
+        let metadata = model::KnowledgeMetadata {
             schema: "methexis.knowledge/v1alpha1".to_owned(),
             id: "tui.example".to_owned(),
-            kind: crate::model::KnowledgeKind::Rule,
+            kind: model::KnowledgeKind::Rule,
             owner: "tui-architecture".to_owned(),
             sources: vec![source_ref("tui.arc-001")],
-            relations: crate::model::Relations::default(),
+            relations: model::Relations::default(),
         };
 
         assert_ne!(
@@ -1151,7 +1157,7 @@ mod tests {
     // 마지막으로 확인한 trusted commit과 호출자가 취할 다음 action을 오류에 함께 보존한다.
     #[test]
     fn retryable_authority_failure_preserves_trusted_commit_and_action() {
-        let report = super::failed_authority_report(crate::checkpoint::AuthorityFailure {
+        let report = super::failed_authority_report(checkpoint::AuthorityFailure {
             diagnostics: vec![local_diagnostic(
                 "methexis/sources".to_owned(),
                 "source_changed_during_validation",
@@ -1176,7 +1182,7 @@ mod tests {
     // serde_norway 경계에서는 문자열 필드에 쓴 `NO`를 글자 그대로 보존하는지 확인한다.
     #[test]
     fn norway_keeps_yaml_no_as_a_string_for_string_fields() {
-        let owner: crate::model::OwnerRecord =
+        let owner: model::OwnerRecord =
             parse_yaml("schema: methexis.owner/v1alpha1\nid: NO\n", "owner.yaml", 0)
                 .expect("NO remains a string at the typed boundary");
 
@@ -1187,7 +1193,7 @@ mod tests {
     // serde_norway가 중복 key를 발견하는 즉시 역직렬화를 거부하는지 확인한다.
     #[test]
     fn norway_rejects_duplicate_mapping_keys_at_the_typed_boundary() {
-        let result = parse_yaml::<crate::model::OwnerRecord>(
+        let result = parse_yaml::<model::OwnerRecord>(
             "schema: methexis.owner/v1alpha1\nid: first\nid: second\n",
             "owner.yaml",
             0,
@@ -1200,7 +1206,7 @@ mod tests {
     // 입력 의미가 명시적으로 보이도록 serde_norway 경계에서 merge key를 거부한다.
     #[test]
     fn norway_rejects_yaml_merge_keys_at_the_typed_boundary() {
-        let result = parse_yaml::<crate::model::OwnerRecord>(
+        let result = parse_yaml::<model::OwnerRecord>(
             "schema: methexis.owner/v1alpha1\nid: direct\n<<: { id: inherited }\n",
             "owner.yaml",
             0,
@@ -1351,19 +1357,19 @@ mod tests {
         assert_eq!(super::body_start_line(content, body), 5);
     }
 
-    fn metadata_for_test() -> crate::model::KnowledgeMetadata {
-        crate::model::KnowledgeMetadata {
+    fn metadata_for_test() -> model::KnowledgeMetadata {
+        model::KnowledgeMetadata {
             schema: "methexis.knowledge/v1alpha1".to_owned(),
             id: "tui.example".to_owned(),
-            kind: crate::model::KnowledgeKind::Rule,
+            kind: model::KnowledgeKind::Rule,
             owner: "tui-architecture".to_owned(),
             sources: vec![source_ref("tui.fixture")],
-            relations: crate::model::Relations::default(),
+            relations: model::Relations::default(),
         }
     }
 
-    fn source_ref(id: &str) -> crate::model::SourceRef {
-        crate::model::SourceRef {
+    fn source_ref(id: &str) -> model::SourceRef {
+        model::SourceRef {
             id: id.to_owned(),
             revision: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
                 .to_owned(),

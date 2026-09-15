@@ -1,9 +1,9 @@
 //! Exact direct-anchor resolution in the pinned trusted KnowledgeSnapshot.
-
 use super::ResolvedAnchor;
 use crate::{
     checkpoint::ContextAuthority,
     context::wire::{Anchor, ResolveFailure},
+    model,
 };
 
 pub(super) fn resolve(
@@ -46,7 +46,7 @@ pub(super) fn resolve(
 
 fn matches_unit(
     authority: &ContextAuthority,
-    unit: &crate::model::KnowledgeUnit,
+    unit: &model::KnowledgeUnit,
     anchor: &Anchor,
     value: &str,
 ) -> bool {
@@ -64,7 +64,7 @@ fn matches_unit(
     }
 }
 
-fn applies_to(unit: &crate::model::KnowledgeUnit, value: &str) -> bool {
+fn applies_to(unit: &model::KnowledgeUnit, value: &str) -> bool {
     unit.metadata
         .relations
         .applies_to

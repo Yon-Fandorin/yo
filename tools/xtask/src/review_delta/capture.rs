@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path, str};
 
 use super::{MAX_INPUT_BYTES, MAX_PACKET_BYTES};
 use crate::{
@@ -13,7 +13,7 @@ pub(super) fn capture_file(path: &Path, label: &str) -> Result<Captured, String>
 
 pub(super) fn capture_packet(path: &Path, label: &str) -> Result<Captured, String> {
     let bytes = bounded_file::read_regular(path, MAX_PACKET_BYTES, label)?;
-    std::str::from_utf8(&bytes).map_err(|_| {
+    str::from_utf8(&bytes).map_err(|_| {
         format!(
             "review delta input `{}` is not UTF-8 model-visible text",
             path.display()
@@ -32,10 +32,10 @@ pub(super) fn capture_published(
     label: &str,
     maximum: usize,
 ) -> Result<Captured, String> {
-    let canonical = std::fs::canonicalize(path)
+    let canonical = fs::canonicalize(path)
         .map_err(|error| format!("cannot resolve {label} {}: {error}", path.display()))?;
     let bytes = bounded_file::read_regular(&canonical, maximum, label)?;
-    std::str::from_utf8(&bytes).map_err(|_| format!("{label} is not UTF-8 model-visible text"))?;
+    str::from_utf8(&bytes).map_err(|_| format!("{label} is not UTF-8 model-visible text"))?;
     Ok(Captured {
         path: relative(repository, &canonical),
         hash: digest(&bytes),
@@ -93,7 +93,7 @@ pub(super) fn captured(path: String, bytes: Vec<u8>) -> Result<Captured, String>
             "review delta input `{path}` exceeds the {MAX_INPUT_BYTES}-byte limit"
         ));
     }
-    std::str::from_utf8(&bytes)
+    str::from_utf8(&bytes)
         .map_err(|_| format!("review delta input `{path}` is not UTF-8 model-visible text"))?;
     Ok(Captured {
         path,

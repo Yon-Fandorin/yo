@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ffi,
+    path::{Path, PathBuf},
+};
 
 use crate::git;
 
@@ -51,7 +54,7 @@ pub(crate) fn worktrees(repository: &Path) -> Result<Vec<Worktree>, String> {
 #[cfg(unix)]
 fn path_from_bytes(bytes: &[u8]) -> Result<PathBuf, String> {
     use std::os::unix::ffi::OsStringExt;
-    Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes.to_vec())))
+    Ok(PathBuf::from(ffi::OsString::from_vec(bytes.to_vec())))
 }
 
 #[cfg(not(unix))]

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, io, path::Path};
 
 use super::{
     model::{
@@ -175,12 +175,12 @@ fn observe_binding(record: &mut FailureRecord, worktree_path: &Path, contract_pa
     match slice_contract::binding_path_for(worktree_path) {
         Ok(binding_path) => {
             record.binding_path = Some(binding_path.clone());
-            record.effects.binding = match std::fs::symlink_metadata(&binding_path) {
+            record.effects.binding = match fs::symlink_metadata(&binding_path) {
                 Ok(_) => match slice_contract::verify_bound_exact(worktree_path, contract_path) {
                     Ok(_) => prepared(),
                     Err(detail) => conflicting(detail),
                 },
-                Err(inspect) if inspect.kind() == std::io::ErrorKind::NotFound => absent(),
+                Err(inspect) if inspect.kind() == io::ErrorKind::NotFound => absent(),
                 Err(inspect) => observation(
                     ObservedState::Unknown,
                     format!("cannot inspect binding: {inspect}"),

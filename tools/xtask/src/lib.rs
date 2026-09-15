@@ -28,9 +28,10 @@ mod validation_summary;
 
 #[cfg(test)]
 mod test_support;
-
 use std::{
+    env,
     ffi::{OsStr, OsString},
+    io,
     path::PathBuf,
 };
 
@@ -300,10 +301,10 @@ fn run_review_packet(arguments: &mut impl Iterator<Item = OsString>) -> Result<(
     let repository = current_repository()?;
     match mode {
         ReviewPacketMode::CheckReadiness => {
-            review_packet::check_readiness(&repository, &request, &mut std::io::stdout().lock())
+            review_packet::check_readiness(&repository, &request, &mut io::stdout().lock())
         },
         ReviewPacketMode::Preflight => {
-            review_packet::preflight(&repository, &request, &mut std::io::stdout().lock())
+            review_packet::preflight(&repository, &request, &mut io::stdout().lock())
         },
         ReviewPacketMode::Publish => review_packet::run(&repository, &request),
     }
@@ -613,7 +614,7 @@ fn run_impact_check(
 }
 
 fn current_repository() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|error| format!("cannot locate the repository: {error}"))
+    env::current_dir().map_err(|error| format!("cannot locate the repository: {error}"))
 }
 
 fn usage(check: &str) -> String {
@@ -752,7 +753,7 @@ fn slice_contract_usage() -> String {
 
 #[cfg(test)]
 mod cli_tests {
-    use std::{cell::Cell, ffi::OsString};
+    use std::{cell::Cell, ffi::OsString, iter};
 
     use super::{
         activation_slice_usage, cost_report_usage, docs_accept_translation_usage,
@@ -819,7 +820,7 @@ mod cli_tests {
     #[test]
     fn general_dispatch_prefetches_command_and_scope() {
         let empty_calls = Cell::new(0);
-        let empty = std::iter::from_fn(|| {
+        let empty = iter::from_fn(|| {
             empty_calls.set(empty_calls.get() + 1);
             None::<OsString>
         });
@@ -828,7 +829,7 @@ mod cli_tests {
 
         let unknown_calls = Cell::new(0);
         let mut values = ["unknown", "scope"].into_iter().map(OsString::from);
-        let unknown = std::iter::from_fn(|| {
+        let unknown = iter::from_fn(|| {
             unknown_calls.set(unknown_calls.get() + 1);
             values.next()
         });

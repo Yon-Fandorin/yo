@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -145,9 +146,9 @@ fn temporary_root() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
         "methexis-candidate-test-{}-{unique}",
-        std::process::id()
+        process::id()
     ));
     fs::create_dir(&root).unwrap();
     root

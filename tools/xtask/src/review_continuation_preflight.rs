@@ -5,7 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use yo_core::{
-    AgentCommand, SessionId, TranscriptRecord,
+    AgentCommand, SessionId, TranscriptRecord, session_repository as core_session_repository,
     session_repository::{
         LocalSessionReader, StoredRequestTraceRecord, read_stored_session,
         read_stored_session_continuation,
@@ -277,7 +277,7 @@ fn resolve_session_root(repository: &Path, requested: &str) -> Result<PathBuf, S
 }
 
 fn observe_history(
-    history: &yo_core::session_repository::StoredSessionHistory,
+    history: &core_session_repository::StoredSessionHistory,
     delivery: &AuthorizedDelivery,
 ) -> Result<Observation, String> {
     let start_packet_hashes = history

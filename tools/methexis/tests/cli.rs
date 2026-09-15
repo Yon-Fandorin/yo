@@ -1,14 +1,17 @@
 use std::{
+    collections, env,
     ffi::{OsStr, OsString},
     fs,
     io::{self, ErrorKind, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    process,
     process::Command,
     sync::{
         OnceLock,
         atomic::{AtomicU64, Ordering},
     },
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -176,9 +179,9 @@ fn allocate_temporary_corpus() -> io::Result<TemporaryCorpusRoot> {
             .as_nanos()
     });
     allocate_temporary_corpus_with(|sequence| {
-        std::env::temp_dir().join(format!(
+        env::temp_dir().join(format!(
             "methexis-cli-corpus-{}-{nonce}-{sequence}",
-            std::process::id()
+            process::id()
         ))
     })
 }
@@ -210,13 +213,13 @@ fn resolve_git_executable(git_override: Option<&Path>) -> Result<PathBuf, String
             )
         });
     }
-    let path = std::env::var_os("PATH")
+    let path = env::var_os("PATH")
         .ok_or_else(|| "PATH is unavailable while resolving the Methexis test Git".to_owned())?;
     resolve_git_in_path(&path)
 }
 
 fn resolve_git_in_path(path: &OsStr) -> Result<PathBuf, String> {
-    for directory in std::env::split_paths(path) {
+    for directory in env::split_paths(path) {
         let candidate = directory.join("git");
         if let Ok(executable) = canonical_executable(&candidate) {
             return Ok(executable);
@@ -282,7 +285,7 @@ fn corpus_allocator_retries_an_exclusive_name_collision() {
 #[test]
 fn concurrent_corpus_allocations_have_distinct_roots() {
     let handles = (0..16)
-        .map(|_| std::thread::spawn(allocate_temporary_corpus))
+        .map(|_| thread::spawn(allocate_temporary_corpus))
         .collect::<Vec<_>>();
     let roots = handles
         .into_iter()
@@ -291,7 +294,7 @@ fn concurrent_corpus_allocations_have_distinct_roots() {
     let distinct = roots
         .iter()
         .map(|root| root.path().to_owned())
-        .collect::<std::collections::BTreeSet<_>>();
+        .collect::<collections::BTreeSet<_>>();
 
     assert_eq!(distinct.len(), roots.len());
 }
@@ -309,7 +312,7 @@ fn corpus_repository_uses_a_resolved_git_executable() {
     fs::create_dir(&bin).unwrap();
     let alternate_git = bin.join("git");
     symlink(&actual_git, &alternate_git).unwrap();
-    let path_only = std::env::join_paths([&bin]).unwrap();
+    let path_only = env::join_paths([&bin]).unwrap();
 
     assert_eq!(resolve_git_in_path(&path_only).unwrap(), actual_git);
 
@@ -333,7 +336,7 @@ fn corpus_repository_uses_a_resolved_git_executable() {
 fn missing_git_has_a_focused_prerequisite_error() {
     let scratch = allocate_temporary_corpus().unwrap();
     let missing = scratch.path().join("missing-git");
-    let empty_path = std::env::join_paths([scratch.path()]).unwrap();
+    let empty_path = env::join_paths([scratch.path()]).unwrap();
 
     let path_error = resolve_git_in_path(&empty_path).unwrap_err();
     let override_error = resolve_git_executable(Some(&missing)).unwrap_err();

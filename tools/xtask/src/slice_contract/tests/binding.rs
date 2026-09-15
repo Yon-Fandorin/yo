@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::{
     super::{bind, binding_path_for, check_bound_scope_with_index, trusted_check_bound_scope},
     support::{commit, contract, contract_for_ref},
@@ -74,8 +76,8 @@ fn explicit_bind_replaces_a_stale_binding() {
 
     let binding = binding_path_for(&repository.path).unwrap();
     assert_eq!(
-        std::fs::read_to_string(binding).unwrap(),
-        format!("{}\n", std::fs::canonicalize(second).unwrap().display())
+        fs::read_to_string(binding).unwrap(),
+        format!("{}\n", fs::canonicalize(second).unwrap().display())
     );
 }
 

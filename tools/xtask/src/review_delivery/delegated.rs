@@ -25,7 +25,10 @@ use super::{
     require_exact_file_hash, require_integration_state, sha256_file, shared_path,
     usage::{UsageBinding, UsageTarget},
 };
-use crate::review_egress::{self, AuthorizedHostDelivery};
+use crate::{
+    review_continuation_preflight,
+    review_egress::{self, AuthorizedHostDelivery},
+};
 
 pub(super) fn run_original(
     repository: &Path,
@@ -335,8 +338,7 @@ pub(super) fn run_continuation(
         policy.prepare_output,
     )?;
 
-    let initial =
-        crate::review_continuation_preflight::evaluate_delegated(repository, &preflight_path)?;
+    let initial = review_continuation_preflight::evaluate_delegated(repository, &preflight_path)?;
     let initial_admission = evaluate_host_admission(
         repository,
         &request.admission_request_path,
@@ -354,8 +356,7 @@ pub(super) fn run_continuation(
         REQUEST_LIMIT,
         "delegated continuation preflight request",
     )?;
-    let verified =
-        crate::review_continuation_preflight::evaluate_delegated(repository, &preflight_path)?;
+    let verified = review_continuation_preflight::evaluate_delegated(repository, &preflight_path)?;
     if verified != initial {
         return Err(
             "delegated reviewer Session or continuation authority changed while preparing delivery"

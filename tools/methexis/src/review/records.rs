@@ -1,8 +1,7 @@
 //! Deterministic Projection and approval record encoding and validation.
+use std::{fs, io::Read, path::Path, str};
 
-use std::{fs, io::Read, path::Path};
-
-use serde::Deserialize;
+use serde::{Deserialize, de};
 
 use super::{
     APPROVAL_REQUEST_SCHEMA, APPROVAL_SCHEMA, ApprovalBasis, ApprovalInput, ApprovalRecord,
@@ -12,7 +11,7 @@ use super::{
     ProjectionMetadata, ProjectionRecord, hash_bytes, local_diagnostic, relative_path,
     semantic_hash, valid_hash, valid_review_time,
 };
-use crate::{check::Diagnostic, model::KnowledgeUnit};
+use crate::{check, check::Diagnostic, model::KnowledgeUnit};
 
 pub(crate) fn projection_input_hash(id: &str, revision: &str, korean_markdown: &str) -> String {
     semantic_hash(&ProjectionInput {
@@ -194,7 +193,7 @@ pub(crate) fn parse_projection(
     })?;
     if metadata.request_hash
         != projection_input_hash(&metadata.knowledge_id, &metadata.revision, translation)
-        || crate::check::body_has_forbidden_html(translation)
+        || check::body_has_forbidden_html(translation)
         || bytes
             != render_projection_fields(
                 &metadata.knowledge_id,
@@ -250,7 +249,7 @@ pub(super) fn parse_approval_bytes(
             Vec::new(),
         ));
     }
-    let content = std::str::from_utf8(bytes).map_err(|error| {
+    let content = str::from_utf8(bytes).map_err(|error| {
         local_diagnostic(
             display.clone(),
             "approval_not_utf8",
@@ -420,7 +419,7 @@ fn parse_canonical_approval(content: &str, display: &str) -> Result<ApprovalReco
 }
 
 #[allow(clippy::result_large_err)]
-fn parse_approval_wire<T: serde::de::DeserializeOwned>(
+fn parse_approval_wire<T: de::DeserializeOwned>(
     content: &str,
     display: &str,
 ) -> Result<T, Diagnostic> {

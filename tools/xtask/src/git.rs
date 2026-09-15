@@ -1,5 +1,8 @@
+#[cfg(test)]
+use std::env;
 use std::{
     ffi::OsStr,
+    fs,
     io::Write,
     path::Path,
     process::{Command, Stdio},
@@ -212,10 +215,10 @@ fn clear_repository_environment(command: &mut Command) {
 #[cfg(test)]
 fn isolate_test_environment(command: &mut Command) {
     let inherited = [
-        ("PATH", std::env::var_os("PATH")),
-        ("TMPDIR", std::env::var_os("TMPDIR")),
-        ("TMP", std::env::var_os("TMP")),
-        ("TEMP", std::env::var_os("TEMP")),
+        ("PATH", env::var_os("PATH")),
+        ("TMPDIR", env::var_os("TMPDIR")),
+        ("TMP", env::var_os("TMP")),
+        ("TEMP", env::var_os("TEMP")),
     ];
     command.env_clear();
     for (name, value) in inherited {
@@ -257,7 +260,7 @@ pub(crate) fn interpret_trailers(message: &str) -> Result<String, String> {
 }
 
 pub(crate) fn read(path: &Path, label: &str) -> Result<String, String> {
-    std::fs::read_to_string(path)
+    fs::read_to_string(path)
         .map_err(|error| format!("cannot read {label} {}: {error}", path.display()))
 }
 

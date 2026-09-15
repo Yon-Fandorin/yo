@@ -1,9 +1,9 @@
-use std::{ffi::OsString, path::PathBuf, process::ExitCode};
+use std::{ffi::OsString, path, path::PathBuf, process::ExitCode};
 
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(std::path::Path::parent)
+        .and_then(path::Path::parent)
         .expect("crate is nested below the repository root")
         .to_owned()
 }

@@ -1,4 +1,4 @@
-use std::{cell::Cell, path::PathBuf};
+use std::{cell::Cell, fs, path::PathBuf};
 
 use serde_json::{Value, json};
 
@@ -10,10 +10,12 @@ use super::{
     prepare_with, set_final_revalidate_hook,
 };
 use crate::{
+    git,
     review_packet::{VerifiedEvidence, VerifiedReview},
     review_protocol::digest,
     slice_contract,
     test_support::{TestRepository, unique_path},
+    validation_summary,
 };
 
 struct Fixture {
@@ -39,7 +41,7 @@ impl Fixture {
         let candidate = git_line(&repository, &["rev-parse", "HEAD"]);
 
         let artifacts = unique_path("slice-gate-prepare-artifacts");
-        std::fs::create_dir_all(&artifacts).unwrap();
+        fs::create_dir_all(&artifacts).unwrap();
         let contract = artifacts.join("slice-contract.json");
         let contract_bytes = format!(
             "{}\n",
@@ -56,14 +58,14 @@ impl Fixture {
             }))
             .unwrap()
         );
-        std::fs::write(&contract, &contract_bytes).unwrap();
+        fs::write(&contract, &contract_bytes).unwrap();
         slice_contract::bind(&repository.path, &contract).unwrap();
 
         let validation = artifacts.join("validation.json");
         let argv = ["cargo", "test", "--locked", "-p", "xtask"]
             .map(str::to_owned)
             .to_vec();
-        std::fs::write(
+        fs::write(
             &validation,
             serde_json::to_vec(&json!({
                 "schema": "yo.validation-run-summary/v1alpha2",
@@ -77,7 +79,7 @@ impl Fixture {
                 "head_commit": candidate,
                 "worktree_state": "clean",
                 "command_argv_count": argv.len(),
-                "command_argv_hash": crate::validation_summary::argv_hash(&argv),
+                "command_argv_hash": validation_summary::argv_hash(&argv),
                 "reused": false,
                 "reuse_policy": "reviewed-descendant/v1"
             }))
@@ -85,13 +87,13 @@ impl Fixture {
         )
         .unwrap();
         let response = artifacts.join("review.txt");
-        std::fs::write(&response, b"fresh-context clear; code-quality clear\n").unwrap();
+        fs::write(&response, b"fresh-context clear; code-quality clear\n").unwrap();
         let manifest = artifacts.join("manifest.json");
-        std::fs::write(&manifest, b"published manifest placeholder\n").unwrap();
+        fs::write(&manifest, b"published manifest placeholder\n").unwrap();
         let review_id = hash(7);
         let packet_hash = hash(8);
         let receipt = artifacts.join("delivery.json");
-        std::fs::write(
+        fs::write(
             &receipt,
             format!(
                 "{}\n",
@@ -127,7 +129,7 @@ impl Fixture {
             validation_evidence: vec![VerifiedEvidence {
                 name: "xtask".to_owned(),
                 path: validation.to_string_lossy().into_owned(),
-                hash: digest(&std::fs::read(&validation).unwrap()),
+                hash: digest(&fs::read(&validation).unwrap()),
             }],
             review_lenses: vec!["fresh-context".to_owned(), "code-quality".to_owned()],
             review_questions: vec!["Does the gate preserve exact identity?".to_owned()],
@@ -164,7 +166,7 @@ impl Fixture {
             }
         });
         let prepare_path = artifacts.join("prepare.json");
-        std::fs::write(
+        fs::write(
             &prepare_path,
             format!("{}\n", serde_json::to_string_pretty(&request).unwrap()),
         )
@@ -215,7 +217,7 @@ impl Fixture {
     }
 
     fn rewrite_request(&self) {
-        std::fs::write(
+        fs::write(
             &self.prepare_path,
             format!("{}\n", serde_json::to_string_pretty(&self.request).unwrap()),
         )
@@ -231,7 +233,7 @@ impl Fixture {
             "xtask".to_owned(),
         ];
         let path = PathBuf::from(&self.review.validation_evidence[0].path);
-        std::fs::write(
+        fs::write(
             &path,
             serde_json::to_vec(&json!({
                 "schema": "yo.external-operation-evidence/v1",
@@ -254,7 +256,7 @@ impl Fixture {
         )
         .unwrap();
         self.review.validation_evidence[0].name = "external-operation/xtask".to_owned();
-        self.review.validation_evidence[0].hash = digest(&std::fs::read(&path).unwrap());
+        self.review.validation_evidence[0].hash = digest(&fs::read(&path).unwrap());
         self.request["validation_commands"][0]["name"] = json!("external-operation/xtask");
         self.rewrite_request();
     }
@@ -280,7 +282,7 @@ impl Fixture {
             ],
             "findings": []
         });
-        std::fs::write(
+        fs::write(
             response,
             format!(
                 "review complete\n<<<YO-SLICE-REVIEW-RESULT>>>\n{}\n<<<YO-SLICE-REVIEW-RESULT-END>>>\n",
@@ -294,7 +296,7 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.artifacts);
+        let _ = fs::remove_dir_all(&self.artifacts);
     }
 }
 
@@ -318,7 +320,7 @@ fn prepares_and_evaluates_exact_gate_request_from_existing_artifacts() {
     }));
 
     let generated: Value =
-        serde_json::from_slice(&std::fs::read(&fixture.output_path).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&fixture.output_path).unwrap()).unwrap();
     assert_eq!(
         generated["approval"]["candidate_commit"],
         fixture.review.candidate_commit
@@ -387,7 +389,7 @@ fn prepares_delegated_host_coverage_without_provider_coordinates() {
             .as_str()
             .unwrap(),
     );
-    std::fs::write(
+    fs::write(
         &receipt,
         format!(
             "{}\n",
@@ -449,9 +451,9 @@ fn preparation_request_change_before_publication_fails_closed() {
     let fixture = Fixture::new();
     let path = fixture.prepare_path.clone();
     set_final_revalidate_hook(move || {
-        let mut bytes = std::fs::read(&path).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
         bytes.push(b' ');
-        std::fs::write(&path, bytes).unwrap();
+        fs::write(&path, bytes).unwrap();
         Ok(())
     });
 
@@ -566,7 +568,7 @@ fn prepares_exact_gate_for_canonical_approval_descendant() {
     assert_eq!(result.gate.candidate_commit, candidate);
     assert!(result.gate.validation[0].reused);
     let generated: Value =
-        serde_json::from_slice(&std::fs::read(&fixture.output_path).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&fixture.output_path).unwrap()).unwrap();
     assert!(
         generated["review_evidence"]
             .as_array()
@@ -581,7 +583,7 @@ fn prepares_exact_gate_for_canonical_approval_descendant() {
 }
 
 fn git_line(repository: &TestRepository, arguments: &[&str]) -> String {
-    crate::git::output_in(&repository.path, arguments, false)
+    git::output_in(&repository.path, arguments, false)
         .unwrap()
         .trim()
         .to_owned()

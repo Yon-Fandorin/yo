@@ -1,3 +1,5 @@
+use std::{env, fs, path, process};
+
 use super::{
     super::{
         canonical::{build_manifest, build_plan},
@@ -11,27 +13,31 @@ use super::{
     },
     support::{publish_original, sample_inputs, sample_inputs_v1_alpha1},
 };
-use crate::review_protocol::{digest, domain_digest};
+use crate::{
+    git,
+    review_protocol::{digest, domain_digest},
+    test_support,
+};
 
 struct ScratchDirectory {
-    path: std::path::PathBuf,
+    path: path::PathBuf,
 }
 
 impl ScratchDirectory {
-    fn create(path: std::path::PathBuf) -> Self {
-        std::fs::create_dir(&path).unwrap();
+    fn create(path: path::PathBuf) -> Self {
+        fs::create_dir(&path).unwrap();
         Self { path }
     }
 }
 
 impl Drop for ScratchDirectory {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        let _ = fs::remove_dir_all(&self.path);
     }
 }
 
-fn repository_head(repository: &std::path::Path) -> String {
-    crate::git::output_in(repository, &["rev-parse", "HEAD"], false)
+fn repository_head(repository: &path::Path) -> String {
+    git::output_in(repository, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned()
@@ -147,7 +153,7 @@ fn v1_alpha1_consumer_rejects_spliced_prefix_and_suffix() {
 // 확인해 stale continuation이 다른 입력을 읽기 전에 현재 diagnostic을 보존한다.
 #[test]
 fn published_verifier_rejects_manifest_hash_drift_before_replay() {
-    let repository = crate::test_support::TestRepository::new("review-published-hash");
+    let repository = test_support::TestRepository::new("review-published-hash");
     let manifest_text = "{\"schema\":\"yo.slice-review-manifest/v1\"}\n";
     let manifest_bytes = manifest_text.as_bytes();
     let manifest_path = repository.write("manifest.json", manifest_text);
@@ -168,7 +174,7 @@ fn published_verifier_rejects_manifest_hash_drift_before_replay() {
 // 위치에서도 Git root 탐색보다 그 필드 진단이 먼저 나와 untrusted 값을 Git에 넘기지 않는다.
 #[test]
 fn published_verifier_validates_every_manifest_revision_before_git() {
-    let root = crate::test_support::unique_path("review-published-revisions");
+    let root = test_support::unique_path("review-published-revisions");
     let _root_owner = ScratchDirectory::create(root.clone());
     let inputs = sample_inputs("/tmp/validation.json");
     let (valid, _, _) = produced_artifacts(&inputs);
@@ -197,7 +203,7 @@ fn published_verifier_validates_every_manifest_revision_before_git() {
         let mut bytes = serde_json::to_vec_pretty(&manifest).unwrap();
         bytes.push(b'\n');
         let path = root.join(format!("{case}.json"));
-        std::fs::write(&path, &bytes).unwrap();
+        fs::write(&path, &bytes).unwrap();
 
         assert_eq!(
             verify_published(&root, &path, &digest(&bytes)).unwrap_err(),
@@ -213,15 +219,15 @@ fn published_revision_fixture_root_is_removed_after_panic() {
     const INJECT_ROOT: &str = "YO_XTASK_TEST_PUBLISHED_REVISION_PANIC_ROOT";
     const TEST_NAME: &str = "review_packet::tests::published_verifier::published_revision_fixture_root_is_removed_after_panic";
 
-    if let Some(root) = std::env::var_os(INJECT_ROOT) {
+    if let Some(root) = env::var_os(INJECT_ROOT) {
         let _root_owner = ScratchDirectory::create(root.into());
         panic!("injected published-verifier assertion failure");
     }
 
-    let root = crate::test_support::unique_path("review-published-panic-root");
-    let sibling = crate::test_support::unique_path("review-published-panic-sibling");
+    let root = test_support::unique_path("review-published-panic-root");
+    let sibling = test_support::unique_path("review-published-panic-sibling");
     let _sibling_owner = ScratchDirectory::create(sibling.clone());
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = process::Command::new(env::current_exe().unwrap())
         .arg("--exact")
         .arg(TEST_NAME)
         .arg("--nocapture")
@@ -238,7 +244,7 @@ fn published_revision_fixture_root_is_removed_after_panic() {
 // commit ID를 직접 이름 붙인 것이 아니므로 ContextBuild나 authority 재생 전에 거부한다.
 #[test]
 fn published_verifier_rejects_a_tag_object_as_the_candidate_commit() {
-    let repository = crate::test_support::TestRepository::new("review-published-tag-object");
+    let repository = test_support::TestRepository::new("review-published-tag-object");
     repository.write(".gitignore", ".local-exclude/\n");
     repository.write("owned.txt", "base\n");
     repository.git(["add", ".gitignore", "owned.txt"]);
@@ -256,7 +262,7 @@ fn published_verifier_rejects_a_tag_object_as_the_candidate_commit() {
         "candidate tag",
         &candidate,
     ]);
-    let tag_object = crate::git::output_in(
+    let tag_object = git::output_in(
         &repository.path,
         &["rev-parse", "refs/tags/candidate-tag"],
         false,
@@ -296,7 +302,7 @@ fn published_verifier_rejects_a_tag_object_as_the_candidate_commit() {
 // 정상 published history까지 거부하지 않음을 같은 trusted Git 경로로 확인한다.
 #[test]
 fn published_provenance_accepts_exact_descendant_commit_objects() {
-    let repository = crate::test_support::TestRepository::new("review-published-descendant");
+    let repository = test_support::TestRepository::new("review-published-descendant");
     repository.write("owned.txt", "base\n");
     repository.git(["add", "owned.txt"]);
     repository.git(["commit", "--quiet", "-m", "base"]);
@@ -313,7 +319,7 @@ fn published_provenance_accepts_exact_descendant_commit_objects() {
 // model-visible 입력을 읽기 전에 exact commit resolution 단계에서 실패한다.
 #[test]
 fn published_verifier_rejects_a_missing_candidate_commit_before_input_replay() {
-    let repository = crate::test_support::TestRepository::new("review-published-missing-object");
+    let repository = test_support::TestRepository::new("review-published-missing-object");
     repository.write("owned.txt", "base\n");
     repository.git(["add", "owned.txt"]);
     repository.git(["commit", "--quiet", "-m", "base"]);
@@ -340,7 +346,7 @@ fn published_verifier_rejects_a_missing_candidate_commit_before_input_replay() {
 // 만들 수 있다는 이유만으로 accepted provenance가 되지 않고 ancestry gate에서 거부된다.
 #[test]
 fn published_verifier_rejects_unrelated_base_and_candidate_histories() {
-    let repository = crate::test_support::TestRepository::new("review-published-unrelated");
+    let repository = test_support::TestRepository::new("review-published-unrelated");
     repository.write(".gitignore", ".local-exclude/\n");
     repository.write("owned.txt", "base\n");
     repository.git(["add", ".gitignore", "owned.txt"]);

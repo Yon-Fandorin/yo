@@ -2,10 +2,11 @@ mod model;
 
 #[cfg(test)]
 mod tests;
-
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Component, Path},
+    str,
 };
 
 use rustix::fs::Dir;
@@ -102,7 +103,7 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         .join(".local-exclude/coordination")
         .join(&request.slice);
     let expected_contract = shared_directory.join("slice-contract.json");
-    let expected_contract = std::fs::canonicalize(&expected_contract).map_err(|error| {
+    let expected_contract = fs::canonicalize(&expected_contract).map_err(|error| {
         format!(
             "cannot resolve standard Slice contract {}: {error}",
             expected_contract.display()
@@ -671,7 +672,7 @@ fn apply_repository_authority_policy(
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
         .map(|path| {
-            std::str::from_utf8(path).map(str::to_owned).map_err(|_| {
+            str::from_utf8(path).map(str::to_owned).map_err(|_| {
                 "changed path is not UTF-8; repository authority routing is ambiguous".to_owned()
             })
         })

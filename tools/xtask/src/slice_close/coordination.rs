@@ -1,5 +1,6 @@
 use std::{
     ffi::OsString,
+    fs, io,
     os::{
         fd::OwnedFd,
         unix::ffi::{OsStrExt, OsStringExt},
@@ -107,7 +108,7 @@ pub(super) fn remove_directory(
     if current != expected_paths {
         return Err("Slice coordination cleanup paths changed after planning".to_owned());
     }
-    let metadata = std::fs::symlink_metadata(&coordination).map_err(|error| {
+    let metadata = fs::symlink_metadata(&coordination).map_err(|error| {
         format!(
             "cannot inspect Slice coordination directory {} before cleanup: {error}",
             coordination.display()
@@ -116,7 +117,7 @@ pub(super) fn remove_directory(
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err("Slice coordination cleanup target must be a real directory".to_owned());
     }
-    std::fs::remove_dir_all(&coordination).map_err(|error| {
+    fs::remove_dir_all(&coordination).map_err(|error| {
         format!(
             "cannot remove completed Slice coordination directory {}: {error}",
             coordination.display()
@@ -136,9 +137,9 @@ pub(super) fn cleanup_paths(workspace: &Path, slice: &str) -> Result<Vec<PathBuf
         .join(".local-exclude")
         .join("coordination")
         .join(slice);
-    let metadata = match std::fs::symlink_metadata(&coordination) {
+    let metadata = match fs::symlink_metadata(&coordination) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
             return Err(format!(
                 "cannot inspect Slice coordination cleanup root {}: {error}",
@@ -156,7 +157,7 @@ pub(super) fn cleanup_paths(workspace: &Path, slice: &str) -> Result<Vec<PathBuf
 }
 
 fn collect_cleanup_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
-    let mut entries = std::fs::read_dir(directory)
+    let mut entries = fs::read_dir(directory)
         .map_err(|error| {
             format!(
                 "cannot enumerate Slice coordination cleanup directory {}: {error}",
@@ -170,7 +171,7 @@ fn collect_cleanup_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(
                 directory.display()
             )
         })?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
+    entries.sort_by_key(fs::DirEntry::file_name);
     for entry in entries {
         if paths.len() == MAX_CLEANUP_PATHS {
             return Err(format!(
@@ -178,7 +179,7 @@ fn collect_cleanup_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(
             ));
         }
         let path = entry.path();
-        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
             format!(
                 "cannot inspect Slice coordination cleanup path {}: {error}",
                 path.display()

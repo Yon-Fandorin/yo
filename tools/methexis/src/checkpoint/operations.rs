@@ -1,6 +1,7 @@
 //! Checkpoint creation and activation-proposal orchestration.
-
 use std::{fs, io::Read, path::Path};
+
+use serde::de;
 
 use super::{
     ACTIVATE_REQUEST_SCHEMA, ActivationInput, ActivationRequest, CREATE_REQUEST_SCHEMA,
@@ -185,7 +186,7 @@ pub(super) fn propose_activation(
 
 pub(super) fn read_request<T>(path: &Path, operation: &'static str) -> Result<T, OperationFailure>
 where
-    T: serde::de::DeserializeOwned,
+    T: de::DeserializeOwned,
 {
     let mut file = fs::File::open(path).map_err(|error| {
         failure(

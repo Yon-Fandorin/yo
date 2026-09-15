@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{env, fs, process::Command};
 
 use super::{CloseFixture, output};
 use crate::{slice_close::apply, test_support};
@@ -16,7 +16,7 @@ fn git_helpers_ignore_poisoned_hook_environment() {
     let head = output(&decoy.path, &["rev-parse", "HEAD"]);
     let git_dir = decoy.path.join(".git");
 
-    let result = Command::new(std::env::current_exe().unwrap())
+    let result = Command::new(env::current_exe().unwrap())
         .args([
             "--exact",
             "slice_close::tests::environment::poisoned_hook_child",
@@ -49,7 +49,7 @@ fn git_helpers_ignore_poisoned_hook_environment() {
 // 모든 custom Git 경로가 중앙 격리 helper를 통과하는지 관찰한다.
 #[test]
 fn poisoned_hook_child() {
-    if std::env::var_os(CHILD_MARKER).is_none() {
+    if env::var_os(CHILD_MARKER).is_none() {
         return;
     }
     let fixture = CloseFixture::new();
@@ -78,7 +78,7 @@ fn rejects_fifo_cleanup_lock_without_blocking() {
 
     assert!(error.contains("Slice close lock"));
     assert!(fixture.slice_worktree.exists());
-    std::fs::remove_file(lock).unwrap();
+    fs::remove_file(lock).unwrap();
 }
 
 #[cfg(unix)]
@@ -93,13 +93,13 @@ fn rejects_symlink_cleanup_lock() {
     fixture.write_plan(&plan);
     let target = test_support::unique_path("slice-close-lock-target");
     let lock = fixture.repository.path.join(".git/yo-slice-close.lock");
-    std::fs::write(&target, b"").unwrap();
+    fs::write(&target, b"").unwrap();
     symlink(&target, &lock).unwrap();
 
     let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
 
     assert!(error.contains("cannot open Slice close lock"));
     assert!(fixture.slice_worktree.exists());
-    std::fs::remove_file(lock).unwrap();
-    std::fs::remove_file(target).unwrap();
+    fs::remove_file(lock).unwrap();
+    fs::remove_file(target).unwrap();
 }

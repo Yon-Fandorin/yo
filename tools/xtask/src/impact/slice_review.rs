@@ -1,18 +1,19 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path};
 
 use super::{ImpactInput, changed_list, deferred_branch};
+use crate::git;
 
 pub(crate) fn check_commit(
-    repository: &std::path::Path,
+    repository: &path::Path,
     commit: &str,
     branch: &str,
 ) -> Result<(), String> {
-    let message = crate::git::output_in(
+    let message = git::output_in(
         repository,
         &["show", "--no-patch", "--format=%B", commit],
         false,
     )?;
-    let changed_paths = crate::git::output_in(
+    let changed_paths = git::output_in(
         repository,
         &[
             "diff-tree",
@@ -45,7 +46,7 @@ pub(crate) fn check(input: &ImpactInput) -> Result<(), String> {
     }
     if input.branch.starts_with("wave/")
         && let Some(merge_head) = input.merge_head.as_deref()
-        && crate::git::succeeds_in(
+        && git::succeeds_in(
             &input.repository,
             &[
                 "merge-base",
@@ -162,7 +163,7 @@ impl Evidence {
 }
 
 pub(crate) fn evidence(message: &str) -> Result<Evidence, String> {
-    let parsed = crate::git::interpret_trailers(message)?;
+    let parsed = git::interpret_trailers(message)?;
     let values = parsed
         .lines()
         .filter_map(|line| line.strip_prefix("Slice-Review:"))

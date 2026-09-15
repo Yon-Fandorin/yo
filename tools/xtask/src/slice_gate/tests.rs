@@ -1,9 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 
 use super::{evaluate, set_final_revalidate_test_hook};
-use crate::{review_protocol, slice_contract, test_support};
+use crate::{git, review_protocol, slice_contract, test_support, validation_summary};
 
 struct Fixture {
     repository: test_support::TestRepository,
@@ -25,7 +28,7 @@ impl Fixture {
         repository.git(["add", "tools/example.rs"]);
         repository.git(["commit", "--quiet", "-m", "candidate"]);
         let candidate = git_line(&repository.path, &["rev-parse", "HEAD"]);
-        let diff = crate::git::trusted_output_bytes_in(
+        let diff = git::trusted_output_bytes_in(
             &repository.path,
             &[
                 "diff",
@@ -42,9 +45,9 @@ impl Fixture {
         let diff_hash = review_protocol::digest(&diff);
 
         let artifacts = test_support::unique_path("slice-gate-artifacts");
-        std::fs::create_dir_all(&artifacts).unwrap();
+        fs::create_dir_all(&artifacts).unwrap();
         let contract = artifacts.join("slice-contract.json");
-        std::fs::write(
+        fs::write(
             &contract,
             serde_json::to_vec_pretty(&json!({
                 "schema": "yo.slice-contract/v1",
@@ -63,17 +66,17 @@ impl Fixture {
         slice_contract::bind(&repository.path, &contract).unwrap();
 
         let validation = artifacts.join("validation.json");
-        std::fs::write(
+        fs::write(
             &validation,
             br#"{"schema":"yo.validation-run-summary/v1","name":"xtask","status":"passed","exit_code":0,"elapsed_seconds":2,"log_bytes":42,"log_path":".local-exclude/validation-runs/xtask.log"}"#,
         )
         .unwrap();
         let validation_hash = digest_file(&validation);
         let fresh = artifacts.join("fresh.txt");
-        std::fs::write(&fresh, b"fresh review clear\n").unwrap();
+        fs::write(&fresh, b"fresh review clear\n").unwrap();
         let fresh_hash = digest_file(&fresh);
         let quality = artifacts.join("quality.txt");
-        std::fs::write(&quality, b"quality review clear\n").unwrap();
+        fs::write(&quality, b"quality review clear\n").unwrap();
         let quality_hash = digest_file(&quality);
 
         let request = json!({
@@ -131,7 +134,7 @@ impl Fixture {
 
     fn evaluate(&self) -> Result<super::model::ResultDocument, String> {
         let request_path = self.artifacts.join("request.json");
-        std::fs::write(&request_path, serde_json::to_vec(&self.request).unwrap()).unwrap();
+        fs::write(&request_path, serde_json::to_vec(&self.request).unwrap()).unwrap();
         evaluate(&self.repository.path, &request_path)
     }
 
@@ -148,7 +151,7 @@ impl Fixture {
                 .as_str()
                 .unwrap(),
         );
-        std::fs::write(
+        fs::write(
             &path,
             serde_json::to_vec(&json!({
                 "schema": "yo.validation-run-summary/v1alpha1",
@@ -162,7 +165,7 @@ impl Fixture {
                 "head_commit": self.candidate,
                 "worktree_state": "clean",
                 "command_argv_count": argv.len(),
-                "command_argv_hash": crate::validation_summary::argv_hash(&argv),
+                "command_argv_hash": validation_summary::argv_hash(&argv),
                 "reused": false
             }))
             .unwrap(),
@@ -184,7 +187,7 @@ impl Fixture {
                 .as_str()
                 .unwrap(),
         );
-        std::fs::write(
+        fs::write(
             &path,
             serde_json::to_vec(&json!({
                 "schema": "yo.external-operation-evidence/v1",
@@ -223,7 +226,7 @@ impl Fixture {
                 .as_str()
                 .unwrap(),
         );
-        std::fs::write(
+        fs::write(
             &path,
             serde_json::to_vec(&json!({
                 "schema": "yo.validation-run-summary/v1alpha2",
@@ -237,7 +240,7 @@ impl Fixture {
                 "head_commit": head_commit,
                 "worktree_state": "clean",
                 "command_argv_count": argv.len(),
-                "command_argv_hash": crate::validation_summary::argv_hash(&argv),
+                "command_argv_hash": validation_summary::argv_hash(&argv),
                 "reused": false,
                 "reuse_policy": "reviewed-descendant/v1"
             }))
@@ -261,7 +264,7 @@ impl Fixture {
                 .as_str()
                 .unwrap(),
         );
-        std::fs::write(
+        fs::write(
             &path,
             serde_json::to_vec(&json!({
                 "schema": "yo.validation-run-summary/v1alpha3",
@@ -275,14 +278,14 @@ impl Fixture {
                 "head_commit": head_commit,
                 "worktree_state": "clean",
                 "command_argv_count": argv.len(),
-                "command_argv_hash": crate::validation_summary::argv_hash(&argv),
+                "command_argv_hash": validation_summary::argv_hash(&argv),
                 "reused": false,
                 "reuse_policy": "reviewed-descendant-context/v1",
                 "reuse_context": {
                     "schema": "yo.validation-reuse-context/v1alpha1",
-                    "platform_os": std::env::consts::OS,
-                    "platform_arch": std::env::consts::ARCH,
-                    "toolchain_hash": crate::validation_summary::current_toolchain_hash().unwrap(),
+                    "platform_os": env::consts::OS,
+                    "platform_arch": env::consts::ARCH,
+                    "toolchain_hash": validation_summary::current_toolchain_hash().unwrap(),
                     "external_state": "none-declared"
                 }
             }))
@@ -296,7 +299,7 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.artifacts);
+        let _ = fs::remove_dir_all(&self.artifacts);
     }
 }
 
@@ -358,9 +361,9 @@ fn alpha_validation_summary_rejects_a_dirty_launch() {
             .as_str()
             .unwrap(),
     );
-    let mut summary: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut summary: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     summary["worktree_state"] = json!("dirty");
-    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
     fixture.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
 
     assert!(
@@ -449,9 +452,9 @@ fn alpha3_reuse_requires_the_current_execution_context() {
             .as_str()
             .unwrap(),
     );
-    let mut summary: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut summary: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     summary["reuse_context"]["platform_os"] = json!("changed-os");
-    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
     fixture.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
     assert!(fixture.evaluate().unwrap_err().contains("platform changed"));
 }
@@ -497,9 +500,9 @@ fn alpha2_reuse_requires_an_executed_passing_summary() {
             .as_str()
             .unwrap(),
     );
-    let mut summary: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut summary: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     summary["reused"] = json!(true);
-    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
     fixture.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
     assert!(
         fixture
@@ -509,10 +512,10 @@ fn alpha2_reuse_requires_an_executed_passing_summary() {
     );
 
     fixture.use_alpha2_validation(&base, true);
-    let mut summary: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut summary: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     summary["status"] = json!("failed");
     summary["exit_code"] = json!(1);
-    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
     fixture.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
     assert!(
         fixture
@@ -542,7 +545,7 @@ fn failed_validation_reports_validate() {
             .as_str()
             .unwrap(),
     );
-    std::fs::write(
+    fs::write(
         &path,
         br#"{"schema":"yo.validation-run-summary/v1","name":"xtask","status":"failed","exit_code":1,"elapsed_seconds":2,"log_bytes":42,"log_path":".local-exclude/validation-runs/xtask.log"}"#,
     )
@@ -628,7 +631,7 @@ fn changed_evidence_bytes_fail_closed() {
             .as_str()
             .unwrap(),
     );
-    std::fs::write(path, b"changed after request\n").unwrap();
+    fs::write(path, b"changed after request\n").unwrap();
 
     assert!(fixture.evaluate().unwrap_err().contains("hash changed"));
 }
@@ -644,8 +647,7 @@ fn final_revalidation_rejects_evidence_changed_after_capture() {
             .unwrap(),
     );
     set_final_revalidate_test_hook(move || {
-        std::fs::write(path, b"changed before final revalidation\n")
-            .map_err(|error| error.to_string())
+        fs::write(path, b"changed before final revalidation\n").map_err(|error| error.to_string())
     });
 
     assert!(fixture.evaluate().unwrap_err().contains("hash changed"));
@@ -658,7 +660,7 @@ fn final_revalidation_rejects_request_changed_after_capture() {
     let fixture = Fixture::new();
     let request_path = fixture.artifacts.join("request.json");
     set_final_revalidate_test_hook(move || {
-        std::fs::write(request_path, b"{}\n").map_err(|error| error.to_string())
+        fs::write(request_path, b"{}\n").map_err(|error| error.to_string())
     });
 
     assert!(
@@ -719,11 +721,11 @@ fn routine_candidate_rejects_unverified_environment() {
 }
 
 fn digest_file(path: &Path) -> String {
-    review_protocol::digest(&std::fs::read(path).unwrap())
+    review_protocol::digest(&fs::read(path).unwrap())
 }
 
 fn git_line(repository: &Path, arguments: &[&str]) -> String {
-    crate::git::trusted_output_in(repository, arguments)
+    git::trusted_output_in(repository, arguments)
         .unwrap()
         .trim()
         .to_owned()

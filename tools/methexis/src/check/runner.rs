@@ -1,5 +1,4 @@
 //! Ordered check planning, execution, and report composition.
-
 use std::{collections::BTreeSet, path::Path};
 
 use super::{
@@ -7,6 +6,7 @@ use super::{
     artifacts, display_path, global_diagnostic, load_records, snapshot_revision, sort_diagnostics,
     validate_global,
 };
+use crate::{checkpoint, review};
 
 pub(super) fn check_repository_selected(
     repository_root: &Path,
@@ -62,13 +62,13 @@ pub(super) fn check_repository_selected(
         return report;
     }
     executed.push(CheckClass::Authority);
-    let review_validation = crate::review::validate_records(repository_root, &foundation);
+    let review_validation = review::validate_records(repository_root, &foundation);
     if !review_validation.diagnostics.is_empty() {
         outcomes.push(outcome(CheckClass::Authority, CheckStatus::Failed));
         block_remaining(&planned, &mut outcomes);
         return failed_report(review_validation.diagnostics, requested, executed, outcomes);
     }
-    let authority = match crate::checkpoint::evaluate(repository_root, Some(&foundation.sources)) {
+    let authority = match checkpoint::evaluate(repository_root, Some(&foundation.sources)) {
         Ok(authority) => authority,
         Err(mut failure) => {
             sort_diagnostics(&mut failure.diagnostics);
@@ -210,7 +210,7 @@ fn failed_report(
 }
 
 #[cfg(test)]
-pub(super) fn failed_authority_report(failure: crate::checkpoint::AuthorityFailure) -> CheckReport {
+pub(super) fn failed_authority_report(failure: checkpoint::AuthorityFailure) -> CheckReport {
     failed_authority_report_with_checks(
         failure,
         CheckClass::ALL.to_vec(),
@@ -230,7 +230,7 @@ pub(super) fn failed_authority_report(failure: crate::checkpoint::AuthorityFailu
 }
 
 fn failed_authority_report_with_checks(
-    failure: crate::checkpoint::AuthorityFailure,
+    failure: checkpoint::AuthorityFailure,
     requested_checks: Vec<CheckClass>,
     executed_checks: Vec<CheckClass>,
     checks: Vec<CheckOutcome>,

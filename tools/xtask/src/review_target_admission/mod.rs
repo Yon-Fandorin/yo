@@ -3,12 +3,14 @@ mod usage;
 
 #[cfg(test)]
 mod tests;
-
 use std::{
+    env,
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
+    process,
     process::{Child, Command, ExitStatus, Stdio},
+    str,
     sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
@@ -26,7 +28,7 @@ use yo_core::{
     ProviderId,
 };
 
-use crate::bounded_file;
+use crate::{bounded_file, grok_outer_sandbox};
 
 const REQUEST_LIMIT: usize = 64 * 1024;
 const MAX_TOKEN_BYTES: usize = 128;
@@ -389,7 +391,7 @@ fn probe_host(host: &str, readiness: HostReadiness) -> Result<HostProbe, String>
         match probe_grok_read_only_startup(&executable) {
             Ok(()) => (
                 (readiness == HostReadiness::ExecutionIsolation)
-                    .then(|| crate::grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE.to_owned()),
+                    .then(|| grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE.to_owned()),
                 (readiness == HostReadiness::ExecutionIsolation).then(|| {
                     "the native Grok read-only profile passed the request-free startup probe and remains the selected isolation; account usage and entitlement remain host-owned".to_owned()
                 }),
@@ -397,7 +399,7 @@ fn probe_host(host: &str, readiness: HostReadiness) -> Result<HostProbe, String>
             Err(native_failure) if readiness == HostReadiness::ExecutionIsolation => {
                 probe_grok_outer_read_only_startup(&executable)?;
                 (
-                    Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE.to_owned()),
+                    Some(grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE.to_owned()),
                     Some(format!(
                         "the native Grok read-only profile was unavailable ({native_failure}); the Yo-owned bwrap read-only no-tools profile passed its request-free startup probe and was selected; account usage and entitlement remain host-owned"
                     )),
@@ -434,10 +436,10 @@ fn probe_grok_read_only_startup(executable: &Path) -> Result<(), String> {
 }
 
 fn probe_grok_outer_read_only_startup(executable: &Path) -> Result<(), String> {
-    let working_directory = std::env::current_dir()
+    let working_directory = env::current_dir()
         .and_then(fs::canonicalize)
         .map_err(|error| format!("cannot resolve the outer-sandbox probe directory: {error}"))?;
-    let command = crate::grok_outer_sandbox::probe_command(executable, &working_directory)?;
+    let command = grok_outer_sandbox::probe_command(executable, &working_directory)?;
     run_grok_startup(command, "Yo's request-free outer read-only Grok profile")
 }
 
@@ -533,7 +535,7 @@ fn wait_for_host_probe(child: &mut Child, label: &str) -> Result<ExitStatus, Str
 }
 
 fn host_state_directory(host: &str) -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME")
+    let home = env::var_os("HOME")
         .ok_or_else(|| "HOME is unavailable for delegated-host state readiness".to_owned())?;
     let home = PathBuf::from(home);
     if !home.is_absolute() {
@@ -560,7 +562,7 @@ fn probe_host_state_writable(directory: &Path) -> Result<(), String> {
         ));
     }
     let sequence = HOST_STATE_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let path = directory.join(format!(".yo-readiness-{}-{sequence}", std::process::id()));
+    let path = directory.join(format!(".yo-readiness-{}-{sequence}", process::id()));
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -628,7 +630,7 @@ fn probe_host_version(host: &str) -> Result<(PathBuf, String), String> {
             "`{host} --version` exceeded the {HOST_VERSION_LIMIT}-byte output limit"
         ));
     }
-    let version = std::str::from_utf8(&output.stdout)
+    let version = str::from_utf8(&output.stdout)
         .map_err(|_| format!("`{host} --version` did not return UTF-8"))?
         .trim();
     if version.is_empty()
@@ -645,9 +647,9 @@ fn probe_host_version(host: &str) -> Result<(PathBuf, String), String> {
 }
 
 fn resolve_executable(name: &str) -> Result<PathBuf, String> {
-    let path = std::env::var_os("PATH")
+    let path = env::var_os("PATH")
         .ok_or_else(|| "PATH is unavailable for delegated-host admission".to_owned())?;
-    for directory in std::env::split_paths(&path) {
+    for directory in env::split_paths(&path) {
         if !directory.is_absolute() {
             continue;
         }

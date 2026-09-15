@@ -1,5 +1,4 @@
 //! Durable exact-revision review holds and invalidations.
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -386,6 +385,7 @@ fn global_diagnostic(code: &str, message: String, affected_ids: Vec<String>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checkpoint;
 
     // 최초 manifest 캡처 중 감지된 identity 변경은 안정적인 missing/unsafe 입력이 아니다.
     // negative-record 전용 동시 변경 코드로 보존해 상위 authority 경계가 retryable로 분류한다.
@@ -404,7 +404,7 @@ mod tests {
         );
         assert_eq!(code, "negative_records_changed_during_validation");
 
-        let authority = crate::checkpoint::AuthorityFailure::from_source(
+        let authority = checkpoint::AuthorityFailure::from_source(
             "0123456789abcdef",
             failure_from_diagnostics(code, diagnostics),
         );

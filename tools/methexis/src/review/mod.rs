@@ -2,9 +2,9 @@
 //!
 //! Callers enter through [`ReviewService`]. Child modules own orchestration,
 //! record encoding, filesystem publication, and repository-wide validation.
-
 use std::{
     collections::BTreeMap,
+    ops,
     path::{Path, PathBuf},
 };
 
@@ -514,7 +514,7 @@ fn valid_review_time(value: &str) -> bool {
     }
 
     let number =
-        |range: std::ops::Range<usize>| value.get(range).and_then(|part| part.parse::<u32>().ok());
+        |range: ops::Range<usize>| value.get(range).and_then(|part| part.parse::<u32>().ok());
     let Some(year) = number(0..4) else {
         return false;
     };

@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, path::Path, str};
 
 use serde::Deserialize;
 
@@ -96,7 +96,7 @@ pub(super) fn require_prospective_activation_boundary(
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
         .map(|path| {
-            std::str::from_utf8(path)
+            str::from_utf8(path)
                 .map(str::to_owned)
                 .map_err(|error| format!("activation candidate path is not UTF-8: {error}"))
         })

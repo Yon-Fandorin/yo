@@ -1,5 +1,8 @@
 //! Deterministic parent-swap coverage for directory-handle publication.
 
+use std::{env, process};
+
+use rustix::fs as rustix_fs;
 #[cfg(unix)]
 // 이미 연 parent 디렉터리는 이후 symlink 교체로 리다이렉트되지 않고 원래 디렉터리에 원자적으로
 // 기록한다.
@@ -15,10 +18,7 @@ fn opened_parent_cannot_be_redirected_by_a_later_symlink_swap() {
         .duration_since(UNIX_EPOCH)
         .expect("system clock")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "methexis-publication-{}-{unique}",
-        std::process::id()
-    ));
+    let root = env::temp_dir().join(format!("methexis-publication-{}-{unique}", process::id()));
     let outside = root.with_extension("outside");
     fs::create_dir(&root).unwrap();
     fs::create_dir(&outside).unwrap();
@@ -48,9 +48,9 @@ fn opened_parent_cannot_be_redirected_by_a_later_symlink_swap() {
 fn child_holds_kernel_lock_until_killed() {
     use std::{fs, path::PathBuf, thread, time::Duration};
 
-    let root = PathBuf::from(std::env::var_os("METHEXIS_LOCK_TEST_ROOT").unwrap());
-    let target = PathBuf::from(std::env::var_os("METHEXIS_LOCK_TEST_TARGET").unwrap());
-    let ready = PathBuf::from(std::env::var_os("METHEXIS_LOCK_TEST_READY").unwrap());
+    let root = PathBuf::from(env::var_os("METHEXIS_LOCK_TEST_ROOT").unwrap());
+    let target = PathBuf::from(env::var_os("METHEXIS_LOCK_TEST_TARGET").unwrap());
+    let ready = PathBuf::from(env::var_os("METHEXIS_LOCK_TEST_READY").unwrap());
     let _lock = super::lock_target(&root, &target).unwrap();
     fs::write(ready, b"ready\n").unwrap();
     loop {
@@ -73,14 +73,11 @@ fn kernel_lock_is_recovered_after_owner_is_killed() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "methexis-kill-lock-{}-{unique}",
-        std::process::id()
-    ));
+    let root = env::temp_dir().join(format!("methexis-kill-lock-{}-{unique}", process::id()));
     fs::create_dir(&root).unwrap();
     let target = root.join("records/item.yaml");
     let ready = root.join("ready");
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut child = Command::new(env::current_exe().unwrap())
         .args([
             "--exact",
             "publication::tests::child_holds_kernel_lock_until_killed",
@@ -127,10 +124,7 @@ fn shared_target_locks_coexist_and_exclude_a_writer() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "methexis-shared-lock-{}-{unique}",
-        std::process::id()
-    ));
+    let root = env::temp_dir().join(format!("methexis-shared-lock-{}-{unique}", process::id()));
     fs::create_dir(&root).unwrap();
     let target = root.join("records/item.yaml");
 
@@ -161,10 +155,7 @@ fn captured_file_rejects_same_byte_identity_replacement() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "methexis-capture-swap-{}-{unique}",
-        std::process::id()
-    ));
+    let root = env::temp_dir().join(format!("methexis-capture-swap-{}-{unique}", process::id()));
     fs::create_dir_all(root.join("records")).unwrap();
     let target = root.join("records/item.yaml");
     fs::write(&target, b"same\n").unwrap();
@@ -189,10 +180,7 @@ fn captured_file_rejects_fifo_without_blocking() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "methexis-capture-fifo-{}-{unique}",
-        std::process::id()
-    ));
+    let root = env::temp_dir().join(format!("methexis-capture-fifo-{}-{unique}", process::id()));
     fs::create_dir_all(root.join("records")).unwrap();
     let target = root.join("records/item.yaml");
     assert!(
@@ -218,10 +206,7 @@ fn captured_file_rejects_oversized_regular_file() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "methexis-capture-large-{}-{unique}",
-        std::process::id()
-    ));
+    let root = env::temp_dir().join(format!("methexis-capture-large-{}-{unique}", process::id()));
     fs::create_dir_all(root.join("records")).unwrap();
     let target = root.join("records/item.yaml");
     fs::write(&target, [0_u8; 33]).unwrap();
@@ -244,10 +229,7 @@ fn canonical_root_accepts_an_absolute_alias_to_that_exact_root() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let fixture = std::env::temp_dir().join(format!(
-        "methexis-root-alias-{}-{unique}",
-        std::process::id()
-    ));
+    let fixture = env::temp_dir().join(format!("methexis-root-alias-{}-{unique}", process::id()));
     let real = fixture.join("real");
     let alias = fixture.join("alias");
     fs::create_dir_all(real.join("records")).unwrap();
@@ -280,9 +262,9 @@ fn root_alias_does_not_allow_an_internal_symlink_escape() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let fixture = std::env::temp_dir().join(format!(
+    let fixture = env::temp_dir().join(format!(
         "methexis-root-alias-escape-{}-{unique}",
-        std::process::id()
+        process::id()
     ));
     let real = fixture.join("real");
     let alias = fixture.join("alias");
@@ -312,9 +294,9 @@ fn created_file_rollback_removes_target_and_temporary_hardlinks() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
         "methexis-create-rollback-{}-{unique}",
-        std::process::id()
+        process::id()
     ));
     fs::create_dir(&root).unwrap();
     let temporary = root.join("temporary");
@@ -322,7 +304,7 @@ fn created_file_rollback_removes_target_and_temporary_hardlinks() {
     fs::write(&temporary, b"candidate\n").unwrap();
     fs::hard_link(&temporary, &target).unwrap();
     assert_eq!(fs::metadata(&target).unwrap().nlink(), 2);
-    let parent = rustix::fs::open(&root, super::OPEN_DIRECTORY, rustix::fs::Mode::empty()).unwrap();
+    let parent = rustix_fs::open(&root, super::OPEN_DIRECTORY, rustix_fs::Mode::empty()).unwrap();
 
     super::rollback_created_file(
         &parent,

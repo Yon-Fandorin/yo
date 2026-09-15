@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, path, path::PathBuf};
 
 use super::{Effect, acquire_bootstrap_lock, encode_failure, prepare, run};
 use crate::{git, test_support};
@@ -20,7 +20,7 @@ impl Fixture {
         let repository = test_support::TestRepository::new(label);
         repository.write("base.txt", "base\n");
         repository.commit_all("test: base");
-        std::fs::write(
+        fs::write(
             repository.path.join(".git/info/exclude"),
             ".local-exclude/\n",
         )
@@ -43,7 +43,7 @@ impl Fixture {
         ]);
         let slice = format!("{label}-slice");
         let source = test_support::unique_path("slice-create-contract.json");
-        std::fs::write(
+        fs::write(
             &source,
             contract_for_ref(&slice, &base, base_ref, write_rule, owned_contract),
         )
@@ -73,7 +73,7 @@ impl Fixture {
     }
 
     fn advance_develop(&self) {
-        std::fs::write(self.integration.join("advanced.txt"), b"advanced\n").unwrap();
+        fs::write(self.integration.join("advanced.txt"), b"advanced\n").unwrap();
         command(&self.integration, &["add", "advanced.txt"]);
         command(
             &self.integration,
@@ -104,7 +104,7 @@ fn creates_a_wave_slice_from_its_declared_integration_ref() {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.source);
+        let _ = fs::remove_file(&self.source);
     }
 }
 
@@ -127,8 +127,8 @@ fn creates_and_binds_a_slice_from_the_unique_integration_worktree() {
     assert!(matches!(result.effects.worktree, Effect::Created));
     assert!(matches!(result.effects.binding, Effect::Created));
     assert_eq!(
-        std::fs::read(&result.contract_path).unwrap(),
-        std::fs::read(&fixture.source).unwrap()
+        fs::read(&result.contract_path).unwrap(),
+        fs::read(&fixture.source).unwrap()
     );
     assert_eq!(result.next_action.cwd, fixture.slice_worktree());
     assert_eq!(
@@ -203,7 +203,7 @@ fn partial_contract_still_blocks_an_overlapping_lease() {
         ],
     );
     let second = test_support::unique_path("slice-create-partial-lease-second.json");
-    std::fs::write(
+    fs::write(
         &second,
         contract(
             "slice-create-partial-lease-second",
@@ -217,7 +217,7 @@ fn partial_contract_still_blocks_an_overlapping_lease() {
     let error = prepare(&fixture.integration, &second).unwrap_err();
 
     assert!(error.contains("overlapping write leases"), "{error}");
-    std::fs::remove_file(second).unwrap();
+    fs::remove_file(second).unwrap();
 }
 
 // cooperating 생성 명령은 lease 검사와 effect publication 전체를 공용 Git lock으로
@@ -254,9 +254,9 @@ fn symlinked_coordination_root_is_rejected_without_external_publication() {
         "test.symlink",
     );
     let external = test_support::unique_path("slice-create-external-coordination");
-    std::fs::create_dir(&external).unwrap();
+    fs::create_dir(&external).unwrap();
     let local = fixture.repository.path.join(".local-exclude");
-    std::fs::create_dir_all(&local).unwrap();
+    fs::create_dir_all(&local).unwrap();
     symlink(&external, local.join("coordination")).unwrap();
 
     let error = prepare(&fixture.integration, &fixture.source).unwrap_err();
@@ -266,7 +266,7 @@ fn symlinked_coordination_root_is_rejected_without_external_publication() {
         "{error}"
     );
     assert!(!external.join(&fixture.slice).exists());
-    std::fs::remove_dir(external).unwrap();
+    fs::remove_dir(external).unwrap();
 }
 
 // 최초 생성은 현재 integration tip과 정확히 일치하는 계약만 받아, 오래된 계약이
@@ -309,7 +309,7 @@ fn rejects_overlapping_active_leases_before_publication() {
     prepare(&fixture.integration, &fixture.source).unwrap();
     let second_slice = "slice-create-second-slice";
     let second = test_support::unique_path("slice-create-second-contract.json");
-    std::fs::write(
+    fs::write(
         &second,
         contract(
             second_slice,
@@ -331,7 +331,7 @@ fn rejects_overlapping_active_leases_before_publication() {
             .join(second_slice)
             .exists()
     );
-    std::fs::remove_file(second).unwrap();
+    fs::remove_file(second).unwrap();
 }
 
 // 경로가 겹치지 않아도 같은 semantic contract owner를 두 active Slice가 동시에
@@ -346,7 +346,7 @@ fn rejects_duplicate_active_contract_ownership() {
     prepare(&fixture.integration, &fixture.source).unwrap();
     let second_slice = "slice-create-second-owner-slice";
     let second = test_support::unique_path("slice-create-second-owner-contract.json");
-    std::fs::write(
+    fs::write(
         &second,
         contract(
             second_slice,
@@ -368,7 +368,7 @@ fn rejects_duplicate_active_contract_ownership() {
             .join(second_slice)
             .exists()
     );
-    std::fs::remove_file(second).unwrap();
+    fs::remove_file(second).unwrap();
 }
 
 // 실패 응답도 versioned JSON 안에 이미 준비된 효과를 다시 관찰해 호출자가
@@ -377,7 +377,7 @@ fn rejects_duplicate_active_contract_ownership() {
 fn conflicting_binding_returns_structured_observed_state() {
     let fixture = Fixture::new("slice-create-failure", "tools/failure/**", "test.failure");
     let result = prepare(&fixture.integration, &fixture.source).unwrap();
-    std::fs::write(&result.binding_path, b"/different/contract.json\n").unwrap();
+    fs::write(&result.binding_path, b"/different/contract.json\n").unwrap();
 
     let encoded = run(&fixture.integration, &fixture.source).unwrap_err();
     let failure: serde_json::Value = serde_json::from_str(&encoded).unwrap();
@@ -400,8 +400,8 @@ fn missing_binding_is_observed_as_absent() {
         "test.missing-binding",
     );
     let result = prepare(&fixture.integration, &fixture.source).unwrap();
-    std::fs::remove_file(&result.binding_path).unwrap();
-    let bytes = std::fs::read(&fixture.source).unwrap();
+    fs::remove_file(&result.binding_path).unwrap();
+    let bytes = fs::read(&fixture.source).unwrap();
 
     let encoded = encode_failure(
         &fixture.integration,
@@ -448,7 +448,7 @@ fn contract_for_ref(
     )
 }
 
-fn command(repository: &std::path::Path, arguments: &[&str]) {
+fn command(repository: &path::Path, arguments: &[&str]) {
     let status = git::test_command_in(repository)
         .args(arguments)
         .status()
@@ -456,7 +456,7 @@ fn command(repository: &std::path::Path, arguments: &[&str]) {
     assert!(status.success());
 }
 
-fn output(repository: &std::path::Path, arguments: &[&str]) -> String {
+fn output(repository: &path::Path, arguments: &[&str]) -> String {
     git::output_in(repository, arguments, false)
         .unwrap()
         .trim()

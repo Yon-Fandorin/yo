@@ -12,10 +12,11 @@ mod verifier;
 
 #[cfg(test)]
 pub(crate) mod tests;
-
+#[cfg(test)]
+use std::cell;
 use std::{
     collections::BTreeSet,
-    io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -348,7 +349,7 @@ fn prepare_readiness(
     let contract_bytes =
         bounded_file::read_regular(&contract_path, MAX_REQUEST_BYTES, "Slice review contract")?;
     let bound = slice_contract::trusted_bound_slice(&repository)?;
-    let canonical_contract = std::fs::canonicalize(&contract_path)
+    let canonical_contract = fs::canonicalize(&contract_path)
         .map_err(|error| format!("cannot resolve Slice contract: {error}"))?;
     if canonical_contract != bound.contract_path || digest(&contract_bytes) != bound.contract_id {
         return Err("request does not identify the exact bound Slice contract".to_owned());
@@ -451,8 +452,8 @@ type PreflightTestHook = Box<dyn FnOnce() -> Result<(), String>>;
 
 #[cfg(test)]
 thread_local! {
-    static PREFLIGHT_TEST_HOOK: std::cell::RefCell<Option<PreflightTestHook>> =
-        const { std::cell::RefCell::new(None) };
+    static PREFLIGHT_TEST_HOOK: cell::RefCell<Option<PreflightTestHook>> =
+        const { cell::RefCell::new(None) };
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use std::{path::Path, process::Stdio};
+use std::{env, fs, path, path::Path, process::Stdio};
 
 use crate::{git, impact::deferred_branch};
 
@@ -6,7 +6,7 @@ const MESSAGE_ENVIRONMENT: &str = "YO_XTASK_ACCEPTED_COMMIT_MESSAGE";
 const EDITOR_COMMAND: &str = "__accepted-commit-message-editor";
 
 pub(super) fn create(repository: &Path, message: &Path) -> Result<(), String> {
-    let executable = std::env::current_exe()
+    let executable = env::current_exe()
         .map_err(|error| format!("cannot locate the xtask executable: {error}"))?;
     create_with_editor(repository, message, &executable)
 }
@@ -15,7 +15,7 @@ pub(super) fn create_from_verified_candidate(
     repository: &Path,
     message: &Path,
 ) -> Result<(), String> {
-    let executable = std::env::current_exe()
+    let executable = env::current_exe()
         .map_err(|error| format!("cannot locate the xtask executable: {error}"))?;
     create_with_editor_mode(repository, message, &executable, true)
 }
@@ -89,10 +89,10 @@ fn commit_arguments(skip_duplicate_hooks: bool) -> Vec<&'static str> {
 }
 
 pub(super) fn copy_message(target: &Path) -> Result<(), String> {
-    let source = std::env::var_os(MESSAGE_ENVIRONMENT)
-        .map(std::path::PathBuf::from)
+    let source = env::var_os(MESSAGE_ENVIRONMENT)
+        .map(path::PathBuf::from)
         .ok_or_else(|| "accepted-commit editor is missing its prepared message".to_owned())?;
-    std::fs::copy(&source, target).map_err(|error| {
+    fs::copy(&source, target).map_err(|error| {
         format!(
             "cannot copy prepared commit message {} to {}: {error}",
             source.display(),

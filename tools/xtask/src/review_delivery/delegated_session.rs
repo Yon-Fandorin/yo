@@ -1,7 +1,8 @@
-use std::path::Path;
+use std::{path::Path, str};
 
 use yo_core::{
     AgentCommand, SessionId, TranscriptRecord, TurnId,
+    session_repository as core_session_repository,
     session_repository::{
         LocalSessionReader, StoredRequestTraceRecord, StoredSessionReader, read_stored_session,
         read_stored_session_continuation,
@@ -120,7 +121,7 @@ fn observe_host_session_inner(
             format!("cannot recover isolated delegated Session: {error}"),
         )
     })?;
-    let packet = std::str::from_utf8(packet).map_err(|error| {
+    let packet = str::from_utf8(packet).map_err(|error| {
         (
             observation.clone(),
             format!("verified review packet is not UTF-8: {error}"),
@@ -281,7 +282,7 @@ fn observe_host_continuation_inner(
 }
 
 fn observe_trace(
-    history: &yo_core::session_repository::StoredSessionHistory,
+    history: &core_session_repository::StoredSessionHistory,
     delivery: &AuthorizedHostDelivery,
 ) -> Result<HostTraceObservation, String> {
     let mut bindings = Vec::new();

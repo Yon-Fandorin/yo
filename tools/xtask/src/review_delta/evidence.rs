@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs,
     path::Path,
 };
 
@@ -12,7 +13,7 @@ use super::{
     },
 };
 use crate::{
-    bounded_file,
+    bounded_file, review_packet,
     review_packet::VerifiedReview,
     review_protocol::{
         Captured, NamedCaptured, artifact, require_commit, resolve_input_path, sorted_unique,
@@ -80,7 +81,7 @@ pub(super) fn validate_transition(
         let previous = prior_by_name.get(evidence.name.as_str());
         match context.affected_path_policy {
             AffectedPathPolicy::LegacyStringIdentity => {
-                crate::review_packet::external_operation::validate(
+                review_packet::external_operation::validate(
                     &evidence.name,
                     &evidence.artifact.bytes,
                     replacement_candidate,
@@ -104,7 +105,7 @@ pub(super) fn validate_transition(
                         &evidence.artifact.path,
                     )?;
                 }
-                crate::review_packet::external_operation::validate(
+                review_packet::external_operation::validate(
                     &evidence.name,
                     &evidence.artifact.bytes,
                     replacement_candidate,
@@ -149,7 +150,7 @@ fn require_new_affected_path(
 ) -> Result<(), String> {
     let canonical = |value: &str| {
         let path = resolve_input_path(repository, value);
-        std::fs::canonicalize(&path).map_err(|error| {
+        fs::canonicalize(&path).map_err(|error| {
             format!(
                 "cannot resolve validation evidence path {}: {error}",
                 path.display()

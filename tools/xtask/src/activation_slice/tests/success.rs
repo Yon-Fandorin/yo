@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::{
     super::model::Effect,
     support::{Fixture, output},
@@ -24,7 +26,7 @@ fn creates_and_binds_the_canonical_activation_slice() {
     assert!(matches!(result.effects.worktree, Effect::Created));
     assert!(matches!(result.effects.binding, Effect::Created));
     let contract: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&result.contract_path).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&result.contract_path).unwrap()).unwrap();
     assert_eq!(
         contract["allowed_write_set"],
         serde_json::json!([
@@ -35,7 +37,7 @@ fn creates_and_binds_the_canonical_activation_slice() {
         ])
     );
     assert_eq!(
-        std::fs::read_to_string(result.binding_path).unwrap(),
+        fs::read_to_string(result.binding_path).unwrap(),
         format!("{}\n", result.contract_path.display())
     );
 }

@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, fs, path, path::Path};
 
 use serde::Deserialize;
 
@@ -33,16 +33,16 @@ pub(crate) struct BoundSlice {
     pub(crate) slice: String,
     pub(crate) base: String,
     pub(crate) base_ref: String,
-    pub(crate) binding_path: std::path::PathBuf,
-    pub(crate) contract_path: std::path::PathBuf,
+    pub(crate) binding_path: path::PathBuf,
+    pub(crate) contract_path: path::PathBuf,
     pub(crate) contract_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct EnsuredBinding {
     pub(crate) slice: String,
-    pub(crate) contract_path: std::path::PathBuf,
-    pub(crate) binding_path: std::path::PathBuf,
+    pub(crate) contract_path: path::PathBuf,
+    pub(crate) binding_path: path::PathBuf,
     pub(crate) created: bool,
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn load(path: &Path) -> Result<SliceContract, String> {
 }
 
 pub(super) fn read_contract(path: &Path) -> Result<(SliceContract, Vec<u8>), String> {
-    let bytes = std::fs::read(path)
+    let bytes = fs::read(path)
         .map_err(|error| format!("cannot read Slice contract {}: {error}", path.display()))?;
     let contract = serde_json::from_slice(&bytes)
         .map_err(|error| format!("invalid Slice contract {}: {error}", path.display()))?;

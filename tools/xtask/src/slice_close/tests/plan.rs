@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::{CloseFixture, git, output};
 use crate::{
     slice_close::{build_plan, identity, plan},
@@ -41,8 +43,8 @@ fn reports_every_coordination_cleanup_path() {
     let coordination = fixture.contract_path.parent().unwrap();
     let notes = coordination.join("notes");
     let handoff = coordination.join("handoff.md");
-    std::fs::create_dir(&notes).unwrap();
-    std::fs::write(&handoff, "retain me\n").unwrap();
+    fs::create_dir(&notes).unwrap();
+    fs::write(&handoff, "retain me\n").unwrap();
 
     let plan = fixture.plan();
 
@@ -65,7 +67,7 @@ fn rejects_more_cleanup_paths_than_the_plan_can_report() {
     let fixture = CloseFixture::new();
     let coordination = fixture.contract_path.parent().unwrap();
     for index in 0..255 {
-        std::fs::write(coordination.join(format!("note-{index:02}")), "retain me\n").unwrap();
+        fs::write(coordination.join(format!("note-{index:02}")), "retain me\n").unwrap();
     }
 
     let error = build_plan(&fixture.repository.path, "sample").unwrap_err();
@@ -80,13 +82,13 @@ fn publishes_the_exact_plan_directly_to_a_file() {
     let fixture = CloseFixture::new();
 
     plan(&fixture.repository.path, "sample", Some(&fixture.plan_path)).unwrap();
-    let first = std::fs::read(&fixture.plan_path).unwrap();
+    let first = fs::read(&fixture.plan_path).unwrap();
     plan(&fixture.repository.path, "sample", Some(&fixture.plan_path)).unwrap();
 
     let mut expected = serde_json::to_vec_pretty(&fixture.plan()).unwrap();
     expected.push(b'\n');
     assert_eq!(first, expected);
-    assert_eq!(std::fs::read(&fixture.plan_path).unwrap(), expected);
+    assert_eq!(fs::read(&fixture.plan_path).unwrap(), expected);
 }
 
 // plan 파일을 제거 대상 worktree 안에 발행하면 검토 증거도 함께 사라지므로
@@ -121,7 +123,7 @@ fn rejects_plan_output_inside_the_slice_coordination_directory() {
 fn linked_integration_worktree_reports_shared_coordination_paths() {
     let fixture = CloseFixture::new();
     let handoff = fixture.contract_path.with_file_name("handoff.md");
-    std::fs::write(&handoff, "retain me\n").unwrap();
+    fs::write(&handoff, "retain me\n").unwrap();
     let linked = test_support::unique_path("slice-close-linked-integration");
     fixture.repository.git(["switch", "--quiet", "--detach"]);
     fixture.repository.git([
@@ -131,7 +133,7 @@ fn linked_integration_worktree_reports_shared_coordination_paths() {
         linked.to_str().unwrap(),
         "develop",
     ]);
-    let linked = std::fs::canonicalize(linked).unwrap();
+    let linked = fs::canonicalize(linked).unwrap();
 
     let plan = build_plan(&linked, "sample").unwrap();
 
@@ -228,7 +230,7 @@ fn rejects_dirty_integration_and_slice_worktrees() {
     assert!(integration_error.contains("integration worktree must be clean"));
 
     let slice = CloseFixture::new();
-    std::fs::write(slice.slice_worktree.join("dirty.txt"), "dirty\n").unwrap();
+    fs::write(slice.slice_worktree.join("dirty.txt"), "dirty\n").unwrap();
     let slice_error = build_plan(&slice.repository.path, "sample").unwrap_err();
     assert!(slice_error.contains("Slice worktree must be clean"));
 }
@@ -238,7 +240,7 @@ fn rejects_dirty_integration_and_slice_worktrees() {
 #[test]
 fn rejects_patch_or_review_evidence_drift() {
     let patch = CloseFixture::new();
-    std::fs::write(patch.slice_worktree.join("feature.txt"), "changed again\n").unwrap();
+    fs::write(patch.slice_worktree.join("feature.txt"), "changed again\n").unwrap();
     git(&patch.slice_worktree, &["add", "feature.txt"]);
     git(
         &patch.slice_worktree,

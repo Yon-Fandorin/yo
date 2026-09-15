@@ -1,4 +1,4 @@
-use std::{cell::Cell, path::PathBuf};
+use std::{cell::Cell, fs, path::PathBuf, str};
 
 use super::{
     PriorReview, ReviewClassification, authorize, canonical_authorization_path,
@@ -303,7 +303,7 @@ fn command_fixture(label: &str) -> CommandFixture {
     let packet = b"immutable packet\n";
     let packet_path = repository.write(
         ".local-exclude/review/packet.md",
-        std::str::from_utf8(packet).unwrap(),
+        str::from_utf8(packet).unwrap(),
     );
     let review_id = hash(8);
     let packet_hash = digest(packet);
@@ -406,8 +406,8 @@ fn command_evaluation_returns_one_bounded_delivery_action() {
 #[test]
 fn command_evaluation_observes_canonical_authorization_revocation() {
     let fixture = command_fixture("review-egress-revoked");
-    let current = std::fs::read_to_string(&fixture.authorization_path).unwrap();
-    std::fs::write(
+    let current = fs::read_to_string(&fixture.authorization_path).unwrap();
+    fs::write(
         &fixture.authorization_path,
         current.replace("\"active\"", "\"revoked\""),
     )

@@ -1,4 +1,4 @@
-use std::{fs, path::Path, process::Command};
+use std::{fs, os, path::Path, process::Command};
 
 use super::{
     CANONICAL_ROOT, KOREAN_ROOT, MANIFEST, accept, publish_reviewed_hash, sha256_hex,
@@ -74,7 +74,7 @@ fn rejects_symlinked_projection_paths_without_touching_the_manifest() {
     let manifest = repository.path.join("docs/ko/source.sha256");
     let before = fs::read(&manifest).unwrap();
     fs::remove_file(repository.path.join("docs/ko/src/README.md")).unwrap();
-    std::os::unix::fs::symlink(
+    os::unix::fs::symlink(
         repository.path.join("docs/src/README.md"),
         repository.path.join("docs/ko/src/README.md"),
     )

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf, str};
 
 use serde_json::json;
 
@@ -9,21 +9,21 @@ use super::{
     egress_document, prepared_review_questions, require_empty_directory,
     require_prepared_requests_current, target_preparation, validate_and_normalize,
 };
-use crate::{review_packet::PublishedReview, test_support::unique_path};
+use crate::{review_packet::PublishedReview, review_result, test_support::unique_path};
 
 struct TemporaryDirectory(PathBuf);
 
 impl TemporaryDirectory {
     fn new(label: &str) -> Self {
         let path = unique_path(label);
-        std::fs::create_dir_all(&path).unwrap();
+        fs::create_dir_all(&path).unwrap();
         Self(path)
     }
 }
 
 impl Drop for TemporaryDirectory {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -230,12 +230,12 @@ fn changed_authority_policy_v1alpha2_keeps_product_cost_minimal() {
 #[test]
 fn default_workflow_has_an_absolute_context_budget() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let root = std::fs::read(repository.join("CONTRIBUTING.md")).unwrap();
-    let index = std::fs::read(repository.join("AGENTS.md")).unwrap();
+    let root = fs::read(repository.join("CONTRIBUTING.md")).unwrap();
+    let index = fs::read(repository.join("AGENTS.md")).unwrap();
     let tokenizer = tiktoken_rs::o200k_base_singleton();
     let count = |bytes: &[u8]| {
         tokenizer
-            .encode_with_special_tokens(std::str::from_utf8(bytes).unwrap())
+            .encode_with_special_tokens(str::from_utf8(bytes).unwrap())
             .len()
     };
     let root_tokens = count(&root);
@@ -249,7 +249,7 @@ fn default_workflow_has_an_absolute_context_budget() {
         startup_tokens <= 1_700,
         "default startup uses {startup_tokens} tokens"
     );
-    let formal = std::fs::read(repository.join("CONTRIBUTING/formal-slices.md")).unwrap();
+    let formal = fs::read(repository.join("CONTRIBUTING/formal-slices.md")).unwrap();
     let formal_tokens = count(&formal);
     eprintln!("formal workflow context: {formal_tokens}");
     assert!(
@@ -286,8 +286,8 @@ fn managed_route_documents_bind_current_authorization_and_delivery_shape() {
     let authorization = workspace
         .0
         .join(".local-exclude/authorizations/external-review.json");
-    std::fs::create_dir_all(authorization.parent().unwrap()).unwrap();
-    std::fs::write(&authorization, b"managed authority\n").unwrap();
+    fs::create_dir_all(authorization.parent().unwrap()).unwrap();
+    fs::write(&authorization, b"managed authority\n").unwrap();
     let request = request(json!({
         "kind": "managed_model",
         "provider": "qwencloud",
@@ -321,8 +321,8 @@ fn delegated_route_documents_keep_host_owned_identity() {
     let authorization = workspace
         .0
         .join(".local-exclude/authorizations/external-review-delegated.json");
-    std::fs::create_dir_all(authorization.parent().unwrap()).unwrap();
-    std::fs::write(&authorization, b"delegated authority\n").unwrap();
+    fs::create_dir_all(authorization.parent().unwrap()).unwrap();
+    fs::write(&authorization, b"delegated authority\n").unwrap();
     let request = request(json!({
         "kind": "delegated_host",
         "host": "codex",
@@ -374,7 +374,7 @@ fn input_validation_rejects_duplicates_and_unknown_hosts() {
 fn nonempty_delivery_output_is_never_reprepared() {
     let directory = TemporaryDirectory::new("review-prepare-output");
     require_empty_directory(&directory.0).unwrap();
-    std::fs::write(directory.0.join("claim.json"), b"claim\n").unwrap();
+    fs::write(directory.0.join("claim.json"), b"claim\n").unwrap();
     assert!(
         require_empty_directory(&directory.0)
             .unwrap_err()
@@ -399,7 +399,7 @@ fn final_prepared_request_check_rejects_post_publication_drift() {
         (&admission, b"admission\n".as_slice()),
         (&delivery, b"delivery\n".as_slice()),
     ] {
-        std::fs::write(path, bytes).unwrap();
+        fs::write(path, bytes).unwrap();
     }
     let paths = PreparedPaths {
         context: &context,
@@ -418,7 +418,7 @@ fn final_prepared_request_check_rejects_post_publication_drift() {
     };
     require_prepared_requests_current(&paths, &bytes).unwrap();
 
-    std::fs::write(&review, b"changed\n").unwrap();
+    fs::write(&review, b"changed\n").unwrap();
     assert!(
         require_prepared_requests_current(&paths, &bytes)
             .unwrap_err()
@@ -489,7 +489,7 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
         prepared_review_questions(&managed)
             .last()
             .map(String::as_str),
-        Some(crate::review_result::OUTPUT_INSTRUCTION)
+        Some(review_result::OUTPUT_INSTRUCTION)
     );
 }
 

@@ -1,6 +1,5 @@
 //! Canonical agent payload, token accounting, BuildId plan, and manifest.
-
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, str};
 
 use serde::Serialize;
 
@@ -9,7 +8,7 @@ use super::{
     selection::{CandidateDecision, ResolvedAnchor, Selection, UnitObservation, ordered_units},
     wire::{COMPILER, CandidateSet, PAYLOAD_PROFILE, TOKENIZER_COMPILER, TOKENIZER_PROFILE},
 };
-use crate::{checkpoint::ContextAuthority, model::KnowledgeUnit};
+use crate::{checkpoint::ContextAuthority, context, model::KnowledgeUnit};
 
 const BUILD_PLAN_SCHEMA: &str = "methexis.context-build-plan/v1alpha1";
 const MANIFEST_SCHEMA: &str = "methexis.context-manifest/v1alpha1";
@@ -56,7 +55,7 @@ struct CandidateLineage<'a> {
     request_hash: &'a str,
     catalog_hash: &'a str,
     compiler: &'a str,
-    unresolved_anchors: &'a [crate::context::wire::Anchor],
+    unresolved_anchors: &'a [context::wire::Anchor],
     truncated: usize,
 }
 
@@ -129,7 +128,7 @@ pub(super) fn render(authority: &ContextAuthority, included: &BTreeSet<String>) 
 }
 
 pub(super) fn count_tokens(bytes: &[u8]) -> usize {
-    let text = std::str::from_utf8(bytes).expect("canonical payload is UTF-8");
+    let text = str::from_utf8(bytes).expect("canonical payload is UTF-8");
     tiktoken_rs::o200k_base_singleton()
         .encode_ordinary(text)
         .len()

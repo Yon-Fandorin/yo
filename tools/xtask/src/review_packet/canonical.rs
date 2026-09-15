@@ -9,7 +9,7 @@ use super::{
         SemanticInput, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
     },
 };
-use crate::review_protocol::artifact;
+use crate::{review_protocol, review_protocol::artifact};
 
 pub(super) fn build_plan(inputs: &Inputs) -> ReviewPlan {
     let prospective = inputs.prospective.as_ref();
@@ -122,7 +122,7 @@ pub(super) fn build_manifest(
     }
 }
 
-pub(super) fn semantic_input(input: &crate::review_protocol::Captured) -> SemanticInput {
+pub(super) fn semantic_input(input: &review_protocol::Captured) -> SemanticInput {
     SemanticInput {
         path: input.path.clone(),
         hash: input.hash.clone(),

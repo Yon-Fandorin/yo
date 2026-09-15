@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use sha2::{Digest, Sha256};
 
@@ -58,7 +61,7 @@ fn bound_slice_with(repository: &Path, trusted: bool) -> Result<BoundSlice, Stri
 }
 
 pub(crate) fn bind(repository: &Path, contract_path: &Path) -> Result<(), String> {
-    let contract_path = std::fs::canonicalize(contract_path).map_err(|error| {
+    let contract_path = fs::canonicalize(contract_path).map_err(|error| {
         format!(
             "cannot resolve Slice contract {}: {error}",
             contract_path.display()
@@ -70,7 +73,7 @@ pub(crate) fn bind(repository: &Path, contract_path: &Path) -> Result<(), String
     model::validate_slice_branch(&repository, &contract)?;
 
     let binding = binding_path(&repository)?;
-    std::fs::write(&binding, format!("{}\n", contract_path.display())).map_err(|error| {
+    fs::write(&binding, format!("{}\n", contract_path.display())).map_err(|error| {
         format!(
             "cannot bind Slice contract at {}: {error}",
             binding.display()
@@ -89,7 +92,7 @@ pub(crate) fn verify_bound_exact(
     repository: &Path,
     contract_path: &Path,
 ) -> Result<PathBuf, String> {
-    let contract_path = std::fs::canonicalize(contract_path).map_err(|error| {
+    let contract_path = fs::canonicalize(contract_path).map_err(|error| {
         format!(
             "cannot resolve Slice contract {}: {error}",
             contract_path.display()
@@ -118,7 +121,7 @@ pub(crate) fn ensure_bound(
     repository: &Path,
     contract_path: &Path,
 ) -> Result<EnsuredBinding, String> {
-    let contract_path = std::fs::canonicalize(contract_path).map_err(|error| {
+    let contract_path = fs::canonicalize(contract_path).map_err(|error| {
         format!(
             "cannot resolve Slice contract {}: {error}",
             contract_path.display()
@@ -155,7 +158,7 @@ pub(super) fn bound_contract_path_with(
     trusted: bool,
 ) -> Result<PathBuf, String> {
     let binding = binding_path_with(repository, trusted)?;
-    let value = std::fs::read_to_string(&binding).map_err(|error| {
+    let value = fs::read_to_string(&binding).map_err(|error| {
         format!(
             "this worktree has no readable Slice contract binding at {}: {error}\n\
              ask the planner to run `cargo xtask slice-contract bind <slice-contract.json>`",

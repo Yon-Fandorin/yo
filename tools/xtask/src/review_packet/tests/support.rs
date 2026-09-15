@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use super::super::{
     MAX_REQUEST_BYTES, REVIEW_ID_DOMAIN,
@@ -142,8 +142,8 @@ fn publish_original_with_profile(
 
     let manifest_path = directory.join("manifest.json");
     let packet_path = directory.join("packet.md");
-    let published_manifest_bytes = std::fs::read(&manifest_path).unwrap();
-    let published_packet_bytes = std::fs::read(&packet_path).unwrap();
+    let published_manifest_bytes = fs::read(&manifest_path).unwrap();
+    let published_packet_bytes = fs::read(&packet_path).unwrap();
     assert_eq!(published_manifest_bytes, manifest_bytes);
     assert_eq!(published_packet_bytes, rendered.bytes);
     let published_manifest: Manifest = serde_json::from_slice(&published_manifest_bytes).unwrap();

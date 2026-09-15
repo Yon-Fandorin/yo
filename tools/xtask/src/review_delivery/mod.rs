@@ -9,9 +9,9 @@ mod usage;
 
 #[cfg(test)]
 mod tests;
-
 use std::{
     fs::{self, File, OpenOptions},
+    io,
     io::Read,
     path::{Path, PathBuf},
     process::Command,
@@ -37,7 +37,7 @@ use sha2::{Digest, Sha256};
 use usage::{UsageBinding, UsageTarget};
 
 use crate::{
-    bounded_file, git,
+    bounded_file, git, review_continuation_preflight,
     review_egress::{self, AuthorizedDelivery, AuthorizedHostDelivery},
     review_protocol::digest,
     review_target_admission::{self, Admission, ReviewTarget},
@@ -398,8 +398,7 @@ fn run_continuation(
     let output_directory =
         delivery_output_directory(repository, &request.output_directory, policy.prepare_output)?;
 
-    let initial =
-        crate::review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
+    let initial = review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
     let initial_admission = admission
         .as_ref()
         .map(|reference| evaluate_admission(repository, reference, &initial.delivery))
@@ -414,8 +413,7 @@ fn run_continuation(
         REQUEST_LIMIT,
         "Slice review continuation preflight request",
     )?;
-    let verified =
-        crate::review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
+    let verified = review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
     if verified != initial {
         return Err(
             "reviewer Session or continuation authority changed while preparing delivery"
@@ -976,7 +974,7 @@ fn prepare_output_directory_at(coordination: &Path, requested: &Path) -> Result<
     })?;
     match fs::symlink_metadata(requested) {
         Ok(_) => require_real_directory(requested)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let parent = requested.parent().ok_or_else(|| {
                 "review delivery output directory must have an existing parent".to_owned()
             })?;

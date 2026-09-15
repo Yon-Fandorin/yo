@@ -1,5 +1,4 @@
 //! Required-closure selection from one validated trusted snapshot.
-
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::{
@@ -8,6 +7,7 @@ use super::{
 };
 use crate::{
     check::{Foundation, load_foundation},
+    review,
     review::validate_records,
 };
 
@@ -73,7 +73,7 @@ pub(super) fn validate_integrated(
         .map(|id| {
             (
                 id.clone(),
-                crate::review::ProposalState {
+                review::ProposalState {
                     evidence: "matching_proposal",
                     reason: None,
                 },
@@ -125,7 +125,7 @@ pub(super) fn verify_lineage(
 fn select_from_foundation(
     commit: &str,
     foundation: &Foundation,
-    states: &BTreeMap<String, crate::review::ProposalState>,
+    states: &BTreeMap<String, review::ProposalState>,
     requested_roots: &[String],
     operation: &'static str,
 ) -> Result<SelectedCheckpoint, OperationFailure> {

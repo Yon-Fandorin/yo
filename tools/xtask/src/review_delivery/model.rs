@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::review_target_admission;
+
 pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-delivery-request/v1alpha1";
 pub(super) const REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-delivery-request/v1alpha2";
 pub(super) const CONTINUATION_REQUEST_SCHEMA: &str =
@@ -177,7 +179,7 @@ pub(super) struct Claim<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) admission_request_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) target: Option<&'a crate::review_target_admission::ReviewTarget>,
+    pub(super) target: Option<&'a review_target_admission::ReviewTarget>,
 }
 
 #[derive(Debug, Serialize)]
@@ -209,7 +211,7 @@ pub(super) struct ContinuationClaim<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) admission_request_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) target: Option<&'a crate::review_target_admission::ReviewTarget>,
+    pub(super) target: Option<&'a review_target_admission::ReviewTarget>,
 }
 
 #[derive(Debug, Serialize)]

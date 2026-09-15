@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections,
+    path::{Path, PathBuf},
+};
 
 use super::{
     AUTHORIZATION_LIMIT, DELIVERY_RECEIPT_LIMIT, MANIFEST_LIMIT, MAX_AUTHORIZED_TOKENS,
@@ -16,7 +19,7 @@ use super::{
     },
     require_exact_hash, require_sha256, resolve_input_path, review_delta,
 };
-use crate::review_packet::VerifiedReview;
+use crate::{grok_outer_sandbox, review_packet::VerifiedReview};
 
 const MAX_HOST_TARGETS: usize = 2;
 const MAX_HOST_TOKEN_BYTES: usize = 32;
@@ -354,7 +357,7 @@ fn validate_authorization(authorization: &DelegatedAuthorizationDocument) -> Res
             "delegated external review authorization requires 1..={MAX_HOST_TARGETS} targets"
         ));
     }
-    let mut hosts = std::collections::BTreeSet::new();
+    let mut hosts = collections::BTreeSet::new();
     match authorization {
         DelegatedAuthorizationDocument::Alpha1(value) => {
             for target in &value.targets {
@@ -430,7 +433,7 @@ fn validate_authorization(authorization: &DelegatedAuthorizationDocument) -> Res
 }
 
 fn validate_target_limits<'a>(
-    hosts: &mut std::collections::BTreeSet<&'a str>,
+    hosts: &mut collections::BTreeSet<&'a str>,
     host: &'a str,
     execution_profile: &str,
     max_packet_bytes: usize,
@@ -663,8 +666,8 @@ fn parse_delivery_receipt(bytes: &[u8], label: &str) -> Result<DelegatedDelivery
             if receipt.target.host() == "grok"
                 && matches!(
                     isolation,
-                    crate::grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE
-                        | crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE
+                    grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE
+                        | grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE
                 ) => {},
         (DELEGATED_DELIVERY_RECEIPT_SCHEMA, Some(_)) => {
             return Err(
@@ -719,9 +722,12 @@ fn require_execution_profile(profile: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::review_egress::model::{
-        AuthorizedDelegatedTarget, DelegatedAuthorization, DelegatedAuthorizationV1Alpha2,
-        DelegatedAuthorizationV1Alpha3,
+    use crate::{
+        review_egress,
+        review_egress::model::{
+            AuthorizedDelegatedTarget, DelegatedAuthorization, DelegatedAuthorizationV1Alpha2,
+            DelegatedAuthorizationV1Alpha3,
+        },
     };
 
     fn target(host: &str) -> AuthorizedDelegatedTarget {
@@ -855,7 +861,7 @@ mod tests {
             manifest_path: "manifest.json".to_owned(),
             manifest_hash: format!("sha256:{}", "1".repeat(64)),
             authorization_hash: format!("sha256:{}", "2".repeat(64)),
-            target: crate::review_egress::model::DelegatedTarget::DelegatedHost {
+            target: review_egress::model::DelegatedTarget::DelegatedHost {
                 host: "codex".to_owned(),
             },
             execution_profile: DELEGATED_EXECUTION_PROFILE.to_owned(),
@@ -923,7 +929,7 @@ mod tests {
             "packet_hash": format!("sha256:{}", "2".repeat(64)),
             "target": {"kind": "delegated_host", "host": "grok"},
             "execution_profile": DELEGATED_EXECUTION_PROFILE,
-            "execution_isolation": crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE,
+            "execution_isolation": grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE,
             "session_id": "session-a",
             "host_request_id": "request-a",
             "host_request_count": 1

@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use super::{
     PREPARE_REQUEST_SCHEMA, PREPARE_REQUEST_SCHEMA_V1_ALPHA2, PREPARE_REQUEST_SCHEMA_V1_ALPHA3,
@@ -6,7 +9,7 @@ use super::{
     require_unchanged, temporary_output_paths,
 };
 use crate::{
-    review_protocol,
+    git, review_protocol,
     slice_accept::{
         ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, ACCEPT_REQUEST_SCHEMA_V1_ALPHA3,
         COMMIT_GIT_HOOKS, fast_effect_scope, require_gate_authorization,
@@ -39,12 +42,12 @@ impl Fixture {
             candidate.to_str().unwrap(),
             "slice/direct/post-gate-test",
         ]);
-        std::fs::create_dir_all(candidate.join("tools")).unwrap();
-        std::fs::write(candidate.join("tools/example.rs"), "pub fn example() {}\n").unwrap();
+        fs::create_dir_all(candidate.join("tools")).unwrap();
+        fs::write(candidate.join("tools/example.rs"), "pub fn example() {}\n").unwrap();
         git(&candidate, &["add", "tools/example.rs"]);
         git(&candidate, &["commit", "--quiet", "-m", "candidate"]);
         let candidate_commit = git_line(&candidate, &["rev-parse", "HEAD"]);
-        let diff = crate::git::trusted_output_bytes_in(
+        let diff = git::trusted_output_bytes_in(
             &candidate,
             &[
                 "diff",
@@ -63,14 +66,14 @@ impl Fixture {
         let coordination = repository
             .path
             .join(".local-exclude/coordination/post-gate-test");
-        std::fs::write(
+        fs::write(
             repository.path.join(".git/info/exclude"),
             ".local-exclude/\n",
         )
         .unwrap();
-        std::fs::create_dir_all(&coordination).unwrap();
+        fs::create_dir_all(&coordination).unwrap();
         let contract = coordination.join("slice-contract.json");
-        std::fs::write(
+        fs::write(
             &contract,
             format!(
                 "{}\n",
@@ -92,15 +95,15 @@ impl Fixture {
         slice_contract::bind(&candidate, &contract).unwrap();
 
         let validation = coordination.join("validation.json");
-        std::fs::write(
+        fs::write(
             &validation,
             br#"{"schema":"yo.validation-run-summary/v1","name":"xtask","status":"passed","exit_code":0,"elapsed_seconds":1,"log_bytes":10,"log_path":"validation.log"}"#,
         )
         .unwrap();
         let fresh = coordination.join("fresh.txt");
-        std::fs::write(&fresh, b"fresh clear\n").unwrap();
+        fs::write(&fresh, b"fresh clear\n").unwrap();
         let quality = coordination.join("quality.txt");
-        std::fs::write(&quality, b"quality clear\n").unwrap();
+        fs::write(&quality, b"quality clear\n").unwrap();
         let scope = super::super::effect_scope(
             "post-gate-test",
             &candidate_commit,
@@ -108,7 +111,7 @@ impl Fixture {
             "refs/heads/develop",
         );
         let gate = coordination.join("gate.json");
-        std::fs::write(
+        fs::write(
             &gate,
             format!(
                 "{}\n",
@@ -161,13 +164,13 @@ impl Fixture {
         )
         .unwrap();
         let message = coordination.join("message.txt");
-        std::fs::write(
+        fs::write(
             &message,
             b"feat(xtask): derive post-gate inputs\n\nDeveloper-Docs-Impact: none - test fixture\n",
         )
         .unwrap();
         let prepare = coordination.join("accept-prepare.json");
-        std::fs::write(
+        fs::write(
             &prepare,
             format!(
                 "{}\n",
@@ -201,21 +204,21 @@ impl Fixture {
     fn fast_no_push() -> Self {
         let fixture = Self::new();
         let mut prepare: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&fixture.prepare).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(&fixture.prepare).unwrap()).unwrap();
         prepare["schema"] = serde_json::json!(PREPARE_REQUEST_SCHEMA_V1_ALPHA3);
         prepare
             .as_object_mut()
             .unwrap()
             .remove("close_observations");
         prepare.as_object_mut().unwrap().remove("push_remote");
-        std::fs::write(
+        fs::write(
             &fixture.prepare,
             format!("{}\n", serde_json::to_string_pretty(&prepare).unwrap()),
         )
         .unwrap();
 
         let mut gate: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&fixture.gate).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(&fixture.gate).unwrap()).unwrap();
         gate["approval"]["scope"] = serde_json::json!(fast_effect_scope(
             "post-gate-test",
             &fixture.candidate_commit,
@@ -223,7 +226,7 @@ impl Fixture {
             "refs/heads/develop",
             COMMIT_GIT_HOOKS,
         ));
-        std::fs::write(
+        fs::write(
             &fixture.gate,
             format!("{}\n", serde_json::to_string_pretty(&gate).unwrap()),
         )
@@ -234,7 +237,7 @@ impl Fixture {
     fn standing_routine(prepare_schema: &str) -> Self {
         let fixture = Self::new();
         let mut gate: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&fixture.gate).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(&fixture.gate).unwrap()).unwrap();
         gate["risk"] = serde_json::json!({
             "classification": "routine",
             "rationale": "mechanical follow-through under an accepted contract"
@@ -244,7 +247,7 @@ impl Fixture {
             "authority": "human/yon",
             "scope": "routine exact-contract implementation"
         });
-        std::fs::write(
+        fs::write(
             &fixture.gate,
             format!("{}\n", serde_json::to_string_pretty(&gate).unwrap()),
         )
@@ -255,9 +258,9 @@ impl Fixture {
 
     fn set_prepare_schema(&self, schema: &str) {
         let mut prepare: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&self.prepare).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(&self.prepare).unwrap()).unwrap();
         prepare["schema"] = serde_json::Value::String(schema.to_owned());
-        std::fs::write(
+        fs::write(
             &self.prepare,
             format!("{}\n", serde_json::to_string_pretty(&prepare).unwrap()),
         )
@@ -267,7 +270,7 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = crate::git::command_in(&self.repository.path, false)
+        let _ = git::command_in(&self.repository.path, false)
             .args(["worktree", "remove", "--force", "--"])
             .arg(&self.candidate)
             .status();
@@ -323,9 +326,8 @@ fn one_prepare_derives_hash_bound_accept_and_close_requests() {
     let accept_path = fixture.coordination.join("accept.json");
     let close_path = fixture.coordination.join("close-prepare.json");
     let accept: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&accept_path).unwrap()).unwrap();
-    let close: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&close_path).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&accept_path).unwrap()).unwrap();
+    let close: serde_json::Value = serde_json::from_slice(&fs::read(&close_path).unwrap()).unwrap();
     assert_eq!(accept["slice"], "post-gate-test");
     assert_eq!(accept["push"]["reference"], "refs/heads/develop");
     assert_eq!(accept["gate_request_hash"], digest_file(&fixture.gate));
@@ -352,7 +354,7 @@ fn alpha2_standing_routine_derives_exact_effect_scope() {
     prepare_with(&fixture.candidate, &fixture.prepare, || Ok(())).unwrap();
 
     let accept: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(fixture.coordination.join("accept.json")).unwrap())
+        serde_json::from_slice(&fs::read(fixture.coordination.join("accept.json")).unwrap())
             .unwrap();
     assert_eq!(accept["schema"], ACCEPT_REQUEST_SCHEMA_V1_ALPHA2);
     assert!(accept.get("approval_scope").is_none());
@@ -376,7 +378,7 @@ fn alpha2_exact_candidate_uses_the_same_effect_scope() {
     prepare_with(&fixture.candidate, &fixture.prepare, || Ok(())).unwrap();
 
     let accept: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(fixture.coordination.join("accept.json")).unwrap())
+        serde_json::from_slice(&fs::read(fixture.coordination.join("accept.json")).unwrap())
             .unwrap();
     assert_eq!(accept["schema"], ACCEPT_REQUEST_SCHEMA_V1_ALPHA2);
     assert!(
@@ -396,12 +398,11 @@ fn alpha3_derives_close_and_allows_no_push() {
     prepare_with(&fixture.candidate, &fixture.prepare, || Ok(())).unwrap();
 
     let accept: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(fixture.coordination.join("accept.json")).unwrap())
+        serde_json::from_slice(&fs::read(fixture.coordination.join("accept.json")).unwrap())
             .unwrap();
-    let close: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(fixture.coordination.join("close-prepare.json")).unwrap(),
-    )
-    .unwrap();
+    let close: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.coordination.join("close-prepare.json")).unwrap())
+            .unwrap();
     assert_eq!(accept["schema"], ACCEPT_REQUEST_SCHEMA_V1_ALPHA3);
     assert!(accept.get("push").is_none());
     assert_eq!(accept["commit_verification"], COMMIT_GIT_HOOKS);
@@ -437,9 +438,9 @@ fn prepare_result_keeps_legacy_pushed_field_absent() {
 fn alpha3_rejects_known_unverified_environments_before_publication() {
     let fixture = Fixture::fast_no_push();
     let mut gate: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&fixture.gate).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&fixture.gate).unwrap()).unwrap();
     gate["known_unverified_environments"] = serde_json::json!(["macOS host unavailable"]);
-    std::fs::write(
+    fs::write(
         &fixture.gate,
         format!("{}\n", serde_json::to_string_pretty(&gate).unwrap()),
     )
@@ -473,9 +474,9 @@ fn stale_gate_change_publishes_no_downstream_artifact() {
     let gate = fixture.gate.clone();
 
     let error = prepare_with(&fixture.candidate, &fixture.prepare, || {
-        let mut bytes = std::fs::read(&gate).unwrap();
+        let mut bytes = fs::read(&gate).unwrap();
         bytes.push(b'\n');
-        std::fs::write(&gate, bytes).unwrap();
+        fs::write(&gate, bytes).unwrap();
         Ok(())
     })
     .unwrap_err();
@@ -508,7 +509,7 @@ fn close_observations_generate_the_frozen_downstream_shape() {
 #[test]
 fn gate_scope_mismatch_is_rejected_before_publication() {
     let path = test_support::unique_path("post-gate-approval-scope");
-    std::fs::write(
+    fs::write(
         &path,
         br#"{"approval":{"kind":"exact_candidate","scope":"scope-a"}}"#,
     )
@@ -518,7 +519,7 @@ fn gate_scope_mismatch_is_rejected_before_publication() {
     let error = require_gate_authorization(&path, "scope-b", ACCEPT_REQUEST_SCHEMA).unwrap_err();
 
     assert!(error.contains("exact_candidate approval"));
-    std::fs::remove_file(path).unwrap();
+    fs::remove_file(path).unwrap();
 }
 
 // 첫 capture 뒤 gate나 의미 원문의 바이트 하나라도 달라지면 새 hash로 조용히
@@ -539,13 +540,13 @@ fn changed_gate_bytes_fail_closed() {
 #[test]
 fn existing_mismatched_output_fails_before_partial_publication() {
     let path = test_support::unique_path("post-gate-existing-output");
-    std::fs::write(&path, b"old\n").unwrap();
+    fs::write(&path, b"old\n").unwrap();
 
     let error = preflight_publication(&path, b"new\n", "Slice accept request").unwrap_err();
 
     assert!(error.contains("existing Slice accept request changed"));
-    assert_eq!(std::fs::read(&path).unwrap(), b"old\n");
-    std::fs::remove_file(path).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"old\n");
+    fs::remove_file(path).unwrap();
 }
 
 // candidate prefix를 포함한 임시 경로는 같은 exact 후보에는 재사용 가능하고 다른
@@ -587,7 +588,7 @@ fn input_and_output_path_aliases_are_rejected() {
 }
 
 fn git(repository: &Path, arguments: &[&str]) {
-    let status = crate::git::command_in(repository, false)
+    let status = git::command_in(repository, false)
         .args(arguments)
         .status()
         .unwrap();
@@ -595,12 +596,12 @@ fn git(repository: &Path, arguments: &[&str]) {
 }
 
 fn git_line(repository: &Path, arguments: &[&str]) -> String {
-    crate::git::output_in(repository, arguments, false)
+    git::output_in(repository, arguments, false)
         .unwrap()
         .trim()
         .to_owned()
 }
 
 fn digest_file(path: &Path) -> String {
-    review_protocol::digest(&std::fs::read(path).unwrap())
+    review_protocol::digest(&fs::read(path).unwrap())
 }

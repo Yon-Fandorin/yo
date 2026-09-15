@@ -1,10 +1,14 @@
 use std::{
+    io,
     io::Write,
     path::Path,
     process::{Command, Stdio},
 };
 
 use serde::{Deserialize, Serialize, de::IgnoredAny};
+
+#[cfg(test)]
+use crate::git;
 
 pub(crate) fn run_methexis_check(repository: &Path) -> Result<(), String> {
     let mode = validation_mode(repository)?;
@@ -157,7 +161,7 @@ fn untracked_methexis_paths(
 fn git_command(repository: &Path, _environment: GitEnvironment) -> Command {
     #[cfg(test)]
     if _environment.is_isolated() {
-        let mut command = crate::git::test_command_in(repository);
+        let mut command = git::test_command_in(repository);
         command.stdin(Stdio::null());
         return command;
     }
@@ -268,8 +272,8 @@ fn run_selected_check(repository: &Path, mode: ValidationMode) -> Result<Authori
         &output.status.to_string(),
         &output.stdout,
         &output.stderr,
-        &mut std::io::stdout(),
-        &mut std::io::stderr(),
+        &mut io::stdout(),
+        &mut io::stderr(),
     )
 }
 

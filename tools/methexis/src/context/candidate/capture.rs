@@ -1,7 +1,7 @@
 //! Symlink-safe, bounded, immutable candidate-file capture.
-
 use std::{
     ffi::OsStr,
+    fmt,
     fs::File,
     io::Read,
     path::{Component, Path},
@@ -172,7 +172,7 @@ fn changed(path: &str) -> ResolveFailure {
     )
 }
 
-fn io_failure(error: impl std::fmt::Display, path: &str) -> ResolveFailure {
+fn io_failure(error: impl fmt::Display, path: &str) -> ResolveFailure {
     failure("candidate_capture_failed", &error.to_string(), false, path)
 }
 

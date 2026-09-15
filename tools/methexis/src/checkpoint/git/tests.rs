@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process,
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -16,9 +17,9 @@ struct TestRepository {
 
 impl TestRepository {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "methexis-proposal-index-{}-{}",
-            std::process::id(),
+            process::id(),
             REPOSITORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();

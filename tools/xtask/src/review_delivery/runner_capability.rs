@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fmt, path::Path};
 
 use serde::Deserialize;
 
@@ -64,7 +64,7 @@ pub(super) fn require(
     Ok(())
 }
 
-fn bootstrap_failure(execution_isolation: &str, detail: impl std::fmt::Display) -> String {
+fn bootstrap_failure(execution_isolation: &str, detail: impl fmt::Display) -> String {
     format!(
         "trusted current-develop Yo does not support selected execution isolation `{execution_isolation}`: {detail}; select a disjoint already-active reviewer before an immutable claim, then dogfood this isolation after integration"
     )

@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use super::{
     Inputs, MAX_INPUT_BYTES, MAX_PACKET_BYTES, WireContract,
@@ -96,9 +96,9 @@ pub(super) fn verify_chain_head_with(
                 .ok_or_else(|| "published ReviewDeltaId is not a SHA-256 identity".to_owned())?,
         )
         .join("manifest.json");
-    if std::fs::canonicalize(manifest_path)
+    if fs::canonicalize(manifest_path)
         .map_err(|error| format!("cannot resolve published delta manifest: {error}"))?
-        != std::fs::canonicalize(&expected_path)
+        != fs::canonicalize(&expected_path)
             .map_err(|error| format!("cannot resolve published ReviewDeltaId directory: {error}"))?
     {
         return Err("manifest is not the exact published ReviewDeltaId artifact".to_owned());

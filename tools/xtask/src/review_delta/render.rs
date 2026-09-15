@@ -1,3 +1,5 @@
+use std::str;
+
 use serde::Serialize;
 
 use super::{
@@ -123,7 +125,7 @@ fn append_section(
     path: &str,
     bytes: &[u8],
 ) -> Result<(), String> {
-    std::str::from_utf8(bytes)
+    str::from_utf8(bytes)
         .map_err(|_| format!("review delta section `{name}` is not UTF-8 model-visible text"))?;
     let metadata = serde_json::to_vec(&SectionMetadata {
         kind,
@@ -195,7 +197,7 @@ pub(super) fn delivery_profile_bytes_for(contract: WireContract) -> Vec<u8> {
 }
 
 pub(super) fn count_tokens(bytes: &[u8]) -> Result<usize, String> {
-    let text = std::str::from_utf8(bytes)
+    let text = str::from_utf8(bytes)
         .map_err(|_| "canonical review delta packet is not UTF-8".to_owned())?;
     Ok(tiktoken_rs::o200k_base_singleton()
         .encode_ordinary(text)

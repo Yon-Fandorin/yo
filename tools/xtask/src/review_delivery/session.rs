@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, str};
 
 use yo_core::{
     AgentCommand, SessionId, TranscriptRecord, TurnId,
@@ -277,7 +277,7 @@ fn observe_session_inner(
             format!("cannot recover isolated durable Session: {error}"),
         )
     })?;
-    let packet = std::str::from_utf8(packet).map_err(|error| {
+    let packet = str::from_utf8(packet).map_err(|error| {
         (
             observation.clone(),
             format!("verified review packet is not UTF-8: {error}"),

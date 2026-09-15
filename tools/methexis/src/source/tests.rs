@@ -1,8 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    env, fs,
     io::ErrorKind,
     path::PathBuf,
+    process, slice,
     sync::{
         OnceLock,
         atomic::{AtomicU64, Ordering},
@@ -12,7 +13,9 @@ use std::{
 
 use super::{Eligibility, NegativeRecords, UnitFreshness, revision, working_tree};
 use crate::{
+    check,
     check::Foundation,
+    checkpoint, model,
     model::{
         ExternalFreshness, KnowledgeKind, KnowledgeMetadata, KnowledgeUnit, Owner, Relations,
         SOURCE_SCHEMA, Source, SourcePayload, SourceRecord, SourceRef,
@@ -47,7 +50,7 @@ fn source_revision_is_domain_separated_by_kind() {
         id: "tui.source".to_owned(),
         revision: hash('0'),
         payload: SourcePayload::Conversation {
-            material: crate::model::ConversationMaterial::Excerpt {
+            material: model::ConversationMaterial::Excerpt {
                 content: "same semantic bytes".to_owned(),
             },
         },
@@ -195,9 +198,10 @@ fn final_code_read_detects_a_mutation_before_its_post_read_stat() {
     })
     .expect_err("post-read stat must detect the concurrent mutation");
 
-    let report = crate::check::failed_authority_report(
-        crate::checkpoint::AuthorityFailure::from_source("0123456789abcdef", failure),
-    );
+    let report = check::failed_authority_report(checkpoint::AuthorityFailure::from_source(
+        "0123456789abcdef",
+        failure,
+    ));
     assert!(report.retryable);
     assert!(report.units.is_empty());
     assert_eq!(report.snapshot_revision, None);
@@ -363,7 +367,7 @@ fn conversation_and_external_sources_fail_closed_in_a_multi_source_unit() {
             id: "tui.conversation".to_owned(),
             revision: hash('0'),
             payload: SourcePayload::Conversation {
-                material: crate::model::ConversationMaterial::Excerpt {
+                material: model::ConversationMaterial::Excerpt {
                     content: "Authorized excerpt.".to_owned(),
                 },
             },
@@ -711,7 +715,7 @@ fn exact_negative_records_apply_invalid_over_suspect_over_stale_and_cannot_be_lo
     let stale = super::evaluate(
         &repository.path,
         &trusted,
-        std::slice::from_ref(&external),
+        slice::from_ref(&external),
         &selected,
     )
     .unwrap();
@@ -721,7 +725,7 @@ fn exact_negative_records_apply_invalid_over_suspect_over_stale_and_cannot_be_lo
     let historical = super::evaluate(
         &repository.path,
         &trusted,
-        std::slice::from_ref(&external),
+        slice::from_ref(&external),
         &selected,
     )
     .unwrap();
@@ -734,7 +738,7 @@ fn exact_negative_records_apply_invalid_over_suspect_over_stale_and_cannot_be_lo
     let suspect = super::evaluate(
         &repository.path,
         &trusted,
-        std::slice::from_ref(&external),
+        slice::from_ref(&external),
         &selected,
     )
     .unwrap();
@@ -754,7 +758,7 @@ fn exact_negative_records_apply_invalid_over_suspect_over_stale_and_cannot_be_lo
     let retained = super::evaluate(
         &repository.path,
         &trusted,
-        std::slice::from_ref(&external),
+        slice::from_ref(&external),
         &selected,
     )
     .unwrap();
@@ -860,7 +864,7 @@ fn clone_foundation(foundation: &Foundation) -> Foundation {
 fn unit(id: &str, relations: Relations) -> KnowledgeUnit {
     KnowledgeUnit {
         metadata: KnowledgeMetadata {
-            schema: crate::model::KNOWLEDGE_SCHEMA.to_owned(),
+            schema: model::KNOWLEDGE_SCHEMA.to_owned(),
             id: id.to_owned(),
             kind: KnowledgeKind::Rule,
             owner: "owner".to_owned(),
@@ -904,9 +908,9 @@ impl TemporaryRepository {
         });
         loop {
             let sequence = TEMPORARY_REPOSITORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
+            let path = env::temp_dir().join(format!(
                 "methexis-source-test-{}-{nonce}-{sequence}",
-                std::process::id(),
+                process::id(),
             ));
             match fs::create_dir(&path) {
                 Ok(()) => {

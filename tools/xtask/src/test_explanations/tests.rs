@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use super::{check_from, check_in, check_paths};
 use crate::test_support::TestRepository;
@@ -94,7 +94,7 @@ fn skips_tracked_sources_deleted_from_the_working_tree() {
     let repository = TestRepository::new("test-explanation-deleted-source");
     let deleted = repository.write("crates/deleted.rs", "#[test]\nfn deleted() {}\n");
     repository.git(["add", "crates/deleted.rs"]);
-    std::fs::remove_file(deleted).unwrap();
+    fs::remove_file(deleted).unwrap();
 
     assert!(check_in(&repository.path, false).is_ok());
 }

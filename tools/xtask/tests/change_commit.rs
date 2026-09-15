@@ -1,10 +1,11 @@
 #![cfg(unix)]
-
 use std::{
-    fs,
+    env, fs,
     os::unix::fs::PermissionsExt,
     path::PathBuf,
+    process,
     process::{Command, ExitStatus, Stdio},
+    thread, time,
     time::{Duration, Instant},
 };
 
@@ -33,7 +34,7 @@ impl Repository {
                 let _ = child.wait();
                 panic!("command timed out: {program} {args:?}");
             }
-            std::thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(10));
         }
     }
 
@@ -52,11 +53,11 @@ impl Drop for Repository {
 // HEAD 변경 전에 거부되는지 확인한다. 명시적 formal preflight는 계속 엄격하다.
 #[test]
 fn ordinary_git_messages_work_but_false_review_claims_do_not_commit() {
-    let path = std::env::temp_dir().join(format!(
+    let path = env::temp_dir().join(format!(
         "yo-change-commit-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));

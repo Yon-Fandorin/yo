@@ -1,8 +1,8 @@
 //! Shared isolated-repository fixture and structured CLI assertions.
-
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process,
     process::{Command, Output},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -21,10 +21,7 @@ impl TempRepository {
             .duration_since(UNIX_EPOCH)
             .expect("system clock is after the Unix epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "methexis-review-flow-{}-{unique}",
-            std::process::id()
-        ));
+        let path = env::temp_dir().join(format!("methexis-review-flow-{}-{unique}", process::id()));
         fs::create_dir(&path).expect("create temporary repository");
         copy_directory(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/relocation-a/methexis"),

@@ -2,19 +2,23 @@
 //!
 //! Its request and response bytes remain compatible while implementation
 //! delegates canonical Source and Knowledge work to the shared layer.
-
-use std::path::Path;
+use std::{fs, io, path::Path};
 
 use serde::{Deserialize, Serialize};
 
 use super::{AuthorSuccess, decode_request, shared};
-use crate::review::{
-    COMPILER, OperationFailure, PROFILE, PROJECTION_SCHEMA, ProjectionMetadata, ProjectionRecord,
-    hash_bytes,
-    operations::{normalize_markdown, publish_review_packet, require_schema},
-    records::{parse_projection, projection_input_hash, render_projection, render_projection_body},
-    relative_path, semantic_hash,
-    storage::publish_tracked_record,
+use crate::{
+    review,
+    review::{
+        COMPILER, OperationFailure, PROFILE, PROJECTION_SCHEMA, ProjectionMetadata,
+        ProjectionRecord, hash_bytes,
+        operations::{normalize_markdown, publish_review_packet, require_schema},
+        records::{
+            parse_projection, projection_input_hash, render_projection, render_projection_body,
+        },
+        relative_path, semantic_hash,
+        storage::publish_tracked_record,
+    },
 };
 
 pub(super) const REQUEST_SCHEMA: &str = "methexis.author-revision-request/v1alpha1";
@@ -104,7 +108,7 @@ pub(super) fn author_revision(
         Some(korean) => korean,
         None => parse_projection(&projection_path, repository_root)
             .map_err(|diagnostic| {
-                crate::review::failure_from_diagnostic(
+                review::failure_from_diagnostic(
                     OPERATION,
                     diagnostic,
                     "provide korean_markdown to author the replacement Projection",
@@ -131,13 +135,13 @@ pub(super) fn author_revision(
         hash: projection_hash.clone(),
         body: render_projection_body(&korean),
     };
-    let projection_capture = match std::fs::symlink_metadata(&projection_path) {
+    let projection_capture = match fs::symlink_metadata(&projection_path) {
         Ok(_) => Some(shared::capture(
             repository_root,
             &projection_path,
             &request.knowledge_id,
         )?),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => {
             return Err(OperationFailure::new(
                 OPERATION,

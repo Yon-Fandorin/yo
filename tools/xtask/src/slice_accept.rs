@@ -1,6 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
+    str,
 };
 
 use serde::{Deserialize, Serialize};
@@ -725,7 +726,7 @@ fn candidate_changed_paths(
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
         .map(|path| {
-            std::str::from_utf8(path)
+            str::from_utf8(path)
                 .map(str::to_owned)
                 .map_err(|error| format!("candidate changed path must be UTF-8: {error}"))
         })
@@ -864,7 +865,7 @@ pub(crate) fn prepare_commit_message(
 }
 
 fn compose_message(source: &[u8], trailers: &[String]) -> Result<Vec<u8>, String> {
-    let source = std::str::from_utf8(source)
+    let source = str::from_utf8(source)
         .map_err(|error| format!("accepted commit message source must be UTF-8: {error}"))?;
     if source.contains('\0') || source.contains('\r') {
         return Err("accepted commit message source must use LF text without NUL bytes".to_owned());

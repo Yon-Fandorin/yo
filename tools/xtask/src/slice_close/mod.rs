@@ -7,8 +7,10 @@ mod storage;
 
 #[cfg(test)]
 mod tests;
-
-use std::path::{Path, PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 pub(crate) use prepare::{
     Observations as CloseObservations, request_bytes as close_prepare_request_bytes,
@@ -344,9 +346,9 @@ fn apply_with_before_delete(
 }
 
 fn path_exists(path: &Path) -> Result<bool, String> {
-    match std::fs::symlink_metadata(path) {
+    match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!("cannot inspect {}: {error}", path.display())),
     }
 }
@@ -448,14 +450,14 @@ fn path_within(path: &Path, directory: &Path) -> Result<bool, String> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let parent = std::fs::canonicalize(parent)
+    let parent = fs::canonicalize(parent)
         .map_err(|error| format!("cannot resolve plan parent {}: {error}", parent.display()))?;
     let name = path
         .file_name()
         .ok_or_else(|| format!("Slice close plan path {} has no file name", path.display()))?;
     let path = parent.join(name);
     let directory = if directory.exists() {
-        std::fs::canonicalize(directory).map_err(|error| {
+        fs::canonicalize(directory).map_err(|error| {
             format!(
                 "cannot resolve planned worktree {}: {error}",
                 directory.display()

@@ -1,9 +1,10 @@
 //! Thin process boundary for the agent-first discovery contract.
-
 use std::{
+    env,
     ffi::OsString,
     fs::File,
     io::{self, Read, Write},
+    path,
     path::PathBuf,
     process::ExitCode,
 };
@@ -102,7 +103,7 @@ fn run_discover(
     Ok(ExitCode::SUCCESS)
 }
 
-fn read_request(path: &std::path::Path) -> Result<Vec<u8>, DiscoveryError> {
+fn read_request(path: &path::Path) -> Result<Vec<u8>, DiscoveryError> {
     let mut file = File::open(path).map_err(|error| {
         DiscoveryError::io(
             "request_read_failed",
@@ -158,7 +159,7 @@ fn parse_discover_arguments(arguments: &[OsString]) -> Result<(PathBuf, PathBuf)
         request_path.ok_or_else(|| usage_error("discover requires a request file"))?;
     let repository_root = match repository_root {
         Some(path) => path,
-        None => std::env::current_dir().map_err(|error| {
+        None => env::current_dir().map_err(|error| {
             DiscoveryError::io(
                 "repository_root_unavailable",
                 format!("cannot resolve the current directory: {error}"),

@@ -8,10 +8,10 @@ mod snapshot;
 #[cfg(test)]
 mod tests;
 mod validation;
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    str,
 };
 
 pub(crate) use records::CatalogUnit as Unit;
@@ -185,7 +185,7 @@ fn parse_projection(
 }
 
 fn normalized_utf8(path: &str, bytes: &[u8]) -> Result<String, DiscoveryError> {
-    let content = std::str::from_utf8(bytes)
+    let content = str::from_utf8(bytes)
         .map_err(|error| invalid_record(path, format!("record is not UTF-8: {error}")))?;
     Ok(content.replace("\r\n", "\n").replace('\r', "\n"))
 }

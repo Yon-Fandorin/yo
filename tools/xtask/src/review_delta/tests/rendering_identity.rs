@@ -1,3 +1,5 @@
+use std::str;
+
 use super::{
     super::{
         Inputs, WireContract,
@@ -11,6 +13,7 @@ use super::{
     support::{commit, finding, hash, prior, prior_findings},
 };
 use crate::{
+    review_delta,
     review_delta::model::PriorFindings,
     review_protocol::{NamedCaptured, digest, domain_digest},
 };
@@ -51,7 +54,7 @@ fn packet_keeps_prior_identity_without_replaying_the_prior_packet() {
     };
     let plan = build_plan_for(&inputs, contract);
     let packet = render_packet(&hash(9), &plan, &inputs).unwrap();
-    let text = std::str::from_utf8(&packet).unwrap();
+    let text = str::from_utf8(&packet).unwrap();
 
     assert!(text.contains(&inputs.prior.review_id));
     assert!(text.contains("F1"));
@@ -180,8 +183,7 @@ fn legacy_v1_delta_artifacts_keep_frozen_bytes_and_identity() {
 fn v1_alpha1_delta_artifacts_have_a_distinct_canonical_identity() {
     let (legacy_id, _, _) = identity_artifacts(v1::contract());
     let (review_delta_id, packet, manifest_bytes) = identity_artifacts(v1alpha1::contract());
-    let manifest: crate::review_delta::model::Manifest =
-        serde_json::from_slice(&manifest_bytes).unwrap();
+    let manifest: review_delta::model::Manifest = serde_json::from_slice(&manifest_bytes).unwrap();
 
     assert_eq!(
         review_delta_id,

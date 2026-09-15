@@ -1,9 +1,9 @@
-use std::{ffi::OsString, path::PathBuf, process::ExitCode};
+use std::{ffi::OsString, fs, path, path::PathBuf, process::ExitCode};
 
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(std::path::Path::parent)
+        .and_then(path::Path::parent)
         .expect("crate is nested below the repository root")
         .to_owned()
 }
@@ -170,8 +170,8 @@ fn identical_snapshot_and_request_are_byte_deterministic() {
 #[test]
 fn complete_success_wire_output_matches_the_golden_fixture() {
     let (_, stdout) = success("query-english.json");
-    let expected = std::fs::read(contract_root().join("expected-query-english.json"))
-        .expect("success fixture");
+    let expected =
+        fs::read(contract_root().join("expected-query-english.json")).expect("success fixture");
 
     assert_wire_bytes(&stdout, &expected);
 }
@@ -180,7 +180,7 @@ fn complete_success_wire_output_matches_the_golden_fixture() {
 #[test]
 fn complete_failure_wire_output_matches_the_golden_fixture() {
     let (code, stdout, stderr) = run_example("failure-duplicate-anchor.json");
-    let expected = std::fs::read(contract_root().join("expected-failure-duplicate-anchor.json"))
+    let expected = fs::read(contract_root().join("expected-failure-duplicate-anchor.json"))
         .expect("failure fixture");
 
     assert_eq!(code, ExitCode::from(2));

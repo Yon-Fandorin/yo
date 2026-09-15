@@ -122,7 +122,7 @@ fn diagnostic(path: String, code: &str, message: String, knowledge_id: &str) -> 
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path};
 
     use super::validate_canonical_approval_followthrough;
     use crate::review::{
@@ -130,8 +130,8 @@ mod tests {
         semantic_hash,
     };
 
-    fn repository() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    fn repository() -> path::PathBuf {
+        path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()
             .unwrap()

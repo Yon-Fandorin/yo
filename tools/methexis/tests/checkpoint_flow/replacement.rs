@@ -1,4 +1,5 @@
 //! Active-record compare-and-swap replacement.
+use std::fs;
 
 use serde_json::json;
 
@@ -21,7 +22,7 @@ fn activation_replacement_requires_the_exact_active_record_hash() {
     );
     let active =
         success_json(repository.run(&["propose-activation", first_activation.to_str().unwrap()]));
-    let original = std::fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap();
+    let original = fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap();
 
     repository.git(&[
         "commit",
@@ -58,7 +59,7 @@ fn activation_replacement_requires_the_exact_active_record_hash() {
         failure_json(repository.run(&["propose-activation", conflicting.to_str().unwrap()]));
     assert_eq!(failure["error"]["code"], "activation_conflict");
     assert_eq!(
-        std::fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap(),
+        fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap(),
         original
     );
 
@@ -76,7 +77,7 @@ fn activation_replacement_requires_the_exact_active_record_hash() {
     assert_eq!(replaced["status"], "written");
     assert_eq!(replaced["checkpoint_id"], second["checkpoint_id"]);
     let active_record: serde_json::Value = serde_norway::from_slice(
-        &std::fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap(),
+        &fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap(),
     )
     .unwrap();
     // persisted active lineage가 요청의 정확한 CAS 전임자를 보존해야 staged 검사가 재현할 수 있다.
@@ -93,7 +94,7 @@ fn checkpoint_success_reports_only_the_reproducible_active_delta() {
     let second = repository
         .path
         .join("methexis/knowledge/first-location/secondary.md");
-    std::fs::write(
+    fs::write(
         second,
         br#"---
 schema: methexis.knowledge/v1alpha1

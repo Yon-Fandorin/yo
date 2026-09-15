@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::{env, path, path::Path, process};
 
-fn fixture(name: &str) -> std::path::PathBuf {
+fn fixture(name: &str) -> path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("fixtures")
@@ -262,10 +262,8 @@ fn authority_root_symlinks_are_rejected_without_following_them() {
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after the Unix epoch")
         .as_nanos();
-    let repository = std::env::temp_dir().join(format!(
-        "methexis-root-symlink-{}-{unique}",
-        std::process::id()
-    ));
+    let repository =
+        env::temp_dir().join(format!("methexis-root-symlink-{}-{unique}", process::id()));
     fs::create_dir(&repository).expect("create temporary repository");
     symlink(
         fixture("relocation-a").join("methexis"),

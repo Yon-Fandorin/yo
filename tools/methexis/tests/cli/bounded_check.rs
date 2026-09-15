@@ -1,3 +1,5 @@
+use std::path;
+
 use super::{CorpusRepository, methexis};
 
 // summary 성공 출력은 전체 KnowledgeUnit 목록을 생략해 agent context를 아끼고,
@@ -126,7 +128,7 @@ fn check_unit_rejects_unbounded_and_pre_authority_combinations() {
 // 실패 때는 --summary나 --unit이 진단을 숨기지 않고 기존 전체 보고서를 stderr에 보존한다.
 #[test]
 fn check_summary_preserves_the_full_failure_report() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let fixture = path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("fixtures")
         .join("local-invalid");

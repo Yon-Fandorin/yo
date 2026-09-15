@@ -1,5 +1,4 @@
 //! Source freshness for one trusted active Checkpoint.
-
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     path::Path,
@@ -8,6 +7,7 @@ use std::{
 use super::{Eligibility, FreshnessEvaluation, UnitFreshness};
 use crate::{
     check::Foundation,
+    model,
     model::{Source, SourcePayload},
 };
 
@@ -199,7 +199,7 @@ fn sources_by_id(sources: &[Source]) -> BTreeMap<&str, &Source> {
 }
 
 pub(super) fn propagate_required_dependents(
-    trusted_units: &BTreeMap<&str, &crate::model::KnowledgeUnit>,
+    trusted_units: &BTreeMap<&str, &model::KnowledgeUnit>,
     selected: &BTreeSet<String>,
     states: &mut BTreeMap<String, UnitFreshness>,
 ) {

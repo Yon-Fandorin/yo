@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests;
-
 use std::{
     collections::BTreeSet,
+    fs,
     fs::File,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -335,7 +336,7 @@ fn verify_active_leases(
                 worktree.path.display()
             )
         })?;
-        let active_path = std::fs::canonicalize(&active.contract_path).map_err(|error| {
+        let active_path = fs::canonicalize(&active.contract_path).map_err(|error| {
             format!(
                 "cannot resolve active contract {}: {error}",
                 active.contract_path.display()
@@ -360,7 +361,7 @@ fn verify_coordination_leases(
     coordination: &Path,
     target_contract_path: &Path,
 ) -> Result<BTreeSet<PathBuf>, String> {
-    match std::fs::symlink_metadata(coordination) {
+    match fs::symlink_metadata(coordination) {
         Ok(metadata) if metadata.file_type().is_dir() => {},
         Ok(_) => {
             return Err(format!(
@@ -368,7 +369,7 @@ fn verify_coordination_leases(
                 coordination.display()
             ));
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(BTreeSet::new());
         },
         Err(error) => {
@@ -378,9 +379,9 @@ fn verify_coordination_leases(
             ));
         },
     }
-    let entries = match std::fs::read_dir(coordination) {
+    let entries = match fs::read_dir(coordination) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
         Err(error) => {
             return Err(format!(
                 "cannot inspect coordination directory {}: {error}",
@@ -431,7 +432,7 @@ fn verify_coordination_leases(
         slice_contract::validate_contract(&active_integration.path, &active).map_err(|error| {
             format!("invalid active Slice contract {}: {error}", path.display())
         })?;
-        let canonical = std::fs::canonicalize(&path).map_err(|error| {
+        let canonical = fs::canonicalize(&path).map_err(|error| {
             format!("cannot resolve active contract {}: {error}", path.display())
         })?;
         checked.insert(canonical);
@@ -509,20 +510,20 @@ fn validate_prepared_worktree(
 }
 
 fn read_optional_contract(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match std::fs::symlink_metadata(path) {
+    match fs::symlink_metadata(path) {
         Ok(_) => {
             bounded_file::read_regular(path, MAX_CONTRACT_BYTES, "Slice coordination contract")
                 .map(Some)
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!("cannot inspect {}: {error}", path.display())),
     }
 }
 
 fn path_entry_exists(path: &Path) -> Result<bool, String> {
-    match std::fs::symlink_metadata(path) {
+    match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!("cannot inspect {}: {error}", path.display())),
     }
 }
@@ -642,8 +643,8 @@ fn encode_failure(
     if prepared_worktree {
         failure["effects"]["worktree"] = serde_json::json!({"state": "prepared"});
         match slice_contract::binding_path_for(&worktree_path) {
-            Ok(binding_path) => match std::fs::symlink_metadata(&binding_path) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(binding_path) => match fs::symlink_metadata(&binding_path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     failure["binding_path"] = serde_json::json!(binding_path);
                     failure["effects"]["binding"] = serde_json::json!({"state": "absent"});
                 },

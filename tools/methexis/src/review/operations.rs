@@ -1,10 +1,11 @@
 //! Agent operations that coordinate foundation, record, and storage boundaries.
-
 use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
 };
+
+use serde::de;
 
 use super::{
     APPROVAL_REQUEST_SCHEMA, ApprovalInput, ApprovalRequest, CANONICAL_APPROVAL_REQUEST_SCHEMA,
@@ -21,6 +22,7 @@ use super::{
     success, valid_review_time,
 };
 use crate::{
+    check,
     check::{Foundation, load_foundation},
     model::KnowledgeUnit,
 };
@@ -381,7 +383,7 @@ fn require_projection_match(
 
 pub(crate) fn read_request<T>(path: &Path, operation: &'static str) -> Result<T, OperationFailure>
 where
-    T: serde::de::DeserializeOwned,
+    T: de::DeserializeOwned,
 {
     let mut file = fs::File::open(path).map_err(|error| {
         OperationFailure::new(
@@ -459,7 +461,7 @@ pub(crate) fn normalize_markdown(
             "provide the exact Korean text to preserve for review",
         ));
     }
-    if crate::check::body_has_forbidden_html(&normalized) {
+    if check::body_has_forbidden_html(&normalized) {
         return Err(OperationFailure::new(
             operation,
             "raw_html_forbidden",

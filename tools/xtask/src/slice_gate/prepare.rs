@@ -3,9 +3,11 @@ mod model;
 
 #[cfg(test)]
 mod tests;
-
+#[cfg(test)]
+use std::cell;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs,
     path::Path,
 };
 
@@ -323,9 +325,9 @@ fn require_review_contract(
     review: &VerifiedReview,
 ) -> Result<(), String> {
     let reviewed_path = resolve_input_path(repository, &review.slice_contract_path);
-    let reviewed = std::fs::canonicalize(&reviewed_path)
+    let reviewed = fs::canonicalize(&reviewed_path)
         .map_err(|error| format!("cannot resolve reviewed Slice contract: {error}"))?;
-    let current = std::fs::canonicalize(&bound.contract_path)
+    let current = fs::canonicalize(&bound.contract_path)
         .map_err(|error| format!("cannot resolve bound Slice contract: {error}"))?;
     if reviewed != current || review.slice_contract_hash != bound.contract_id {
         return Err("review chain does not bind the current Slice contract".to_owned());
@@ -485,8 +487,8 @@ type FinalRevalidateHook = Box<dyn FnOnce() -> Result<(), String>>;
 
 #[cfg(test)]
 thread_local! {
-    static FINAL_REVALIDATE_HOOK: std::cell::RefCell<Option<FinalRevalidateHook>> =
-        const { std::cell::RefCell::new(None) };
+    static FINAL_REVALIDATE_HOOK: cell::RefCell<Option<FinalRevalidateHook>> =
+        const { cell::RefCell::new(None) };
 }
 
 #[cfg(test)]

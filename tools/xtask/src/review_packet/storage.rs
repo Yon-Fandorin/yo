@@ -1,8 +1,11 @@
 use std::{
+    ffi,
     ffi::OsString,
     fs::File,
     io::Write,
+    os,
     path::Path,
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -208,15 +211,15 @@ fn require_exact(directory: &Path, packet: &[u8], manifest: &[u8]) -> Result<(),
 }
 
 fn create_temporary(
-    parent: &std::os::fd::OwnedFd,
-    target: &std::ffi::OsStr,
+    parent: &os::fd::OwnedFd,
+    target: &ffi::OsStr,
     directory: &Path,
 ) -> Result<OsString, String> {
     for _ in 0..1024 {
         let sequence = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
         let mut temporary = OsString::from(".");
         temporary.push(target);
-        temporary.push(format!(".yo-prepare-{}-{sequence}", std::process::id()));
+        temporary.push(format!(".yo-prepare-{}-{sequence}", process::id()));
         match mkdirat(parent, &temporary, Mode::from_raw_mode(0o700)) {
             Ok(()) => return Ok(temporary),
             Err(Errno::EXIST) => continue,
@@ -231,7 +234,7 @@ fn create_temporary(
     Err("cannot allocate a unique prepared review packet directory".to_owned())
 }
 
-fn write_file(directory: &std::os::fd::OwnedFd, name: &str, bytes: &[u8]) -> Result<(), String> {
+fn write_file(directory: &os::fd::OwnedFd, name: &str, bytes: &[u8]) -> Result<(), String> {
     let fd = openat(directory, name, FILE_FLAGS, Mode::from_raw_mode(0o600))
         .map_err(|error| format!("cannot create prepared review {name}: {error}"))?;
     let mut file = File::from(fd);
@@ -241,17 +244,13 @@ fn write_file(directory: &std::os::fd::OwnedFd, name: &str, bytes: &[u8]) -> Res
         .map_err(|error| format!("cannot sync prepared review {name}: {error}"))
 }
 
-fn cleanup(
-    parent: &std::os::fd::OwnedFd,
-    temporary: &std::ffi::OsStr,
-    directory: &std::os::fd::OwnedFd,
-) {
+fn cleanup(parent: &os::fd::OwnedFd, temporary: &ffi::OsStr, directory: &os::fd::OwnedFd) {
     let _ = unlinkat(directory, "packet.md", AtFlags::empty());
     let _ = unlinkat(directory, "manifest.json", AtFlags::empty());
     let _ = unlinkat(parent, temporary, AtFlags::REMOVEDIR);
 }
 
-fn cleanup_path(parent: &std::os::fd::OwnedFd, temporary: &std::ffi::OsStr) {
+fn cleanup_path(parent: &os::fd::OwnedFd, temporary: &ffi::OsStr) {
     if let Ok(directory) = openat(parent, temporary, DIRECTORY_FLAGS, Mode::empty()) {
         cleanup(parent, temporary, &directory);
     }

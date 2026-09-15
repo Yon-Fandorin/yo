@@ -1,15 +1,18 @@
+use std::str;
+
 use super::super::{
     capture::{capture_context_from_result, captured},
     model::{CheckpointIdentity, ContextResult},
 };
 use crate::{
+    review_protocol,
     review_protocol::{artifact, digest},
     test_support::TestRepository,
 };
 
 struct ContextFixture {
     repository: TestRepository,
-    request: crate::review_protocol::Captured,
+    request: review_protocol::Captured,
     result: ContextResult,
     context_bytes: Vec<u8>,
     manifest_bytes: Vec<u8>,
@@ -23,7 +26,7 @@ fn context_fixture(label: &str) -> ContextFixture {
         context_bytes.clone(),
     )
     .unwrap();
-    repository.write(&context.path, std::str::from_utf8(&context.bytes).unwrap());
+    repository.write(&context.path, str::from_utf8(&context.bytes).unwrap());
     let build_id = format!("sha256:{}", "b".repeat(64));
     let checkpoint = CheckpointIdentity {
         id: format!("sha256:{}", "c".repeat(64)),
@@ -50,10 +53,7 @@ fn context_fixture(label: &str) -> ContextFixture {
         manifest_bytes.clone(),
     )
     .unwrap();
-    repository.write(
-        &manifest.path,
-        std::str::from_utf8(&manifest.bytes).unwrap(),
-    );
+    repository.write(&manifest.path, str::from_utf8(&manifest.bytes).unwrap());
     let request = captured(".local-exclude/request.json".to_owned(), b"{}\n".to_vec()).unwrap();
     let result = ContextResult {
         schema: "methexis.context-result/v1alpha1".to_owned(),
@@ -113,13 +113,13 @@ fn context_capture_rejects_absolute_and_traversing_result_paths() {
             if target == "context" {
                 fixture.repository.write(
                     ".local-exclude/context.md",
-                    std::str::from_utf8(&fixture.context_bytes).unwrap(),
+                    str::from_utf8(&fixture.context_bytes).unwrap(),
                 );
                 ".local-exclude/build/../context.md".into()
             } else {
                 fixture.repository.write(
                     ".local-exclude/manifest.json",
-                    std::str::from_utf8(&fixture.manifest_bytes).unwrap(),
+                    str::from_utf8(&fixture.manifest_bytes).unwrap(),
                 );
                 ".local-exclude/build/../manifest.json".into()
             }
@@ -181,7 +181,7 @@ fn context_capture_rejects_a_context_outside_the_manifest_owned_sibling() {
     let mut fixture = context_fixture("review-context-logical-mismatch");
     fixture.repository.write(
         ".local-exclude/build/other.md",
-        std::str::from_utf8(&fixture.context_bytes).unwrap(),
+        str::from_utf8(&fixture.context_bytes).unwrap(),
     );
     fixture.result.context.path = ".local-exclude/build/other.md".to_owned();
     fixture.result.context.hash = digest(&fixture.context_bytes);

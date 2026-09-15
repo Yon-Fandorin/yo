@@ -6,7 +6,7 @@ use std::{
 
 use serde::Serialize;
 
-use crate::{bounded_file, git, slice_contract, slice_worktree};
+use crate::{bounded_file, git, review_protocol, slice_contract, slice_worktree};
 
 mod delivery;
 
@@ -377,7 +377,7 @@ fn scan_coordination(
             let effective = scope.current_validations.iter().find(|evidence| {
                 evidence.name == name
                     && evidence.path == path
-                    && evidence.hash == crate::review_protocol::digest(&bytes)
+                    && evidence.hash == review_protocol::digest(&bytes)
             });
             let current = if scope.current_review_ids.is_empty() {
                 value.get("head_commit").and_then(serde_json::Value::as_str)
@@ -556,7 +556,7 @@ fn delivery_request_review_id(
     ) {
         let path = resolve_status_path(workspace, path);
         let bytes = bounded_file::read_regular(&path, JSON_LIMIT, "review continuation preflight")?;
-        if crate::review_protocol::digest(&bytes) != hash {
+        if review_protocol::digest(&bytes) != hash {
             return Err("review continuation preflight hash changed".to_owned());
         }
         let value: serde_json::Value = serde_json::from_slice(&bytes)
@@ -587,7 +587,7 @@ fn delivery_request_review_id(
     );
     let egress_bytes =
         bounded_file::read_regular(&egress_path, JSON_LIMIT, "review egress request")?;
-    if crate::review_protocol::digest(&egress_bytes) != egress_hash {
+    if review_protocol::digest(&egress_bytes) != egress_hash {
         return Err("review egress request hash changed".to_owned());
     }
     let egress: serde_json::Value = serde_json::from_slice(&egress_bytes)
@@ -607,7 +607,7 @@ fn delivery_request_review_id(
     let manifest_path = resolve_status_path(repository, manifest_path);
     let manifest_bytes =
         bounded_file::read_regular(&manifest_path, JSON_LIMIT, "review-chain manifest")?;
-    if crate::review_protocol::digest(&manifest_bytes) != manifest_hash {
+    if review_protocol::digest(&manifest_bytes) != manifest_hash {
         return Err("review-chain manifest hash changed".to_owned());
     }
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
@@ -1155,7 +1155,7 @@ mod tests {
 
         let current_validation_path = root.join("current-validation.json");
         let current_validation_hash =
-            crate::review_protocol::digest(&fs::read(&current_validation_path).unwrap());
+            review_protocol::digest(&fs::read(&current_validation_path).unwrap());
         let effective = [EffectiveValidation {
             name: "current-validation".to_owned(),
             path: current_validation_path,
@@ -1248,7 +1248,7 @@ mod tests {
         let egress = serde_json::to_vec(&serde_json::json!({
             "schema": "yo.slice-review-delegated-egress-request/v1alpha1",
             "manifest_path": manifest_path.display().to_string(),
-            "manifest_hash": crate::review_protocol::digest(&manifest)
+            "manifest_hash": review_protocol::digest(&manifest)
         }))
         .unwrap();
         let egress_path = coordination.join("stale-egress.json");
@@ -1258,7 +1258,7 @@ mod tests {
             serde_json::to_vec(&serde_json::json!({
                 "schema": "yo.slice-review-delegated-delivery-request/v1alpha2",
                 "egress_request_path": egress_path.display().to_string(),
-                "egress_request_hash": crate::review_protocol::digest(&egress)
+                "egress_request_hash": review_protocol::digest(&egress)
             }))
             .unwrap(),
         )

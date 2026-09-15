@@ -1,3 +1,5 @@
+use std::{fs, str};
+
 use super::{
     super::{
         REVIEW_ID_DOMAIN_V1_ALPHA3,
@@ -12,6 +14,7 @@ use super::{
     support::sample_inputs_v1_alpha3,
 };
 use crate::{
+    git, review_protocol,
     review_protocol::{artifact, digest, domain_digest},
     test_support::TestRepository,
 };
@@ -46,12 +49,7 @@ fn bootstrap_fixture(
     label: &str,
     capability_in_trusted: bool,
     implementation_change: bool,
-) -> (
-    TestRepository,
-    String,
-    String,
-    crate::review_protocol::Captured,
-) {
+) -> (TestRepository, String, String, review_protocol::Captured) {
     let repository = TestRepository::new(label);
     repository.write(".gitignore", ".local-exclude/\n");
     repository.write("methexis/active-checkpoint.yaml", "active: old\n");
@@ -64,14 +62,11 @@ fn bootstrap_fixture(
         "{\"build\":\"old-stable\"}\n",
     );
     if capability_in_trusted {
-        repository.write(
-            CAPABILITY_PATH,
-            std::str::from_utf8(CAPABILITY_BYTES).unwrap(),
-        );
+        repository.write(CAPABILITY_PATH, str::from_utf8(CAPABILITY_BYTES).unwrap());
     }
     repository.git(["add", "."]);
     repository.git(["commit", "--quiet", "-m", "trusted develop"]);
-    let trusted_commit = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let trusted_commit = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
@@ -94,10 +89,7 @@ fn bootstrap_fixture(
         "{\"build\":\"new-stable\"}\n",
     );
     if !capability_in_trusted {
-        repository.write(
-            CAPABILITY_PATH,
-            std::str::from_utf8(CAPABILITY_BYTES).unwrap(),
-        );
+        repository.write(CAPABILITY_PATH, str::from_utf8(CAPABILITY_BYTES).unwrap());
     }
     if implementation_change {
         repository.write(
@@ -107,7 +99,7 @@ fn bootstrap_fixture(
     }
     repository.git(["add", "."]);
     repository.git(["commit", "--quiet", "-m", "activation candidate"]);
-    let candidate_commit = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let candidate_commit = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
@@ -124,7 +116,7 @@ fn bootstrap_fixture(
         repository
             .write(
                 ".local-exclude/activation.json",
-                std::str::from_utf8(&activation_bytes).unwrap(),
+                str::from_utf8(&activation_bytes).unwrap(),
             )
             .to_string_lossy()
             .into_owned(),
@@ -148,7 +140,7 @@ fn prospective_packet_binds_the_exact_proposal_without_claiming_active_authority
     assert!(manifest.plan.prospective_activation.is_some());
     assert!(manifest.inputs.prospective_activation.is_some());
     let prefix = manifest.input_prefix.as_ref().unwrap();
-    let visible = std::str::from_utf8(&packet[..prefix.bytes]).unwrap();
+    let visible = str::from_utf8(&packet[..prefix.bytes]).unwrap();
     assert!(visible.starts_with("# yo Prospective Activation Review Packet\n"));
     assert!(visible.contains("\"kind\":\"prospective_activation_request\""));
     assert!(visible.contains("\"kind\":\"prospective_checkpoint\""));
@@ -279,7 +271,7 @@ fn prospective_capture_accepts_the_real_yaml_active_record_boundary() {
     repository.write(".gitignore", ".local-exclude/\n");
     repository.git(["add", ".gitignore"]);
     repository.git(["commit", "--quiet", "-m", "trusted base"]);
-    let trusted_commit = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let trusted_commit = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
@@ -301,12 +293,12 @@ fn prospective_capture_accepts_the_real_yaml_active_record_boundary() {
             "methexis/checkpoints/{}.yaml",
             checkpoint_id.strip_prefix("sha256:").unwrap()
         ),
-        std::str::from_utf8(checkpoint_bytes).unwrap(),
+        str::from_utf8(checkpoint_bytes).unwrap(),
     );
     repository.write("methexis/active-checkpoint.yaml", &active_yaml);
     repository.git(["add", "methexis"]);
     repository.git(["commit", "--quiet", "-m", "activation candidate"]);
-    let candidate_commit = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let candidate_commit = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
@@ -322,7 +314,7 @@ fn prospective_capture_accepts_the_real_yaml_active_record_boundary() {
     );
     let activation = captured(
         activation_path.to_string_lossy().into_owned(),
-        std::fs::read(&activation_path).unwrap(),
+        fs::read(&activation_path).unwrap(),
     )
     .unwrap();
     let context_request = captured(
@@ -338,7 +330,7 @@ fn prospective_capture_accepts_the_real_yaml_active_record_boundary() {
         b"context\n".to_vec(),
     )
     .unwrap();
-    repository.write(&context.path, std::str::from_utf8(&context.bytes).unwrap());
+    repository.write(&context.path, str::from_utf8(&context.bytes).unwrap());
     let build_id = format!("sha256:{}", "d".repeat(64));
     let checkpoint = super::super::model::CheckpointIdentity {
         id: checkpoint_id,
@@ -365,10 +357,7 @@ fn prospective_capture_accepts_the_real_yaml_active_record_boundary() {
         manifest_bytes,
     )
     .unwrap();
-    repository.write(
-        &manifest.path,
-        std::str::from_utf8(&manifest.bytes).unwrap(),
-    );
+    repository.write(&manifest.path, str::from_utf8(&manifest.bytes).unwrap());
     let result = super::super::model::ContextResult {
         schema: "methexis.activation-review-context-result/v1alpha1".to_owned(),
         ok: true,

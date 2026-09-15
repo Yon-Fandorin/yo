@@ -1,8 +1,9 @@
 //! Directory-handle-relative publication, locking, and path-safety policy.
-
 use std::{
     collections::{BTreeMap, BTreeSet},
+    convert,
     ffi::{OsStr, OsString},
+    fs,
     fs::File,
     io::{self, Read, Seek, Write},
     os::{
@@ -10,6 +11,7 @@ use std::{
         unix::{ffi::OsStrExt, fs::MetadataExt},
     },
     path::{Component, Path, PathBuf},
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -18,7 +20,9 @@ use rustix::{
         AtFlags, Dir, FileType, FlockOperation, Mode, OFlags, RenameFlags, flock, ftruncate,
         linkat, mkdirat, open, openat, renameat, renameat_with, statat, unlinkat,
     },
+    io as rustix_io,
     io::Errno,
+    path,
 };
 use sha2::{Digest, Sha256};
 
@@ -95,7 +99,7 @@ impl CapturedFile {
 
     pub(crate) fn revalidate(&self) -> io::Result<()> {
         let (file, identity, bytes) = capture_relative(
-            rustix::io::dup(&self.parent).map_err(errno)?,
+            rustix_io::dup(&self.parent).map_err(errno)?,
             &self.target_name,
             self.max_bytes,
         )?;
@@ -112,9 +116,9 @@ impl CapturedFile {
 
 impl TargetLock {
     pub(crate) fn capture(&self, max_bytes: usize) -> io::Result<CapturedFile> {
-        let parent = rustix::io::dup(&self.parent).map_err(errno)?;
+        let parent = rustix_io::dup(&self.parent).map_err(errno)?;
         let (file, identity, bytes) = capture_relative(
-            rustix::io::dup(&parent).map_err(errno)?,
+            rustix_io::dup(&parent).map_err(errno)?,
             &self.target_name,
             max_bytes,
         )?;
@@ -235,7 +239,7 @@ impl TargetLock {
         let mut identities = BTreeMap::new();
         for (name, expected) in files {
             let (file, file_identity, actual) = match capture_relative(
-                rustix::io::dup(&directory).map_err(|error| PublicationError::Io(errno(error)))?,
+                rustix_io::dup(&directory).map_err(|error| PublicationError::Io(errno(error)))?,
                 OsStr::new(name),
                 expected.len(),
             ) {
@@ -294,7 +298,7 @@ impl TargetLock {
         }
         for (name, expected) in files {
             let (file, identity, actual) = match capture_relative(
-                rustix::io::dup(&directory).map_err(|error| PublicationError::Io(errno(error)))?,
+                rustix_io::dup(&directory).map_err(|error| PublicationError::Io(errno(error)))?,
                 OsStr::new(name),
                 expected.len(),
             ) {
@@ -323,8 +327,7 @@ impl TargetLock {
         &self,
         files: &[(&str, &[u8])],
     ) -> Result<(), PublicationError> {
-        match self.atomic_create_directory_guarded(files, || Ok::<(), std::convert::Infallible>(()))
-        {
+        match self.atomic_create_directory_guarded(files, || Ok::<(), convert::Infallible>(())) {
             Ok(()) => Ok(()),
             Err(GuardedDirectoryError::Publication(error)) => Err(error),
             Err(GuardedDirectoryError::Guard(never)) => match never {},
@@ -460,13 +463,8 @@ fn lock_target_with(
     if record_owner {
         ftruncate(&file, 0).map_err(|error| PublicationError::Io(errno(error)))?;
         file.rewind().map_err(PublicationError::Io)?;
-        writeln!(
-            file,
-            "pid={} target={}",
-            std::process::id(),
-            relative.display()
-        )
-        .map_err(PublicationError::Io)?;
+        writeln!(file, "pid={} target={}", process::id(), relative.display())
+            .map_err(PublicationError::Io)?;
         file.sync_all().map_err(PublicationError::Io)?;
     }
     Ok(TargetLock {
@@ -507,7 +505,7 @@ pub(crate) fn capture_file(
     let (parent, target_name) = open_existing_parent(repository_root, target)?;
     reject_symlink(&parent, &target_name, target)?;
     let (file, identity, bytes) = capture_relative(
-        rustix::io::dup(&parent).map_err(|error| PublicationError::Io(errno(error)))?,
+        rustix_io::dup(&parent).map_err(|error| PublicationError::Io(errno(error)))?,
         &target_name,
         max_bytes,
     )
@@ -593,9 +591,9 @@ fn repository_relative(repository_root: &Path, target: &Path) -> Result<PathBuf,
     if !target.is_absolute() {
         return Err(PublicationError::OutsideRepository);
     }
-    let root = std::fs::metadata(repository_root).map_err(PublicationError::Io)?;
+    let root = fs::metadata(repository_root).map_err(PublicationError::Io)?;
     for ancestor in target.ancestors().skip(1) {
-        let Ok(candidate) = std::fs::metadata(ancestor) else {
+        let Ok(candidate) = fs::metadata(ancestor) else {
             continue;
         };
         if candidate.dev() == root.dev() && candidate.ino() == root.ino() {
@@ -645,7 +643,7 @@ fn component_error(error: Errno, display: &Path) -> PublicationError {
     }
 }
 
-fn write_new_file(parent: &OwnedFd, name: impl rustix::path::Arg, bytes: &[u8]) -> io::Result<()> {
+fn write_new_file(parent: &OwnedFd, name: impl path::Arg, bytes: &[u8]) -> io::Result<()> {
     let fd = openat(
         parent,
         name,
@@ -750,7 +748,7 @@ fn temporary_name(target: &OsStr) -> OsString {
     let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let mut name = OsString::from(".");
     name.push(target);
-    name.push(format!(".tmp-{}-{sequence}", std::process::id()));
+    name.push(format!(".tmp-{}-{sequence}", process::id()));
     name
 }
 
@@ -769,7 +767,7 @@ fn classify_ambiguous_recovery(
 }
 
 fn sync_directory(directory: &OwnedFd) -> io::Result<()> {
-    File::from(rustix::io::dup(directory).map_err(errno)?).sync_all()
+    File::from(rustix_io::dup(directory).map_err(errno)?).sync_all()
 }
 
 #[cfg(test)]

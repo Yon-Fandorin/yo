@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, fs, path, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -397,9 +397,9 @@ fn revalidate_sources(request: &Request, workspace: &Path) -> Result<(), String>
     Ok(())
 }
 
-fn canonical_input(workspace: &Path, path: &Path) -> Result<std::path::PathBuf, String> {
+fn canonical_input(workspace: &Path, path: &Path) -> Result<path::PathBuf, String> {
     let resolved = review_protocol::resolve_input_path(workspace, &path.to_string_lossy());
-    std::fs::canonicalize(&resolved).map_err(|error| {
+    fs::canonicalize(&resolved).map_err(|error| {
         format!(
             "cannot resolve Slice cost input {}: {error}",
             resolved.display()
@@ -407,12 +407,12 @@ fn canonical_input(workspace: &Path, path: &Path) -> Result<std::path::PathBuf, 
     })
 }
 
-fn canonical_output(workspace: &Path, path: &Path) -> Result<std::path::PathBuf, String> {
+fn canonical_output(workspace: &Path, path: &Path) -> Result<path::PathBuf, String> {
     let resolved = review_protocol::resolve_input_path(workspace, &path.to_string_lossy());
     let parent = resolved
         .parent()
         .ok_or_else(|| "Slice cost output has no parent".to_owned())?;
-    let parent = std::fs::canonicalize(parent)
+    let parent = fs::canonicalize(parent)
         .map_err(|error| format!("cannot resolve Slice cost output parent: {error}"))?;
     let name = resolved
         .file_name()
@@ -443,16 +443,18 @@ fn require_text(value: &str, label: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path};
+
     use serde_json::{Value, json};
 
     use super::{POLICY, run};
-    use crate::{review_protocol::digest, test_support::TestRepository};
+    use crate::{git, review_protocol::digest, test_support::TestRepository};
 
     struct Fixture {
         repository: TestRepository,
-        request: std::path::PathBuf,
-        output: std::path::PathBuf,
-        source: std::path::PathBuf,
+        request: path::PathBuf,
+        output: path::PathBuf,
+        source: path::PathBuf,
     }
 
     impl Fixture {
@@ -462,16 +464,16 @@ mod tests {
             repository.git(["add", "base"]);
             repository.git(["commit", "-qm", "base"]);
             let source = repository.path.join("usage.json");
-            std::fs::write(&source, br#"{"schema":"example.usage/v1","value":1}"#).unwrap();
+            fs::write(&source, br#"{"schema":"example.usage/v1","value":1}"#).unwrap();
             let request = repository.path.join("request.json");
             let output = repository.path.join("report.json");
-            let head = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+            let head = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
                 .unwrap()
                 .trim()
                 .to_owned();
             let source_ref = json!({
                 "path": source,
-                "hash": digest(&std::fs::read(&source).unwrap()),
+                "hash": digest(&fs::read(&source).unwrap()),
                 "schema": "example.usage/v1"
             });
             let reported = json!({"availability":"reported","value":10});
@@ -488,7 +490,7 @@ mod tests {
                     "elapsed": {"basis":"wall clock","sources":[],"total_milliseconds":{"availability":"reported","value":1000},"critical_bottleneck":{"name":"tests","elapsed_milliseconds":900}}
                 }
             });
-            std::fs::write(&request, serde_json::to_vec(&document).unwrap()).unwrap();
+            fs::write(&request, serde_json::to_vec(&document).unwrap()).unwrap();
             Self {
                 repository,
                 request,
@@ -498,11 +500,11 @@ mod tests {
         }
 
         fn document(&self) -> Value {
-            serde_json::from_slice(&std::fs::read(&self.request).unwrap()).unwrap()
+            serde_json::from_slice(&fs::read(&self.request).unwrap()).unwrap()
         }
 
         fn write(&self, value: &Value) {
-            std::fs::write(&self.request, serde_json::to_vec(value).unwrap()).unwrap();
+            fs::write(&self.request, serde_json::to_vec(value).unwrap()).unwrap();
         }
     }
 
@@ -522,8 +524,7 @@ mod tests {
     fn publishes_owner_separated_report_without_cross_owner_total() {
         let fixture = Fixture::new();
         run(&fixture.repository.path, &fixture.request, &fixture.output).unwrap();
-        let report: Value =
-            serde_json::from_slice(&std::fs::read(&fixture.output).unwrap()).unwrap();
+        let report: Value = serde_json::from_slice(&fs::read(&fixture.output).unwrap()).unwrap();
         assert_eq!(report["aggregation_policy"], POLICY);
         assert!(report["owners"]["packet"].is_object());
         assert!(report.get("total").is_none());
@@ -534,7 +535,7 @@ mod tests {
     #[test]
     fn rejects_stale_hash_or_schema() {
         let fixture = Fixture::new();
-        std::fs::write(
+        fs::write(
             &fixture.source,
             br#"{"schema":"example.usage/v1","value":2}"#,
         )
@@ -600,8 +601,8 @@ mod tests {
         let fixture = Fixture::new();
         run(&fixture.repository.path, &fixture.request, &fixture.output).unwrap();
         run(&fixture.repository.path, &fixture.request, &fixture.output).unwrap();
-        std::fs::write(&fixture.output, b"conflict\n").unwrap();
+        fs::write(&fixture.output, b"conflict\n").unwrap();
         assert!(run(&fixture.repository.path, &fixture.request, &fixture.output).is_err());
-        assert_eq!(std::fs::read(&fixture.output).unwrap(), b"conflict\n");
+        assert_eq!(fs::read(&fixture.output).unwrap(), b"conflict\n");
     }
 }

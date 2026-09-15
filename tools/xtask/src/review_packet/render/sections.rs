@@ -1,3 +1,5 @@
+use std::str;
+
 use serde::Serialize;
 
 #[cfg(test)]
@@ -269,7 +271,7 @@ fn append_section_bytes(
     rendered: &[u8],
     encoding: Option<&str>,
 ) -> Result<(), String> {
-    std::str::from_utf8(bytes)
+    str::from_utf8(bytes)
         .map_err(|_| format!("review section `{name}` is not UTF-8 model-visible text"))?;
     let metadata = serde_json::to_vec(&SectionMetadata {
         kind,
@@ -329,8 +331,8 @@ pub(in crate::review_packet) fn decode_section(bytes: &[u8]) -> Result<Vec<u8>, 
 }
 
 pub(in crate::review_packet) fn count_tokens(bytes: &[u8]) -> Result<usize, String> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| "canonical review packet is not UTF-8".to_owned())?;
+    let text =
+        str::from_utf8(bytes).map_err(|_| "canonical review packet is not UTF-8".to_owned())?;
     Ok(tiktoken_rs::o200k_base_singleton()
         .encode_ordinary(text)
         .len())

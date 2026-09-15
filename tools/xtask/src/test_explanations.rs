@@ -1,9 +1,12 @@
 use std::{
     ffi::OsString,
+    fs,
     io::ErrorKind,
     os::unix::ffi::OsStringExt,
     path::{Path, PathBuf},
 };
+
+use crate::git;
 
 pub(crate) fn check(repository: &Path) -> Result<(), String> {
     check_from(repository, true)
@@ -15,7 +18,7 @@ fn check_from(directory: &Path, inherit_git_environment: bool) -> Result<(), Str
 }
 
 fn repository_root(directory: &Path, inherit_git_environment: bool) -> Result<PathBuf, String> {
-    let mut output = crate::git::output_bytes_in(
+    let mut output = git::output_bytes_in(
         directory,
         &["rev-parse", "--show-toplevel"],
         inherit_git_environment,
@@ -41,7 +44,7 @@ fn rust_source_paths(
     repository: &Path,
     inherit_git_environment: bool,
 ) -> Result<Vec<PathBuf>, String> {
-    let output = crate::git::output_bytes_in(
+    let output = git::output_bytes_in(
         repository,
         &[
             "ls-files",
@@ -71,7 +74,7 @@ fn check_paths(repository: &Path, paths: &[PathBuf]) -> Result<(), String> {
     let mut diagnostics = Vec::new();
     for relative in paths {
         let path = repository.join(relative);
-        let source = match std::fs::read_to_string(&path) {
+        let source = match fs::read_to_string(&path) {
             Ok(source) => source,
             Err(error) if error.kind() == ErrorKind::NotFound => continue,
             Err(error) => {

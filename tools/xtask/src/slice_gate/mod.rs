@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -606,8 +608,8 @@ type FinalRevalidateTestHook = Box<dyn FnOnce() -> Result<(), String>>;
 
 #[cfg(test)]
 thread_local! {
-    static FINAL_REVALIDATE_TEST_HOOK: std::cell::RefCell<Option<FinalRevalidateTestHook>> =
-        const { std::cell::RefCell::new(None) };
+    static FINAL_REVALIDATE_TEST_HOOK: cell::RefCell<Option<FinalRevalidateTestHook>> =
+        const { cell::RefCell::new(None) };
 }
 
 #[cfg(test)]

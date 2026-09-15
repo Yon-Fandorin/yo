@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{fs, process::Command};
 
 use super::super::storage;
 use crate::test_support;
@@ -12,14 +12,14 @@ fn rejects_symlinks() {
 
     let target = test_support::unique_path("slice-close-plan-target");
     let link = test_support::unique_path("slice-close-plan-link");
-    std::fs::write(&target, b"{}").unwrap();
+    fs::write(&target, b"{}").unwrap();
     symlink(&target, &link).unwrap();
 
     let error = storage::read_plan(&link).unwrap_err();
 
     assert!(error.contains("cannot open Slice close plan"));
-    std::fs::remove_file(link).unwrap();
-    std::fs::remove_file(target).unwrap();
+    fs::remove_file(link).unwrap();
+    fs::remove_file(target).unwrap();
 }
 
 // 최대 크기보다 큰 regular file은 JSON parser에 넘기지 않아 plan 입력이
@@ -27,12 +27,12 @@ fn rejects_symlinks() {
 #[test]
 fn rejects_oversized_plan_files() {
     let path = test_support::unique_path("slice-close-plan-oversized");
-    std::fs::write(&path, vec![b'x'; 64 * 1024 + 1]).unwrap();
+    fs::write(&path, vec![b'x'; 64 * 1024 + 1]).unwrap();
 
     let error = storage::read_plan(&path).unwrap_err();
 
     assert!(error.contains("65536-byte limit"));
-    std::fs::remove_file(path).unwrap();
+    fs::remove_file(path).unwrap();
 }
 
 #[cfg(unix)]
@@ -52,5 +52,5 @@ fn rejects_fifo_without_blocking() {
     let error = storage::read_plan(&path).unwrap_err();
 
     assert!(error.contains("regular file"));
-    std::fs::remove_file(path).unwrap();
+    fs::remove_file(path).unwrap();
 }

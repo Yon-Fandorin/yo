@@ -1,9 +1,11 @@
 use std::{
+    ffi,
     ffi::OsString,
     fs::File,
     io::{Read, Write},
     os::fd::OwnedFd,
     path::{Component, Path},
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -12,6 +14,7 @@ use rustix::{
         AtFlags, FileType, Mode, OFlags, RenameFlags, fstat, mkdirat, open, openat, renameat_with,
         unlinkat,
     },
+    io,
     io::Errno,
 };
 use sha2::{Digest, Sha256};
@@ -45,7 +48,7 @@ pub(crate) fn read_regular(path: &Path, limit: usize, label: &str) -> Result<Vec
 
 pub(crate) fn read_regular_at(
     parent: &OwnedFd,
-    name: &std::ffi::OsStr,
+    name: &ffi::OsStr,
     display_path: &Path,
     limit: usize,
     label: &str,
@@ -212,8 +215,8 @@ fn remove_regular_matching_sha256_with_hooks(
 #[allow(clippy::too_many_arguments)]
 fn restore_claimed(
     parent: &OwnedFd,
-    claimed: &std::ffi::OsStr,
-    target: &std::ffi::OsStr,
+    claimed: &ffi::OsStr,
+    target: &ffi::OsStr,
     claimed_path: &Path,
     path: &Path,
     label: &str,
@@ -323,7 +326,7 @@ fn publish_new_or_exact_with_hooks(
 
 fn create_temporary(
     parent: &OwnedFd,
-    target: &std::ffi::OsStr,
+    target: &ffi::OsStr,
     display_path: &Path,
     label: &str,
 ) -> Result<(OsString, OwnedFd), String> {
@@ -331,7 +334,7 @@ fn create_temporary(
         let sequence = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
         let mut temporary = OsString::from(".");
         temporary.push(target);
-        temporary.push(format!(".yo-prepare-{}-{sequence}", std::process::id()));
+        temporary.push(format!(".yo-prepare-{}-{sequence}", process::id()));
         match openat(parent, &temporary, CREATE_FLAGS, Mode::from_raw_mode(0o600)) {
             Ok(fd) => return Ok((temporary, fd)),
             Err(Errno::EXIST) => continue,
@@ -359,7 +362,7 @@ pub(crate) fn open_directory(path: &Path, label: &str) -> Result<OwnedFd, String
     for component in path.components() {
         let name = match component {
             Component::RootDir | Component::CurDir => continue,
-            Component::ParentDir => std::ffi::OsStr::new(".."),
+            Component::ParentDir => ffi::OsStr::new(".."),
             Component::Normal(name) => name,
             Component::Prefix(_) => {
                 return Err(format!(
@@ -388,7 +391,7 @@ pub(crate) fn ensure_directory(path: &Path, label: &str) -> Result<(), String> {
     for component in path.components() {
         let name = match component {
             Component::RootDir | Component::CurDir => continue,
-            Component::ParentDir => std::ffi::OsStr::new(".."),
+            Component::ParentDir => ffi::OsStr::new(".."),
             Component::Normal(name) => name,
             Component::Prefix(_) => {
                 return Err(format!(
@@ -429,7 +432,7 @@ pub(crate) fn ensure_directory(path: &Path, label: &str) -> Result<(), String> {
 
 pub(crate) fn sync_directory(directory: &OwnedFd, label: &str) -> Result<(), String> {
     File::from(
-        rustix::io::dup(directory)
+        io::dup(directory)
             .map_err(|error| format!("cannot retain {label} parent for sync: {error}"))?,
     )
     .sync_all()

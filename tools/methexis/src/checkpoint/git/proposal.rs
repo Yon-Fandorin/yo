@@ -1,9 +1,10 @@
 //! Immutable, read-only capture of the caller-selected proposal index.
-
 use std::{
     collections::{BTreeMap, BTreeSet},
+    env,
     ffi::OsString,
     path::Path,
+    str,
 };
 
 use super::{git_output, git_output_with_index, safe_relative, valid_commit};
@@ -34,11 +35,7 @@ pub(in crate::checkpoint) fn capture_index(
     repository_root: &Path,
     operation: &'static str,
 ) -> Result<ProposalIndex, OperationFailure> {
-    capture_index_from(
-        repository_root,
-        std::env::var_os("GIT_INDEX_FILE"),
-        operation,
-    )
+    capture_index_from(repository_root, env::var_os("GIT_INDEX_FILE"), operation)
 }
 
 pub(in crate::checkpoint) fn capture_index_from(
@@ -324,7 +321,7 @@ fn split_listing_entry<'a>(
                 "repair the Git repository and retry",
             )
         })?;
-    let header = std::str::from_utf8(&entry[..separator]).map_err(|error| {
+    let header = str::from_utf8(&entry[..separator]).map_err(|error| {
         OperationFailure::new(
             operation,
             None,

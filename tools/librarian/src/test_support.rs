@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -11,10 +12,8 @@ pub(crate) struct TestDirectory(PathBuf);
 impl TestDirectory {
     pub(crate) fn new(label: &str) -> Self {
         let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "yo-librarian-{label}-{}-{sequence}",
-            std::process::id()
-        ));
+        let path =
+            env::temp_dir().join(format!("yo-librarian-{label}-{}-{sequence}", process::id()));
         fs::create_dir(&path).expect("create isolated test directory");
         Self(path)
     }

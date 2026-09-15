@@ -1,8 +1,10 @@
 use std::{
     collections::BTreeSet,
     ffi::OsString,
+    fs,
     path::{Component, Path},
     process::ExitCode,
+    str,
 };
 
 use serde::Deserialize;
@@ -415,7 +417,7 @@ pub(super) fn capture_authorities(
             if listed_path != path.as_bytes() {
                 return Err(format!("authority `{path}` did not resolve exactly"));
             }
-            let header = std::str::from_utf8(header)
+            let header = str::from_utf8(header)
                 .map_err(|error| format!("invalid authority tree entry: {error}"))?;
             let fields = header.split_ascii_whitespace().collect::<Vec<_>>();
             if fields.len() != 3 || fields[0] != "100644" || fields[1] != "blob" {
@@ -442,7 +444,7 @@ pub(super) fn capture_validation(
             return Err("validation evidence names must be non-empty and unique".to_owned());
         }
         let path = resolve_input_path(repository, &request.path);
-        let canonical = std::fs::canonicalize(&path).map_err(|error| {
+        let canonical = fs::canonicalize(&path).map_err(|error| {
             format!(
                 "cannot resolve validation evidence path {}: {error}",
                 path.display()
@@ -483,7 +485,7 @@ pub(super) fn captured(path: String, bytes: Vec<u8>) -> Result<Captured, String>
             "review input `{path}` exceeds the {MAX_INPUT_BYTES}-byte limit"
         ));
     }
-    std::str::from_utf8(&bytes)
+    str::from_utf8(&bytes)
         .map_err(|_| format!("review input `{path}` is not UTF-8 model-visible text"))?;
     Ok(Captured {
         path,

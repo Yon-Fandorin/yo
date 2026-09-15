@@ -1,6 +1,6 @@
 //! Symlink-safe, stable working-tree byte capture.
-
 use std::{
+    collections,
     ffi::{OsStr, OsString},
     fs::File,
     io::Read,
@@ -9,6 +9,7 @@ use std::{
         unix::ffi::OsStrExt,
     },
     path::Path,
+    str,
 };
 
 use rustix::{
@@ -363,7 +364,7 @@ fn limit_error(relative: &Path, message: &'static str) -> DiscoveryError {
 }
 
 fn os_string(bytes: &[u8], parent: &Path) -> Result<OsString, DiscoveryError> {
-    if std::str::from_utf8(bytes).is_err() {
+    if str::from_utf8(bytes).is_err() {
         return Err(catalog_path_error(
             "catalog_path_not_utf8",
             "catalog paths must be valid UTF-8",
@@ -383,14 +384,14 @@ fn differing_paths(left: &[CapturedFile], right: &[CapturedFile]) -> Vec<String>
     let left = left
         .iter()
         .map(|file| (&file.path, file))
-        .collect::<std::collections::BTreeMap<_, _>>();
+        .collect::<collections::BTreeMap<_, _>>();
     let right = right
         .iter()
         .map(|file| (&file.path, file))
-        .collect::<std::collections::BTreeMap<_, _>>();
+        .collect::<collections::BTreeMap<_, _>>();
     left.keys()
         .chain(right.keys())
-        .collect::<std::collections::BTreeSet<_>>()
+        .collect::<collections::BTreeSet<_>>()
         .into_iter()
         .filter(|path| left.get(*path) != right.get(*path))
         .map(|path| (*path).clone())

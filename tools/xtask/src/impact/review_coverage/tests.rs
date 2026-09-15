@@ -1,8 +1,10 @@
+use std::{env, fs};
+
 use super::{
     check_candidate_diff_with_cutover, check_commit_with_cutover,
     check_prepare_commit_message_with_cutover, check_with_cutover, current_review_diff, validate,
 };
-use crate::{impact::ImpactInput, review_protocol::digest, test_support::TestRepository};
+use crate::{git, impact::ImpactInput, review_protocol::digest, test_support::TestRepository};
 
 const DIFF_HASH: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OTHER_HASH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -169,7 +171,7 @@ fn staged_and_committed_boundaries_share_the_exact_review_surface() {
     repository.write("base.txt", "base\n");
     repository.git(["add", "base.txt"]);
     repository.git(["commit", "--quiet", "-m", "test: coverage cutover"]);
-    let cutover = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let cutover = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
@@ -203,7 +205,7 @@ fn staged_and_committed_boundaries_share_the_exact_review_surface() {
         "--file",
         message_path.to_str().unwrap(),
     ]);
-    let accepted = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let accepted = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
@@ -219,7 +221,7 @@ fn candidate_diff_is_checked_before_the_index_is_mutated() {
     repository.write("base.txt", "base\n");
     repository.git(["add", "base.txt"]);
     repository.git(["commit", "--quiet", "-m", "test: coverage cutover"]);
-    let cutover = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let cutover = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
@@ -251,7 +253,7 @@ fn rejects_ambiguous_commit_reuse_only_on_accepted_history_after_cutover() {
     repository.write("base.txt", "base\n");
     repository.git(["add", "base.txt"]);
     repository.git(["commit", "--quiet", "-m", "test: coverage cutover"]);
-    let cutover = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let cutover = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
@@ -288,22 +290,22 @@ fn accepted_commit_editor_allows_new_commit_but_amend_file_cannot_bypass_guard()
     repository.write("base.txt", "base\n");
     repository.git(["add", "base.txt"]);
     repository.git(["commit", "--quiet", "-m", "test: coverage cutover"]);
-    let cutover = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let cutover = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
     let hooks = repository.path.join(".git/hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
+    fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("prepare-commit-msg");
-    let executable = std::env::current_exe().unwrap();
+    let executable = env::current_exe().unwrap();
     let script = format!(
         "#!/bin/sh\n\
          YO_XTASK_TEST_PREPARE_CHILD=1 \\\n         YO_XTASK_TEST_PREPARE_SOURCE=\"${{2-}}\" \\\n         YO_XTASK_TEST_PREPARE_COMMIT=\"${{3-}}\" \\\n         YO_XTASK_TEST_PREPARE_CUTOVER='{cutover}' \\\n         '{}' --exact \
          impact::review_coverage::tests::prepare_commit_message_hook_child --nocapture\n",
         executable.display()
     );
-    std::fs::write(&hook, script).unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(&hook, script).unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
     repository.git(["config", "core.hooksPath", hooks.to_str().unwrap()]);
     let configured_template = repository.write("configured-template", "must not select template\n");
     repository.git([
@@ -317,7 +319,7 @@ fn accepted_commit_editor_allows_new_commit_but_amend_file_cannot_bypass_guard()
          test \"$1\" = \"__accepted-commit-message-editor\" || exit 41\n\
          cp -- \"$YO_XTASK_ACCEPTED_COMMIT_MESSAGE\" \"$2\"\n",
     );
-    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&editor, fs::Permissions::from_mode(0o755)).unwrap();
     repository.write("accepted.txt", "new accepted surface\n");
     repository.git(["add", "accepted.txt"]);
     let accepted_message = repository.write("accepted-message", "test: exact new commit\n");
@@ -328,13 +330,13 @@ fn accepted_commit_editor_allows_new_commit_but_amend_file_cannot_bypass_guard()
     assert!(template_error.contains("requires commit.template to be unset"));
     repository.git(["config", "--unset", "commit.template"]);
     super::commit::create_with_editor(&repository.path, &accepted_message, &editor).unwrap();
-    let accepted = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+    let accepted = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
         .unwrap()
         .trim()
         .to_owned();
-    let parent = crate::git::output_in(&repository.path, &["rev-parse", "HEAD^"], false).unwrap();
+    let parent = git::output_in(&repository.path, &["rev-parse", "HEAD^"], false).unwrap();
     assert_eq!(parent.trim(), cutover);
-    let committed_message = crate::git::output_in(
+    let committed_message = git::output_in(
         &repository.path,
         &["show", "-s", "--format=%B", "HEAD"],
         false,
@@ -346,7 +348,7 @@ fn accepted_commit_editor_allows_new_commit_but_amend_file_cannot_bypass_guard()
     repository.git(["add", "amended.txt"]);
     let message = repository.write("amend-message", "test: ambiguous amend\n");
 
-    let output = crate::git::command_in(&repository.path, false)
+    let output = git::command_in(&repository.path, false)
         .args(["commit", "--amend", "--file"])
         .arg(&message)
         .output()
@@ -360,9 +362,9 @@ fn accepted_commit_editor_allows_new_commit_but_amend_file_cannot_bypass_guard()
             || stderr.contains("reject -m, -F, -t, -c, -C, and --amend"),
         "stdout: {stdout}\nstderr: {stderr}"
     );
-    let head = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false).unwrap();
+    let head = git::output_in(&repository.path, &["rev-parse", "HEAD"], false).unwrap();
     assert_eq!(head.trim(), accepted);
-    let staged = crate::git::output_in(
+    let staged = git::output_in(
         &repository.path,
         &["diff", "--cached", "--name-only"],
         false,
@@ -376,16 +378,16 @@ fn accepted_commit_editor_allows_new_commit_but_amend_file_cannot_bypass_guard()
 // production guard로 검사하여 테스트 전용 shell 판단이 결과를 대신하지 않는다.
 #[test]
 fn prepare_commit_message_hook_child() {
-    if std::env::var_os("YO_XTASK_TEST_PREPARE_CHILD").is_none() {
+    if env::var_os("YO_XTASK_TEST_PREPARE_CHILD").is_none() {
         return;
     }
-    let optional = |name| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let optional = |name| env::var(name).ok().filter(|value| !value.is_empty());
     let source = optional("YO_XTASK_TEST_PREPARE_SOURCE");
     let commit = optional("YO_XTASK_TEST_PREPARE_COMMIT");
-    let cutover = std::env::var("YO_XTASK_TEST_PREPARE_CUTOVER").unwrap();
+    let cutover = env::var("YO_XTASK_TEST_PREPARE_CUTOVER").unwrap();
 
     check_prepare_commit_message_with_cutover(
-        &std::env::current_dir().unwrap(),
+        &env::current_dir().unwrap(),
         source.as_deref(),
         commit.as_deref(),
         &cutover,

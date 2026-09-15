@@ -1,10 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde_json::json;
 
 use super::super::{check_readiness, readiness::set_test_hook};
 use crate::{
-    slice_contract,
+    git, slice_contract,
     test_support::{TestRepository, unique_path},
 };
 
@@ -30,7 +33,7 @@ fn readiness_production_boundary_is_non_publishing_and_fails_closed() {
 
     let validation = fixture.validation_path.clone();
     set_test_hook(move || {
-        std::fs::write(
+        fs::write(
             validation,
             br#"{"schema":"yo.validation-run-summary/v1","name":"validation","status":"failed","exit_code":1,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/readiness/validation.log"}
 "#,
@@ -57,7 +60,7 @@ fn readiness_final_guard_rejects_a_same_commit_task_branch_switch() {
     let fixture = ReadinessFixture::new();
     let repository = fixture.repository.path.clone();
     set_test_hook(move || {
-        crate::git::output_in(
+        git::output_in(
             &repository,
             &[
                 "switch",
@@ -89,7 +92,7 @@ fn readiness_final_guard_rejects_a_same_commit_task_branch_switch() {
 fn readiness_rejects_an_external_context_request_before_context_build() {
     let fixture = ReadinessFixture::new();
     let external = unique_path("external-context-request");
-    std::fs::write(&external, b"{}\n").unwrap();
+    fs::write(&external, b"{}\n").unwrap();
     fixture.write_review_request(&external, &["validation"]);
     let mut output = Vec::new();
 
@@ -102,7 +105,7 @@ fn readiness_rejects_an_external_context_request_before_context_build() {
     );
     assert!(output.is_empty());
     assert!(!fixture.artifact_root.exists());
-    std::fs::remove_file(external).unwrap();
+    fs::remove_file(external).unwrap();
 }
 
 // 서로 다른 이름으로 같은 validation 파일을 두 번 싣는 request는 section 의미를
@@ -126,7 +129,7 @@ fn readiness_rejects_duplicate_validation_paths() {
 #[test]
 fn readiness_rejects_a_wrapper_name_that_differs_from_the_summary() {
     let fixture = ReadinessFixture::new();
-    std::fs::write(
+    fs::write(
         &fixture.validation_path,
         json_text(&json!({
             "schema": "yo.validation-run-summary/v1alpha2",
@@ -326,7 +329,7 @@ impl ReadinessFixture {
         repository.write("CONTRIBUTING.md", "review authority\n");
         repository.git(["add", ".gitignore", "CONTRIBUTING.md"]);
         repository.git(["commit", "--quiet", "-m", "readiness fixture base"]);
-        let base = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+        let base = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
             .unwrap()
             .trim()
             .to_owned();
@@ -334,11 +337,10 @@ impl ReadinessFixture {
         repository.write("candidate.txt", "candidate\n");
         repository.git(["add", "candidate.txt"]);
         repository.git(["commit", "--quiet", "-m", "readiness fixture candidate"]);
-        let candidate_commit =
-            crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
-                .unwrap()
-                .trim()
-                .to_owned();
+        let candidate_commit = git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+            .unwrap()
+            .trim()
+            .to_owned();
 
         let contract_path = repository.write(
             ".git/readiness-contract.json",
@@ -394,7 +396,7 @@ impl ReadinessFixture {
         };
         fixture.write_review_request(&fixture.context_path, &["validation"]);
         assert!(
-            crate::git::output_in(&fixture.repository.path, &["status", "--porcelain"], false)
+            git::output_in(&fixture.repository.path, &["status", "--porcelain"], false)
                 .unwrap()
                 .is_empty()
         );

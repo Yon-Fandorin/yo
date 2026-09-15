@@ -1,6 +1,9 @@
 #[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::time::{Duration, Instant};
+use std::{
+    fs,
+    time::{Duration, Instant},
+};
 
 use super::{
     canonical_json, combine_failures,
@@ -16,6 +19,7 @@ use super::{
     require_integration_state, require_original_fresh,
 };
 use crate::{
+    git, grok_outer_sandbox,
     review_egress::{AuthorizedDelivery, AuthorizedHostDelivery},
     review_protocol::digest,
     review_session::provider_request_identity,
@@ -73,17 +77,17 @@ fn delegated_continuation_pins_prior_execution_isolation() {
     let mut authorized = authorized_host();
     authorized.host = "grok".to_owned();
     authorized.prior_execution_isolation =
-        Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE.to_owned());
+        Some(grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE.to_owned());
 
     require_continuation_isolation(
         &authorized,
-        Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE),
+        Some(grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE),
     )
     .unwrap();
     assert!(
         require_continuation_isolation(
             &authorized,
-            Some(crate::grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE),
+            Some(grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE),
         )
         .unwrap_err()
         .contains("exact prior physical isolation")
@@ -93,7 +97,7 @@ fn delegated_continuation_pins_prior_execution_isolation() {
     assert!(
         require_continuation_isolation(
             &authorized,
-            Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE),
+            Some(grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE),
         )
         .is_err()
     );
@@ -448,9 +452,9 @@ fn managed_model_reference_rejects_ambiguous_components() {
 fn output_directory_must_be_empty_before_claim() {
     let repository = TestRepository::new("review-delivery-output");
     let output = repository.path.join("output");
-    std::fs::create_dir(&output).unwrap();
+    fs::create_dir(&output).unwrap();
     require_empty_directory(&output).unwrap();
-    std::fs::write(output.join("claim.json"), b"claimed").unwrap();
+    fs::write(output.join("claim.json"), b"claimed").unwrap();
     assert!(
         require_empty_directory(&output)
             .unwrap_err()
@@ -464,12 +468,12 @@ fn output_directory_must_be_empty_before_claim() {
 fn output_directory_preparation_creates_and_checks_exact_child() {
     let repository = TestRepository::new("review-delivery-output-prepare");
     let coordination = repository.path.join("coordination");
-    std::fs::create_dir(&coordination).unwrap();
+    fs::create_dir(&coordination).unwrap();
     let output = coordination.join("attempt-1");
 
     let prepared = prepare_output_directory_at(&coordination, &output).unwrap();
-    assert_eq!(prepared, std::fs::canonicalize(&output).unwrap());
-    assert!(std::fs::read_dir(&prepared).unwrap().next().is_none());
+    assert_eq!(prepared, fs::canonicalize(&output).unwrap());
+    assert!(fs::read_dir(&prepared).unwrap().next().is_none());
     prepare_output_directory_at(&coordination, &output).unwrap();
 }
 
@@ -480,8 +484,8 @@ fn output_directory_preparation_rejects_nonempty_directory() {
     let repository = TestRepository::new("review-delivery-output-nonempty");
     let coordination = repository.path.join("coordination");
     let output = coordination.join("attempt-1");
-    std::fs::create_dir_all(&output).unwrap();
-    std::fs::write(output.join("claim.json"), b"claimed").unwrap();
+    fs::create_dir_all(&output).unwrap();
+    fs::write(output.join("claim.json"), b"claimed").unwrap();
 
     assert!(
         prepare_output_directory_at(&coordination, &output)
@@ -499,7 +503,7 @@ fn output_directory_preparation_rejects_final_symlink() {
     let coordination = repository.path.join("coordination");
     let target = coordination.join("target");
     let output = coordination.join("attempt-1");
-    std::fs::create_dir_all(&target).unwrap();
+    fs::create_dir_all(&target).unwrap();
     symlink(&target, &output).unwrap();
 
     assert!(
@@ -529,7 +533,7 @@ fn exact_claim_cannot_be_reused_as_resend_authority() {
 fn claimed_spawn_failure_returns_one_bounded_capture() {
     let repository = TestRepository::new("review-delivery-spawn-failure");
     let output = repository.path.join("output");
-    std::fs::create_dir(&output).unwrap();
+    fs::create_dir(&output).unwrap();
     let capture = execute_once(
         &repository.path.join("missing-yo"),
         &repository.path,
@@ -554,15 +558,15 @@ fn continuation_launch_uses_exact_print_resume_arguments() {
     let repository = TestRepository::new("review-continuation-delivery-launch");
     let output = repository.path.join("output");
     let sessions = repository.path.join("sessions");
-    std::fs::create_dir(&output).unwrap();
-    std::fs::create_dir(&sessions).unwrap();
+    fs::create_dir(&output).unwrap();
+    fs::create_dir(&sessions).unwrap();
     let executable = repository.write(
         "yo",
         "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$YO_SESSION_REPOSITORY/argv\"\ncat > \"$YO_SESSION_REPOSITORY/stdin\"\nprintf 'reviewed\\n'\n",
     );
-    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    let mut permissions = fs::metadata(&executable).unwrap().permissions();
     permissions.set_mode(0o700);
-    std::fs::set_permissions(&executable, permissions).unwrap();
+    fs::set_permissions(&executable, permissions).unwrap();
     let mut delivery = authorized();
     delivery.review_kind = "finding_resolution";
     delivery.fresh_session = false;
@@ -581,13 +585,10 @@ fn continuation_launch_uses_exact_print_resume_arguments() {
     assert!(capture.status.unwrap().success());
     assert_eq!(capture.stdout, b"reviewed\n");
     assert_eq!(
-        std::fs::read_to_string(sessions.join("argv")).unwrap(),
+        fs::read_to_string(sessions.join("argv")).unwrap(),
         "-p\n--resume\n01890f00-0000-7000-8000-000000000001\n"
     );
-    assert_eq!(
-        std::fs::read(sessions.join("stdin")).unwrap(),
-        b"delta packet"
-    );
+    assert_eq!(fs::read(sessions.join("stdin")).unwrap(), b"delta packet");
 
     let mut delegated = authorized_host();
     delegated.review_kind = "finding_resolution";
@@ -605,11 +606,11 @@ fn continuation_launch_uses_exact_print_resume_arguments() {
     );
     assert!(capture.status.unwrap().success());
     assert_eq!(
-        std::fs::read_to_string(sessions.join("argv")).unwrap(),
+        fs::read_to_string(sessions.join("argv")).unwrap(),
         "-p\n--resume\n01890f00-0000-7000-8000-000000000001\n"
     );
     assert_eq!(
-        std::fs::read(sessions.join("stdin")).unwrap(),
+        fs::read(sessions.join("stdin")).unwrap(),
         b"delegated delta"
     );
 }
@@ -624,13 +625,13 @@ fn delegated_launch_uses_exact_host_read_only_arguments() {
         "yo",
         "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$YO_SESSION_REPOSITORY.argv\"\ncat > \"$YO_SESSION_REPOSITORY.stdin\"\nprintf 'reviewed\\n'\n",
     );
-    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    let mut permissions = fs::metadata(&executable).unwrap().permissions();
     permissions.set_mode(0o700);
-    std::fs::set_permissions(&executable, permissions).unwrap();
+    fs::set_permissions(&executable, permissions).unwrap();
 
     for host in ["codex", "grok"] {
         let output = repository.path.join(format!("output-{host}"));
-        std::fs::create_dir(&output).unwrap();
+        fs::create_dir(&output).unwrap();
         let mut delivery = authorized_host();
         delivery.host = host.to_owned();
         let capture =
@@ -638,11 +639,11 @@ fn delegated_launch_uses_exact_host_read_only_arguments() {
 
         assert!(capture.status.unwrap().success());
         assert_eq!(
-            std::fs::read_to_string(output.join("sessions.argv")).unwrap(),
+            fs::read_to_string(output.join("sessions.argv")).unwrap(),
             format!("-p\n--model\nhost:{host}\n--sandbox\nread-only\n")
         );
         assert_eq!(
-            std::fs::read(output.join("sessions.stdin")).unwrap(),
+            fs::read(output.join("sessions.stdin")).unwrap(),
             b"review packet"
         );
     }
@@ -655,11 +656,11 @@ fn delegated_launch_uses_exact_host_read_only_arguments() {
 fn claimed_process_is_terminated_at_its_deadline() {
     let repository = TestRepository::new("review-delivery-timeout");
     let output = repository.path.join("output");
-    std::fs::create_dir(&output).unwrap();
+    fs::create_dir(&output).unwrap();
     let executable = repository.write("yo", "#!/bin/sh\nwhile :; do :; done\n");
-    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    let mut permissions = fs::metadata(&executable).unwrap().permissions();
     permissions.set_mode(0o700);
-    std::fs::set_permissions(&executable, permissions).unwrap();
+    fs::set_permissions(&executable, permissions).unwrap();
     let started = Instant::now();
 
     let capture = execute_once_with_timeout(
@@ -702,8 +703,8 @@ fn provider_request_identity_counts_outcomes_and_uses_the_accepted_fallback() {
 fn post_claim_capture_setup_failure_remains_a_bounded_capture() {
     let repository = TestRepository::new("review-delivery-capture-setup");
     let output = repository.path.join("output");
-    std::fs::create_dir(&output).unwrap();
-    std::fs::write(output.join(".review.stdout.tmp"), b"occupied").unwrap();
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join(".review.stdout.tmp"), b"occupied").unwrap();
 
     let capture = execute_once(
         &repository.path.join("must-not-start"),
@@ -733,7 +734,7 @@ fn integration_state_rejects_untracked_files() {
     repository.write("tracked.txt", "tracked\n");
     repository.git(["add", "tracked.txt"]);
     repository.git(["commit", "--quiet", "-m", "test: base"]);
-    let head = crate::git::trusted_output_in(&repository.path, &["rev-parse", "HEAD"])
+    let head = git::trusted_output_in(&repository.path, &["rev-parse", "HEAD"])
         .unwrap()
         .trim()
         .to_owned();

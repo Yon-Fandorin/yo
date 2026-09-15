@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -21,10 +22,12 @@ use super::{
 use crate::{
     git,
     review_delta::model::{Manifest, PRIOR_FINDINGS_SCHEMA, PriorFinding, PriorFindings},
+    review_packet,
     review_packet::{VerifiedReview, storage},
     review_protocol::{
         Captured, NamedCaptured, digest, domain_digest, relative, resolve_input_path,
     },
+    test_support,
 };
 
 fn repository_head(repository: &Path) -> String {
@@ -46,7 +49,7 @@ fn write_findings(path: &Path, review_id: &str, candidate: &str, finding_id: &st
     };
     let mut bytes = serde_json::to_vec_pretty(&value).unwrap();
     bytes.push(b'\n');
-    std::fs::write(path, &bytes).unwrap();
+    fs::write(path, &bytes).unwrap();
     captured(path.to_string_lossy().into_owned(), bytes).unwrap()
 }
 
@@ -116,7 +119,7 @@ fn delta_inputs(
         finding_id,
     );
     let evidence_path = repository.join(format!(".local-exclude/evidence-{evidence_suffix}.txt"));
-    std::fs::write(&evidence_path, evidence_body).unwrap();
+    fs::write(&evidence_path, evidence_body).unwrap();
     let contract_path = resolve_input_path(repository, &prior.slice_contract_path);
     Inputs {
         request: captured("request.json".to_owned(), b"request".to_vec()).unwrap(),
@@ -147,7 +150,7 @@ fn delta_inputs(
 // canonical-but-ineligible evidence는 거부하는지 끝까지 확인한다.
 #[test]
 fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() {
-    let repository = crate::test_support::TestRepository::new("review-delta-chain-e2e");
+    let repository = test_support::TestRepository::new("review-delta-chain-e2e");
     repository.write(".gitignore", ".local-exclude/\n");
     repository.write("owned.txt", "base\n");
     repository.git(["add", ".gitignore", "owned.txt"]);
@@ -165,7 +168,7 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
         r#"{"schema":"yo.validation-run-summary/v1","name":"baseline","status":"passed","exit_code":0,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/validation.log"}
 "#,
     );
-    let seed = crate::review_packet::tests::support::publish_original(
+    let seed = review_packet::tests::support::publish_original(
         &repository.path,
         &base_commit,
         &candidate_a,
@@ -175,8 +178,7 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
     );
     let seed_manifest_path = resolve_input_path(&repository.path, &seed.manifest_path);
     let verify_seed = |_: &Path, path: &Path, expected: &str| {
-        if std::fs::canonicalize(path).unwrap()
-            == std::fs::canonicalize(&seed_manifest_path).unwrap()
+        if fs::canonicalize(path).unwrap() == fs::canonicalize(&seed_manifest_path).unwrap()
             && expected == seed.manifest_hash
         {
             Ok(seed.clone())
@@ -224,7 +226,7 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
     )
     .unwrap();
     let first_manifest_value: Manifest =
-        serde_json::from_slice(&std::fs::read(&first_manifest).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&first_manifest).unwrap()).unwrap();
     assert_eq!(
         first_manifest_value.plan.prior_candidate_commit,
         candidate_a
@@ -294,7 +296,7 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
         relative(&repository.path, &second_manifest)
     );
     let second_manifest_value: Manifest =
-        serde_json::from_slice(&std::fs::read(&second_manifest).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&second_manifest).unwrap()).unwrap();
     assert_eq!(
         second_manifest_value.plan.prior_candidate_commit,
         candidate_b
@@ -347,7 +349,7 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
 // dispatch가 기록된 wire version의 의미만 적용함을 확인한다.
 #[test]
 fn legacy_v1_alias_replays_while_v1_alpha1_rejects_it() {
-    let repository = crate::test_support::TestRepository::new("review-delta-legacy-alias");
+    let repository = test_support::TestRepository::new("review-delta-legacy-alias");
     repository.write(".gitignore", ".local-exclude/\n");
     repository.write("owned.txt", "base\n");
     repository.git(["add", ".gitignore", "owned.txt"]);
@@ -373,20 +375,20 @@ fn legacy_v1_alias_replays_while_v1_alpha1_rejects_it() {
         ".local-exclude/evidence.txt",
         &format!("Prior: {candidate_a}\nCandidate: {candidate_b}\npassed\n"),
     );
-    std::fs::create_dir_all(repository.path.join(".local-exclude/nested")).unwrap();
+    fs::create_dir_all(repository.path.join(".local-exclude/nested")).unwrap();
     let old_evidence = capture_file(&evidence, "prior evidence").unwrap();
     let prior = VerifiedReview {
         review_id: digest(b"prior review"),
         manifest_path: relative(&repository.path, &prior_manifest),
-        manifest_hash: digest(&std::fs::read(&prior_manifest).unwrap()),
+        manifest_hash: digest(&fs::read(&prior_manifest).unwrap()),
         packet_path: relative(&repository.path, &prior_packet),
-        packet_hash: digest(&std::fs::read(&prior_packet).unwrap()),
+        packet_hash: digest(&fs::read(&prior_packet).unwrap()),
         base_commit: base,
         candidate_commit: candidate_a.clone(),
         trusted_commit: candidate_a,
         slice_contract_path: contract.to_string_lossy().into_owned(),
-        slice_contract_hash: digest(&std::fs::read(&contract).unwrap()),
-        validation_evidence: vec![crate::review_packet::VerifiedEvidence {
+        slice_contract_hash: digest(&fs::read(&contract).unwrap()),
+        validation_evidence: vec![review_packet::VerifiedEvidence {
             name: "baseline".to_owned(),
             path: old_evidence.path.clone(),
             hash: old_evidence.hash.clone(),
@@ -411,7 +413,7 @@ fn legacy_v1_alias_replays_while_v1_alpha1_rejects_it() {
     let (manifest, manifest_hash, _) =
         publish_delta_fixture_for(&repository.path, &inputs, v1::contract());
     let verify_prior = |_: &Path, path: &Path, expected_hash: &str| {
-        if std::fs::canonicalize(path).unwrap() != std::fs::canonicalize(&prior_manifest).unwrap()
+        if fs::canonicalize(path).unwrap() != fs::canonicalize(&prior_manifest).unwrap()
             || expected_hash != prior.manifest_hash
         {
             return Err("unexpected prior review".to_owned());
@@ -437,8 +439,8 @@ fn legacy_v1_alias_replays_while_v1_alpha1_rejects_it() {
     assert_eq!(verified.validation_evidence[0].hash, old_evidence.hash);
     assert_ne!(verified.validation_evidence[0].path, old_evidence.path);
     assert_eq!(
-        std::fs::canonicalize(&verified.validation_evidence[0].path).unwrap(),
-        std::fs::canonicalize(&old_evidence.path).unwrap()
+        fs::canonicalize(&verified.validation_evidence[0].path).unwrap(),
+        fs::canonicalize(&old_evidence.path).unwrap()
     );
 
     inputs.delivery_profile_bytes = delivery_profile_bytes_for(v1alpha1::contract());
@@ -462,7 +464,7 @@ fn assert_experimental_original_roots_accept_v1_alpha1_delta(
     case: &str,
     publish_original: PublishOriginal,
 ) {
-    let repository = crate::test_support::TestRepository::new(case);
+    let repository = test_support::TestRepository::new(case);
     repository.write(".gitignore", ".local-exclude/\n");
     repository.write("owned.txt", "base\n");
     repository.git(["add", ".gitignore", "owned.txt"]);
@@ -489,7 +491,7 @@ fn assert_experimental_original_roots_accept_v1_alpha1_delta(
     );
     let seed_path = resolve_input_path(&repository.path, &seed.manifest_path);
     let verify_seed = |_: &Path, path: &Path, expected: &str| {
-        if std::fs::canonicalize(path).unwrap() == std::fs::canonicalize(&seed_path).unwrap()
+        if fs::canonicalize(path).unwrap() == fs::canonicalize(&seed_path).unwrap()
             && expected == seed.manifest_hash
         {
             Ok(seed.clone())
@@ -531,7 +533,7 @@ fn assert_experimental_original_roots_accept_v1_alpha1_delta(
 fn v1_alpha1_original_roots_v1_alpha1_delta_chain() {
     assert_experimental_original_roots_accept_v1_alpha1_delta(
         "review-delta-alpha1-root",
-        crate::review_packet::tests::support::publish_original_v1_alpha1,
+        review_packet::tests::support::publish_original_v1_alpha1,
     );
 }
 
@@ -541,6 +543,6 @@ fn v1_alpha1_original_roots_v1_alpha1_delta_chain() {
 fn v1_alpha2_original_roots_v1_alpha1_delta_chain() {
     assert_experimental_original_roots_accept_v1_alpha1_delta(
         "review-delta-alpha2-root",
-        crate::review_packet::tests::support::publish_original_v1_alpha2,
+        review_packet::tests::support::publish_original_v1_alpha2,
     );
 }

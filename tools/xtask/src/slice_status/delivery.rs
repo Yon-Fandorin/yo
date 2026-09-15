@@ -1,5 +1,6 @@
 use std::{
     fs::{File, OpenOptions, TryLockError},
+    io,
     path::{Path, PathBuf},
 };
 
@@ -238,7 +239,7 @@ fn writer_is_active(root: &Path, session_id: SessionId) -> Result<bool, String> 
     let path = root.join(format!("{session_id}.writer.lock"));
     let file = match OpenOptions::new().read(true).open(&path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(error) => {
             return Err(format!(
                 "cannot inspect delivery Session writer lock {}: {error}",

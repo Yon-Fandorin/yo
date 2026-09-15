@@ -1,17 +1,19 @@
 use std::{
     ffi::{OsStr, OsString},
     fs::File,
-    io::{Read, Write},
+    io::{self, Read, Write},
     os::fd::OwnedFd,
     path::{Component, Path, PathBuf},
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use rustix::{
     fs::{
-        AtFlags, FileType, FlockOperation, Mode, OFlags, fchmod, flock, fstat, open, openat,
+        self, AtFlags, FileType, FlockOperation, Mode, OFlags, fchmod, flock, fstat, open, openat,
         renameat, unlinkat,
     },
+    io as rustix_io,
     io::Errno,
 };
 
@@ -55,7 +57,7 @@ impl RepositoryFiles {
         let root = open(repository, DIRECTORY_FLAGS, Mode::empty())
             .map_err(|error| format!("cannot open repository root: {}", io_error(error)))?;
         let lock = File::from(
-            rustix::io::dup(&root)
+            rustix_io::dup(&root)
                 .map_err(|error| format!("cannot retain repository root: {}", io_error(error)))?,
         );
         flock(&lock, FlockOperation::NonBlockingLockExclusive).map_err(|error| {
@@ -154,7 +156,7 @@ fn open_parent(root: &OwnedFd, relative: &Path) -> Result<(OwnedFd, OsString), S
             ));
         },
     };
-    let mut parent = rustix::io::dup(root)
+    let mut parent = rustix_io::dup(root)
         .map_err(|error| format!("cannot retain repository root: {}", io_error(error)))?;
     for component in components.iter().take(components.len() - 1) {
         let Component::Normal(component) = component else {
@@ -198,7 +200,7 @@ fn capture_relative(
 }
 
 impl FileIdentity {
-    fn from_stat(stat: &rustix::fs::Stat) -> Self {
+    fn from_stat(stat: &fs::Stat) -> Self {
         Self {
             device: i128::from(stat.st_dev),
             inode: i128::from(stat.st_ino),
@@ -265,13 +267,13 @@ fn temporary_name(target: &OsStr) -> OsString {
     let sequence = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
     let mut name = OsString::from(".");
     name.push(target);
-    name.push(format!(".tmp-{}-{sequence}", std::process::id()));
+    name.push(format!(".tmp-{}-{sequence}", process::id()));
     name
 }
 
 fn sync_directory(directory: &OwnedFd) -> Result<(), String> {
     File::from(
-        rustix::io::dup(directory)
+        rustix_io::dup(directory)
             .map_err(|error| format!("cannot retain manifest directory: {}", io_error(error)))?,
     )
     .sync_all()
@@ -285,6 +287,6 @@ fn path_error(path: &Path, error: Errno) -> String {
     }
 }
 
-fn io_error(error: Errno) -> std::io::Error {
-    std::io::Error::from_raw_os_error(error.raw_os_error())
+fn io_error(error: Errno) -> io::Error {
+    io::Error::from_raw_os_error(error.raw_os_error())
 }

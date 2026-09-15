@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs, path,
     path::PathBuf,
+    process,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -10,6 +11,7 @@ use serde_json::json;
 use super::{BuildArtifacts, run_with_before_final, storage, verify_artifacts};
 use crate::{
     checkpoint::{CheckpointService, TestRepository},
+    context,
     context::hash::{StableHasher, digest},
 };
 
@@ -131,9 +133,9 @@ impl Fixture {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "methexis-context-verify-{}-{nonce}-{sequence}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir(&root).unwrap();
         let artifacts = BuildArtifacts {
@@ -162,7 +164,7 @@ impl Drop for Fixture {
     }
 }
 
-fn write_artifacts(directory: &std::path::Path, artifacts: &BuildArtifacts) {
+fn write_artifacts(directory: &path::Path, artifacts: &BuildArtifacts) {
     fs::write(directory.join("context.md"), &artifacts.context).unwrap();
     fs::write(directory.join("manifest.json"), &artifacts.manifest).unwrap();
 }
@@ -205,7 +207,7 @@ fn resolved_repository() -> (TestRepository, PathBuf, String) {
             "max_tokens": 8000
         }),
     );
-    let resolved = crate::context::operations::resolve(&repository.path, &request).unwrap();
+    let resolved = context::operations::resolve(&repository.path, &request).unwrap();
     let build_id = serde_json::to_value(resolved).unwrap()["build_id"]
         .as_str()
         .unwrap()
@@ -256,7 +258,7 @@ fn resolved_candidate_repository() -> (TestRepository, PathBuf, String, PathBuf)
             "max_tokens": 8000
         }),
     );
-    let resolved = crate::context::operations::resolve(&repository.path, &request).unwrap();
+    let resolved = context::operations::resolve(&repository.path, &request).unwrap();
     let build_id = serde_json::to_value(resolved).unwrap()["build_id"]
         .as_str()
         .unwrap()

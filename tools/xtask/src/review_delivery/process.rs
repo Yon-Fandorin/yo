@@ -2,6 +2,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     path::Path,
+    process,
     process::{Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
@@ -9,7 +10,7 @@ use std::{
 
 use super::{DIAGNOSTIC_LIMIT, REVIEW_RESULT_LIMIT, combine_failures, model::ProcessOutcome};
 use crate::{
-    bounded_file,
+    bounded_file, grok_outer_sandbox,
     review_egress::{AuthorizedDelivery, AuthorizedHostDelivery},
 };
 
@@ -190,18 +191,14 @@ fn execute_command_once_with_timeout(
         },
     };
     let mut command = match execution_isolation {
-        None | Some(crate::grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE) => {
+        None | Some(grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE) => {
             let mut command = Command::new(yo_binary);
             command.args(arguments);
             command
         },
-        Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE) => {
-            match crate::grok_outer_sandbox::command(
-                yo_binary,
-                arguments,
-                integration,
-                session_repository,
-            ) {
+        Some(grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE) => {
+            match grok_outer_sandbox::command(yo_binary, arguments, integration, session_repository)
+            {
                 Ok(command) => command,
                 Err(error) => {
                     drop(stdout);
@@ -292,7 +289,7 @@ fn execute_command_once_with_timeout(
 }
 
 fn wait_with_timeout(
-    child: &mut std::process::Child,
+    child: &mut process::Child,
     timeout: Duration,
 ) -> (Option<ExitStatus>, Option<String>) {
     let started = Instant::now();
@@ -329,7 +326,7 @@ fn wait_with_timeout(
     }
 }
 
-fn terminate_and_reap(child: &mut std::process::Child) -> Option<String> {
+fn terminate_and_reap(child: &mut process::Child) -> Option<String> {
     let kill_failure = child
         .kill()
         .err()

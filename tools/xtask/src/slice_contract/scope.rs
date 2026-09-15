@@ -1,4 +1,5 @@
 use std::{
+    env,
     ffi::OsStr,
     path::{Path, PathBuf},
 };
@@ -43,7 +44,7 @@ pub(crate) fn trusted_check_bound_scope(repository: &Path) -> Result<(), String>
 }
 
 fn selected_index(repository: &Path) -> Option<PathBuf> {
-    std::env::var_os("GIT_INDEX_FILE").map(|value| {
+    env::var_os("GIT_INDEX_FILE").map(|value| {
         let path = PathBuf::from(value);
         if path.is_absolute() {
             path

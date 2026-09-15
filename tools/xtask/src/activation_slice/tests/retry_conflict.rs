@@ -1,7 +1,10 @@
+use std::fs;
+
 use super::{
     super::{model::Effect, observation, prepare, prepare_with_post_binding, run},
     support::{Fixture, output},
 };
+use crate::slice_contract;
 
 // contract publication 뒤 branch만 남은 중단 상태는 exact base와 request가
 // 일치할 때 새 worktree와 binding만 복구하여 수동 ref 삭제를 요구하지 않는다.
@@ -138,7 +141,7 @@ fn failure_observes_a_branch_only_partial_setup() {
 fn failure_observes_a_contractless_worktree_as_conflicting() {
     let fixture = Fixture::new("activation-contractless-worktree");
     let first = fixture.prepare();
-    std::fs::remove_file(&first.contract_path).unwrap();
+    fs::remove_file(&first.contract_path).unwrap();
 
     let encoded = run(&fixture.repository.path, &fixture.request).unwrap_err();
     let failure: serde_json::Value = serde_json::from_str(&encoded).unwrap();
@@ -161,10 +164,10 @@ fn failure_distinguishes_an_unprepared_contract_from_worktree_coordinate_drift()
         let fixture = Fixture::new(&format!("activation-unprepared-contract-{invalid_kind}"));
         let first = fixture.prepare();
         if invalid_kind == "invalid-json" {
-            std::fs::write(&first.contract_path, b"{}\n").unwrap();
+            fs::write(&first.contract_path, b"{}\n").unwrap();
         } else {
-            std::fs::remove_file(&first.contract_path).unwrap();
-            std::fs::create_dir(&first.contract_path).unwrap();
+            fs::remove_file(&first.contract_path).unwrap();
+            fs::create_dir(&first.contract_path).unwrap();
         }
 
         let encoded = run(&fixture.repository.path, &fixture.request).unwrap_err();
@@ -189,9 +192,9 @@ fn failure_distinguishes_an_unprepared_contract_from_worktree_coordinate_drift()
 #[test]
 fn failure_observation_uses_the_invocation_snapshot() {
     let fixture = Fixture::new("activation-failure-snapshot");
-    let request = std::fs::read(&fixture.request).unwrap();
+    let request = fs::read(&fixture.request).unwrap();
     let initial_base = output(&fixture.repository.path, &["rev-parse", "HEAD"]);
-    std::fs::write(
+    fs::write(
         &fixture.request,
         r#"{
   "schema": "yo.activation-slice-request/v1",
@@ -236,8 +239,8 @@ fn rejects_a_conflicting_coordination_contract() {
         .join(".local-exclude/coordination")
         .join(&fixture.slice)
         .join("slice-contract.json");
-    std::fs::create_dir_all(contract.parent().unwrap()).unwrap();
-    std::fs::write(&contract, b"{}\n").unwrap();
+    fs::create_dir_all(contract.parent().unwrap()).unwrap();
+    fs::write(&contract, b"{}\n").unwrap();
 
     let error = prepare(&fixture.repository.path, &fixture.request).unwrap_err();
 
@@ -251,13 +254,13 @@ fn rejects_a_conflicting_coordination_contract() {
 fn rejects_a_dirty_existing_slice_worktree() {
     let fixture = Fixture::new("activation-dirty-slice");
     fixture.prepare();
-    std::fs::write(fixture.worktree().join("untracked.txt"), b"dirty\n").unwrap();
+    fs::write(fixture.worktree().join("untracked.txt"), b"dirty\n").unwrap();
 
     let error = prepare(&fixture.repository.path, &fixture.request).unwrap_err();
 
     assert!(error.contains("activation Slice worktree must be clean"));
     assert_eq!(
-        std::fs::read(fixture.worktree().join("untracked.txt")).unwrap(),
+        fs::read(fixture.worktree().join("untracked.txt")).unwrap(),
         b"dirty\n"
     );
 }
@@ -269,12 +272,12 @@ fn rejects_a_worktree_mutation_after_binding() {
     let fixture = Fixture::new("activation-post-binding-mutation");
 
     let error = prepare_with_post_binding(&fixture.repository.path, &fixture.request, |worktree| {
-        std::fs::write(worktree.join("late.txt"), b"late\n").map_err(|write| write.to_string())
+        fs::write(worktree.join("late.txt"), b"late\n").map_err(|write| write.to_string())
     })
     .unwrap_err();
 
     assert!(error.contains("activation Slice worktree must be clean"));
-    let binding = crate::slice_contract::binding_path_for(&fixture.worktree()).unwrap();
+    let binding = slice_contract::binding_path_for(&fixture.worktree()).unwrap();
     assert!(binding.exists());
 }
 
@@ -284,13 +287,13 @@ fn rejects_a_worktree_mutation_after_binding() {
 fn rejects_and_preserves_a_conflicting_binding() {
     let fixture = Fixture::new("activation-binding-conflict");
     let first = fixture.prepare();
-    std::fs::write(&first.binding_path, b"/different/contract.json\n").unwrap();
+    fs::write(&first.binding_path, b"/different/contract.json\n").unwrap();
 
     let error = prepare(&fixture.repository.path, &fixture.request).unwrap_err();
 
     assert!(error.contains("already contains different bytes"));
     assert_eq!(
-        std::fs::read(&first.binding_path).unwrap(),
+        fs::read(&first.binding_path).unwrap(),
         b"/different/contract.json\n"
     );
 }
@@ -301,7 +304,7 @@ fn rejects_and_preserves_a_conflicting_binding() {
 fn failure_reports_every_prepared_or_conflicting_effect() {
     let fixture = Fixture::new("activation-structured-failure");
     let first = fixture.prepare();
-    std::fs::write(&first.binding_path, b"/different/contract.json\n").unwrap();
+    fs::write(&first.binding_path, b"/different/contract.json\n").unwrap();
 
     let encoded = run(&fixture.repository.path, &fixture.request).unwrap_err();
     let failure: serde_json::Value = serde_json::from_str(&encoded).unwrap();

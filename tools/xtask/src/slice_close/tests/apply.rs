@@ -1,5 +1,10 @@
+use std::{fs, os};
+
 use super::{CloseFixture, git, git_succeeds};
-use crate::slice_close::{apply, apply_with_before_delete, identity};
+use crate::{
+    slice_close::{apply, apply_with_before_delete, identity},
+    slice_contract, test_support,
+};
 
 // 계획 이후 develop이 한 커밋이라도 움직이면 apply는 오래된 승인 상태를
 // 추측하지 않고 멈추며 Slice worktree와 다른 로컬 자료를 그대로 보존한다.
@@ -90,8 +95,8 @@ fn rejects_contract_content_drift() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
     fixture.write_plan(&plan);
-    let contract = std::fs::read_to_string(&fixture.contract_path).unwrap();
-    std::fs::write(
+    let contract = fs::read_to_string(&fixture.contract_path).unwrap();
+    fs::write(
         &fixture.contract_path,
         contract.replace("test focused", "test focused changed"),
     )
@@ -111,7 +116,7 @@ fn rejects_coordination_drift_before_cleanup() {
     let plan = fixture.plan();
     fixture.write_plan(&plan);
     let handoff = fixture.contract_path.parent().unwrap().join("handoff.md");
-    std::fs::write(&handoff, "new after plan\n").unwrap();
+    fs::write(&handoff, "new after plan\n").unwrap();
 
     let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
 
@@ -127,11 +132,11 @@ fn rejects_coordination_drift_before_cleanup() {
 fn rejects_nested_coordination_drift_before_cleanup() {
     let fixture = CloseFixture::new();
     let notes = fixture.contract_path.with_file_name("notes");
-    std::fs::create_dir(&notes).unwrap();
+    fs::create_dir(&notes).unwrap();
     let plan = fixture.plan();
     fixture.write_plan(&plan);
     let late = notes.join("late.txt");
-    std::fs::write(&late, "late\n").unwrap();
+    fs::write(&late, "late\n").unwrap();
 
     let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
 
@@ -179,7 +184,7 @@ fn rejects_missing_registration_when_the_planned_path_still_exists() {
             fixture.slice_worktree.to_str().unwrap(),
         ],
     );
-    std::fs::create_dir_all(&fixture.slice_worktree).unwrap();
+    fs::create_dir_all(&fixture.slice_worktree).unwrap();
 
     let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
 
@@ -197,7 +202,7 @@ fn rejects_a_plan_stored_inside_the_target_worktree() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
     let inside = fixture.slice_worktree.join("close-plan.json");
-    std::fs::write(&inside, serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
+    fs::write(&inside, serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
 
     let error = apply(&fixture.repository.path, &inside).unwrap_err();
 
@@ -212,7 +217,7 @@ fn rejects_a_plan_stored_inside_the_slice_coordination_directory() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
     let inside = fixture.contract_path.with_file_name("close-plan.json");
-    std::fs::write(&inside, serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
+    fs::write(&inside, serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
 
     let error = apply(&fixture.repository.path, &inside).unwrap_err();
 
@@ -250,8 +255,8 @@ fn removes_reported_coordination_paths() {
     let coordination = fixture.contract_path.parent().unwrap();
     let handoff = coordination.join("handoff.md");
     let notes = coordination.join("notes");
-    std::fs::write(&handoff, "retain me\n").unwrap();
-    std::fs::create_dir(&notes).unwrap();
+    fs::write(&handoff, "retain me\n").unwrap();
+    fs::create_dir(&notes).unwrap();
     let plan = fixture.plan();
     fixture.write_plan(&plan);
 
@@ -269,10 +274,10 @@ fn removes_reported_coordination_paths() {
 #[test]
 fn coordination_cleanup_does_not_follow_symlinks() {
     let fixture = CloseFixture::new();
-    let outside = crate::test_support::unique_path("slice-close-outside");
-    std::fs::create_dir_all(&outside).unwrap();
-    std::fs::write(outside.join("preserved.txt"), "preserve me\n").unwrap();
-    std::os::unix::fs::symlink(
+    let outside = test_support::unique_path("slice-close-outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("preserved.txt"), "preserve me\n").unwrap();
+    os::unix::fs::symlink(
         &outside,
         fixture.contract_path.with_file_name("outside-link"),
     )
@@ -283,7 +288,7 @@ fn coordination_cleanup_does_not_follow_symlinks() {
     apply(&fixture.repository.path, &fixture.plan_path).unwrap();
 
     assert!(outside.join("preserved.txt").exists());
-    std::fs::remove_dir_all(outside).unwrap();
+    fs::remove_dir_all(outside).unwrap();
 }
 
 // v3 도입 전에 발행된 v2 plan은 새 retained 필드가 없어도 기존 identity로
@@ -303,7 +308,7 @@ fn applies_a_legacy_v2_plan() {
         .as_object_mut()
         .unwrap()
         .remove("retained_coordination_paths");
-    std::fs::write(
+    fs::write(
         &fixture.plan_path,
         serde_json::to_vec_pretty(&encoded).unwrap(),
     )
@@ -389,9 +394,9 @@ fn resumes_after_the_planned_worktree_was_already_removed() {
 #[test]
 fn preserves_a_nonstandard_contract_path() {
     let fixture = CloseFixture::new();
-    let external = crate::test_support::unique_path("slice-close-external-contract.json");
-    std::fs::copy(&fixture.contract_path, &external).unwrap();
-    crate::slice_contract::bind(&fixture.slice_worktree, &external).unwrap();
+    let external = test_support::unique_path("slice-close-external-contract.json");
+    fs::copy(&fixture.contract_path, &external).unwrap();
+    slice_contract::bind(&fixture.slice_worktree, &external).unwrap();
     let plan = fixture.plan();
     fixture.write_plan(&plan);
 
@@ -399,7 +404,7 @@ fn preserves_a_nonstandard_contract_path() {
     apply(&fixture.repository.path, &fixture.plan_path).unwrap();
 
     assert!(external.exists());
-    std::fs::remove_file(external).unwrap();
+    fs::remove_file(external).unwrap();
 }
 
 // worktree와 표준 contract가 이미 제거된 중단 상태에서도 plan의 exact ref가
@@ -423,7 +428,7 @@ fn resumes_after_worktree_and_contract_were_already_removed() {
             fixture.slice_worktree.to_str().unwrap(),
         ],
     );
-    std::fs::remove_file(&fixture.contract_path).unwrap();
+    fs::remove_file(&fixture.contract_path).unwrap();
 
     apply(&fixture.repository.path, &fixture.plan_path).unwrap();
 
@@ -454,7 +459,7 @@ fn changed_contract_after_worktree_removal_is_preserved() {
             fixture.slice_worktree.to_str().unwrap(),
         ],
     );
-    std::fs::write(&fixture.contract_path, b"changed after interruption\n").unwrap();
+    fs::write(&fixture.contract_path, b"changed after interruption\n").unwrap();
 
     let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
 

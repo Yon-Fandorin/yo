@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::{ImpactInput, developer_docs, slice_review};
 use crate::test_support::{TestRepository, unique_path};
 
@@ -9,7 +11,7 @@ fn staged_deletion_remains_a_developer_docs_change() {
     repository.write("crates/yo-core/src/obsolete.rs", "obsolete\n");
     repository.git(["add", "."]);
     repository.git(["commit", "--quiet", "-m", "test: seed deletion"]);
-    std::fs::remove_file(repository.path.join("crates/yo-core/src/obsolete.rs")).unwrap();
+    fs::remove_file(repository.path.join("crates/yo-core/src/obsolete.rs")).unwrap();
     repository.git(["add", "-u"]);
     let message = repository.write("message", "refactor: remove obsolete code\n");
 
@@ -78,14 +80,14 @@ fn developer_docs_does_not_use_slice_review_head_fallback() {
 #[test]
 fn changed_path_query_failure_is_not_treated_as_an_empty_change() {
     let directory = unique_path("not-a-repository");
-    std::fs::create_dir_all(&directory).unwrap();
+    fs::create_dir_all(&directory).unwrap();
     let message = directory.join("message");
-    std::fs::write(&message, "test: invalid repository\n").unwrap();
+    fs::write(&message, "test: invalid repository\n").unwrap();
 
     let result =
         ImpactInput::load_from(&directory, message, None, Some("develop".to_owned()), false);
 
-    let _ = std::fs::remove_dir_all(&directory);
+    let _ = fs::remove_dir_all(&directory);
     assert!(result.is_err());
 }
 
