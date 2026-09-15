@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     fmt,
+    io::Error as IoError,
     path::{Path, PathBuf},
 };
 
@@ -8,10 +9,7 @@ use super::storage::MAX_CREDENTIAL_FILE_BYTES;
 
 #[derive(Debug)]
 pub enum LocalCredentialStoreError {
-    Io {
-        path: PathBuf,
-        source: std::io::Error,
-    },
+    Io { path: PathBuf, source: IoError },
     InvalidPath(PathBuf),
     UnsupportedFileType(PathBuf),
     WrongOwner(PathBuf),
@@ -26,7 +24,7 @@ pub enum LocalCredentialStoreError {
 }
 
 impl LocalCredentialStoreError {
-    pub(super) fn io(path: &Path, source: std::io::Error) -> Self {
+    pub(super) fn io(path: &Path, source: IoError) -> Self {
         Self::Io {
             path: path.to_owned(),
             source,

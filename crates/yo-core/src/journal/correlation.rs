@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt::Write as _, mem};
+use std::{collections::BTreeSet, fmt::Write as _, iter, mem};
 
 use sha2::Digest as _;
 
@@ -432,7 +432,7 @@ impl SessionJournal {
         let exchange_sequence = first_sequence.advance_by(events.len() + 1);
         let accepted_sequence = first_sequence.advance_by(events.len() + 2);
         let operation_id = OperationId::from(submission_id);
-        let records = std::iter::once(SemanticRecord::CommandCommitted(committed))
+        let records = iter::once(SemanticRecord::CommandCommitted(committed))
             .chain(events.iter().cloned().map(SemanticRecord::EventCommitted))
             .chain([
                 SemanticRecord::BackendExchangeObserved(BackendExchangeObserved::new(

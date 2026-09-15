@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::io::ErrorKind;
 use std::{
     cell::Cell,
     fs,
@@ -6,6 +8,8 @@ use std::{
 };
 
 use super::support::{Fixture, candidate};
+#[cfg(test)]
+use crate::model_service::ConnectionOperationExecutionError;
 use crate::model_service::{
     ConnectionOperationExecutionOutcome, ConnectionOperationJournalEntry,
     ConnectionRepositoryError, LocalConnectionOperationRepositories,
@@ -29,10 +33,7 @@ fn publish_connect_through_credential_commit(fixture: &Fixture) -> ConnectionOpe
 
 fn recover(
     fixture: &Fixture,
-) -> Result<
-    ConnectionOperationExecutionOutcome,
-    crate::model_service::ConnectionOperationExecutionError,
-> {
+) -> Result<ConnectionOperationExecutionOutcome, ConnectionOperationExecutionError> {
     LocalConnectionOperationRepositories::from_paths(
         fixture.connections.path(),
         fixture.credentials.path(),
@@ -279,7 +280,7 @@ fn non_collision_open_failure_is_not_retried() {
     assert!(matches!(
         error,
         ConnectionRepositoryError::Io { ref path, ref source }
-            if path == &expected && source.kind() == std::io::ErrorKind::NotADirectory
+            if path == &expected && source.kind() == ErrorKind::NotADirectory
     ));
     assert_eq!(calls.get(), 1);
     assert_eq!(

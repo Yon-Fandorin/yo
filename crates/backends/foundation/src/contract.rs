@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{error::Error, fmt, sync::Arc};
 
 use crate::{BackendBindingEvidence, BackendCommandEvidence};
 
@@ -276,4 +276,4 @@ impl fmt::Display for BackendFailure {
     }
 }
 
-impl std::error::Error for BackendFailure {}
+impl Error for BackendFailure {}

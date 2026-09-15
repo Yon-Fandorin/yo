@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::IgnoredAny};
 pub use serde_saphyr::{Error, SerializeError};
 
 const MAX_YAML_EVENTS: usize = 100_000;
@@ -121,7 +121,7 @@ where
 /// keeps format-retirement diagnostics scoped to root fields instead of matching an identically
 /// named nested field from a typed deserialization error.
 pub fn has_any_top_level_mapping_key(contents: &[u8], field_names: &[&str]) -> Result<bool, Error> {
-    let fields: BTreeMap<String, serde::de::IgnoredAny> = serde_saphyr::from_slice_with_options(
+    let fields: BTreeMap<String, IgnoredAny> = serde_saphyr::from_slice_with_options(
         contents,
         deserialize_options(ParseLimits::default()),
     )?;

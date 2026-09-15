@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt, sync::Arc};
+use std::{collections::HashSet, error::Error, fmt, sync::Arc};
 
 use super::{
     RepositoryError, SessionWriterRepository, StoredDiscoveryValidation, StoredSessionReader,
@@ -14,7 +14,10 @@ use crate::{
     JournalSequence, ModelReplay, SessionDescriptor, SessionId, SubmissionId,
     journal::{
         JournalEntry,
-        codec::{ForkSource, HistoricalForkKind, JournalRecord, RecoveredJournal},
+        codec::{
+            ForkSource, HistoricalForkKind, JournalCommit, JournalRecord, RecoveredJournal,
+            TransitionMode, VersionedIdentity,
+        },
     },
 };
 
@@ -393,7 +396,7 @@ impl StoredSessionContinuation {
         self.recovered.semantic_entries()
     }
 
-    pub(crate) fn snapshot(&self) -> crate::journal::codec::JournalCommit {
+    pub(crate) fn snapshot(&self) -> JournalCommit {
         self.recovered.complete_snapshot()
     }
 
@@ -437,7 +440,7 @@ impl fmt::Display for StoredSessionContinuationError {
     }
 }
 
-impl std::error::Error for StoredSessionContinuationError {}
+impl Error for StoredSessionContinuationError {}
 
 /// Acquires one Session writer lease, then revalidates its executable continuation.
 pub fn recover_stored_session_continuation(
@@ -628,8 +631,7 @@ pub(crate) fn build_continuation(
     let resumes_from_replacement_source = transition_source == Some(resume_source)
         && matches!(
             binding.transition().mode(),
-            crate::journal::codec::TransitionMode::ExactReplay
-                | crate::journal::codec::TransitionMode::BackendNativeModelRebind
+            TransitionMode::ExactReplay | TransitionMode::BackendNativeModelRebind
         );
     if source_epoch != epoch && !resumes_from_replacement_source {
         return Err(StoredSessionContinuationError::new(format!(
@@ -705,7 +707,7 @@ pub(crate) fn build_continuation(
     })
 }
 
-fn identity(value: &crate::journal::codec::VersionedIdentity) -> BackendIdentity {
+fn identity(value: &VersionedIdentity) -> BackendIdentity {
     BackendIdentity::new(value.schema(), value.value())
 }
 

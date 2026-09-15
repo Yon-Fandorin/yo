@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{error::Error, fmt};
 
 use crate::{
     AgentEvent, AgentRejection, BackendEvent, BackendFailure, SubmissionId, SubmissionRejection,
@@ -79,4 +79,4 @@ impl fmt::Display for RuntimeError {
     }
 }
 
-impl std::error::Error for RuntimeError {}
+impl Error for RuntimeError {}

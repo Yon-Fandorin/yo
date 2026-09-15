@@ -1,3 +1,5 @@
+use std::{error::Error, slice};
+
 mod command;
 mod correlation;
 mod descriptor;
@@ -70,7 +72,7 @@ impl fmt::Display for JournalCodecError {
     }
 }
 
-impl std::error::Error for JournalCodecError {}
+impl Error for JournalCodecError {}
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -405,7 +407,7 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
         }
     }
     if commit.kind() == JournalCommitKind::Snapshot {
-        let recovered = recover(std::slice::from_ref(commit))?;
+        let recovered = recover(slice::from_ref(commit))?;
         if recovered.recovery_commit().is_some() {
             return Err(JournalCodecError::new(
                 "a complete Journal snapshot cannot require recovery repair",

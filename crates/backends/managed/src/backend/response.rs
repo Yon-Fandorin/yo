@@ -1,6 +1,6 @@
 //! Ordinary connector observations and semantic round completion.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, mem};
 
 use serde_json::json;
 use yo_backend::validate_provider_private_replay_sequence;
@@ -500,14 +500,14 @@ impl NativeModelBackend {
                     });
                 }
                 let mut messages = BTreeMap::<usize, String>::new();
-                for ((output_index, _), content) in std::mem::take(&mut state.round_messages) {
+                for ((output_index, _), content) in mem::take(&mut state.round_messages) {
                     messages.entry(output_index).or_default().push_str(&content);
                 }
                 let mut refusals = BTreeMap::<usize, String>::new();
-                for ((output_index, _), refusal) in std::mem::take(&mut state.round_refusals) {
+                for ((output_index, _), refusal) in mem::take(&mut state.round_refusals) {
                     refusals.entry(output_index).or_default().push_str(&refusal);
                 }
-                for output_index in std::mem::take(&mut state.round_message_items) {
+                for output_index in mem::take(&mut state.round_message_items) {
                     let content = messages.remove(&output_index).unwrap_or_default();
                     let refusal = refusals.remove(&output_index);
                     if state
@@ -555,7 +555,7 @@ impl NativeModelBackend {
                 });
                 state
                     .delta
-                    .extend(std::mem::take(&mut state.round_replay).into_values());
+                    .extend(mem::take(&mut state.round_replay).into_values());
                 match status {
                     ModelConnectorTerminal::Completed if state.pending_calls.is_empty() => {
                         if completed_round_has_assistant {

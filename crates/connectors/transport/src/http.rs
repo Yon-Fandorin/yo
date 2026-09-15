@@ -1,4 +1,4 @@
-use reqwest::{Client, ClientBuilder, Url, redirect};
+use reqwest::{Client, ClientBuilder, Url, redirect, retry};
 use yo_core::{ConnectorError, ModelConnectorLimits};
 
 use super::failure::configuration_failure;
@@ -44,7 +44,7 @@ fn http_client_builder(
     Ok(Client::builder()
         .connect_timeout(limits.connect_timeout)
         .redirect(redirect::Policy::none())
-        .retry(reqwest::retry::never()))
+        .retry(retry::never()))
 }
 
 pub(super) fn validate_redirect(

@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::{
+    collections::{HashMap, HashSet, hash_map::Entry},
+    fmt::{Display, Formatter, Result as FmtResult},
+};
 
 use super::super::{
     AccountId, CompleteModelBinding, ModelSelection, ModelServiceError, ProviderId,
@@ -213,8 +216,8 @@ impl ModelRequestFailureKind {
     }
 }
 
-impl std::fmt::Display for ModelRequestFailureKind {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ModelRequestFailureKind {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         formatter.write_str(self.as_str())
     }
 }

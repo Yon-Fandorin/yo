@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::mem;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -747,7 +749,7 @@ fn progress_requires_admission_and_never_enters_model_replay() {
             })
         }
         fn take_progress(&mut self) -> Option<ToolExecutionProgress> {
-            if std::mem::replace(&mut self.sent, true) {
+            if mem::replace(&mut self.sent, true) {
                 None
             } else {
                 Some(ToolExecutionProgress {

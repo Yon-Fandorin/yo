@@ -1,3 +1,8 @@
+use std::{
+    io::{Error, Result as IoResult, Write},
+    iter,
+};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -402,16 +407,16 @@ pub(crate) fn validate_image_losses(losses: &[ContextImageLoss]) -> Result<(), &
         loss: &'a ContextImageLoss,
     }
     struct Budget(usize);
-    impl std::io::Write for Budget {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+    impl Write for Budget {
+        fn write(&mut self, bytes: &[u8]) -> IoResult<usize> {
             self.0 = self
                 .0
                 .checked_add(bytes.len())
                 .filter(|len| *len <= 64 * 1024)
-                .ok_or_else(|| std::io::Error::other("image loss array exceeds 64 KiB"))?;
+                .ok_or_else(|| Error::other("image loss array exceeds 64 KiB"))?;
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> {
+        fn flush(&mut self) -> IoResult<()> {
             Ok(())
         }
     }
@@ -810,7 +815,7 @@ impl ContextCheckpoint {
     }
 
     pub(crate) fn replay_root(&self) -> Result<ModelReplay, &'static str> {
-        let items = std::iter::once(ModelReplayItem::Message {
+        let items = iter::once(ModelReplayItem::Message {
             role: ModelReplayRole::User,
             content: self.portable_body.clone(),
             refusal: None,

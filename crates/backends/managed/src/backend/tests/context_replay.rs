@@ -1,3 +1,7 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     collections::VecDeque,
     num::NonZeroU64,
@@ -1564,9 +1568,9 @@ fn check_automatic_compaction_survives_disk_resume_with_exact_retained_connector
             self.inner.start(request, cancellation)
         }
     }
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
         "yo-managed-compaction-resume-{}-{}",
-        std::process::id(),
+        process::id(),
         WorkspaceHostId::new().unwrap(),
     ));
     fs::create_dir(&root).unwrap();
@@ -2135,9 +2139,9 @@ fn rejected_idle_compaction_survives_immediate_disk_shutdown_and_resume() {
         }
     }
     for case in ["nonreduction", "wrong-heading", "missing-section"] {
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-idle-rejection-resume-{}-{}",
-            std::process::id(),
+            process::id(),
             WorkspaceHostId::new().unwrap()
         ));
         fs::create_dir(&root).unwrap();
@@ -2403,7 +2407,7 @@ fn prepared_managed_fork_resumes_exact_context_once_without_touching_parent() {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
         "yo-managed-fork-{}",
         WorkspaceHostId::new().unwrap()
     ));

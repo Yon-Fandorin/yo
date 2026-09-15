@@ -1,7 +1,11 @@
 use std::{env, fs, time::Duration};
 
+#[cfg(test)]
+use reqwest::retry;
 use reqwest::{Client, Url, redirect};
 use serde_json::{Value, json};
+#[cfg(test)]
+use tokio::runtime::Builder;
 use yo_core::{ApiDialect, EffectiveModelBinding, ModelProfileLayer, VersionedProfileId};
 use yo_test_support::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
 
@@ -504,12 +508,12 @@ fn fetch_from_local_tls_with_timeouts(
         .add_root_certificate(roots[0].clone())
         .connect_timeout(CONNECT_TIMEOUT)
         .redirect(redirect::Policy::none())
-        .retry(reqwest::retry::never())
+        .retry(retry::never())
         .build()
         .unwrap();
     let endpoint = NormalizedEndpoint::parse(server.endpoint()).unwrap();
     let url = discovery_url(&endpoint).unwrap();
-    tokio::runtime::Builder::new_current_thread()
+    Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()

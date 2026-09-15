@@ -1,4 +1,4 @@
-use std::{fmt, str::FromStr};
+use std::{error::Error, fmt, str::FromStr};
 
 const MAX_ID_BYTES: usize = 256;
 
@@ -94,4 +94,4 @@ impl fmt::Display for ModelServiceError {
     }
 }
 
-impl std::error::Error for ModelServiceError {}
+impl Error for ModelServiceError {}

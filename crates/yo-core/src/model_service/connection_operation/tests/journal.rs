@@ -1,3 +1,9 @@
+#[cfg(test)]
+use std::io::Error;
+#[cfg(test)]
+use std::io::ErrorKind;
+#[cfg(test)]
+use std::slice;
 use std::{
     cell::{Cell, RefCell},
     ffi::OsString,
@@ -17,6 +23,8 @@ use super::{
     },
     support::{CANDIDATE_SECRET, Fixture},
 };
+#[cfg(test)]
+use crate::model_service::ConnectionRepositoryError;
 
 fn pending_residue(parent: &Path, hex: &str) -> PathBuf {
     assert_eq!(hex.len(), 32);
@@ -196,7 +204,7 @@ fn connect_phases_advance_in_closed_order_before_exact_clear() {
     assert!(fixture.journal.capture().unwrap().is_none());
     assert!(matches!(
         fs::symlink_metadata(fixture.journal.path()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        Err(error) if error.kind() == ErrorKind::NotFound
     ));
 
     let next = fixture.connect_entry();
@@ -218,7 +226,7 @@ fn exact_uncommitted_intent_can_be_abandoned() {
     assert!(fixture.journal.capture().unwrap().is_none());
     assert!(matches!(
         fs::symlink_metadata(fixture.journal.path()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        Err(error) if error.kind() == ErrorKind::NotFound
     ));
 
     let next = fixture.connect_entry();
@@ -317,7 +325,7 @@ fn journal_mutation_requires_the_exact_exclusive_operation_guard() {
 
     assert!(matches!(
         fixture.connections.acquire_operation(),
-        Err(crate::model_service::ConnectionRepositoryError::OperationBusy(_))
+        Err(ConnectionRepositoryError::OperationBusy(_))
     ));
     assert!(matches!(
         fixture.journal.publish_intent(&mut wrong_guard, &entry),
@@ -506,11 +514,11 @@ fn pending_residue_unlink_failure_preserves_residue_and_canonical_journal() {
     let residue_identity = metadata_identity(&residue);
     let result = storage::cleanup_pending_residues_in_order_for_test(
         parent,
-        std::slice::from_ref(&residue),
-        std::slice::from_ref(&residue),
+        slice::from_ref(&residue),
+        slice::from_ref(&residue),
         |path| {
             assert_eq!(path, residue);
-            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            Err(Error::from(ErrorKind::PermissionDenied))
         },
         |directory| directory.sync_all(),
     );
@@ -518,7 +526,7 @@ fn pending_residue_unlink_failure_preserves_residue_and_canonical_journal() {
     assert!(matches!(
         result,
         Err(ConnectionOperationError::Io { path, source })
-            if path == residue && source.kind() == std::io::ErrorKind::PermissionDenied
+            if path == residue && source.kind() == ErrorKind::PermissionDenied
     ));
     assert_eq!(fs::read(&residue).unwrap(), b"eligible but not unlinkable");
     assert_eq!(metadata_identity(&residue), residue_identity);
@@ -560,7 +568,7 @@ fn partial_pending_residue_cleanup_is_synced_before_later_unlink_error() {
                 fs::remove_file(path)
             } else {
                 assert_eq!(path, safe2);
-                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                Err(Error::from(ErrorKind::PermissionDenied))
             }
         },
         |directory| {
@@ -574,7 +582,7 @@ fn partial_pending_residue_cleanup_is_synced_before_later_unlink_error() {
     assert!(matches!(
         result,
         Err(ConnectionOperationError::Io { path, source })
-            if path == safe2 && source.kind() == std::io::ErrorKind::PermissionDenied
+            if path == safe2 && source.kind() == ErrorKind::PermissionDenied
     ));
     assert_eq!(
         removal_order.into_inner(),

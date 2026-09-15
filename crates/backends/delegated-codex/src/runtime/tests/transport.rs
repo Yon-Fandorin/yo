@@ -1,3 +1,8 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
+
 use yo_core::BackendFailureKind;
 
 // Codex 실행 파일이 없으면 일반 protocol 오류가 아니라 설치 또는 PATH 문제로 대응할 수
@@ -52,9 +57,9 @@ mod codex_receive_bound {
     impl Fixture {
         fn new(payload_bytes: usize) -> Self {
             let suffix = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let directory = std::env::temp_dir().join(format!(
+            let directory = super::env::temp_dir().join(format!(
                 "yo-codex-receive-bound-{}-{suffix}",
-                std::process::id()
+                super::process::id()
             ));
             fs::create_dir(&directory).unwrap();
             let executable = directory.join("fake-codex");

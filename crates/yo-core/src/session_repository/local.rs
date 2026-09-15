@@ -1,3 +1,5 @@
+use std::{cmp::Ordering, io::Error, path::Path};
+
 mod file;
 mod reader;
 mod wire;
@@ -90,10 +92,10 @@ impl StoredSessionReader for LocalSessionReader {
         let mut paths = BTreeMap::new();
         let mut duplicates = BTreeSet::new();
         let mut truncated = false;
-        let directory = Dir::read_from(&self.tree_root).map_err(std::io::Error::from)?;
+        let directory = Dir::read_from(&self.tree_root).map_err(Error::from)?;
         let mut index = 0;
         for entry in directory {
-            let entry = entry.map_err(std::io::Error::from)?;
+            let entry = entry.map_err(Error::from)?;
             let name = entry.file_name().to_bytes();
             if matches!(name, b"." | b"..") {
                 continue;
@@ -282,8 +284,8 @@ impl StoredSessionReader for LocalSessionReader {
                         .session_id()
                         .cmp(&right.discovery().descriptor().session_id())
                 }),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
             (None, None) => left.session_id().cmp(&right.session_id()),
         });
         Ok(sessions)
@@ -316,7 +318,7 @@ impl StoredSessionReader for LocalSessionReader {
         let mut budget = TreeReadBudget::for_fork(limits);
         read_fork_entries(
             &self.tree_root,
-            std::path::Path::new(&format!("{session_id}.jsonl")),
+            Path::new(&format!("{session_id}.jsonl")),
             session_id,
             &mut budget,
         )
@@ -363,7 +365,7 @@ impl LocalSessionRepository {
     }
 
     #[cfg(test)]
-    pub(super) fn root_path(&self) -> &std::path::Path {
+    pub(super) fn root_path(&self) -> &Path {
         &self.root
     }
 
@@ -438,12 +440,12 @@ impl LocalSessionRepository {
                 }
                 let metadata = fs::symlink_metadata(entry.path())?;
                 if metadata.file_type().is_symlink() {
-                    return Err(std::io::Error::other("repository contains a symbolic link"));
+                    return Err(Error::other("repository contains a symbolic link"));
                 }
                 if metadata.is_file() {
                     total
                         .checked_add(metadata.len())
-                        .ok_or_else(|| std::io::Error::other("repository size exceeds u64"))
+                        .ok_or_else(|| Error::other("repository size exceeds u64"))
                 } else {
                     Ok(total)
                 }

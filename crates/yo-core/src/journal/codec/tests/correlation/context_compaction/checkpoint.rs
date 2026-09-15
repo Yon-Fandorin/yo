@@ -1,4 +1,11 @@
+#[cfg(test)]
+use std::num::NonZeroU64;
+
 use super::*;
+#[cfg(test)]
+use crate::journal::CommittedCommand;
+#[cfg(test)]
+use crate::session_repository;
 
 // 새 정책·epoch·checkpoint를 물리 wire로 왕복한 뒤에도 summary와 retained group만으로
 // 정확한 successor replay root와 checkpoint-only 실행 대상을 복구해야 합니다.
@@ -31,7 +38,7 @@ fn round_trips_and_recovers_a_checkpoint_as_the_new_replay_root() {
         ModelReplayItem::Message { role: ModelReplayRole::User, content, .. }
             if content == portable_body()
     ));
-    let continuation = crate::session_repository::build_continuation(
+    let continuation = session_repository::build_continuation(
         recovered,
         super::super::super::activity().session_id(),
     )
@@ -50,7 +57,7 @@ fn rejects_records_after_a_checkpoint_in_the_same_incremental_commit() {
     let mut commits = current_history();
     let turn = crate::TurnRef::new(
         super::super::super::activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(3).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(3).unwrap()),
     );
     commits.push(JournalCommit::incremental_through(
         JournalSequence::new(12),
@@ -60,7 +67,7 @@ fn rejects_records_after_a_checkpoint_in_the_same_incremental_commit() {
                 13,
                 12,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn,
                             input: crate::UserInput::new("after checkpoint"),
@@ -92,7 +99,7 @@ fn repeated_checkpoint_accounts_for_the_prior_checkpoint_root() {
     ));
     let turn = crate::TurnRef::new(
         super::super::super::activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(3).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(3).unwrap()),
     );
     let submission_id = super::super::super::submission(43);
     let operation_id = OperationId::from(submission_id);
@@ -103,7 +110,7 @@ fn repeated_checkpoint_accounts_for_the_prior_checkpoint_root() {
                 13,
                 12,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn,
                             input: crate::UserInput::new("second request"),
@@ -310,7 +317,7 @@ fn retains_the_complete_active_suffix_and_current_input() {
     let mut commits = current_history();
     let turn = crate::TurnRef::new(
         super::super::super::activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(3).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(3).unwrap()),
     );
     commits.push(JournalCommit::incremental_through(
         JournalSequence::new(11),
@@ -318,7 +325,7 @@ fn retains_the_complete_active_suffix_and_current_input() {
             12,
             11,
             JournalRecord::CommandCommitted(
-                crate::journal::CommittedCommand::submission(
+                CommittedCommand::submission(
                     AgentCommand::StartTurn {
                         turn,
                         input: crate::UserInput::new("current input"),
@@ -375,16 +382,12 @@ fn retains_a_completed_post_tool_active_suffix() {
     let mut commits = current_history();
     let turn = crate::TurnRef::new(
         super::super::super::activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(3).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(3).unwrap()),
     );
-    let call_activity = crate::ActivityRef::new(
-        turn,
-        crate::ActivityId::new(std::num::NonZeroU64::new(1).unwrap()),
-    );
-    let result_activity = crate::ActivityRef::new(
-        turn,
-        crate::ActivityId::new(std::num::NonZeroU64::new(2).unwrap()),
-    );
+    let call_activity =
+        crate::ActivityRef::new(turn, crate::ActivityId::new(NonZeroU64::new(1).unwrap()));
+    let result_activity =
+        crate::ActivityRef::new(turn, crate::ActivityId::new(NonZeroU64::new(2).unwrap()));
     let submission_id = super::super::super::submission(43);
     let operation_id = OperationId::from(submission_id);
     commits.push(JournalCommit::incremental_through(
@@ -394,7 +397,7 @@ fn retains_a_completed_post_tool_active_suffix() {
                 12,
                 11,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn,
                             input: crate::UserInput::new("current input"),
@@ -546,7 +549,7 @@ fn rejects_an_active_suffix_that_invents_replay_items() {
     let mut commits = current_history();
     let turn = crate::TurnRef::new(
         super::super::super::activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(3).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(3).unwrap()),
     );
     commits.push(JournalCommit::incremental_through(
         JournalSequence::new(11),
@@ -554,7 +557,7 @@ fn rejects_an_active_suffix_that_invents_replay_items() {
             12,
             11,
             JournalRecord::CommandCommitted(
-                crate::journal::CommittedCommand::submission(
+                CommittedCommand::submission(
                     AgentCommand::StartTurn {
                         turn,
                         input: crate::UserInput::new("current input"),
@@ -611,7 +614,7 @@ fn rejects_a_checkpoint_that_cuts_through_an_accepted_request() {
     let mut commits = current_history();
     let turn = crate::TurnRef::new(
         super::super::super::activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(3).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(3).unwrap()),
     );
     let submission_id = super::super::super::submission(43);
     let operation_id = OperationId::from(submission_id);
@@ -622,7 +625,7 @@ fn rejects_a_checkpoint_that_cuts_through_an_accepted_request() {
                 12,
                 11,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn,
                             input: crate::UserInput::new("current input"),
@@ -701,7 +704,7 @@ fn rejects_a_checkpoint_that_omits_the_active_suffix() {
     let mut commits = current_history();
     let turn = crate::TurnRef::new(
         super::super::super::activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(3).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(3).unwrap()),
     );
     commits.push(JournalCommit::incremental_through(
         JournalSequence::new(11),
@@ -709,7 +712,7 @@ fn rejects_a_checkpoint_that_omits_the_active_suffix() {
             12,
             11,
             JournalRecord::CommandCommitted(
-                crate::journal::CommittedCommand::submission(
+                CommittedCommand::submission(
                     AgentCommand::StartTurn {
                         turn,
                         input: crate::UserInput::new("current input"),
@@ -811,7 +814,7 @@ fn rejects_a_stale_context_epoch_after_a_checkpoint() {
                 13,
                 12,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::SteerTurn {
                             turn: super::super::super::activity().turn(),
                             input: crate::UserInput::new("more"),

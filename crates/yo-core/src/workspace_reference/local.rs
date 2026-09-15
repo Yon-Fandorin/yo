@@ -1,9 +1,15 @@
 //! Local execution-workspace discovery kept outside the terminal UI thread.
 
 use std::{
+    collections::BTreeMap,
+    env,
     ffi::OsStr,
+    fs,
+    io::{Error, ErrorKind},
     os::unix::ffi::OsStrExt,
     path::{Component, Path, PathBuf},
+    process::Command,
+    str,
     sync::{
         Arc,
         mpsc::{self, Receiver, Sender, TryRecvError},
@@ -33,6 +39,7 @@ use super::{
 use crate::{
     InputAdmissionHost, InputReference, SubmissionRejection, SubmissionRejectionKind, UserInput,
     WorkspaceHostId, WorkspaceReferenceKind,
+    readiness::{Readiness, ReadyReceiver},
 };
 
 mod filesystem;
@@ -77,7 +84,7 @@ impl DiscoveryBudget {
 
 pub struct LocalWorkspaceReferenceProvider {
     requests: Sender<WorkspaceReferenceSearchRequest>,
-    updates: crate::readiness::ReadyReceiver<WorkspaceReferenceSearchUpdate>,
+    updates: ReadyReceiver<WorkspaceReferenceSearchUpdate>,
 }
 
 /// Local execution-host admission for workspace path references, without reading contents.
@@ -92,7 +99,7 @@ pub struct LocalWorkspaceInputAdmission {
 impl LocalWorkspaceInputAdmission {
     /// Captures the canonical root mapping used by this live execution environment.
     pub fn new(root: &Path, host: WorkspaceHostId) -> Result<Self, String> {
-        let root = std::fs::canonicalize(root).map_err(|error| error.to_string())?;
+        let root = fs::canonicalize(root).map_err(|error| error.to_string())?;
         let descriptor = pin_root(&root).map_err(|error| {
             format!("workspace root {} is unavailable: {error}", root.display())
         })?;
@@ -266,7 +273,7 @@ fn pin_directory(root: &OwnedFd, relative: &Path) -> Result<OwnedFd, Errno> {
 
 impl LocalWorkspaceReferenceProvider {
     /// Execution-host discovery command for local output navigation, never run by rendering.
-    pub fn output_link_command(root: &Path) -> std::process::Command {
+    pub fn output_link_command(root: &Path) -> Command {
         let mut command = git_command(root);
         command.args([
             "-c",
@@ -277,7 +284,7 @@ impl LocalWorkspaceReferenceProvider {
             "--others",
             "--exclude-standard",
         ]);
-        for (key, _) in std::env::vars_os() {
+        for (key, _) in env::vars_os() {
             if key.to_string_lossy().starts_with("GIT_") {
                 command.env_remove(key);
             }
@@ -292,7 +299,7 @@ impl LocalWorkspaceReferenceProvider {
         root: &Path,
         candidates: Option<&[u8]>,
         cancelled: impl Fn() -> bool,
-    ) -> Result<std::collections::BTreeMap<String, PathBuf>, String> {
+    ) -> Result<BTreeMap<String, PathBuf>, String> {
         use std::{
             collections::BTreeMap,
             time::{Duration, Instant},
@@ -301,7 +308,7 @@ impl LocalWorkspaceReferenceProvider {
         if cancelled() {
             return Err("link discovery cancelled".into());
         }
-        if std::fs::canonicalize(root).ok().as_deref() != Some(root) {
+        if fs::canonicalize(root).ok().as_deref() != Some(root) {
             return Err("workspace root changed".into());
         }
         let mut paths = Vec::new();
@@ -314,7 +321,7 @@ impl LocalWorkspaceReferenceProvider {
                 .filter(|path| !path.is_empty())
             {
                 paths.push(PathBuf::from(
-                    std::str::from_utf8(candidate).map_err(|_| "non-UTF-8 link inventory")?,
+                    str::from_utf8(candidate).map_err(|_| "non-UTF-8 link inventory")?,
                 ));
                 if paths.len() > 8192 {
                     return Err("link inventory exceeds entry limit".into());
@@ -322,9 +329,9 @@ impl LocalWorkspaceReferenceProvider {
             }
         } else {
             for ancestor in root.ancestors() {
-                match std::fs::symlink_metadata(ancestor.join(".git")) {
+                match fs::symlink_metadata(ancestor.join(".git")) {
                     Ok(_) => return Err("Git discovery unavailable".into()),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(error) if error.kind() == ErrorKind::NotFound => {},
                     Err(_) => return Err("workspace discovery unavailable".into()),
                 }
             }
@@ -398,7 +405,7 @@ impl LocalWorkspaceReferenceProvider {
             let mut valid = true;
             for (index, component) in components.iter().enumerate() {
                 path.push(component);
-                let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                let Ok(metadata) = fs::symlink_metadata(&path) else {
                     valid = false;
                     break;
                 };
@@ -413,7 +420,7 @@ impl LocalWorkspaceReferenceProvider {
             if !valid {
                 continue;
             }
-            let Ok(canonical) = std::fs::canonicalize(&path) else {
+            let Ok(canonical) = fs::canonicalize(&path) else {
                 continue;
             };
             if canonical != path || !canonical.starts_with(root) {
@@ -424,7 +431,7 @@ impl LocalWorkspaceReferenceProvider {
             };
             links.insert(relative.to_owned(), canonical);
         }
-        if std::fs::canonicalize(root).ok().as_deref() != Some(root) {
+        if fs::canonicalize(root).ok().as_deref() != Some(root) {
             return Err("workspace root changed".into());
         }
         Ok(links)
@@ -434,12 +441,12 @@ impl LocalWorkspaceReferenceProvider {
         pin_directory(root, relative).map_err(|error| error.to_string())
     }
 
-    pub fn start(root: &Path, workspace_host_id: WorkspaceHostId) -> Result<Self, std::io::Error> {
+    pub fn start(root: &Path, workspace_host_id: WorkspaceHostId) -> Result<Self, Error> {
         let (request_tx, request_rx) = mpsc::channel();
         let (update_tx, update_rx) = mpsc::channel();
-        let readiness = Arc::new(crate::readiness::Readiness::new());
+        let readiness = Arc::new(Readiness::new());
         let worker_readiness = Arc::clone(&readiness);
-        let root = std::fs::canonicalize(root)?;
+        let root = fs::canonicalize(root)?;
         thread::Builder::new()
             .name("yo-workspace-search".to_owned())
             .spawn(move || {
@@ -454,7 +461,7 @@ impl LocalWorkspaceReferenceProvider {
             })?;
         Ok(Self {
             requests: request_tx,
-            updates: crate::readiness::ReadyReceiver::new(update_rx, readiness),
+            updates: ReadyReceiver::new(update_rx, readiness),
         })
     }
 }
@@ -484,7 +491,7 @@ fn worker(
     workspace_host_id: WorkspaceHostId,
     requests: Receiver<WorkspaceReferenceSearchRequest>,
     updates: Sender<WorkspaceReferenceSearchUpdate>,
-    readiness: &crate::readiness::Readiness,
+    readiness: &Readiness,
 ) {
     let inventory = build_inventory(&root, workspace_host_id);
     while let Ok(mut request) = requests.recv() {

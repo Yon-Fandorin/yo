@@ -1,4 +1,4 @@
-use std::{fmt, str::FromStr};
+use std::{error::Error, fmt, str::FromStr};
 
 use uuid::{Builder, Uuid, Variant, Version};
 
@@ -66,8 +66,8 @@ impl fmt::Display for SubmissionIdGenerationError {
     }
 }
 
-impl std::error::Error for SubmissionIdGenerationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for SubmissionIdGenerationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Entropy(error) => Some(error),
         }
@@ -80,4 +80,4 @@ impl fmt::Display for SubmissionIdError {
     }
 }
 
-impl std::error::Error for SubmissionIdError {}
+impl Error for SubmissionIdError {}

@@ -1,3 +1,8 @@
+#[cfg(test)]
+use std::ptr;
+#[cfg(test)]
+use std::str;
+
 use super::{
     super::{
         StoredDiscoveryValidation, StoredSessionContinuity, StoredSessionRecovery,
@@ -275,7 +280,7 @@ fn inherited_history_groups_repeated_sources_without_relabeling_or_private_repla
     assert!(!format!("{inherited:?}").contains("private-archive-canary"));
     assert!(!format!("{inherited:?}").contains("private-system-canary"));
     let shared = inherited.clone();
-    assert!(std::ptr::eq(shared.sections(), inherited.sections()));
+    assert!(ptr::eq(shared.sections(), inherited.sections()));
 }
 
 // 문서·tool output·usage receipt는 원래 snapshot 그대로 상속 archive에만 남고,
@@ -403,7 +408,7 @@ fn inherited_segmented_message_emits_one_final_snapshot_across_many_boundaries()
                 activity(),
                 MessageStream::Agent,
                 index + 1,
-                std::str::from_utf8(segment).unwrap().to_owned(),
+                str::from_utf8(segment).unwrap().to_owned(),
             )),
         ));
         records.push(archival_event(

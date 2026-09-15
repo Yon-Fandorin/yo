@@ -1,9 +1,12 @@
 use std::{
+    collections::HashSet,
     fmt, fs,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
+
+use rustix::process;
 
 use super::{ModelCatalog, ModelCatalogEntry, ModelSelection, StartupTarget};
 
@@ -519,7 +522,7 @@ pub(super) fn validate_catalog_seeds(
     accounts: &[ConnectionAccount],
     seeds: &[ConnectionCatalogSeed],
 ) -> Result<(), ConnectionRepositoryError> {
-    let mut coordinates = std::collections::HashSet::new();
+    let mut coordinates = HashSet::new();
     for seed in seeds {
         if !coordinates.insert((seed.provider().clone(), seed.account().clone()))
             || !accounts.iter().any(|account| {
@@ -777,7 +780,7 @@ impl LocalConnectionRepository {
         };
         let path = parent.join(PENDING_OPERATION_FILE);
         match fs::symlink_metadata(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
             Ok(_) => Err(ConnectionRepositoryError::PendingOperation(path)),
             Err(source) => Err(ConnectionRepositoryError::io(&path, source)),
         }
@@ -862,7 +865,7 @@ fn create_connection_temporary_with(
             .open(&temporary)
         {
             Ok(file) => return Ok((temporary, file)),
-            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {},
+            Err(source) if source.kind() == ErrorKind::AlreadyExists => {},
             Err(source) => return Err(ConnectionRepositoryError::io(&temporary, source)),
         }
     }
@@ -947,7 +950,7 @@ fn read_snapshot(path: &Path) -> Result<ConnectionSnapshot, ConnectionRepository
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == ErrorKind::NotFound => {
             return Ok(ConnectionSnapshot {
                 revision: ConnectionRevision::Absent,
                 preference: None,
@@ -1072,7 +1075,7 @@ impl MetadataSnapshot {
                 path.to_owned(),
             ));
         }
-        if self.user != rustix::process::geteuid().as_raw() {
+        if self.user != process::geteuid().as_raw() {
             return Err(ConnectionRepositoryError::WrongOwner(path.to_owned()));
         }
         if self.mode & 0o077 != 0 {

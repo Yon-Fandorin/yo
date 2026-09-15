@@ -1,3 +1,13 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::panic;
+#[cfg(test)]
+use std::panic::AssertUnwindSafe;
+#[cfg(test)]
+use std::process;
+#[cfg(test)]
+use std::thread;
 use std::{
     fs,
     io::{self, Write},
@@ -18,7 +28,7 @@ impl TempFixture {
     pub(super) fn new(label: &str) -> Self {
         let root = allocate_fixture_root(
             label,
-            &[PathBuf::from("/dev/shm"), std::env::temp_dir()],
+            &[PathBuf::from("/dev/shm"), env::temp_dir()],
             |path: &Path| fs::create_dir(path),
         );
         // macOS temp directories can traverse /var -> /private/var; the host
@@ -36,7 +46,7 @@ impl TempFixture {
 impl Drop for TempFixture {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_dir_all(&self.root) {
-            if std::thread::panicking() {
+            if thread::panicking() {
                 let mut stderr = io::stderr();
                 let _ = writeln!(
                     stderr,
@@ -60,7 +70,7 @@ fn allocate_fixture_root(
 ) -> PathBuf {
     for _ in 0..MAX_FIXTURE_ATTEMPTS {
         let counter = TEMP_FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let name = format!("yo-{label}-{}-{counter}", std::process::id());
+        let name = format!("yo-{label}-{}-{counter}", process::id());
         let mut last_error = None;
         let mut collision = false;
         for base in bases {
@@ -117,7 +127,7 @@ fn fixture_allocator_fails_immediately_when_all_bases_error() {
     use std::cell::Cell;
 
     let calls = Cell::new(0);
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
         allocate_fixture_root(
             "all-errors",
             &[PathBuf::from("/optional"), PathBuf::from("/fallback")],

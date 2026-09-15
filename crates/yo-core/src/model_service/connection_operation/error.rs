@@ -1,4 +1,9 @@
-use std::{error::Error, fmt, path::PathBuf};
+use std::{
+    error::Error,
+    fmt,
+    io::Error as IoError,
+    path::{Path, PathBuf},
+};
 
 use super::journal::{
     ConnectionCredentialAction, ConnectionOperationKind, ConnectionOperationPhase,
@@ -10,7 +15,7 @@ pub const MAX_OPERATION_JOURNAL_BYTES: u64 = 2 * 1024 * 1024;
 pub enum ConnectionOperationError {
     Io {
         path: PathBuf,
-        source: std::io::Error,
+        source: IoError,
     },
     InvalidPath(PathBuf),
     UnsupportedFileType(PathBuf),
@@ -38,7 +43,7 @@ pub enum ConnectionOperationError {
 }
 
 impl ConnectionOperationError {
-    pub(super) fn io(path: &std::path::Path, source: std::io::Error) -> Self {
+    pub(super) fn io(path: &Path, source: IoError) -> Self {
         Self::Io {
             path: path.to_owned(),
             source,

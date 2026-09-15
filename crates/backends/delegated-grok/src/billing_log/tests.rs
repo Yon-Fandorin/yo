@@ -1,11 +1,17 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::fs;
 use std::io::Write;
+#[cfg(test)]
+use std::process;
 
 use super::*;
 
 // 큰 unified log 전체를 읽지 않고 bounded tail의 최신 완전한 주간 관찰만 선택합니다.
 #[test]
 fn reads_the_newest_complete_weekly_snapshot_from_a_bounded_tail() {
-    let path = std::env::temp_dir().join(format!("yo-grok-billing-{}.jsonl", std::process::id()));
+    let path = env::temp_dir().join(format!("yo-grok-billing-{}.jsonl", process::id()));
     let mut file = File::create(&path).unwrap();
     writeln!(file, r#"{{"msg":"unrelated","ctx":{{}}}}"#).unwrap();
     writeln!(
@@ -15,7 +21,7 @@ fn reads_the_newest_complete_weekly_snapshot_from_a_bounded_tail() {
     .unwrap();
 
     let window = read_latest_usage(&path).unwrap().unwrap();
-    std::fs::remove_file(path).unwrap();
+    fs::remove_file(path).unwrap();
 
     assert_eq!(window.used_percent(), 13);
     assert_eq!(window.used_percent_basis_points(), 1_210);

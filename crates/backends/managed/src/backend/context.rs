@@ -1,3 +1,6 @@
+#[cfg(test)]
+use std::iter;
+
 use yo_core::{ContextPolicyChanged, ContextStrategy};
 
 pub(super) const PORTABLE_SUMMARY_INSTRUCTION: &str = r#"Create a faithful context checkpoint from only the supplied conversation history.
@@ -160,7 +163,7 @@ mod tests {
     // 이식 가능한 요약이 정확한 제목 집합과 순서를 가져야만 승인됨을 검증합니다.
     #[test]
     fn portable_summary_requires_the_exact_closed_heading_shape() {
-        let body = std::iter::once(SUMMARY_HEADING)
+        let body = iter::once(SUMMARY_HEADING)
             .chain(SUMMARY_SECTIONS)
             .map(|heading| format!("{heading}\nNone."))
             .collect::<Vec<_>>()
@@ -173,7 +176,7 @@ mod tests {
     // 문장 안의 heading-like text는 구조적 heading이 아니며 빈 section을 채우지 못합니다.
     #[test]
     fn inline_heading_text_does_not_fill_an_empty_section() {
-        let body = std::iter::once(SUMMARY_HEADING)
+        let body = iter::once(SUMMARY_HEADING)
             .chain(SUMMARY_SECTIONS)
             .map(|heading| format!("{heading}\nNone."))
             .collect::<Vec<_>>()

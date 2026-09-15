@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use super::{Answer, AnswerResponse, Capture, InterviewQuestion};
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    ActivityUpdate, AgentCommand, AgentEvent, TranscriptRecord,
+    ActivityUpdate, AgentCommand, AgentEvent, TranscriptRecord, journal::JournalEntry,
+    session_repository::DurableCutoff,
 };
 
 pub(crate) fn initial_submission_evidence(
-    entries: &[crate::journal::JournalEntry],
+    entries: &[JournalEntry],
     id: crate::SubmissionId,
     durability: crate::JournalDurability,
 ) -> Option<(crate::TurnRef, crate::JournalSequence)> {
@@ -31,7 +32,7 @@ pub(crate) fn initial_submission_evidence(
         } => journal_sequence?,
         crate::JournalDurability::Gap {
             durable_cutoff:
-                crate::session_repository::DurableCutoff::Known {
+                DurableCutoff::Known {
                     journal_sequence, ..
                 },
             ..

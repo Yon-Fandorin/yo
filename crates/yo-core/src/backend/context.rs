@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error};
 use serde_json::Value;
 
 use crate::{ModelReplayContract, ModelReplayItem, TurnRef, VersionedProfileId};
@@ -46,11 +46,11 @@ impl<'de> Deserialize<'de> for ContextAccounting {
         let wire = AccountingWire::deserialize(decoder)?;
         Self::new(
             wire.quality,
-            VersionedProfileId::new(wire.policy).map_err(serde::de::Error::custom)?,
+            VersionedProfileId::new(wire.policy).map_err(Error::custom)?,
             wire.input_estimate,
             wire.reserve_tokens,
         )
-        .map_err(serde::de::Error::custom)
+        .map_err(Error::custom)
     }
 }
 

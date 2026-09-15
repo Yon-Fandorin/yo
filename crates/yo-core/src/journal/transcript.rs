@@ -7,7 +7,9 @@ use super::{
     JournalDurability, JournalEntry, JournalSequence, SemanticRecord, SessionJournalState,
     read_state,
 };
-use crate::{AgentCommand, AgentEvent, ContextPolicyChanged};
+use crate::{
+    AgentCommand, AgentEvent, ContextPolicyChanged, interview, interview::InterviewCatalog,
+};
 
 const READ_LIMIT: usize = 256;
 
@@ -33,14 +35,14 @@ impl fmt::Debug for TranscriptReader {
 impl TranscriptReader {
     /// Revalidates capture provenance against genuine committed commands and Activities.
     #[must_use]
-    pub fn interviews(&self) -> crate::interview::InterviewCatalog {
+    pub fn interviews(&self) -> InterviewCatalog {
         let state = read_state(&self.state);
         let records = state
             .entries
             .iter()
             .filter_map(TranscriptRecord::from_journal)
             .collect::<Vec<_>>();
-        crate::interview::InterviewCatalog::from_records(&records)
+        InterviewCatalog::from_records(&records)
     }
 
     /// Actual accepted first-Turn request, distinct from successful Turn execution.
@@ -50,7 +52,7 @@ impl TranscriptReader {
         id: crate::SubmissionId,
     ) -> Option<(crate::TurnRef, JournalSequence)> {
         let state = read_state(&self.state);
-        crate::interview::initial_submission_evidence(&state.entries, id, state.durability)
+        interview::initial_submission_evidence(&state.entries, id, state.durability)
     }
     /// Terminal first Turn or actual backend binding closure, including a volatile failure tail.
     #[must_use]

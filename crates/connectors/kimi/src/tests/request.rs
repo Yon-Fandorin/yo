@@ -2,6 +2,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use yo_core::{InputImageSnapshot, ModelConnector, ModelInputPart};
 
 use super::*;
+#[cfg(test)]
+use crate::request;
 
 // 동일한 secret-free preflight와 Connector 방어 검사가 drift하지 않도록 모든 exact
 // ModelId/alias, K3 effort, Code context form과 주요 one-off 경계를 한 표로 고정합니다.
@@ -564,7 +566,7 @@ fn image_input_without_reviewed_profile_is_rejected_before_projection() {
         let profile = admit_binding(&complete).unwrap();
         for result in [
             wire_body(&request, model, profile),
-            crate::request::tokenization_body(&request, model, profile),
+            request::tokenization_body(&request, model, profile),
         ] {
             let error = result.unwrap_err();
             assert_eq!(error.kind(), yo_core::ConnectorFailureKind::Configuration);
@@ -669,7 +671,7 @@ fn text_only_tokenization_retains_exact_transport_request() {
         );
         let profile = admit_binding(&complete).unwrap();
         assert_eq!(
-            crate::request::tokenization_body(&request, "k3", profile).unwrap(),
+            request::tokenization_body(&request, "k3", profile).unwrap(),
             wire_body(&request, "k3", profile).unwrap(),
         );
     }
@@ -689,7 +691,7 @@ fn ordinary_image_history_is_not_limited_to_one_input_image_count() {
     );
     let profile = admit_binding(&complete).unwrap();
     let wire = wire_body(&request, "k3", profile).unwrap();
-    let counter = crate::request::tokenization_body(&request, "k3", profile).unwrap();
+    let counter = request::tokenization_body(&request, "k3", profile).unwrap();
     assert_eq!(wire["messages"].as_array().unwrap().len(), 17);
     assert_eq!(counter["messages"].as_array().unwrap().len(), 17);
     for message in counter["messages"].as_array().unwrap() {

@@ -1,6 +1,10 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+    io::{BufReader, Cursor, Error, ErrorKind, Read, Seek, SeekFrom},
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -132,8 +136,7 @@ fn read_bounded_entries(
     }
     if require_stable_file {
         let final_metadata = file.metadata()?;
-        let current =
-            statat(root, path, AtFlags::SYMLINK_NOFOLLOW).map_err(std::io::Error::from)?;
+        let current = statat(root, path, AtFlags::SYMLINK_NOFOLLOW).map_err(Error::from)?;
         let current_device = current.st_dev;
         // Match MetadataExt::dev's conversion of Apple's signed dev_t.
         #[cfg(target_vendor = "apple")]
@@ -198,7 +201,7 @@ pub(super) fn read_tail_discovery(
     reject_symlink(path)?;
     let mut file = match OpenOptions::new().read(true).open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     require_user_only_file(&file)?;
@@ -227,7 +230,7 @@ pub(super) fn read_snapshot_entries(
     reject_symlink(path)?;
     let file = match OpenOptions::new().read(true).open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     require_user_only_file(&file)?;
@@ -258,9 +261,9 @@ fn guarded_tree_cutoff(
             let current = match statat(root, pending, AtFlags::SYMLINK_NOFOLLOW) {
                 Ok(stat) => stat,
                 Err(Errno::NOENT) => return Ok(None),
-                Err(error) => return Err(std::io::Error::from(error).into()),
+                Err(error) => return Err(Error::from(error).into()),
             };
-            let opened = fstat(marker).map_err(std::io::Error::from)?;
+            let opened = fstat(marker).map_err(Error::from)?;
             Ok(Some(
                 opened.st_dev == current.st_dev && opened.st_ino == current.st_ino,
             ))
@@ -336,7 +339,7 @@ fn marker_path_matches(marker: &File, pending: &Path) -> Result<Option<bool>, Re
             });
         },
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     Ok(Some(
@@ -405,9 +408,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("the clock follows the Unix epoch")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-session-marker-generation-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir_all(&root).expect("the test root is created");
         let pending = root.join("session.jsonl.pending");

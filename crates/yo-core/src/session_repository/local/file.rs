@@ -1,6 +1,7 @@
 use std::{
+    ffi::OsStr,
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Error, ErrorKind, Seek, SeekFrom, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
 };
@@ -94,7 +95,7 @@ impl Drop for RootAppendGuard {
     }
 }
 
-pub(super) fn coordination_file(name: &std::ffi::OsStr) -> bool {
+pub(super) fn coordination_file(name: &OsStr) -> bool {
     let name = name.to_string_lossy();
     name == LEGACY_WRITER_LOCK
         || name == APPEND_COORDINATOR_LOCK
@@ -143,17 +144,15 @@ fn exclusive_lock_is_active(path: &Path) -> Result<bool, RepositoryError> {
 
 pub(super) fn pin_reader_root(root: &Path) -> Result<File, RepositoryError> {
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    let mut directory = open("/", flags, Mode::empty()).map_err(std::io::Error::from)?;
+    let mut directory = open("/", flags, Mode::empty()).map_err(Error::from)?;
     for component in root.components() {
         match component {
             Component::RootDir | Component::CurDir => {},
             Component::Normal(name) => {
-                directory =
-                    openat(&directory, name, flags, Mode::empty()).map_err(std::io::Error::from)?;
+                directory = openat(&directory, name, flags, Mode::empty()).map_err(Error::from)?;
             },
             Component::ParentDir => {
-                directory =
-                    openat(&directory, "..", flags, Mode::empty()).map_err(std::io::Error::from)?;
+                directory = openat(&directory, "..", flags, Mode::empty()).map_err(Error::from)?;
             },
             _ => {
                 return Err(RepositoryError::Unavailable {
@@ -179,7 +178,7 @@ pub(super) fn open_readonly_regular_at(
     ) {
         Ok(file) => file,
         Err(Errno::NOENT) => return Ok(None),
-        Err(error) => return Err(std::io::Error::from(error).into()),
+        Err(error) => return Err(Error::from(error).into()),
     };
     let file = File::from(opened);
     if !file.metadata()?.is_file() {
@@ -207,7 +206,7 @@ pub(super) fn open_readonly_regular(path: &Path) -> Result<Option<File>, Reposit
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     if !file.metadata()?.is_file() {
@@ -314,7 +313,7 @@ pub(super) fn scan_entries(
     reject_pending_append(path)?;
     let file = match OpenOptions::new().read(true).write(repair_tail).open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == ErrorKind::NotFound => {
             return Ok(ScanResult {
                 durable_cutoff: None,
                 journal_cutoff: None,
@@ -470,7 +469,7 @@ pub(super) fn reject_symlink(path: &Path) -> Result<(), RepositoryError> {
             message: format!("symbolic links are not allowed at {}", path.display()),
         }),
         Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
     }
 }

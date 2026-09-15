@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 #[cfg(test)]
 mod tests;
 
@@ -130,7 +132,7 @@ impl KimiAssistantMessage {
                 .is_some_and(|total| total <= MAX_KIMI_FUNCTION_ARGUMENT_BYTES)
             && (!self.tool_calls.is_empty() || self.content.is_some())
             && {
-                let mut ids = std::collections::HashSet::new();
+                let mut ids = HashSet::new();
                 self.tool_calls.iter().all(|call| ids.insert(call.id()))
             }
     }

@@ -1,7 +1,12 @@
+#[cfg(test)]
+use std::num::NonZeroU64;
+
 use super::{
     super::{JournalCommit, JournalRecord, activity, encode, recover, submission},
     support::{identity, semantic, valid_history},
 };
+#[cfg(test)]
+use crate::journal::CommittedCommand;
 use crate::{
     AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ReplayExecutor, TurnOutcome,
     TurnRef,
@@ -132,7 +137,7 @@ fn completed_turn_in_epoch_two() -> Vec<JournalCommit> {
     let operation_id = OperationId::from(submission_id);
     let turn = TurnRef::new(
         activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(4).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(4).unwrap()),
     );
     vec![
         JournalCommit::incremental_through(
@@ -142,7 +147,7 @@ fn completed_turn_in_epoch_two() -> Vec<JournalCommit> {
                     13,
                     12,
                     JournalRecord::CommandCommitted(
-                        crate::journal::CommittedCommand::submission(
+                        CommittedCommand::submission(
                             AgentCommand::StartTurn {
                                 turn,
                                 input: crate::UserInput::new("epoch two"),
@@ -224,7 +229,7 @@ fn clears_the_latest_anchor_when_a_new_semantic_suffix_begins() {
     let submission_id = submission(12);
     let turn = TurnRef::new(
         activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(4).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(4).unwrap()),
     );
     commits.push(JournalCommit::incremental_through(
         JournalSequence::new(11),
@@ -233,7 +238,7 @@ fn clears_the_latest_anchor_when_a_new_semantic_suffix_begins() {
                 11,
                 10,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn,
                             input: crate::UserInput::new("next"),
@@ -403,10 +408,8 @@ fn compact_without_checkpoint_preserves_anchor_until_the_next_ordinary_request()
             11,
             10,
             JournalRecord::CommandCommitted(
-                crate::journal::CommittedCommand::uncorrelated(AgentCommand::CompactContext {
-                    guidance: None,
-                })
-                .unwrap(),
+                CommittedCommand::uncorrelated(AgentCommand::CompactContext { guidance: None })
+                    .unwrap(),
             ),
         )],
     ));
@@ -419,7 +422,7 @@ fn compact_without_checkpoint_preserves_anchor_until_the_next_ordinary_request()
     let submission_id = submission(12);
     let turn = TurnRef::new(
         activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(4).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(4).unwrap()),
     );
     commits.push(JournalCommit::incremental_through(
         JournalSequence::new(13),
@@ -428,7 +431,7 @@ fn compact_without_checkpoint_preserves_anchor_until_the_next_ordinary_request()
                 12,
                 11,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn,
                             input: crate::UserInput::new("next"),

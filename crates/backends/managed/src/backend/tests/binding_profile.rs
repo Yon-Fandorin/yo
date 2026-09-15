@@ -1,3 +1,11 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 use std::{
     fs,
     path::PathBuf,
@@ -7,6 +15,8 @@ use std::{
 };
 
 use yo_backend::BackendAdapter as AgentBackend;
+#[cfg(test)]
+use yo_core::session_repository::StoredSessionContinuation;
 use yo_core::{
     AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionPoll, ApiDialect,
     BackendCommandEvidence, BackendIdentity, CommandAdmission, EffectiveModelProfile,
@@ -132,12 +142,12 @@ fn injected_binding_admission_rejection_precedes_connector_requests() {
     let profile = profile("{}", "{}", "local-tools/v1");
     let expected = yo_core::CompleteModelBinding::new(binding(), profile.clone()).unwrap();
     assert!(yo_core::admit_standard_complete_binding(&expected).is_ok());
-    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls = Arc::new(AtomicUsize::new(0));
     let admission_calls = Arc::clone(&calls);
     let requests = Arc::new(Mutex::new(Vec::new()));
     let admission = move |complete: &yo_core::CompleteModelBinding| {
         assert_eq!(complete, &expected);
-        admission_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        admission_calls.fetch_add(1, Ordering::Relaxed);
         Err("injected binding rejection".to_owned())
     };
     let result = NativeModelBackend::with_connector_and_profile(
@@ -162,7 +172,7 @@ fn injected_binding_admission_rejection_precedes_connector_requests() {
         .expect("injected admission must reject initialization");
     assert_eq!(error.kind(), yo_core::BackendFailureKind::Initialization);
     assert_eq!(error.message(), "injected binding rejection");
-    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
     assert!(requests.lock().unwrap().is_empty());
 }
 
@@ -174,8 +184,7 @@ impl TestDirectory {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("yo-managed-resume-{}-{nonce}", std::process::id()));
+        let path = env::temp_dir().join(format!("yo-managed-resume-{}-{nonce}", process::id()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
@@ -206,10 +215,7 @@ fn resume_through_durable_agent_session(
 
 fn durable_continuation(
     mut first_backend: NativeModelBackend,
-) -> (
-    TestDirectory,
-    yo_core::session_repository::StoredSessionContinuation,
-) {
+) -> (TestDirectory, StoredSessionContinuation) {
     first_backend.connector = Box::new(MockConnector {
         rounds: event_rounds(vec![vec![
             ModelConnectorEvent::ResponseCreated {
@@ -232,7 +238,7 @@ fn durable_continuation(
     let directory = TestDirectory::new();
     let descriptor = SessionDescriptor::new(
         WorkspaceHostId::new().unwrap(),
-        HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+        HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
     )
     .unwrap();
     let session_id = descriptor.session_id();
@@ -813,7 +819,7 @@ fn command_manifest_is_required_for_exact_resume_and_fork() {
         let candidate = command_backend(digest);
         let child = SessionDescriptor::new(
             WorkspaceHostId::new().unwrap(),
-            HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+            HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -866,7 +872,7 @@ fn command_fork_preserves_semantically_equal_durable_wrapper_bytes() {
     let child_descriptor = || {
         SessionDescriptor::new(
             WorkspaceHostId::new().unwrap(),
-            HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+            HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
         )
         .unwrap()
     };

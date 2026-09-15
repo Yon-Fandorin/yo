@@ -1,6 +1,7 @@
 //! Frontend-neutral local image preparation; prepared values do not grant admission.
 
 use std::{
+    fmt::{Debug, Formatter, Result as FmtResult},
     path::PathBuf,
     sync::Arc,
     task::{Context, Poll},
@@ -34,8 +35,8 @@ pub struct PreparedImageAttachment {
     thumbnail_height: u32,
 }
 
-impl std::fmt::Debug for PreparedImageAttachment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for PreparedImageAttachment {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("PreparedImageAttachment")
             .field("image", &self.image)
             .field("thumbnail_bytes", &self.thumbnail_png.len())

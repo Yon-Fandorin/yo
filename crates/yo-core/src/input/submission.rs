@@ -1,3 +1,8 @@
+use std::{
+    error::Error,
+    fmt::{Display, Formatter, Result as FmtResult},
+};
+
 use super::{ResolvedSkill, SubmissionId, UserInput};
 
 /// Execution-host authority for reference validation and immutable skill assembly.
@@ -39,8 +44,8 @@ pub enum InputAdmissionConfigurationError {
     InputAlreadySubmitted,
 }
 
-impl std::fmt::Display for InputAdmissionConfigurationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for InputAdmissionConfigurationError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         formatter.write_str(match self {
             Self::AlreadyConfigured => "input admission host is already configured",
             Self::InputAlreadySubmitted => "configure input admission before submitting input",
@@ -48,7 +53,7 @@ impl std::fmt::Display for InputAdmissionConfigurationError {
     }
 }
 
-impl std::error::Error for InputAdmissionConfigurationError {}
+impl Error for InputAdmissionConfigurationError {}
 
 /// One immutable frontend snapshot retained until admission resolves.
 #[derive(Clone, Debug, Eq, PartialEq)]

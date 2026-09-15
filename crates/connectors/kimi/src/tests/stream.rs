@@ -1,4 +1,9 @@
+#[cfg(test)]
+use std::iter;
+
 use super::*;
+#[cfg(test)]
+use crate::private_replay::KimiReplayToolCallSize;
 
 // Kimi stream의 reasoning은 frontend event가 아니라 한 bounded private replay item으로만
 // 나오고, visible content와 tool call을 같은 assistant message에 정확히 상관시킵니다.
@@ -223,8 +228,7 @@ fn kimi_stream_rejects_the_first_complete_replay_overflow_fragment_before_retent
         content: String::new(),
         refusal: None,
     };
-    let empty_budget =
-        ModelReplayDelta::replay_budget(None, std::iter::once(&empty_prefix)).unwrap();
+    let empty_budget = ModelReplayDelta::replay_budget(None, iter::once(&empty_prefix)).unwrap();
     let fixed_bytes = empty_budget
         .encoded_len_with_item_lengths(&exact_lengths)
         .unwrap();
@@ -233,7 +237,7 @@ fn kimi_stream_rejects_the_first_complete_replay_overflow_fragment_before_retent
         content: "p".repeat(ModelReplayDelta::MAX_ENCODED_BYTES - fixed_bytes),
         refusal: None,
     };
-    let replay_budget = ModelReplayDelta::replay_budget(None, std::iter::once(&prefix)).unwrap();
+    let replay_budget = ModelReplayDelta::replay_budget(None, iter::once(&prefix)).unwrap();
     assert!(replay_budget.accepts_item_lengths(&exact_lengths));
     let overflow_lengths = kimi_replay_round_item_lengths(
         true,
@@ -303,7 +307,7 @@ fn kimi_incremental_round_sizes_match_the_canonical_replay_encoder() {
         let json_bytes = |value: &str| serde_json::to_string(value).unwrap().len() - 2;
         let sizes = calls
             .iter()
-            .map(|call| crate::private_replay::KimiReplayToolCallSize {
+            .map(|call| KimiReplayToolCallSize {
                 id_json_bytes: json_bytes(call.id()),
                 name_json_bytes: json_bytes(call.name()),
                 arguments_json_bytes: json_bytes(call.arguments()),
@@ -339,10 +343,10 @@ fn kimi_incremental_round_sizes_match_the_canonical_replay_encoder() {
             refusal: None,
         };
         let prefix_budget =
-            ModelReplayDelta::replay_budget(Some(&contract), std::iter::once(&prefix)).unwrap();
+            ModelReplayDelta::replay_budget(Some(&contract), iter::once(&prefix)).unwrap();
         let canonical_budget = ModelReplayDelta::replay_budget(
             Some(&contract),
-            std::iter::once(&prefix).chain(round_items.iter()),
+            iter::once(&prefix).chain(round_items.iter()),
         )
         .unwrap();
 

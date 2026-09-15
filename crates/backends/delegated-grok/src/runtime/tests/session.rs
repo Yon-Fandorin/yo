@@ -1,3 +1,8 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::iter;
+
 use super::*;
 
 // skills watcher ACK는 session/new의 실제 숫자 response를 대신하지 않고, 0건 reload도
@@ -309,7 +314,7 @@ fn long_resume_drains_history_before_accepting_the_next_turn() {
         "agent_message_chunk",
         json!({ "content": { "type": "text", "text": "fresh" } }),
     );
-    let messages = std::iter::repeat_n(old, 1025).chain([
+    let messages = iter::repeat_n(old, 1025).chain([
         response(3, json!({})),
         fresh,
         response(4, json!({ "stopReason": "end_turn" })),
@@ -368,7 +373,7 @@ fn resume_history_filter_preserves_unrelated_bounds_and_response_failures() {
     ] {
         let messages = [history.clone()]
             .into_iter()
-            .chain(std::iter::repeat_n(unrelated, 1025));
+            .chain(iter::repeat_n(unrelated, 1025));
         let (mut backend, _) = backend(messages);
         let failure = backend
             .resume_binding(session(1), &resume_binding("grok-session-a"))
@@ -415,7 +420,7 @@ fn read_only_resume_restores_profile_and_rejects_downgrade() {
 // Unavailable 실패로 분류해 사용자가 Grok CLI 설치 문제를 바로 구분할 수 있게 합니다.
 #[test]
 fn classifies_a_missing_grok_executable_as_unavailable() {
-    let config = GrokBackendConfig::new(std::env::temp_dir())
+    let config = GrokBackendConfig::new(env::temp_dir())
         .with_executable("yo-definitely-missing-grok-executable");
 
     let failure = match GrokBackend::spawn(config) {
@@ -431,7 +436,7 @@ fn classifies_a_missing_grok_executable_as_unavailable() {
 #[test]
 #[ignore = "requires a compatible installed and logged-in Grok CLI"]
 fn local_grok_authenticates_and_shuts_down_without_a_session() {
-    let cwd = std::env::current_dir().unwrap();
+    let cwd = env::current_dir().unwrap();
 
     GrokBackend::verify(GrokBackendConfig::new(cwd)).unwrap();
 }
@@ -441,7 +446,7 @@ fn local_grok_authenticates_and_shuts_down_without_a_session() {
 #[test]
 #[ignore = "requires the Yo bwrap profile plus a compatible installed and logged-in Grok CLI"]
 fn local_outer_sandbox_grok_authenticates_without_a_session() {
-    let cwd = std::env::current_dir().unwrap();
+    let cwd = env::current_dir().unwrap();
     let config = GrokBackendConfig::new(cwd)
         .with_read_only_review(true)
         .with_outer_sandboxed_review(true);

@@ -1,5 +1,11 @@
 //! Nonsecret interview capture and editable copies, independent of backend wire state.
 
+use std::{
+    error::Error,
+    fmt::{Display, Formatter, Result},
+    io::Error as IoError,
+};
+
 mod capture;
 mod profile;
 mod refs;
@@ -24,11 +30,11 @@ pub enum InterviewError {
     Invalid(String),
     Conflict,
     Busy,
-    Io(std::io::Error),
+    Io(IoError),
 }
 
-impl std::fmt::Display for InterviewError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for InterviewError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             Self::Invalid(message) => f.write_str(message),
             Self::Conflict => f.write_str(
@@ -41,9 +47,9 @@ impl std::fmt::Display for InterviewError {
         }
     }
 }
-impl std::error::Error for InterviewError {}
-impl From<std::io::Error> for InterviewError {
-    fn from(value: std::io::Error) -> Self {
+impl Error for InterviewError {}
+impl From<IoError> for InterviewError {
+    fn from(value: IoError) -> Self {
         Self::Io(value)
     }
 }

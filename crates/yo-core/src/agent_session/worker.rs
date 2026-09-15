@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, PoisonError,
         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         mpsc::{Receiver, SyncSender, TryRecvError, TrySendError},
     },
@@ -17,6 +17,7 @@ use crate::{
     ActivityKind, ActivityRequestRef, AgentBackend, AgentCommand, AgentEvent, AgentRejection,
     AgentRuntime, BackendFailureKind, RuntimeError, RuntimePoll, SessionId, SubmissionOutcome,
     SubmissionRejection, SubmissionRejectionKind, TurnRef, journal::SessionJournal,
+    readiness::Readiness,
 };
 
 pub(super) enum WorkerSignal {
@@ -55,14 +56,14 @@ impl WorkerExit {
 pub(super) struct ChangeLane {
     sender: SyncSender<WorkerSignal>,
     failure: Arc<Mutex<Option<AgentSessionError>>>,
-    readiness: Arc<crate::readiness::Readiness>,
+    readiness: Arc<Readiness>,
 }
 
 impl ChangeLane {
     pub(super) fn new(
         sender: SyncSender<WorkerSignal>,
         failure: Arc<Mutex<Option<AgentSessionError>>>,
-        readiness: Arc<crate::readiness::Readiness>,
+        readiness: Arc<Readiness>,
     ) -> Self {
         Self {
             sender,
@@ -373,7 +374,7 @@ impl AgentWorker {
                                     .store(false, Ordering::Release);
                                 self.control_outcomes
                                     .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .unwrap_or_else(PoisonError::into_inner)
                                     .push_back(AgentControlOutcome::ContextCompactionRejected {
                                         detail,
                                     });
@@ -433,7 +434,7 @@ impl AgentWorker {
                             .store(false, Ordering::Release);
                         self.control_outcomes
                             .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .unwrap_or_else(PoisonError::into_inner)
                             .push_back(AgentControlOutcome::ContextCompactionRejected { detail });
                         if !changes.changed() {
                             return WorkerExit::from_cleanup(self.runtime.shutdown());
@@ -460,7 +461,7 @@ impl AgentWorker {
     fn record_submission_outcome(&self, outcome: SubmissionOutcome) {
         self.submission_outcomes
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(PoisonError::into_inner)
             .push_back(outcome);
     }
 

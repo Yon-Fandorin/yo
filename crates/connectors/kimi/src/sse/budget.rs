@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{
     ChatCompletionsSseDecoder, ConnectorError, KIMI_PRIVATE_MESSAGE_FIXED_BYTES,
     KIMI_TOOL_CALLS_FIELD_BYTES, KimiReplayToolCallSize, kimi_replay_round_item_lengths,
@@ -87,7 +89,7 @@ impl ChatCompletionsSseDecoder {
             .keys()
             .copied()
             .chain(updated_call.map(|(index, _)| index))
-            .collect::<std::collections::BTreeSet<_>>();
+            .collect::<BTreeSet<_>>();
         let call_sizes = call_indices
             .into_iter()
             .map(|index| {

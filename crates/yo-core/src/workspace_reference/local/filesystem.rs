@@ -1,8 +1,9 @@
 use std::{
     collections::{BTreeSet, HashSet},
     ffi::OsStr,
+    mem,
     os::unix::ffi::OsStrExt,
-    path::{Path, PathBuf},
+    path::{MAIN_SEPARATOR, Path, PathBuf},
 };
 
 use rustix::{
@@ -23,7 +24,7 @@ pub(super) fn discover_entries(
     let mut frontier = vec![PathBuf::new()];
     while !frontier.is_empty() {
         let mut candidates = Vec::new();
-        for relative in std::mem::take(&mut frontier) {
+        for relative in mem::take(&mut frontier) {
             let directory = root.join(&relative);
             let descriptor = pin_directory(root_descriptor, &relative).map_err(|error| {
                 format!(
@@ -80,7 +81,7 @@ pub(super) fn discover_entries(
                 incomplete = true;
                 continue;
             };
-            let normalized = path.replace(std::path::MAIN_SEPARATOR, "/");
+            let normalized = path.replace(MAIN_SEPARATOR, "/");
             if !ignored.contains(&normalized) {
                 visible.insert((normalized, kind));
                 if kind == WorkspaceReferenceKind::Directory {

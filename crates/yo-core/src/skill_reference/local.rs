@@ -5,6 +5,7 @@ use std::{
     fmt::Write as _,
     fs::File,
     io::Read,
+    mem,
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     sync::{
@@ -592,7 +593,7 @@ impl LocalSkillReferenceProvider {
                         }
                         (
                             mailbox.request.take().expect("request checked"),
-                            std::mem::take(&mut mailbox.refresh),
+                            mem::take(&mut mailbox.refresh),
                         )
                     };
                     if refresh || cache.is_none() {

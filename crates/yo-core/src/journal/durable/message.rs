@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use super::super::codec::{JournalRecord, MessageOutcome, MessageSegmenter, MessageStream};
-use crate::{ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate};
+use crate::{ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, interview::Capture};
 
 #[derive(Debug, Default)]
 pub(super) struct MessageTracker {
@@ -34,7 +34,7 @@ impl MessageTracker {
         let capture = matches!(
             self.kinds.get(&activity),
             Some(ActivityKind::UserInputRequest { .. } | ActivityKind::UserInputResponse { .. })
-        ) && matches!(update, ActivityUpdate::TextSnapshot(text) if crate::interview::Capture::from_snapshot(text).is_ok());
+        ) && matches!(update, ActivityUpdate::TextSnapshot(text) if Capture::from_snapshot(text).is_ok());
         let boundary = capture.then(|| message.flush_boundary()).flatten();
         let mut records = segments
             .into_iter()

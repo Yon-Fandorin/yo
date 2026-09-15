@@ -1,4 +1,8 @@
 use super::*;
+#[cfg(test)]
+use crate::journal::CommittedCommand;
+#[cfg(test)]
+use crate::session_repository;
 
 fn checkpoint_replacement_history(strategy: ContinuationStrategy) -> Vec<JournalCommit> {
     let mut commits = current_history();
@@ -249,7 +253,7 @@ fn replacement_first_delta_establishes_its_new_replay_contract() {
                 15,
                 14,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::SteerTurn {
                             turn: super::super::super::activity().turn(),
                             input: crate::UserInput::new("after replacement"),
@@ -413,7 +417,7 @@ fn replacement_with_an_unanchored_request_does_not_fall_back_to_checkpoint() {
                 15,
                 14,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::SteerTurn {
                             turn: super::super::super::activity().turn(),
                             input: crate::UserInput::new("uncertain"),
@@ -455,7 +459,7 @@ fn replacement_with_an_unanchored_request_does_not_fall_back_to_checkpoint() {
     ));
     let recovered = recover(&commits).unwrap();
 
-    let error = crate::session_repository::build_continuation(
+    let error = session_repository::build_continuation(
         recovered,
         super::super::super::activity().session_id(),
     )

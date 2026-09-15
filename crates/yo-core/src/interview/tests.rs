@@ -1,3 +1,21 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
+use std::fs::Permissions;
+#[cfg(test)]
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
+#[cfg(test)]
+use std::thread;
+#[cfg(test)]
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
 use std::{
     num::NonZeroU64,
     os::unix::fs::{PermissionsExt, symlink},
@@ -5,6 +23,12 @@ use std::{
 };
 
 use super::*;
+#[cfg(test)]
+use crate::journal::SessionJournal;
+#[cfg(test)]
+use crate::session_repository::DurableCutoff;
+#[cfg(test)]
+use crate::session_repository::RepositorySequence;
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
     ActivityUpdate, AgentCommand, AgentEvent, RequestId, TranscriptRecord, TurnId, TurnRef,
@@ -144,20 +168,20 @@ impl Temp {
     fn new() -> Self {
         // macOS의 임시 경로는 /var -> /private/var 링크를 거칠 수 있으므로,
         // descriptor 기반 저장소에는 fixture의 물리 경로를 전달한다.
-        let root = std::fs::canonicalize(std::env::temp_dir())
+        let root = fs::canonicalize(env::temp_dir())
             .expect("the interview fixture temp directory must resolve physically");
         let p = root.join(format!(
             "yo-interview-test-{}",
             working_copy::new_id().unwrap()
         ));
-        std::fs::create_dir(&p).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
+        fs::create_dir(&p).unwrap();
+        fs::set_permissions(&p, Permissions::from_mode(0o700)).unwrap();
         Self(p)
     }
 }
 impl Drop for Temp {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -301,7 +325,7 @@ fn cas_conflict_preserves_winner_and_editable_loser() {
         "승자"
     );
     assert!(
-        !std::fs::read_dir(&temp.0).unwrap().any(|e| e
+        !fs::read_dir(&temp.0).unwrap().any(|e| e
             .unwrap()
             .file_name()
             .to_string_lossy()
@@ -322,12 +346,12 @@ fn unsafe_storage_and_unknown_records_are_preserved() {
     let path = temp.0.join(format!("{id}.json"));
     symlink(outside.0.join("value"), &path).unwrap();
     assert!(repo.load(&id).is_err());
-    std::fs::remove_file(&path).unwrap();
-    std::fs::write(&path, b"{\"schema\":\"future\"}").unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, b"{\"schema\":\"future\"}").unwrap();
+    fs::set_permissions(&path, Permissions::from_mode(0o600)).unwrap();
     assert!(repo.load(&id).is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), b"{\"schema\":\"future\"}");
-    std::fs::set_permissions(&temp.0, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"{\"schema\":\"future\"}");
+    fs::set_permissions(&temp.0, Permissions::from_mode(0o755)).unwrap();
     assert!(InterviewRepository::open(&temp.0).is_err());
     assert!(repo.load(&id).is_err());
 }
@@ -368,12 +392,12 @@ fn simultaneous_writers_publish_one_generation() {
         .unwrap()
         .save(&copy, None, &catalog)
         .unwrap();
-    let ready = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let ready = Arc::new(AtomicUsize::new(0));
     let repositories = [
         InterviewRepository::open(&temp.0).unwrap(),
         InterviewRepository::open(&temp.0).unwrap(),
     ];
-    let results = std::thread::scope(|scope| {
+    let results = thread::scope(|scope| {
         let handles = repositories
             .into_iter()
             .enumerate()
@@ -383,14 +407,11 @@ fn simultaneous_writers_publish_one_generation() {
                 let catalog = &catalog;
                 scope.spawn(move || {
                     copy.context = i.to_string();
-                    ready.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-                    while ready.load(std::sync::atomic::Ordering::SeqCst) != 2 {
-                        assert!(
-                            std::time::Instant::now() < deadline,
-                            "writers did not become ready"
-                        );
-                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    ready.fetch_add(1, Ordering::SeqCst);
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    while ready.load(Ordering::SeqCst) != 2 {
+                        assert!(Instant::now() < deadline, "writers did not become ready");
+                        thread::sleep(Duration::from_millis(1));
                     }
                     repo.save(&copy, Some(1), catalog)
                 })
@@ -448,7 +469,7 @@ fn first_request_and_complete_capture_publish_in_one_physical_append() {
         }),
     ]);
     let repository = LocalSessionRepository::open(&root, 16 * 1024 * 1024).unwrap();
-    let journal = crate::journal::SessionJournal::with_repository_and_descriptor(
+    let journal = SessionJournal::with_repository_and_descriptor(
         Box::new(repository),
         crate::fixture_descriptor(session_id),
     );
@@ -460,7 +481,7 @@ fn first_request_and_complete_capture_publish_in_one_physical_append() {
     runtime
         .execute_submission(start, SubmissionId::new().unwrap())
         .unwrap();
-    let before = std::fs::read_to_string(root.join(format!("{session_id}.jsonl")))
+    let before = fs::read_to_string(root.join(format!("{session_id}.jsonl")))
         .unwrap()
         .lines()
         .count();
@@ -468,7 +489,7 @@ fn first_request_and_complete_capture_publish_in_one_physical_append() {
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::ActivityStarted { .. })
     ));
-    let physical = std::fs::read_to_string(root.join(format!("{session_id}.jsonl"))).unwrap();
+    let physical = fs::read_to_string(root.join(format!("{session_id}.jsonl"))).unwrap();
     assert_eq!(physical.lines().count(), before + 1);
     let reader = LocalSessionReader::open(&root).unwrap();
     let restored = read_stored_session(&reader, session_id).unwrap();
@@ -522,7 +543,7 @@ fn durable_first_turn_acceptance_is_correlated_and_recovers() {
         },
     ]);
     let repository = LocalSessionRepository::open(&root, 16 * 1024 * 1024).unwrap();
-    let journal = crate::journal::SessionJournal::with_repository_and_descriptor(
+    let journal = SessionJournal::with_repository_and_descriptor(
         Box::new(repository),
         crate::fixture_descriptor(session_id),
     );
@@ -548,9 +569,9 @@ fn durable_first_turn_acceptance_is_correlated_and_recovers() {
         read_stored_session(&LocalSessionReader::open(&root).unwrap(), session_id).unwrap();
     assert_eq!(stored.accepted_initial_submission(id), Some((turn, seq)));
     let entries = runtime.journal().semantic_entries();
-    let durable_cutoff = crate::session_repository::DurableCutoff::Known {
+    let durable_cutoff = DurableCutoff::Known {
         journal_sequence: Some(seq),
-        repository_sequence: crate::session_repository::RepositorySequence::new(1),
+        repository_sequence: RepositorySequence::new(1),
     };
     assert_eq!(
         initial_submission_evidence(
@@ -568,7 +589,7 @@ fn durable_first_turn_acceptance_is_correlated_and_recovers() {
             &entries,
             id,
             crate::JournalDurability::Gap {
-                durable_cutoff: crate::session_repository::DurableCutoff::Unknown,
+                durable_cutoff: DurableCutoff::Unknown,
                 cause: crate::DurabilityGapCause::Storage
             }
         )
@@ -605,11 +626,11 @@ fn reserved_worker_turn_is_busy_before_frontend_observation() {
         .unwrap();
     assert!(matches!(admission, CommandAdmission::Queued));
     assert!(!session.is_idle_for_new_conversation());
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
     while session.take_submission_outcome().is_none() {
-        assert!(std::time::Instant::now() < deadline);
+        assert!(Instant::now() < deadline);
         let _ = session.poll();
-        std::thread::yield_now();
+        thread::yield_now();
     }
     session.shutdown().unwrap();
 }
@@ -640,15 +661,15 @@ fn complete_capture_limit_and_generation_overflow_preserve_boundaries() {
     copy.generation = u64::MAX;
     let path = temp.0.join(format!("{}.json", copy.copy_id));
     let bytes = copy.encode().unwrap();
-    std::fs::write(&path, &bytes).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    fs::set_permissions(&path, Permissions::from_mode(0o600)).unwrap();
     assert!(
         InterviewRepository::open(&temp.0)
             .unwrap()
             .save(&copy, Some(u64::MAX), &catalog)
             .is_err()
     );
-    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    assert_eq!(fs::read(path).unwrap(), bytes);
 }
 
 // 장애로 남은 우리 UUID temp만 exclusive lease에서 회수하고 정상 파일·unknown·symlink는 보존한다.
@@ -665,10 +686,10 @@ fn abandoned_owned_attempts_are_reclaimed_without_purging_unknown_files() {
         copy.copy_id,
         working_copy::new_id().unwrap()
     ));
-    std::fs::write(&owned, b"partial interrupted write").unwrap();
-    std::fs::set_permissions(&owned, std::fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&owned, b"partial interrupted write").unwrap();
+    fs::set_permissions(&owned, Permissions::from_mode(0o600)).unwrap();
     let unknown = temp.0.join("unknown.tmp");
-    std::fs::write(&unknown, b"keep").unwrap();
+    fs::write(&unknown, b"keep").unwrap();
     let unsafe_path = temp.0.join(format!(
         ".{}.{}.tmp",
         copy.copy_id,
@@ -678,9 +699,9 @@ fn abandoned_owned_attempts_are_reclaimed_without_purging_unknown_files() {
     drop(repo);
     let reopened = InterviewRepository::open(&temp.0).unwrap();
     assert!(!owned.exists());
-    assert_eq!(std::fs::read(&unknown).unwrap(), b"keep");
+    assert_eq!(fs::read(&unknown).unwrap(), b"keep");
     assert!(
-        std::fs::symlink_metadata(unsafe_path)
+        fs::symlink_metadata(unsafe_path)
             .unwrap()
             .file_type()
             .is_symlink()

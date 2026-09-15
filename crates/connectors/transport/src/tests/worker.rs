@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use tokio::runtime::Builder;
 use tokio::sync::mpsc as async_mpsc;
 use yo_core::{ConnectorFailureKind, ModelConnectorCancellation, ModelConnectorLimits};
 
@@ -12,10 +14,7 @@ use super::{
 // agent absolute deadline 없이도 자체 timeout으로 끝나는지 검증합니다.
 #[test]
 fn event_backpressure_obeys_its_own_delivery_deadline() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
     let (sender, _receiver) = async_mpsc::channel(1);
     sender.try_send(dummy_event("first")).unwrap();
     let limits = ModelConnectorLimits {

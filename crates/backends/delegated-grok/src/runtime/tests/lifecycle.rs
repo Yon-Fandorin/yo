@@ -1,3 +1,10 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::path::PathBuf;
+#[cfg(test)]
+use std::process;
+
 use super::*;
 
 // 새 Session은 ACP v1 초기화 뒤 cached_token만 인증하고 session/new를 호출하며,
@@ -120,7 +127,7 @@ fn rejected_cached_login_has_actionable_login_guidance() {
 fn early_process_failure_reports_safe_sandbox_diagnostics_without_stderr_secrets() {
     use std::{fs, os::unix::fs::PermissionsExt};
 
-    struct Fixture(std::path::PathBuf);
+    struct Fixture(PathBuf);
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -128,9 +135,9 @@ fn early_process_failure_reports_safe_sandbox_diagnostics_without_stderr_secrets
     }
 
     for failure_kind in ["unknown", "bwrap", "profile"] {
-        let directory = std::env::temp_dir().join(format!(
+        let directory = env::temp_dir().join(format!(
             "yo-grok-startup-diagnostic-{}-{}",
-            std::process::id(),
+            process::id(),
             yo_core::WorkspaceHostId::new().unwrap(),
         ));
         fs::create_dir(&directory).unwrap();

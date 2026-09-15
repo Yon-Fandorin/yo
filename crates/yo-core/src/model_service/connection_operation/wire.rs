@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, str};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ use crate::model_service::{
 pub(super) fn encode(
     entry: &ConnectionOperationJournalEntry,
 ) -> Result<Vec<u8>, ConnectionOperationError> {
-    let planned_snapshot = std::str::from_utf8(entry.connection_mutation().planned_bytes())
+    let planned_snapshot = str::from_utf8(entry.connection_mutation().planned_bytes())
         .map_err(|_| ConnectionOperationError::InvalidEntry)?;
     yo_yaml::to_string(&WireEntry {
         operation_id: entry.operation_id(),

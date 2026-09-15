@@ -1,8 +1,11 @@
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use reqwest::{Client, StatusCode, Url, header, redirect};
-use tokio::time::{Instant as TokioInstant, timeout_at};
+use reqwest::{Client, StatusCode, Url, header, redirect, retry};
+use tokio::{
+    runtime::Builder,
+    time::{Instant as TokioInstant, timeout_at},
+};
 use yo_core::{ApiCredential, NormalizedEndpoint};
 
 use super::{KimiCatalogError, KimiCatalogFailureKind, failure, limit_failure, timeout_failure};
@@ -27,7 +30,7 @@ pub(super) fn fetch_catalog(
     let client = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .redirect(redirect::Policy::none())
-        .retry(reqwest::retry::never())
+        .retry(retry::never())
         .build()
         .map_err(|_| {
             failure(
@@ -35,7 +38,7 @@ pub(super) fn fetch_catalog(
                 "cannot initialize the Kimi catalog HTTP client",
             )
         })?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| {

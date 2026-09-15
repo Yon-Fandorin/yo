@@ -1,4 +1,10 @@
 use super::{activity, engine_with_active_turn, id, session, turn};
+#[cfg(test)]
+use crate::journal::SemanticRecord;
+#[cfg(test)]
+use crate::journal::SessionJournal;
+#[cfg(test)]
+use crate::journal::codec::RecoveredJournal;
 use crate::{
     ActivityKind, ActivityOutcome, ActivityResponse, AgentCommand, AgentEngine, AgentEvent,
     AgentRejection, ApprovalDecision, Failure, RequestId, TurnOutcome, UserInput,
@@ -235,10 +241,11 @@ fn restores_fork_bootstrap_and_starts_a_real_child_turn() {
     assert_eq!(engine.session_id(), Some(child));
     assert_eq!(engine.turn_count(), 0);
     assert_eq!(engine.active_turn(), None);
-    assert!(entries.iter().all(|entry| !matches!(
-        entry.record(),
-        crate::journal::SemanticRecord::CommandCommitted(_)
-    )));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| !matches!(entry.record(), SemanticRecord::CommandCommitted(_)))
+    );
 
     let first = turn(child, 1);
     let events = engine
@@ -270,7 +277,7 @@ fn rejects_unmatched_or_incomplete_fork_session_creation() {
                 .contains("unexpected lifecycle event")
         );
     }
-    let mut foreign = crate::journal::SessionJournal::new();
+    let mut foreign = SessionJournal::new();
     foreign.append_events(&[AgentEvent::SessionCreated {
         session_id: session(81),
     }]);
@@ -282,7 +289,7 @@ fn rejects_unmatched_or_incomplete_fork_session_creation() {
             .contains("unexpected lifecycle event")
     );
 
-    let mut ordinary = crate::journal::SessionJournal::new();
+    let mut ordinary = SessionJournal::new();
     ordinary.append_committed_command(
         AgentCommand::CreateSession {
             session_id: session(82),
@@ -296,7 +303,7 @@ fn rejects_unmatched_or_incomplete_fork_session_creation() {
     assert_eq!(engine.turn_count(), 0);
 }
 
-fn fork_bootstrap() -> crate::journal::codec::RecoveredJournal {
+fn fork_bootstrap() -> RecoveredJournal {
     use crate::{
         BackendBindingEvidence, BackendIdentity, ContinuationStrategy, JournalSequence,
         ModelReplayContract, ModelReplayItem, ModelReplayRole, ReplayExecutor, ReplayProfile,

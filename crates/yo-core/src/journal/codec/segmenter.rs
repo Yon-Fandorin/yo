@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{mem, time::Duration};
 
 use super::{
     JournalRecord, MessageEnded, MessageOutcome, MessageReset, MessageSegment, MessageStream,
@@ -150,7 +150,7 @@ impl MessageSegmenter {
 
     fn take_segment(&mut self, end: usize) -> MessageSegment {
         let tail = self.pending.split_off(end);
-        let text = std::mem::replace(&mut self.pending, tail);
+        let text = mem::replace(&mut self.pending, tail);
         self.segment_count = self
             .segment_count
             .checked_add(1)

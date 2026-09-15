@@ -2,6 +2,8 @@ use super::{
     super::{decode, encode, recover},
     support::{identity, semantic},
 };
+#[cfg(test)]
+use crate::journal::CommittedCommand;
 use crate::{
     AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplayContract,
     ModelReplayDelta, ModelReplayItem, ModelReplayRole, ProviderPrivateReplayEnvelope,
@@ -124,7 +126,7 @@ fn current_history_with(
                 5,
                 4,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn: super::super::activity().turn(),
                             input: crate::UserInput::new("continue"),

@@ -1,10 +1,11 @@
 use std::{
     collections::{BTreeSet, HashSet},
+    fs,
     io::{self, Read, Write},
     os::unix::process::CommandExt,
-    path::{Component, Path, PathBuf},
+    path::{Component, MAIN_SEPARATOR, Path, PathBuf},
     process::{Child, Command, Output, Stdio},
-    thread,
+    str, thread,
     time::{Duration, Instant},
 };
 
@@ -53,7 +54,7 @@ pub(super) fn git_command(root: &Path) -> Command {
 fn has_git_marker(root: &Path) -> Result<bool, String> {
     for ancestor in root.ancestors() {
         let marker = ancestor.join(".git");
-        match std::fs::symlink_metadata(&marker) {
+        match fs::symlink_metadata(&marker) {
             Ok(_) => {
                 let output = run_git(
                     git_command(root)
@@ -129,7 +130,7 @@ pub(super) fn discover_tracked_entries(
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
     {
-        let Ok(path) = std::str::from_utf8(raw_path) else {
+        let Ok(path) = str::from_utf8(raw_path) else {
             incomplete = true;
             continue;
         };
@@ -205,8 +206,8 @@ pub(super) fn ignored_paths(root: &Path, paths: &[PathBuf]) -> Result<HashSet<St
     Ok(output
         .stdout
         .split(|byte| *byte == 0)
-        .filter_map(|path| std::str::from_utf8(path).ok())
-        .map(|path| path.replace(std::path::MAIN_SEPARATOR, "/"))
+        .filter_map(|path| str::from_utf8(path).ok())
+        .map(|path| path.replace(MAIN_SEPARATOR, "/"))
         .collect())
 }
 

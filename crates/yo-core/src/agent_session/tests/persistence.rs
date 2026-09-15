@@ -1,3 +1,9 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 use std::{
     fs,
     path::PathBuf,
@@ -9,6 +15,22 @@ use super::{
     super::{AgentIntent, AgentSession, CommandAdmission},
     support::{activity, session, turn},
 };
+#[cfg(test)]
+use crate::journal::codec;
+#[cfg(test)]
+use crate::session_repository::RepositoryEntry;
+#[cfg(test)]
+use crate::session_repository::RepositoryError;
+#[cfg(test)]
+use crate::session_repository::RepositorySequence;
+#[cfg(test)]
+use crate::session_repository::SessionForkLimits;
+#[cfg(test)]
+use crate::session_repository::StoredSession;
+#[cfg(test)]
+use crate::session_repository::StoredSessionReader;
+#[cfg(test)]
+use crate::session_repository::StoredSessionSnapshot;
 use crate::{
     ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, BackendEvent, BackendScriptStep,
     InputReference, InputSubmission, ScriptedBackend, TurnOutcome, UserInput, WorkspaceReference,
@@ -25,9 +47,9 @@ impl TestDirectory {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "yo-agent-session-persistence-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir_all(&path).unwrap();
         Self(path)
@@ -177,7 +199,7 @@ fn live_worker_persists_a_recoverable_session_journal() {
     let physical = repository.read_after(session(), None, 16).unwrap();
     assert!(physical.len() >= 2);
     assert_eq!(physical[0].record().journal_cutoff(), None);
-    let first = crate::journal::codec::decode(physical[0].record().payload()).unwrap();
+    let first = codec::decode(physical[0].record().payload()).unwrap();
     assert!(matches!(
         first.records()[0].record(),
         JournalRecord::SessionDescriptor(observed) if observed == &descriptor
@@ -243,33 +265,19 @@ fn historical_fork_reader_defaults_to_unavailable() {
     );
 }
 
-impl crate::session_repository::StoredSessionReader for UnexpectedForkReader {
-    fn discover(
-        &self,
-    ) -> Result<
-        Vec<crate::session_repository::StoredSession>,
-        crate::session_repository::RepositoryError,
-    > {
+impl StoredSessionReader for UnexpectedForkReader {
+    fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError> {
         panic!("fork must reject before storage read")
     }
-    fn read_session(
-        &self,
-        _: crate::SessionId,
-    ) -> Result<
-        crate::session_repository::StoredSessionSnapshot,
-        crate::session_repository::RepositoryError,
-    > {
+    fn read_session(&self, _: crate::SessionId) -> Result<StoredSessionSnapshot, RepositoryError> {
         panic!("fork must reject before storage read")
     }
     fn read_after(
         &self,
         _: crate::SessionId,
-        _: Option<crate::session_repository::RepositorySequence>,
+        _: Option<RepositorySequence>,
         _: usize,
-    ) -> Result<
-        Vec<crate::session_repository::RepositoryEntry>,
-        crate::session_repository::RepositoryError,
-    > {
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
         panic!("fork must reject before storage read")
     }
 }
@@ -352,7 +360,7 @@ fn fork_capture_rejects_a_finished_durable_idle_worker_before_reading_storage() 
         thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(
-        live.lifecycle.load(std::sync::atomic::Ordering::Acquire),
+        live.lifecycle.load(Ordering::Acquire),
         super::super::WORKER_IDLE
     );
     assert!(live.state.lock().unwrap().active_turn.is_none());
@@ -530,10 +538,7 @@ fn fork_capture_accepts_the_actual_idle_durable_worker_source() {
     };
     assert_eq!(captured.snapshot().journal_cutoff(), journal_sequence);
     let catalog = live
-        .capture_fork_catalog(
-            &reader,
-            crate::session_repository::SessionForkLimits::default(),
-        )
+        .capture_fork_catalog(&reader, SessionForkLimits::default())
         .unwrap();
     let selected = catalog.selection(0).unwrap();
     assert_eq!(
@@ -545,10 +550,10 @@ fn fork_capture_accepts_the_actual_idle_durable_worker_source() {
         replay
     );
     live.context_compaction_pending
-        .store(true, std::sync::atomic::Ordering::Release);
+        .store(true, Ordering::Release);
     assert!(live.prepare_historical_fork_source(&selected).is_err());
     live.context_compaction_pending
-        .store(false, std::sync::atomic::Ordering::Release);
+        .store(false, Ordering::Release);
     {
         live.state.lock().unwrap().active_turn = Some(turn(2));
     }
@@ -569,10 +574,7 @@ fn fork_capture_accepts_the_actual_idle_durable_worker_source() {
     live.wait_until_no_active_turn();
     assert!(live.prepare_historical_fork_source(&selected).is_err());
     let refreshed = loop {
-        match live.capture_fork_catalog(
-            &reader,
-            crate::session_repository::SessionForkLimits::default(),
-        ) {
+        match live.capture_fork_catalog(&reader, SessionForkLimits::default()) {
             Ok(catalog) => break catalog,
             Err(error) => {
                 assert!(

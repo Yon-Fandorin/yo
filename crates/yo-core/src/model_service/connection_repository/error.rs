@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     fmt,
+    io::Error as IoError,
     path::{Path, PathBuf},
 };
 
@@ -9,7 +10,7 @@ use super::{ConnectionRevision, MAX_CONNECTION_BYTES};
 pub enum ConnectionRepositoryError {
     Io {
         path: PathBuf,
-        source: std::io::Error,
+        source: IoError,
     },
     InvalidPath(PathBuf),
     UnsupportedFileType(PathBuf),
@@ -40,7 +41,7 @@ pub enum ConnectionRepositoryError {
 }
 
 impl ConnectionRepositoryError {
-    pub(super) fn io(path: &Path, source: std::io::Error) -> Self {
+    pub(super) fn io(path: &Path, source: IoError) -> Self {
         Self::Io {
             path: path.to_owned(),
             source,

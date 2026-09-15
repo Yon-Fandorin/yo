@@ -1,3 +1,7 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -13,9 +17,9 @@ impl TestDirectory {
             .duration_since(UNIX_EPOCH)
             .expect("the system clock is after the Unix epoch")
             .as_nanos();
-        Self(std::env::temp_dir().join(format!(
+        Self(env::temp_dir().join(format!(
             "yo-workspace-host-{}-{name}-{nonce}",
-            std::process::id()
+            process::id()
         )))
     }
 

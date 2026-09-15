@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{Error, Read, Seek, SeekFrom},
     path::Path,
 };
 
@@ -138,7 +138,7 @@ fn decode_usage_config(
     .map_err(|error| protocol_failure(error.to_string()))
 }
 
-fn io_failure(error: std::io::Error) -> BackendFailure {
+fn io_failure(error: Error) -> BackendFailure {
     BackendFailure::new(
         BackendFailureKind::Protocol,
         format!("could not read the Grok billing snapshot: {error}"),

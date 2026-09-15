@@ -1,11 +1,15 @@
 use std::{
-    fs::File,
-    io::{Read, Write},
+    fs::{File, TryLockError},
+    io::{Error, Read, Write},
     os::unix::fs::MetadataExt,
     path::{Component, Path},
 };
 
-use rustix::fs::{self, Dir, Mode, OFlags};
+use rustix::{
+    fs::{self, Dir, Mode, OFlags},
+    io::Errno,
+    process,
+};
 
 use super::{
     COPY_LIMIT, InterviewCatalog, InterviewError, WorkingCopy, invalid,
@@ -30,7 +34,7 @@ impl InterviewRepository {
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
                 Mode::empty(),
             )
-            .map_err(std::io::Error::from)?,
+            .map_err(Error::from)?,
         );
         for (i, component) in components.iter().enumerate().skip(1) {
             let Component::Normal(name) = component else {
@@ -38,16 +42,16 @@ impl InterviewRepository {
             };
             let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
             let fd = match fs::openat(&root, *name, flags, Mode::empty()) {
-                Err(rustix::io::Errno::NOENT) if i + 1 == components.len() => {
+                Err(Errno::NOENT) if i + 1 == components.len() => {
                     match fs::mkdirat(&root, *name, Mode::from_raw_mode(0o700)) {
-                        Ok(()) | Err(rustix::io::Errno::EXIST) => {},
-                        Err(e) => return Err(std::io::Error::from(e).into()),
+                        Ok(()) | Err(Errno::EXIST) => {},
+                        Err(e) => return Err(Error::from(e).into()),
                     }
                     fs::openat(&root, *name, flags, Mode::empty())
                 },
                 value => value,
             }
-            .map_err(std::io::Error::from)?;
+            .map_err(Error::from)?;
             if i + 1 == components.len() {
                 root.sync_all()?;
             }
@@ -76,7 +80,7 @@ impl InterviewRepository {
                     | OFlags::CLOEXEC,
                 Mode::from_raw_mode(0o600),
             )
-            .map_err(std::io::Error::from)?,
+            .map_err(Error::from)?,
         );
         secure(&file, false)?;
         match file.try_lock() {
@@ -84,24 +88,21 @@ impl InterviewRepository {
                 self.cleanup_abandoned()?;
                 Ok(file)
             },
-            Err(std::fs::TryLockError::WouldBlock) => Err(InterviewError::Busy),
-            Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
+            Err(TryLockError::WouldBlock) => Err(InterviewError::Busy),
+            Err(TryLockError::Error(e)) => Err(e.into()),
         }
     }
     // The private reserved .<copy UUID>.<attempt UUID>.tmp namespace belongs to
     // this repository. Exclusive lease proves no Yo writer still owns an attempt.
     fn cleanup_abandoned(&self) -> Result<(), InterviewError> {
         let mut removed = false;
-        for (index, entry) in Dir::read_from(&self.root)
-            .map_err(std::io::Error::from)?
-            .enumerate()
-        {
+        for (index, entry) in Dir::read_from(&self.root).map_err(Error::from)?.enumerate() {
             if index >= 4096 {
                 return Err(invalid(
                     "interview repository directory exceeds its read limit",
                 ));
             }
-            let entry = entry.map_err(std::io::Error::from)?;
+            let entry = entry.map_err(Error::from)?;
             let Ok(name) = entry.file_name().to_str() else {
                 continue;
             };
@@ -146,7 +147,7 @@ impl InterviewRepository {
             if current.dev() != metadata.dev() || current.ino() != metadata.ino() {
                 continue;
             }
-            fs::unlinkat(&self.root, name, fs::AtFlags::empty()).map_err(std::io::Error::from)?;
+            fs::unlinkat(&self.root, name, fs::AtFlags::empty()).map_err(Error::from)?;
             removed = true;
         }
         if removed {
@@ -164,8 +165,8 @@ impl InterviewRepository {
             OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
             Mode::empty(),
         ) {
-            Err(rustix::io::Errno::NOENT) => return Ok(None),
-            value => value.map_err(std::io::Error::from)?,
+            Err(Errno::NOENT) => return Ok(None),
+            value => value.map_err(Error::from)?,
         };
         let file = File::from(fd);
         secure(&file, false)?;
@@ -185,16 +186,13 @@ impl InterviewRepository {
     pub fn list(&self) -> Result<Vec<InterviewCopyEntry>, InterviewError> {
         let _lease = self.lease()?;
         let mut copies = Vec::new();
-        for (i, entry) in Dir::read_from(&self.root)
-            .map_err(std::io::Error::from)?
-            .enumerate()
-        {
+        for (i, entry) in Dir::read_from(&self.root).map_err(Error::from)?.enumerate() {
             if i >= 4096 {
                 return Err(invalid(
                     "interview repository directory exceeds its read limit",
                 ));
             }
-            let entry = entry.map_err(std::io::Error::from)?;
+            let entry = entry.map_err(Error::from)?;
             let Ok(name) = entry.file_name().to_str() else {
                 continue;
             };
@@ -242,7 +240,7 @@ impl InterviewRepository {
                 OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::from_raw_mode(0o600),
             )
-            .map_err(std::io::Error::from)?,
+            .map_err(Error::from)?,
         );
         let result = (|| {
             secure(&file, false)?;
@@ -256,7 +254,7 @@ impl InterviewRepository {
                 &self.root,
                 format!("{}.json", copy.copy_id),
             )
-            .map_err(std::io::Error::from)?;
+            .map_err(Error::from)?;
             self.root.sync_all()?;
             secure(&self.root, true)?;
             Ok(generation)
@@ -275,7 +273,7 @@ fn secure(file: &File, directory: bool) -> Result<(), InterviewError> {
         metadata.is_file() && metadata.nlink() == 1
     };
     if !kind
-        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.uid() != process::geteuid().as_raw()
         || metadata.mode() & 0o7777 != if directory { 0o700 } else { 0o600 }
     {
         return Err(invalid(

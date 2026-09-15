@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, mem};
 
 use crate::{
     ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent, TranscriptRecord,
@@ -153,7 +153,7 @@ impl HistoryNormalizer {
                 self.message_mut(ended.activity())?.terminal = Some(ended.outcome().clone());
                 if self.terminal_snapshots_only {
                     let message = self.message_mut(ended.activity())?;
-                    let text = std::mem::take(&mut message.text);
+                    let text = mem::take(&mut message.text);
                     self.output.push(TranscriptRecord::EventCommitted(
                         AgentEvent::ActivityUpdated {
                             activity: ended.activity(),

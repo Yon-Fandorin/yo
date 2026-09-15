@@ -1,9 +1,19 @@
 use std::fs;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 
 use super::{
     super::connect::ConnectStep,
     support::{CANDIDATE_SECRET, Fixture, account, candidate, provider},
 };
+#[cfg(test)]
+use crate::model_service::LocalConnectionOperationSession;
+#[cfg(test)]
+use crate::model_service::PreparedConnectionMutation;
+#[cfg(test)]
+use crate::model_service::PreparedExternalConnection;
 use crate::model_service::{
     CompleteModelBinding, ConnectionAccount, ConnectionOperationExecutionError,
     ConnectionOperationExecutionOutcome, ConnectionOperationPhase,
@@ -225,10 +235,10 @@ fn injected_admission_rejection_precedes_all_connection_writes() {
         let fixture = Fixture::new("injected-admission");
         let binding = complete("alpha");
         assert!(crate::admit_standard_complete_binding(&binding).is_ok());
-        let called = std::sync::atomic::AtomicUsize::new(0);
+        let called = AtomicUsize::new(0);
         let admission = |candidate: &CompleteModelBinding| {
             assert_eq!(candidate, &binding);
-            called.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            called.fetch_add(1, Ordering::Relaxed);
             Err("injected admission rejection".to_owned())
         };
         let mutation = if definition {
@@ -259,7 +269,7 @@ fn injected_admission_rejection_precedes_all_connection_writes() {
             session.prepare_external_connection(&admission, mutation, vec![binding.clone()])
         };
         assert!(result.is_err());
-        assert_eq!(called.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(called.load(Ordering::Relaxed), 1);
         assert!(fixture.journal.capture().unwrap().is_none());
         assert!(
             fixture
@@ -281,10 +291,10 @@ fn injected_admission_rejection_precedes_all_connection_writes() {
 }
 
 fn prepared(
-    session: &mut crate::model_service::LocalConnectionOperationSession<'_>,
+    session: &mut LocalConnectionOperationSession<'_>,
     fixture: &Fixture,
     bindings: Vec<CompleteModelBinding>,
-) -> crate::model_service::PreparedExternalConnection {
+) -> PreparedExternalConnection {
     let connection = direct_connect_mutation(
         fixture,
         bindings
@@ -303,7 +313,7 @@ fn prepared(
 fn direct_connect_mutation(
     fixture: &Fixture,
     binding: &CompleteModelBinding,
-) -> crate::model_service::PreparedConnectionMutation {
+) -> PreparedConnectionMutation {
     let coordinate = binding.binding();
     let account = ConnectionAccount::new(
         coordinate.provider_id().clone(),

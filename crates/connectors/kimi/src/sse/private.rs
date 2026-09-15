@@ -1,7 +1,10 @@
+use std::mem;
+
 use super::{
     ChatCompletionsSseDecoder, ConnectorError, KimiAssistantMessage, KimiAssistantToolCall,
     ModelConnectorEvent, ModelConnectorUsage, Value, protocol_failure,
 };
+use crate::private_replay;
 
 impl ChatCompletionsSseDecoder {
     pub(super) fn kimi_private_replay(&self) -> bool {
@@ -62,19 +65,19 @@ impl ChatCompletionsSseDecoder {
             None,
         )?;
         let output_index = self.calls.len() + 1;
-        let tool_calls = std::mem::take(&mut self.calls)
+        let tool_calls = mem::take(&mut self.calls)
             .into_values()
             .map(|call| KimiAssistantToolCall::new(call.id, call.name, call.arguments))
             .collect::<Vec<_>>();
         let message = KimiAssistantMessage::new(
-            std::mem::take(&mut self.reasoning_content),
-            self.content_seen.then(|| std::mem::take(&mut self.content)),
+            mem::take(&mut self.reasoning_content),
+            self.content_seen.then(|| mem::take(&mut self.content)),
             tool_calls,
         );
         emitted.push(ModelConnectorEvent::ProviderPrivateAssistant {
             output_index,
-            envelope: crate::private_replay::encode_envelope(&message)?,
-            visible_projection: crate::private_replay::visible_projection(&message),
+            envelope: private_replay::encode_envelope(&message)?,
+            visible_projection: private_replay::visible_projection(&message),
         });
         Ok(())
     }

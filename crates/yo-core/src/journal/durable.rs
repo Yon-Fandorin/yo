@@ -1,4 +1,7 @@
-use std::{fmt, time::Instant};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 mod message;
 
@@ -192,7 +195,7 @@ impl DurableJournal {
     fn translate(
         &mut self,
         entry: &JournalEntry,
-        now: std::time::Duration,
+        now: Duration,
         durable: &mut Vec<PendingJournalRecord>,
     ) {
         let record = entry.record();

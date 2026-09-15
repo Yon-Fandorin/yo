@@ -1,3 +1,7 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     fs,
     num::NonZeroU64,
@@ -6,6 +10,8 @@ use std::{
 };
 
 use super::*;
+#[cfg(test)]
+use crate::journal::CommittedCommand;
 use crate::{
     ActivityId, ActivityRef, AgentCommand, AgentEvent, JournalSequence, TurnId, TurnRef, UserInput,
     journal::codec::{
@@ -24,9 +30,9 @@ impl TestDirectory {
             .duration_since(UNIX_EPOCH)
             .expect("the system clock should be after the Unix epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "yo-journal-repository-{}-{name}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir_all(&path).expect("the test directory should be created");
         Self(path)
@@ -121,7 +127,7 @@ fn command_commit_at(first_sequence: u64) -> JournalCommit {
         SequencedJournalRecord::new(
             JournalSequence::new(first_sequence),
             JournalRecord::CommandCommitted(
-                crate::journal::CommittedCommand::submission(
+                CommittedCommand::submission(
                     AgentCommand::StartTurn {
                         turn,
                         input: UserInput::new("inspect"),

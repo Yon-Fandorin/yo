@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
+    mem,
 };
 
 use super::super::{
@@ -369,7 +370,7 @@ pub(crate) enum ForkHistoryCoordinate {
 
 impl Hash for ForkHistoryCoordinate {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
+        mem::discriminant(self).hash(state);
         match self {
             Self::Journal { sequence } => sequence.get().hash(state),
             Self::Message {

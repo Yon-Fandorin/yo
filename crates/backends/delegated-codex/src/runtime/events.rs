@@ -1,6 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Write},
+    iter,
+    sync::Arc,
 };
 
 use serde_json::{Map, Value, json, to_string_pretty};
@@ -11,6 +13,7 @@ use yo_core::{
     ActivityUpdate, ApprovalChoice, BackendEvent, BackendFailure, BackendFailureKind,
     BackendOutcomeEvidence, BackendPoll, Failure, NoticeLevel, PlanStep, PlanStepStatus,
     QuestionChoice, SummaryKind, ToolOutput, TurnOutcome,
+    interview::{Capture, InterviewOption, InterviewQuestion},
 };
 
 use super::{Backend, InputQuestion, InputQuestions, ItemBinding, RequestBinding, RequestKind};
@@ -700,7 +703,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                 outcome: ActivityOutcome::Interrupted,
             })
             .chain(completion_events)
-            .chain(std::iter::once(turn_finished));
+            .chain(iter::once(turn_finished));
         let first = terminal_events
             .next()
             .expect("an interrupted Turn always has its own terminal event");
@@ -1031,12 +1034,12 @@ impl<P: JsonMessagePeer> Backend<P> {
         let request_id = self.next_request()?;
         let request = ActivityRequestRef::new(activity, request_id);
         if let RequestKind::Input(questions) = &mut kind {
-            questions.capture = yo_core::interview::Capture::batch(
+            questions.capture = Capture::batch(
                 request,
                 questions
                     .questions
                     .iter()
-                    .map(|q| yo_core::interview::InterviewQuestion {
+                    .map(|q| InterviewQuestion {
                         id: q.id.clone(),
                         prompt: q.prompt.clone(),
                         question: q.question.clone(),
@@ -1044,7 +1047,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                             .choices
                             .iter()
                             .enumerate()
-                            .map(|(index, choice)| yo_core::interview::InterviewOption {
+                            .map(|(index, choice)| InterviewOption {
                                 id: (index + 1).to_string(),
                                 label: choice.label.clone(),
                                 description: choice.description.clone(),
@@ -1057,7 +1060,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                     .collect(),
             )
             .ok()
-            .map(std::sync::Arc::new);
+            .map(Arc::new);
         }
         let wire_key = wire_key(&wire_id)?;
         if self.wire_requests.contains_key(&wire_key) {
@@ -2663,7 +2666,7 @@ impl InputQuestions {
     }
 
     pub(super) fn prompt(&self) -> String {
-        if let Some(yo_core::interview::Capture::Batch {
+        if let Some(Capture::Batch {
             interview,
             revision,
             questions,
@@ -2674,7 +2677,7 @@ impl InputQuestions {
             {
                 self.capture.as_deref().cloned().expect("present capture")
             } else {
-                yo_core::interview::Capture::Question {
+                Capture::Question {
                     interview: *interview,
                     revision: revision.clone(),
                     question: questions[self.current].clone(),

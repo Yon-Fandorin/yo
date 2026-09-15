@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::str;
 use std::{
     num::NonZeroU64,
     sync::{Arc, Mutex},
@@ -342,7 +344,7 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
             .any(|item| matches!(
                 item,
                 ModelReplayItem::ProviderPrivateAssistant { envelope }
-                    if std::str::from_utf8(envelope.payload()).unwrap().contains("hidden-1")
+                    if str::from_utf8(envelope.payload()).unwrap().contains("hidden-1")
             ))
     );
 
@@ -370,7 +372,7 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
     assert!(requests[1].input().iter().any(|item| matches!(
         item,
         yo_core::ModelConnectorInputItem::ProviderPrivateAssistant { envelope }
-            if std::str::from_utf8(envelope.payload()).unwrap().contains("hidden-1")
+            if str::from_utf8(envelope.payload()).unwrap().contains("hidden-1")
     )));
 }
 

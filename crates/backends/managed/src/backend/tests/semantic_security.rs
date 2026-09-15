@@ -1,4 +1,6 @@
 use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::time::Duration;
 
 use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
@@ -113,7 +115,7 @@ fn native_backend_rejects_a_zero_absolute_tool_deadline() {
         ),
         context_profile(),
         NativeModelBackendConfig {
-            absolute_tool_execution_timeout: Some(std::time::Duration::ZERO),
+            absolute_tool_execution_timeout: Some(Duration::ZERO),
             ..NativeModelBackendConfig::default()
         },
     );

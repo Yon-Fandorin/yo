@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter, Result};
+
 use crate::{JournalSequence, SessionDescriptor};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -216,8 +218,8 @@ impl StoredSession {
     }
 }
 
-impl std::fmt::Display for StoredSessionUnavailableReason {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for StoredSessionUnavailableReason {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result {
         match self {
             Self::NoCompleteEnvelope => {
                 formatter.write_str("Session log has no complete durable envelope")

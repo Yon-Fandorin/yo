@@ -1,4 +1,5 @@
 use std::{
+    env,
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     time::Duration,
@@ -130,9 +131,9 @@ impl GrokBackendConfig {
 }
 
 fn default_usage_log_path() -> Option<PathBuf> {
-    let root = std::env::var_os("GROK_HOME")
+    let root = env::var_os("GROK_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".grok")))?;
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".grok")))?;
     root.is_absolute().then(|| root.join("logs/unified.jsonl"))
 }
 

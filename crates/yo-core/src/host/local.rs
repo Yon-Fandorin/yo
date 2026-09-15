@@ -5,6 +5,7 @@ use std::{
     io::{self, Read, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
+    str,
 };
 
 use path::{open_existing_state_root, prepare_state_root};
@@ -94,7 +95,7 @@ fn read_identity(path: &Path) -> Result<WorkspaceHostId, LocalWorkspaceHostIdent
     if u64::try_from(encoded.len()).unwrap_or(u64::MAX) > ENCODED_ID_BYTES {
         return Err(invalid_identity(path, "the identity file is too large"));
     }
-    let encoded = std::str::from_utf8(&encoded)
+    let encoded = str::from_utf8(&encoded)
         .map_err(|_| invalid_identity(path, "the identity file is not UTF-8"))?;
     let record = encoded
         .strip_suffix('\n')

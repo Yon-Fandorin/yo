@@ -1,10 +1,13 @@
-use std::{error::Error, fmt, time::Duration};
+use std::{error::Error, fmt, str, time::Duration};
 
 use futures_util::StreamExt;
-use reqwest::{Client, RequestBuilder, Url, header, redirect};
+use reqwest::{Client, RequestBuilder, Url, header, redirect, retry};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::time::{Instant, timeout_at};
+use tokio::{
+    runtime::Builder,
+    time::{Instant, timeout_at},
+};
 use yo_core::{
     AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountId,
     ApiCredential, ModelServiceError, ProviderId,
@@ -131,7 +134,7 @@ pub fn read_account_capacity(
     let client = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .redirect(redirect::Policy::none())
-        .retry(reqwest::retry::never())
+        .retry(retry::never())
         .build()
         .map_err(|_| {
             failure(
@@ -139,7 +142,7 @@ pub fn read_account_capacity(
                 "cannot initialize the QwenCloud capacity HTTP client",
             )
         })?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| {
@@ -197,7 +200,7 @@ async fn resolve_sec_token(
             "Mozilla/5.0 AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
         );
     let bytes = fetch_bounded(request, ExpectedMedia::Html).await?;
-    let html = std::str::from_utf8(&bytes).map_err(|_| {
+    let html = str::from_utf8(&bytes).map_err(|_| {
         failure(
             QwenCloudCapacityFailureKind::Protocol,
             "QwenCloud dashboard response is not valid UTF-8",

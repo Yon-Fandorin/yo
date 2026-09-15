@@ -1,3 +1,11 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
+use std::iter;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::{slice, time::Duration};
 
 use super::{
@@ -5,6 +13,14 @@ use super::{
     MessageSegmenter, MessageStream, activity, descriptor_with_path, encode, recover, sequenced,
     submission,
 };
+#[cfg(test)]
+use crate::journal::CommittedCommand;
+#[cfg(test)]
+use crate::session_repository;
+#[cfg(test)]
+use crate::session_repository::RepositorySequence;
+#[cfg(test)]
+use crate::session_repository::SessionUsageProjection;
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, BackendBindingEvidence,
     BackendIdentity, BackendResumeSource, ContinuationStrategy, JournalSequence,
@@ -40,13 +56,13 @@ fn recovery_rejects_a_duplicate_submission_identity_across_commits() {
     let first = JournalCommit::incremental(sequenced(
         2,
         [JournalRecord::CommandCommitted(
-            crate::journal::CommittedCommand::submission(command.clone(), submission(9)).unwrap(),
+            CommittedCommand::submission(command.clone(), submission(9)).unwrap(),
         )],
     ));
     let duplicate = JournalCommit::incremental(sequenced(
         3,
         [JournalRecord::CommandCommitted(
-            crate::journal::CommittedCommand::submission(command, submission(9)).unwrap(),
+            CommittedCommand::submission(command, submission(9)).unwrap(),
         )],
     ));
 
@@ -67,10 +83,8 @@ fn rejects_records_from_different_sessions_in_one_commit() {
         1,
         [
             JournalRecord::CommandCommitted(
-                crate::journal::CommittedCommand::uncorrelated(AgentCommand::CreateSession {
-                    session_id: first,
-                })
-                .unwrap(),
+                CommittedCommand::uncorrelated(AgentCommand::CreateSession { session_id: first })
+                    .unwrap(),
             ),
             JournalRecord::EventCommitted(AgentEvent::SessionCreated { session_id: second }),
         ],
@@ -608,7 +622,7 @@ fn fork_child_request() -> (TurnRef, JournalCommit) {
         5,
         vec![
             JournalRecord::CommandCommitted(
-                crate::journal::CommittedCommand::submission(
+                CommittedCommand::submission(
                     AgentCommand::StartTurn {
                         turn,
                         input: crate::UserInput::new("child followup"),
@@ -655,7 +669,7 @@ fn accepted_child_suffix_disables_initial_seed_continuation() {
     let recovered = recover(&commits).unwrap();
     assert_eq!(recovered.initial_fork_seed(), None);
     assert_eq!(recovered.continuation_anchor(), None);
-    assert!(crate::session_repository::build_continuation(recovered, fixture_session(82)).is_err());
+    assert!(session_repository::build_continuation(recovered, fixture_session(82)).is_err());
 }
 
 // 새 child delta만 baseline 뒤에 붙이고 원본 epoch 3와 새 private epoch 1을 snapshot에서 구별해
@@ -779,17 +793,15 @@ fn completed_child_turn_appends_once_after_imported_baseline() {
         };
         assert_eq!(exact, &baseline);
         assert_eq!(exact.item_origins()[0].original().binding_epoch(), 3);
-        assert!(
-            crate::session_repository::build_continuation(reloaded, fixture_session(82)).is_ok()
-        );
+        assert!(session_repository::build_continuation(reloaded, fixture_session(82)).is_ok());
     }
 }
 
-struct ForkRepositoryDirectory(std::path::PathBuf);
+struct ForkRepositoryDirectory(PathBuf);
 
 impl Drop for ForkRepositoryDirectory {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -797,11 +809,11 @@ impl Drop for ForkRepositoryDirectory {
 // 않습니다.
 #[test]
 fn fork_repository_reopens_private_seed_without_ancestor_files_or_inherited_usage() {
-    let directory = ForkRepositoryDirectory(std::env::temp_dir().join(format!(
+    let directory = ForkRepositoryDirectory(env::temp_dir().join(format!(
         "yo-fork-independent-{}",
         crate::SessionId::new().unwrap()
     )));
-    std::fs::create_dir(&directory.0).unwrap();
+    fs::create_dir(&directory.0).unwrap();
     let child = fixture_session(82);
     let parent = fixture_session(81);
     let mut records = fork_records(true);
@@ -836,7 +848,7 @@ fn fork_repository_reopens_private_seed_without_ancestor_files_or_inherited_usag
         .map(crate::TranscriptRecord::EventCommitted)
         .collect::<Vec<_>>();
     assert_eq!(
-        crate::session_repository::SessionUsageProjection::from_records(&source_projection)
+        SessionUsageProjection::from_records(&source_projection)
             .unwrap()
             .receipts()
             .len(),
@@ -1013,7 +1025,7 @@ fn fork_private_turn_at_epoch(
         first,
         vec![
             JournalRecord::CommandCommitted(
-                crate::journal::CommittedCommand::submission(
+                CommittedCommand::submission(
                     AgentCommand::StartTurn {
                         turn,
                         input: crate::UserInput::new(input.clone()),
@@ -1242,7 +1254,7 @@ fn imported_private_groups_survive_two_context_checkpoints_and_restart() {
     assert_eq!(recovered.context_epoch(), Some(3));
     let final_snapshot = recovered.complete_snapshot();
     let final_recovery = recover(&[decode(&encode(&final_snapshot).unwrap()).unwrap()]).unwrap();
-    let expected = std::iter::once(ModelReplayItem::Message {
+    let expected = iter::once(ModelReplayItem::Message {
         role: ModelReplayRole::User,
         content: fork_portable_summary().into(),
         refusal: None,
@@ -1465,7 +1477,7 @@ fn two_seed_only_exact_replacements_preserve_imports_after_restart() {
             .all(|origin| origin.original().binding_epoch() == 3)
     );
     let continuation =
-        crate::session_repository::build_continuation(restarted, fixture_session(82)).unwrap();
+        session_repository::build_continuation(restarted, fixture_session(82)).unwrap();
     let target = continuation.target();
     assert_eq!(
         target.source(),
@@ -1731,7 +1743,7 @@ fn imported_private_checkpoint_exact_replacement_advances_owner_without_changing
     let recovered = recover(&final_commits).unwrap();
     assert_eq!(recovered.binding_epoch(), Some(2));
     assert_eq!(recovered.context_epoch(), Some(3));
-    let expected = std::iter::once(ModelReplayItem::Message {
+    let expected = iter::once(ModelReplayItem::Message {
         role: ModelReplayRole::User,
         content: fork_portable_summary().into(),
         refusal: None,
@@ -1931,8 +1943,7 @@ fn seed_only_exact_fork_builds_continuation_without_synthetic_anchor() {
     let expected_policy = recovered.context_policy().cloned();
     let expected_groups = recovered.model_replay_groups();
     let continuation =
-        crate::session_repository::build_continuation(recovered.clone(), fixture_session(82))
-            .unwrap();
+        session_repository::build_continuation(recovered.clone(), fixture_session(82)).unwrap();
     let target = continuation.target();
     assert_eq!(
         target.source(),
@@ -1970,7 +1981,7 @@ fn historical_fork_selects_exact_older_replay_and_publishes_an_independent_child
     let (request_a, complete_a, suffix_a) = fork_private_turn(5, 1, 1);
     let (request_b, complete_b, _) = fork_private_turn(12, 2, 1);
     let parent = fixture_session(82);
-    let directory = ForkRepositoryDirectory(std::env::temp_dir().join(format!(
+    let directory = ForkRepositoryDirectory(env::temp_dir().join(format!(
         "yo-historical-fork-{}",
         crate::SessionId::new().unwrap()
     )));
@@ -2028,7 +2039,7 @@ fn historical_fork_selects_exact_older_replay_and_publishes_an_independent_child
     journal.append(child_id, &child.snapshot()).unwrap();
     assert_eq!(reader.read_session(parent).unwrap(), before);
     drop(journal);
-    std::fs::remove_file(directory.0.join(format!("{parent}.jsonl"))).unwrap();
+    fs::remove_file(directory.0.join(format!("{parent}.jsonl"))).unwrap();
     let child = read_stored_session_continuation(&reader, child_id).unwrap();
     assert_eq!(child.target().model_replay().items(), expected);
     let inherited_history = child.inherited_history().unwrap();
@@ -2040,7 +2051,7 @@ fn historical_fork_selects_exact_older_replay_and_publishes_an_independent_child
     }));
     let stale = crate::JournalDurability::Durable {
         journal_sequence: Some(JournalSequence::new(19)),
-        repository_sequence: crate::session_repository::RepositorySequence::new(6),
+        repository_sequence: RepositorySequence::new(6),
     };
     assert!(selected.prepare_source(parent, stale).is_err());
     assert!(
@@ -2085,8 +2096,7 @@ fn historical_initial_fork_points_keep_the_selected_replacement_owner() {
         let prefix = recovered
             .historical_fork_prefix(point.record_count, point.cutoff)
             .unwrap();
-        let source =
-            crate::session_repository::build_continuation(prefix, fixture_session(82)).unwrap();
+        let source = session_repository::build_continuation(prefix, fixture_session(82)).unwrap();
         assert_eq!(source.target().epoch(), point.binding_epoch);
         assert_eq!(source.target().model_replay().items(), exact.items());
         assert_eq!(
@@ -2148,8 +2158,7 @@ fn historical_checkpoint_and_anchor_preserve_their_original_model_and_context() 
         let prefix = recovered
             .historical_fork_prefix(point.record_count, point.cutoff)
             .unwrap();
-        let source =
-            crate::session_repository::build_continuation(prefix, fixture_session(82)).unwrap();
+        let source = session_repository::build_continuation(prefix, fixture_session(82)).unwrap();
         assert_eq!(source.target().binding().model_identity().value(), model);
         assert_eq!(source.target().epoch(), epoch);
         assert_eq!(source.target().context_epoch(), Some(context));
@@ -2179,7 +2188,7 @@ fn historical_catalog_enforces_full_physical_bounds_and_late_discovery_validatio
         DurableRecord, RecordDiscovery, SessionForkLimits, SessionRepository, read_fork_catalog,
     };
     let parent = fixture_session(82);
-    let directory = ForkRepositoryDirectory(std::env::temp_dir().join(format!(
+    let directory = ForkRepositoryDirectory(env::temp_dir().join(format!(
         "yo-historical-bounds-{}",
         crate::SessionId::new().unwrap()
     )));
@@ -2192,7 +2201,7 @@ fn historical_catalog_enforces_full_physical_bounds_and_late_discovery_validatio
         journal.append(parent, commit).unwrap();
     }
     let reader = LocalSessionReader::open(&directory.0).unwrap();
-    let bytes = std::fs::metadata(directory.0.join(format!("{parent}.jsonl")))
+    let bytes = fs::metadata(directory.0.join(format!("{parent}.jsonl")))
         .unwrap()
         .len();
     let exact_limits = SessionForkLimits::try_new(bytes, 3, 1).unwrap();
@@ -2241,7 +2250,7 @@ fn historical_catalog_enforces_full_physical_bounds_and_late_discovery_validatio
 fn historical_catalog_rejects_a_latest_uncertain_parent() {
     use crate::session_repository::{SessionForkLimits, read_fork_catalog};
     let parent = fixture_session(82);
-    let directory = ForkRepositoryDirectory(std::env::temp_dir().join(format!(
+    let directory = ForkRepositoryDirectory(env::temp_dir().join(format!(
         "yo-historical-uncertain-{}",
         crate::SessionId::new().unwrap()
     )));

@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     num::NonZeroU64,
-    sync::{Arc, TryLockError, atomic::Ordering, mpsc::TrySendError},
+    sync::{Arc, PoisonError, TryLockError, atomic::Ordering, mpsc::TrySendError},
 };
 
 use super::{
@@ -419,7 +419,7 @@ impl AgentSession {
     fn reject_context_compaction_requires_idle(&mut self) -> CommandAdmission {
         self.control_outcomes
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(PoisonError::into_inner)
             .push_back(AgentControlOutcome::ContextCompactionRejected {
                 detail: AgentSessionError::ContextCompactionRequiresIdle.to_string(),
             });

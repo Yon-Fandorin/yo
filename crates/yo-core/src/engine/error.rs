@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{error::Error, fmt};
 
 use crate::{ActivityRef, ActivityRequestRef, RequestId, SessionId, TurnRef};
 
@@ -86,4 +86,4 @@ impl fmt::Display for AgentRejection {
     }
 }
 
-impl std::error::Error for AgentRejection {}
+impl Error for AgentRejection {}

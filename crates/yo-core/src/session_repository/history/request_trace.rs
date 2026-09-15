@@ -6,10 +6,9 @@ pub use crate::request_trace::{
     StoredBindingTransitionMode, StoredContinuationStrategy, StoredExchangeDirection,
     StoredExchangeKind, StoredReplayExecutor, StoredRequestDetailAvailability,
 };
-pub(super) fn project(
-    recovered: &crate::journal::codec::RecoveredJournal,
-) -> Vec<StoredRequestTraceEntry> {
-    crate::request_trace::project_recovered(recovered)
+use crate::{journal::codec::RecoveredJournal, request_trace};
+pub(super) fn project(recovered: &RecoveredJournal) -> Vec<StoredRequestTraceEntry> {
+    request_trace::project_recovered(recovered)
 }
 
 #[cfg(test)]

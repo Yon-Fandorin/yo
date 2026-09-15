@@ -1,4 +1,9 @@
+#[cfg(test)]
+use std::array;
+
 use super::{activity, runtime_with_active_turn, session, submission, turn};
+#[cfg(test)]
+use crate::journal::CommittedCommand;
 use crate::{
     ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, AgentRuntime,
     BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
@@ -100,9 +105,7 @@ fn records_only_commands_that_reach_semantic_commit() {
     assert_eq!(runtime.journal().entries().len(), before + 1);
     assert_eq!(
         runtime.journal().entries().last().unwrap().record(),
-        &SemanticRecord::CommandCommitted(
-            crate::journal::CommittedCommand::uncorrelated(interrupt).unwrap()
-        )
+        &SemanticRecord::CommandCommitted(CommittedCommand::uncorrelated(interrupt).unwrap())
     );
 }
 
@@ -470,7 +473,7 @@ fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
         turn(session_id, 3),
     ];
     let inputs = ["first input", "second input", "current input"];
-    let starts = std::array::from_fn::<_, 3, _>(|index| AgentCommand::StartTurn {
+    let starts = array::from_fn::<_, 3, _>(|index| AgentCommand::StartTurn {
         turn: turns[index],
         input: UserInput::new(inputs[index]),
     });

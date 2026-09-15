@@ -1,9 +1,14 @@
+#[cfg(test)]
+use std::num::NonZeroU64;
+
 use super::*;
+#[cfg(test)]
+use crate::journal::CommittedCommand;
 
 fn committed(command: AgentCommand, submission_id: Option<SubmissionId>) -> JournalRecord {
     let committed = match submission_id {
-        Some(submission_id) => crate::journal::CommittedCommand::submission(command, submission_id),
-        None => crate::journal::CommittedCommand::uncorrelated(command),
+        Some(submission_id) => CommittedCommand::submission(command, submission_id),
+        None => CommittedCommand::uncorrelated(command),
     }
     .expect("the fixture command uses the matching correlation shape");
     JournalRecord::CommandCommitted(committed)
@@ -599,7 +604,7 @@ fn activity_response_inputs_reject_resolved_skill_snapshots() {
                     AgentCommand::RespondToActivity {
                         request: ActivityRequestRef::new(
                             activity(),
-                            RequestId::new(std::num::NonZeroU64::new(1).unwrap()),
+                            RequestId::new(NonZeroU64::new(1).unwrap()),
                         ),
                         response: response(input),
                     },

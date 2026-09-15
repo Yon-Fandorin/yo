@@ -1,3 +1,7 @@
+use yo_core::interview::{Answer, AnswerResponse, Capture, RECOVERY_UNAVAILABLE_RECEIPT_PREFIX};
+
+use crate::observation;
+
 mod events;
 #[cfg(test)]
 mod tests;
@@ -185,13 +189,8 @@ struct InputQuestions {
     current: usize,
     answers: Map<String, Value>,
     drafts: HashMap<String, (Option<u32>, String)>,
-    capture: Option<Arc<yo_core::interview::Capture>>,
-    captured_answers: Vec<
-        Option<(
-            yo_core::interview::Answer,
-            yo_core::interview::AnswerResponse,
-        )>,
-    >,
+    capture: Option<Arc<Capture>>,
+    captured_answers: Vec<Option<(Answer, AnswerResponse)>>,
 }
 
 #[derive(Clone)]
@@ -756,7 +755,7 @@ impl<P: JsonMessagePeer> Backend<P> {
     }
 
     fn refresh_model_capability(&mut self, model: &str) {
-        self.image_capability = crate::observation::observe_model_capability(
+        self.image_capability = observation::observe_model_capability(
             &mut self.client,
             model,
             self.image_wire_supported,
@@ -1014,7 +1013,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             ) => {
                 let mut questions = questions.clone();
                 let question = &questions.questions[questions.current];
-                if let Some(yo_core::interview::Capture::Batch {
+                if let Some(Capture::Batch {
                     questions: captured,
                     ..
                 }) = questions.capture.as_deref()
@@ -1024,7 +1023,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                         .map_err(|error| protocol::protocol_failure(error.to_string()))?;
                     questions.captured_answers[questions.current] = Some((
                         answer,
-                        yo_core::interview::AnswerResponse {
+                        AnswerResponse {
                             question_id: question.id.clone(),
                             request,
                             response_activity,
@@ -1081,7 +1080,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                     .insert(question.id.clone(), json!({"answers": answers}));
                 questions.current += 1;
                 let payload = if questions.current == questions.questions.len() {
-                    if let Some(yo_core::interview::Capture::Batch {
+                    if let Some(Capture::Batch {
                         interview,
                         revision,
                         ..
@@ -1094,7 +1093,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                             .collect::<Option<Vec<_>>>();
                         if let Some(pairs) = pairs {
                             let (answers, answer_responses) = pairs.into_iter().unzip();
-                            let seal = yo_core::interview::Capture::AcceptedAnswers {
+                            let seal = Capture::AcceptedAnswers {
                                 interview: *interview,
                                 revision: revision.clone(),
                                 answers,
@@ -1169,7 +1168,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             } else if let Some(error) = seal_failure {
                 response_text = format!(
                     "{} {error}\n{response_text}",
-                    yo_core::interview::RECOVERY_UNAVAILABLE_RECEIPT_PREFIX
+                    RECOVERY_UNAVAILABLE_RECEIPT_PREFIX
                 );
             }
         }

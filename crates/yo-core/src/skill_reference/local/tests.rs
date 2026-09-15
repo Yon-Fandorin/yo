@@ -1,3 +1,9 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process::Child;
+#[cfg(test)]
+use std::process::ExitStatus;
 use std::{fs, os::unix::fs::symlink, sync::mpsc};
 
 use super::*;
@@ -5,7 +11,7 @@ use super::*;
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("yo-local-skills-{}", uuid::Uuid::now_v7()));
+        let path = env::temp_dir().join(format!("yo-local-skills-{}", uuid::Uuid::now_v7()));
         fs::create_dir(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
@@ -263,7 +269,7 @@ fn root_and_aggregate_byte_limits_reject_the_first_excess() {
     ));
 }
 
-fn wait_bounded(mut child: std::process::Child) -> std::process::ExitStatus {
+fn wait_bounded(mut child: Child) -> ExitStatus {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match child.try_wait() {
@@ -283,7 +289,7 @@ fn wait_bounded(mut child: std::process::Child) -> std::process::ExitStatus {
 fn fifo_skill_without_writer_is_rejected_without_blocking() {
     use std::process::Command;
     const CHILD_ROOT: &str = "YO_LOCAL_SKILL_FIFO_TEST_ROOT";
-    if let Some(path) = std::env::var_os(CHILD_ROOT) {
+    if let Some(path) = env::var_os(CHILD_ROOT) {
         let catalog = Catalog::new(
             vec![LocalSkillRoot::new(path.into(), SkillReferenceScope::Workspace).unwrap()],
             WorkspaceHostId::new().unwrap(),
@@ -307,7 +313,7 @@ fn fifo_skill_without_writer_is_rejected_without_blocking() {
         )
         .success()
     );
-    let child = Command::new(std::env::current_exe().unwrap())
+    let child = Command::new(env::current_exe().unwrap())
         .args([
             "--exact",
             "skill_reference::local::tests::fifo_skill_without_writer_is_rejected_without_blocking",

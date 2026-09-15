@@ -1,4 +1,8 @@
 use super::*;
+#[cfg(test)]
+use crate::session_repository::AppendError;
+#[cfg(test)]
+use crate::session_repository::RepositoryError;
 
 // v1 와이어 형식이 버전, 세션, 순번, 종류와 독립 계산한 고정 checksum 답안을 남겨
 // 향후 구현 변경이 같은 코드로 기대값까지 다시 계산해 오류를 숨기지 않게 합니다.
@@ -319,8 +323,8 @@ fn successor_writer_quarantines_only_the_session_with_an_abandoned_marker() {
 
     assert!(matches!(
         error,
-        crate::session_repository::AppendError::StoragePressure {
-            source: Some(crate::session_repository::RepositoryError::Quarantined { .. }),
+        AppendError::StoragePressure {
+            source: Some(RepositoryError::Quarantined { .. }),
             ..
         }
     ));
@@ -329,10 +333,7 @@ fn successor_writer_quarantines_only_the_session_with_an_abandoned_marker() {
     let read_error = reader
         .read_after(session_id, None, 8)
         .expect_err("the successor lease does not adopt the abandoned marker");
-    assert!(matches!(
-        read_error,
-        crate::session_repository::RepositoryError::Quarantined { .. }
-    ));
+    assert!(matches!(read_error, RepositoryError::Quarantined { .. }));
 
     let other_session = session(38);
     successor

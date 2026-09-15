@@ -1,5 +1,7 @@
 //! Storage-neutral durable Session records.
 
+use std::{error::Error, io::Error as IoError};
+
 mod continuation;
 #[cfg(test)]
 pub(crate) use continuation::build_continuation;
@@ -270,8 +272,8 @@ impl fmt::Display for AppendError {
     }
 }
 
-impl std::error::Error for AppendError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for AppendError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::StoragePressure {
                 source: Some(source),
@@ -310,8 +312,8 @@ impl fmt::Display for RepositoryError {
     }
 }
 
-impl std::error::Error for RepositoryError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for RepositoryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Unavailable { .. }
             | Self::Quarantined { .. }
@@ -322,8 +324,8 @@ impl std::error::Error for RepositoryError {
     }
 }
 
-impl From<std::io::Error> for RepositoryError {
-    fn from(error: std::io::Error) -> Self {
+impl From<IoError> for RepositoryError {
+    fn from(error: IoError) -> Self {
         Self::Unavailable {
             message: error.to_string(),
         }

@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
+use crate::journal::JournalEntry;
+
 mod correlation;
 
 use correlation::CorrelationRecovery;
@@ -551,7 +553,7 @@ impl RecoveredJournal {
         &self.submission_ids
     }
 
-    pub(crate) fn semantic_entries(&self) -> Vec<crate::journal::JournalEntry> {
+    pub(crate) fn semantic_entries(&self) -> Vec<JournalEntry> {
         self.records
             .iter()
             .filter_map(|entry| {
@@ -559,7 +561,7 @@ impl RecoveredJournal {
                 entry
                     .record()
                     .semantic_record()
-                    .map(|record| crate::journal::JournalEntry::new(sequence, record))
+                    .map(|record| JournalEntry::new(sequence, record))
             })
             .collect()
     }

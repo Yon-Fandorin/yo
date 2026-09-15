@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::journal::CommittedCommand;
 use crate::{
     AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplayContract,
     ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReplayExecutor, TurnOutcome,
@@ -89,7 +91,7 @@ pub(super) fn valid_history_with_profile_and_replay(
                 4,
                 3,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn: super::super::activity().turn(),
                             input: crate::UserInput::new("continue"),

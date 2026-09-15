@@ -1,6 +1,9 @@
 //! Turn admission, completion, interruption, and resource cleanup.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    mem,
+};
 
 use serde_json::json;
 use yo_core::{
@@ -94,7 +97,7 @@ impl NativeModelBackend {
                 .contract()
                 .is_none()
                 .then(|| self.contract.clone()),
-            std::mem::take(&mut state.delta),
+            mem::take(&mut state.delta),
         );
         let completed_group = delta.items().to_vec();
         if let Err(message) = self.replay.apply(&delta) {
@@ -239,7 +242,7 @@ impl NativeModelBackend {
             .map(|active| (active.activity, active.call.call_id().to_owned()));
         let cleanup_diagnostics = self.cleanup_turn_resources(&mut state);
         self.events.clear();
-        let open_activities = std::mem::take(&mut self.open_activities)
+        let open_activities = mem::take(&mut self.open_activities)
             .into_iter()
             .collect::<BTreeSet<_>>();
         for activity in open_activities {

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::time::Instant;
 use std::{
     ffi::OsString,
     fs,
@@ -293,7 +295,7 @@ fn discovery_reports_the_first_excess_entry_and_path_byte() {
         assert_eq!(incomplete, limit == 2);
     }
     let mut budget = DiscoveryBudget {
-        deadline: std::time::Instant::now(),
+        deadline: Instant::now(),
         ..DiscoveryBudget::default()
     };
     let (entries, incomplete) = discover_entries(root, &descriptor, false, &mut budget).unwrap();

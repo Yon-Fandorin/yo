@@ -1,5 +1,12 @@
-use serde::{Deserialize, Serialize};
+use std::fmt::{Formatter, Result as FmtResult};
+
+use serde::{
+    Deserialize, Serialize,
+    de::{IgnoredAny, SeqAccess, Visitor},
+};
 use serde_json::Value;
+
+use crate::journal::codec;
 
 mod fork;
 use fork::WireForkRecord;
@@ -379,15 +386,12 @@ fn deserialize_multimodal_parts<'de, D: serde::Deserializer<'de>>(
     decoder: D,
 ) -> Result<Vec<crate::ModelInputPart>, D::Error> {
     struct PartsVisitor;
-    impl<'de> serde::de::Visitor<'de> for PartsVisitor {
+    impl<'de> Visitor<'de> for PartsVisitor {
         type Value = Vec<crate::ModelInputPart>;
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn expecting(&self, f: &mut Formatter<'_>) -> FmtResult {
             f.write_str("one to thirty-three ordered multimodal user parts")
         }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(
-            self,
-            mut sequence: A,
-        ) -> Result<Self::Value, A::Error> {
+        fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
             use serde::de::Error as _;
             let mut parts = Vec::new();
             let mut images = 0_usize;
@@ -422,7 +426,7 @@ fn deserialize_multimodal_parts<'de, D: serde::Deserializer<'de>>(
                 }
                 parts.push(part);
             }
-            if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+            if sequence.next_element::<IgnoredAny>()?.is_some() {
                 return Err(A::Error::custom("multimodal part limit exceeded"));
             }
             crate::ModelInputPart::validate_user_parts(&parts).map_err(A::Error::custom)?;
@@ -1296,15 +1300,12 @@ fn deserialize_context_losses<'de, D: serde::Deserializer<'de>>(
     decoder: D,
 ) -> Result<Vec<WireContextLoss>, D::Error> {
     struct LossVisitor;
-    impl<'de> serde::de::Visitor<'de> for LossVisitor {
+    impl<'de> Visitor<'de> for LossVisitor {
         type Value = Vec<WireContextLoss>;
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn expecting(&self, f: &mut Formatter<'_>) -> FmtResult {
             f.write_str("bounded checkpoint losses with at most 64 image entries")
         }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(
-            self,
-            mut sequence: A,
-        ) -> Result<Self::Value, A::Error> {
+        fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
             use serde::de::Error as _;
             let mut losses = Vec::new();
             let mut images = Vec::new();
@@ -1317,8 +1318,7 @@ fn deserialize_context_losses<'de, D: serde::Deserializer<'de>>(
                         return Err(A::Error::custom("checkpoint image loss count exceeds 64"));
                     }
                     images.push(image.clone());
-                    crate::journal::codec::validate_image_losses(&images)
-                        .map_err(A::Error::custom)?;
+                    codec::validate_image_losses(&images).map_err(A::Error::custom)?;
                 }
                 losses.push(loss);
             }

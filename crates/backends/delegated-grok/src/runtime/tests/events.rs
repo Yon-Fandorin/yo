@@ -1,3 +1,6 @@
+#[cfg(test)]
+use std::iter;
+
 use yo_core::{ActivityApproval, ToolOutput};
 
 use super::*;
@@ -1478,9 +1481,8 @@ fn grok_permission_links_late_calls_and_resolves_known_details() {
         } else {
             vec![call, unrelated, permission]
         };
-        let (mut backend, _) = backend(
-            std::iter::once(response(3, json!({"sessionId":"grok-session-a"}))).chain(events),
-        );
+        let (mut backend, _) =
+            backend(iter::once(response(3, json!({"sessionId":"grok-session-a"}))).chain(events));
         create_session(&mut backend, session_id);
         backend
             .execute_command(AgentCommand::StartTurn {
@@ -1869,12 +1871,9 @@ fn reasoning_stream_preserves_accumulation_and_content_boundaries() {
             }
             update
         });
-        let messages = std::iter::once(response(3, json!({"sessionId":"grok-session-a"})))
+        let messages = iter::once(response(3, json!({"sessionId":"grok-session-a"})))
             .chain(updates)
-            .chain(std::iter::once(response(
-                4,
-                json!({"stopReason":"end_turn"}),
-            )));
+            .chain(iter::once(response(4, json!({"stopReason":"end_turn"}))));
         let (mut backend, _) = backend(messages);
         let session_id = session(1);
         create_session(&mut backend, session_id);

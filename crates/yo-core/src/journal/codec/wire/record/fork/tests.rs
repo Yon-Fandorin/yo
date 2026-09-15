@@ -1,6 +1,18 @@
 use serde_json::{Value, json};
 
 use super::{WireForkRecord, WireRecord};
+#[cfg(test)]
+use crate::journal::CommittedCommand;
+#[cfg(test)]
+use crate::journal::codec::ForkExactReplay;
+#[cfg(test)]
+use crate::journal::codec::ForkGroup;
+#[cfg(test)]
+use crate::journal::codec::ForkItemCoordinate;
+#[cfg(test)]
+use crate::journal::codec::ForkItemOrigin;
+#[cfg(test)]
+use crate::journal::codec::ForkSourcePoint;
 use crate::{
     JournalSequence, fixture_descriptor, fixture_session,
     journal::codec::{
@@ -424,8 +436,7 @@ fn inherited_image_input_preserves_original_source_evidence() {
         ReplaySequence::new(1),
         JournalSequence::new(1),
         JournalRecord::CommandCommitted(
-            crate::journal::CommittedCommand::submission(command, SubmissionId::new().unwrap())
-                .unwrap(),
+            CommittedCommand::submission(command, SubmissionId::new().unwrap()).unwrap(),
         ),
     );
     let binding = crate::BackendBindingEvidence::new(
@@ -440,7 +451,7 @@ fn inherited_image_input_preserves_original_source_evidence() {
         },
     );
     let source = ForkSource::Anchor(
-        crate::journal::codec::ForkSourcePoint::new(
+        ForkSourcePoint::new(
             1,
             1,
             JournalSequence::new(3),
@@ -449,14 +460,12 @@ fn inherited_image_input_preserves_original_source_evidence() {
         )
         .unwrap(),
     );
-    let coordinate =
-        crate::journal::codec::ForkItemCoordinate::new(parent, 1, 1, JournalSequence::new(2), 0)
-            .unwrap();
-    let replay = crate::journal::codec::ForkExactReplay::new(
+    let coordinate = ForkItemCoordinate::new(parent, 1, 1, JournalSequence::new(2), 0).unwrap();
+    let replay = ForkExactReplay::new(
         crate::ModelReplayContract::new("system", vec![]),
         vec![input.model_replay_item()],
-        vec![crate::journal::codec::ForkItemOrigin::new(coordinate, coordinate, binding).unwrap()],
-        vec![crate::journal::codec::ForkGroup::new(0, 1).unwrap()],
+        vec![ForkItemOrigin::new(coordinate, coordinate, binding).unwrap()],
+        vec![ForkGroup::new(0, 1).unwrap()],
     )
     .unwrap();
     let seed = super::prepare_seed(

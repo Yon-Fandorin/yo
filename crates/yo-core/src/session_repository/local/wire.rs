@@ -1,6 +1,6 @@
-use std::num::NonZeroU64;
+use std::{collections::BTreeMap, num::NonZeroU64, str};
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::IgnoredAny};
 
 use super::super::{
     DurableRecord, DurableRecordKind, RecordDiscovery, RepositoryEntry, RepositoryError,
@@ -85,7 +85,7 @@ struct WireChecksum {
 struct WireSchemaProbe {
     schema: String,
     #[serde(flatten)]
-    _ignored: std::collections::BTreeMap<String, serde::de::IgnoredAny>,
+    _ignored: BTreeMap<String, IgnoredAny>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -334,7 +334,7 @@ impl WireDiscovery {
             })?;
         let descriptor = discovery.descriptor();
         let path = descriptor.workspace_path().as_unix_bytes();
-        let workspace_path = std::str::from_utf8(path).map_or_else(
+        let workspace_path = str::from_utf8(path).map_or_else(
             |_| WireWorkspacePath::UnixBytes(path.to_vec()),
             |path| WireWorkspacePath::Utf8(path.to_owned()),
         );

@@ -1,3 +1,5 @@
+use std::str;
+
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -33,7 +35,7 @@ enum WireWorkspacePath {
 impl From<&SessionDescriptor> for WireSessionDescriptor {
     fn from(descriptor: &SessionDescriptor) -> Self {
         let bytes = descriptor.workspace_path().as_unix_bytes();
-        let workspace_path = match std::str::from_utf8(bytes) {
+        let workspace_path = match str::from_utf8(bytes) {
             Ok(path) => WireWorkspacePath::Utf8(path.to_owned()),
             Err(_) => WireWorkspacePath::UnixBytes(bytes.to_vec()),
         };

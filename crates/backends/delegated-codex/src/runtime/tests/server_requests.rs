@@ -1,4 +1,12 @@
 use serde_json::{Value, json};
+#[cfg(test)]
+use yo_backend::transport::JsonMessagePeer;
+#[cfg(test)]
+use yo_core::interview::CAPTURE_LIMIT;
+#[cfg(test)]
+use yo_core::interview::Capture;
+#[cfg(test)]
+use yo_core::interview::RECOVERY_UNAVAILABLE_RECEIPT_PREFIX;
 use yo_core::{
     ActivityApproval, ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse,
     ActivityUpdate, AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendFailureKind,
@@ -270,11 +278,11 @@ fn answers_codex_questions_sequentially_with_exact_wire_ids() {
         else {
             panic!("final answer receipt missing")
         };
-        let yo_core::interview::Capture::AcceptedAnswers {
+        let Capture::AcceptedAnswers {
             answers,
             final_request,
             ..
-        } = yo_core::interview::Capture::from_snapshot(&receipt).unwrap()
+        } = Capture::from_snapshot(&receipt).unwrap()
         else {
             panic!("final genuine answer capture")
         };
@@ -864,8 +872,8 @@ fn completed_interview_turn_closes_sent_request_without_incomplete_summary() {
         panic!("receipt missing")
     };
     assert!(matches!(
-        yo_core::interview::Capture::from_snapshot(&receipt).unwrap(),
-        yo_core::interview::Capture::AcceptedAnswers { .. }
+        Capture::from_snapshot(&receipt).unwrap(),
+        Capture::AcceptedAnswers { .. }
     ));
     runtime.poll_event().unwrap();
     assert_eq!(
@@ -2013,7 +2021,7 @@ fn revisits_questions_with_drafts_and_sends_only_final_answers() {
             submission(1),
         )
         .unwrap();
-    fn next_question<P: yo_backend::transport::JsonMessagePeer>(
+    fn next_question<P: JsonMessagePeer>(
         runtime: &mut AgentRuntime<super::super::Backend<P>>,
     ) -> (ActivityRequestRef, yo_core::ActivityQuestion) {
         let mut request = None;
@@ -2238,7 +2246,7 @@ fn oversized_final_interview_capture_exposes_unavailability_after_wire_success()
     runtime.poll_event().unwrap();
     runtime.poll_event().unwrap();
     let request = ActivityRequestRef::new(activity(active_turn, 1), RequestId::new(id(1)));
-    let answer = "x".repeat(yo_core::interview::CAPTURE_LIMIT + 1);
+    let answer = "x".repeat(CAPTURE_LIMIT + 1);
     runtime
         .execute_command(AgentCommand::RespondToActivity {
             request,
@@ -2256,7 +2264,7 @@ fn oversized_final_interview_capture_exposes_unavailability_after_wire_success()
             ..
         }) = runtime.poll_event().unwrap()
         {
-            assert!(text.starts_with(yo_core::interview::RECOVERY_UNAVAILABLE_RECEIPT_PREFIX));
+            assert!(text.starts_with(RECOVERY_UNAVAILABLE_RECEIPT_PREFIX));
             assert!(text.contains("capture exceeds"));
             diagnosed = true;
         }

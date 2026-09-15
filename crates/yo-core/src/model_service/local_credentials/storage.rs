@@ -1,9 +1,11 @@
 use std::{
     fs,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
+
+use rustix::process;
 
 use super::{
     LocalCredentialStoreError,
@@ -34,7 +36,7 @@ pub(super) fn read_snapshot(
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == ErrorKind::NotFound => {
             return StoredCredentialSnapshot::new(CredentialRevision::absent(), Vec::new());
         },
         Err(source) => return Err(LocalCredentialStoreError::io(path, source)),
@@ -98,7 +100,7 @@ pub(super) fn publish(
         if expected_absent {
             match fs::hard_link(&temporary, path) {
                 Ok(()) => {},
-                Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(source) if source.kind() == ErrorKind::AlreadyExists => {
                     return Err(LocalCredentialStoreError::Conflict(path.to_owned()));
                 },
                 Err(source) => return Err(LocalCredentialStoreError::io(path, source)),
@@ -139,7 +141,7 @@ fn create_temporary(parent: &Path) -> Result<(PathBuf, fs::File), LocalCredentia
             .open(&temporary)
         {
             Ok(file) => return Ok((temporary, file)),
-            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {},
+            Err(source) if source.kind() == ErrorKind::AlreadyExists => {},
             Err(source) => return Err(LocalCredentialStoreError::io(&temporary, source)),
         }
     }
@@ -216,7 +218,7 @@ impl MetadataSnapshot {
                 path.to_owned(),
             ));
         }
-        if self.user != rustix::process::geteuid().as_raw() {
+        if self.user != process::geteuid().as_raw() {
             return Err(LocalCredentialStoreError::WrongOwner(path.to_owned()));
         }
         if self.mode & 0o077 != 0 {
@@ -261,7 +263,7 @@ pub(super) fn secure_snapshot() -> MetadataSnapshot {
         device: 1,
         inode: 2,
         mode: REGULAR_FILE_MODE | 0o600,
-        user: rustix::process::geteuid().as_raw(),
+        user: process::geteuid().as_raw(),
         group: 3,
         len: 100,
         modified_seconds: 4,

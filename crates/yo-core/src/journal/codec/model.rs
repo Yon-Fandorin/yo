@@ -5,7 +5,8 @@ use super::{
 };
 use crate::{
     ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionDescriptor,
-    SessionId, journal::CommittedCommand,
+    SessionId,
+    journal::{CommittedCommand, SemanticRecord},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -223,7 +224,7 @@ pub(crate) enum JournalRecord {
 }
 
 impl JournalRecord {
-    pub(crate) fn semantic_record(&self) -> Option<crate::journal::SemanticRecord> {
+    pub(crate) fn semantic_record(&self) -> Option<SemanticRecord> {
         use crate::journal::SemanticRecord;
         match self {
             Self::InitialForkSeed(record) => Some(SemanticRecord::InitialForkSeed(record.clone())),

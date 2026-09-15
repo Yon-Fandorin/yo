@@ -3,7 +3,7 @@
 use std::{
     fmt::Write as _,
     fs::OpenOptions,
-    io::Read as _,
+    io::{Error, Read as _},
     os::unix::fs::OpenOptionsExt as _,
     sync::{
         Arc,
@@ -237,7 +237,7 @@ impl CodexSkillReferenceProvider {
     pub fn start(
         config: CodexBackendConfig,
         workspace_host_id: WorkspaceHostId,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<Self, Error> {
         Self::start_with_warning_observer(config, workspace_host_id, None)
     }
 
@@ -246,7 +246,7 @@ impl CodexSkillReferenceProvider {
         config: CodexBackendConfig,
         workspace_host_id: WorkspaceHostId,
         warning_observer: Option<CodexWarningObserver>,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<Self, Error> {
         let (request_tx, request_rx) = mpsc::channel();
         let (update_tx, update_rx) = mpsc::channel();
         let readiness = Arc::new(Readiness::new());

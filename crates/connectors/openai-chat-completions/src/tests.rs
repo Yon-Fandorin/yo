@@ -1,3 +1,12 @@
+#[cfg(test)]
+use std::collections::VecDeque;
+#[cfg(test)]
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
+
 use yo_core::{
     AccountId, ApiCredential, ApiDialect, ConnectorError, ConnectorFailureKind,
     EffectiveModelBinding, ModelConnectorCancellation, ModelConnectorEvent,
@@ -137,8 +146,8 @@ fn rejects_provider_private_assistant_replay_before_dispatch() {
 }
 
 struct ScriptedStream {
-    polls: std::collections::VecDeque<Result<ModelConnectorPoll, ConnectorError>>,
-    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    polls: VecDeque<Result<ModelConnectorPoll, ConnectorError>>,
+    cancelled: Arc<AtomicBool>,
     shutdown: bool,
 }
 
@@ -150,8 +159,7 @@ impl ChatCompletionsStream for ScriptedStream {
     }
 
     fn cancel(&self) {
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.cancelled.store(true, Ordering::SeqCst);
     }
 
     fn shutdown(&mut self) -> Result<(), ConnectorError> {
@@ -164,7 +172,7 @@ impl ChatCompletionsStream for ScriptedStream {
 // 위임합니다.
 #[test]
 fn neutral_stream_port_preserves_polling_and_cleanup_order() {
-    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancelled = Arc::new(AtomicBool::new(false));
     let terminal = ModelConnectorEvent::Terminal {
         response_id: "chat-1".to_owned(),
         status: yo_core::ModelConnectorTerminal::Completed,
@@ -207,6 +215,6 @@ fn neutral_stream_port_preserves_polling_and_cleanup_order() {
     );
     ModelConnectorStreamPort::cancel(&stream);
     ModelConnectorStreamPort::shutdown(&mut stream).unwrap();
-    assert!(cancelled.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(cancelled.load(Ordering::SeqCst));
     assert!(stream.0.shutdown);
 }

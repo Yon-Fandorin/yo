@@ -1,4 +1,9 @@
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::{
+    collections::{HashMap, HashSet, hash_map::Entry},
+    error::Error,
+    fmt::{Display, Formatter, Result as FmtResult},
+    hash::Hash,
+};
 
 use serde_json::Value;
 
@@ -247,13 +252,13 @@ impl ModelTokenCounterError {
     }
 }
 
-impl std::fmt::Display for ModelTokenCounterError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ModelTokenCounterError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         formatter.write_str(&self.message)
     }
 }
 
-impl std::error::Error for ModelTokenCounterError {}
+impl Error for ModelTokenCounterError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModelCatalog {
@@ -332,7 +337,7 @@ fn require_consistent_display_name<K>(
     identity: String,
 ) -> Result<(), ModelServiceError>
 where
-    K: Eq + std::hash::Hash,
+    K: Eq + Hash,
 {
     let value = value.map(str::to_owned);
     match names.entry(key) {

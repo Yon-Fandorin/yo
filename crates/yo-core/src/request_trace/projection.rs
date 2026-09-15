@@ -9,8 +9,10 @@ use crate::{
     journal::{
         SemanticRecord,
         codec::{
-            BindingCloseReason, CacheState, DetailAvailability, ExchangeDirection, ExchangeKind,
-            JournalRecord, RecoveredJournal, TransitionMode, VersionedIdentity,
+            BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved,
+            BackendRequestAccepted, BackendResumableOutcome, BindingCloseReason, CacheState,
+            ContinuationAnchor, DetailAvailability, ExchangeDirection, ExchangeKind, JournalRecord,
+            RecoveredJournal, TransitionMode, VersionedIdentity,
         },
     },
 };
@@ -47,7 +49,7 @@ pub(crate) fn project_live(
     Some(RequestTraceEntry::new(sequence, record))
 }
 
-fn binding_opened(binding: &crate::journal::codec::BackendBindingOpened) -> RequestTraceRecord {
+fn binding_opened(binding: &BackendBindingOpened) -> RequestTraceRecord {
     RequestTraceRecord::BindingOpened {
         epoch: binding.epoch(),
         backend_kind: binding.backend_kind().to_owned(),
@@ -74,9 +76,7 @@ fn binding_opened(binding: &crate::journal::codec::BackendBindingOpened) -> Requ
     }
 }
 
-fn exchange_observed(
-    exchange: &crate::journal::codec::BackendExchangeObserved,
-) -> RequestTraceRecord {
+fn exchange_observed(exchange: &BackendExchangeObserved) -> RequestTraceRecord {
     RequestTraceRecord::ExchangeObserved {
         epoch: exchange.epoch(),
         operation_id: exchange.operation_id().as_uuid(),
@@ -89,14 +89,14 @@ fn exchange_observed(
     }
 }
 
-fn binding_closed(binding: &crate::journal::codec::BackendBindingClosed) -> RequestTraceRecord {
+fn binding_closed(binding: &BackendBindingClosed) -> RequestTraceRecord {
     RequestTraceRecord::BindingClosed {
         epoch: binding.epoch(),
         reason: close_reason(binding.reason()),
     }
 }
 
-fn request_accepted(request: &crate::journal::codec::BackendRequestAccepted) -> RequestTraceRecord {
+fn request_accepted(request: &BackendRequestAccepted) -> RequestTraceRecord {
     RequestTraceRecord::RequestAccepted {
         epoch: request.epoch(),
         turn_id: request.turn_id(),
@@ -106,9 +106,7 @@ fn request_accepted(request: &crate::journal::codec::BackendRequestAccepted) -> 
     }
 }
 
-fn resumable_outcome(
-    outcome: &crate::journal::codec::BackendResumableOutcome,
-) -> RequestTraceRecord {
+fn resumable_outcome(outcome: &BackendResumableOutcome) -> RequestTraceRecord {
     RequestTraceRecord::ResumableOutcome {
         epoch: outcome.epoch(),
         turn_id: outcome.turn_id(),
@@ -118,7 +116,7 @@ fn resumable_outcome(
     }
 }
 
-fn continuation_anchor(anchor: &crate::journal::codec::ContinuationAnchor) -> RequestTraceRecord {
+fn continuation_anchor(anchor: &ContinuationAnchor) -> RequestTraceRecord {
     RequestTraceRecord::ContinuationAnchor {
         epoch: anchor.epoch(),
         accepted_request_sequence: anchor.accepted_request_sequence(),

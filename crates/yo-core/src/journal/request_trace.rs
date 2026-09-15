@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::{JournalSequence, SessionJournalState, read_state};
-use crate::RequestTraceEntry;
+use crate::{RequestTraceEntry, request_trace};
 
 const READ_LIMIT: usize = 256;
 
@@ -50,7 +50,7 @@ impl RequestTraceReader {
 }
 
 fn project(entry: &super::JournalEntry) -> Option<RequestTraceEntry> {
-    crate::request_trace::project_live(entry.sequence(), entry.record())
+    request_trace::project_live(entry.sequence(), entry.record())
 }
 
 /// One bounded live Request-trace page and its observed head.

@@ -1,8 +1,11 @@
 use std::{
     fs,
+    io::ErrorKind,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Component, Path, PathBuf},
 };
+
+use rustix::process;
 
 use super::super::{LocalWorkspaceHostIdentityError, io_error};
 
@@ -36,7 +39,7 @@ pub(super) fn validate_original_existing_prefix(
         let next = current.join(component);
         let child_metadata = match fs::symlink_metadata(&next) {
             Ok(metadata) => metadata,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(current),
+            Err(source) if source.kind() == ErrorKind::NotFound => return Ok(current),
             Err(source) => return Err(io_error("inspect", &next, source)),
         };
         validate_protected_entry(
@@ -167,7 +170,7 @@ fn validate_protected_entry(
 }
 
 fn effective_user() -> u32 {
-    rustix::process::geteuid().as_raw()
+    process::geteuid().as_raw()
 }
 
 fn system_owner() -> Result<u32, LocalWorkspaceHostIdentityError> {

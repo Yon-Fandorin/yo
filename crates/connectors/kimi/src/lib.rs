@@ -1,6 +1,6 @@
 //! Kimi Chat Completions Connector and provider-private replay codec.
 
-use std::fmt;
+use std::{fmt, iter};
 
 use reqwest::{Client, Url};
 use serde_json::Value;
@@ -117,7 +117,7 @@ impl ModelConnector for KimiChatCompletionsConnector {
         cancellation: ModelConnectorCancellation,
     ) -> Result<Box<dyn ModelConnectorStreamPort>, ConnectorError> {
         let replay_budget = request.replay_budget().unwrap_or_else(|| {
-            yo_core::ModelReplayDelta::replay_budget(None, std::iter::empty())
+            yo_core::ModelReplayDelta::replay_budget(None, iter::empty())
                 .expect("an empty replay delta prefix fits its canonical bound")
         });
         let body = request::wire_body(&request, &self.model, self.profile)?;

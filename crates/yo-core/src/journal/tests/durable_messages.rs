@@ -1,3 +1,6 @@
+#[cfg(test)]
+use std::slice;
+
 use super::*;
 
 // 백엔드 adapter가 semantic ModelWork 본문으로 공개한 text는 live 화면에서만 보였다가
@@ -831,7 +834,7 @@ fn approval_then_interview_responses_remain_durable_through_completion() {
         turn: active_turn,
         outcome: TurnOutcome::Completed,
     };
-    journal.append_events(std::slice::from_ref(&finished));
+    journal.append_events(slice::from_ref(&finished));
     let commits = observed
         .lock()
         .unwrap()

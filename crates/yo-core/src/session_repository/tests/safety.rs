@@ -7,6 +7,8 @@ use super::{
     },
     support::{TestDirectory, discovered, log_path, session},
 };
+#[cfg(test)]
+use crate::session_repository::RepositoryError;
 
 // 완결된 줄이 손상되면 조용히 건너뛰지 않고 손상 위치를 보고하는지 검증합니다.
 #[test]
@@ -77,10 +79,7 @@ fn quarantines_a_complete_line_when_an_append_marker_remains() {
     let read_error = reader
         .read_after(session_id, None, 8)
         .expect_err("an ambiguous complete line must not be replayed");
-    assert!(matches!(
-        read_error,
-        crate::session_repository::RepositoryError::Quarantined { .. }
-    ));
+    assert!(matches!(read_error, RepositoryError::Quarantined { .. }));
 
     let mut successor = LocalSessionRepository::open(directory.path(), 32_768)
         .expect("an abandoned marker does not quarantine another Session");
@@ -93,7 +92,7 @@ fn quarantines_a_complete_line_when_an_append_marker_remains() {
     assert!(matches!(
         append_error,
         AppendError::StoragePressure {
-            source: Some(crate::session_repository::RepositoryError::Quarantined { .. }),
+            source: Some(RepositoryError::Quarantined { .. }),
             ..
         }
     ));

@@ -1,3 +1,6 @@
+#[cfg(test)]
+use std::iter;
+
 use super::*;
 
 fn private_envelope(payload: &[u8]) -> ProviderPrivateReplayEnvelope {
@@ -39,7 +42,7 @@ fn provider_private_envelope_closes_schema_and_payload_grammar() {
 fn provider_private_envelope_accepts_the_exact_payload_ceiling_only() {
     let payload = |bytes: usize| {
         let mut payload = br#"{"x":""}"#.to_vec();
-        payload.splice(6..6, std::iter::repeat_n(b'x', bytes - 8));
+        payload.splice(6..6, iter::repeat_n(b'x', bytes - 8));
         assert_eq!(payload.len(), bytes);
         payload
     };

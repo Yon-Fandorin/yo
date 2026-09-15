@@ -1,3 +1,7 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
@@ -18,10 +22,8 @@ impl TestDirectory {
             .duration_since(UNIX_EPOCH)
             .expect("the system clock is after the Unix epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "yo-model-service-{}-{name}-{nonce}",
-            std::process::id()
-        ));
+        let path =
+            env::temp_dir().join(format!("yo-model-service-{}-{name}-{nonce}", process::id()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }

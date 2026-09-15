@@ -1,3 +1,6 @@
+#[cfg(test)]
+use std::slice;
+
 use super::{
     JournalCommit, JournalRecord, JournalSequence, ReplaySequence, SequencedJournalRecord, decode,
     descriptor_with_path, encode, recover,
@@ -12,7 +15,7 @@ fn round_trips_the_initial_descriptor_without_a_semantic_cutoff() {
 
     let encoded = encode(&commit).expect("the descriptor commit encodes");
     let decoded = decode(&encoded).expect("the descriptor commit decodes");
-    let recovered = recover(std::slice::from_ref(&decoded)).expect("the descriptor recovers");
+    let recovered = recover(slice::from_ref(&decoded)).expect("the descriptor recovers");
 
     assert_eq!(decoded.journal_cutoff(), None);
     assert_eq!(recovered.descriptor(), Some(&descriptor));

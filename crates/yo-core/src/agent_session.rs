@@ -15,7 +15,7 @@ use crate::{
     InputAdmissionConfigurationError, InputAdmissionHost, JournalDurability, SessionDescriptor,
     SessionId, SubmissionOutcome, TranscriptReader,
     journal::SessionJournal,
-    readiness::ReadyReceiver,
+    readiness::{Readiness, ReadyReceiver},
     session_repository::{
         SessionForkLimits, SessionRepository, StoredSessionContinuation, StoredSessionForkCatalog,
         StoredSessionForkSelection, StoredSessionReader, read_fork_catalog,
@@ -105,7 +105,7 @@ pub struct AgentSession {
     submission_ids: HashSet<crate::SubmissionId>,
     input_admission: Arc<OnceLock<Box<dyn InputAdmissionHost>>>,
     input_admission_sealed: bool,
-    readiness: Arc<crate::readiness::Readiness>,
+    readiness: Arc<Readiness>,
     #[cfg(test)]
     processed: Arc<(Mutex<u64>, Condvar)>,
     worker: Option<JoinHandle<WorkerExit>>,
@@ -341,7 +341,7 @@ impl AgentSession {
         let worker_control_outcomes = Arc::clone(&control_outcomes);
         let context_compaction_pending = Arc::new(AtomicBool::new(false));
         let worker_context_compaction_pending = Arc::clone(&context_compaction_pending);
-        let readiness = Arc::new(crate::readiness::Readiness::new());
+        let readiness = Arc::new(Readiness::new());
         let worker_readiness = Arc::clone(&readiness);
         let input_admission = Arc::new(OnceLock::new());
         let worker_input_admission = Arc::clone(&input_admission);

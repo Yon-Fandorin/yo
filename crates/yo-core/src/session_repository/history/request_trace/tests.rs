@@ -3,6 +3,8 @@ use std::num::NonZeroU64;
 use uuid::Builder;
 
 use super::*;
+#[cfg(test)]
+use crate::journal::codec::RecoveredJournal;
 use crate::{
     AgentCommand, AgentEvent, JournalSequence, SubmissionId, TurnId, TurnOutcome, TurnRef,
     UserInput,
@@ -43,7 +45,7 @@ fn assert_identity(identity: &crate::BackendIdentity, schema: &str, value: &str)
     assert_eq!(identity.value(), value);
 }
 
-fn recovered_correlation_history() -> crate::journal::codec::RecoveredJournal {
+fn recovered_correlation_history() -> RecoveredJournal {
     let session_id = crate::fixture_session(1);
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
     let submission_id = submission();

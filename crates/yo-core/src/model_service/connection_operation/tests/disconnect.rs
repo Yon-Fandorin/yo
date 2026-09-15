@@ -2,6 +2,12 @@ use super::{
     super::disconnect::{DisconnectStep, ExternalDisconnectCredentialAction},
     support::{Fixture, account, candidate, provider},
 };
+#[cfg(test)]
+use crate::model_service::CompleteModelBinding;
+#[cfg(test)]
+use crate::model_service::LocalConnectionOperationSession;
+#[cfg(test)]
+use crate::model_service::PreparedExternalDisconnect;
 use crate::model_service::{
     ApiCredential, ConnectionAccount, ConnectionOperationExecutionError,
     ConnectionOperationExecutionOutcome, ConnectionOperationPhase,
@@ -387,10 +393,10 @@ fn repositories(fixture: &Fixture) -> LocalConnectionOperationRepositories {
 }
 
 fn prepared(
-    session: &mut crate::model_service::LocalConnectionOperationSession<'_>,
+    session: &mut LocalConnectionOperationSession<'_>,
     fixture: &Fixture,
     action: ExternalDisconnectCredentialAction,
-) -> crate::model_service::PreparedExternalDisconnect {
+) -> PreparedExternalDisconnect {
     session
         .prepare_external_disconnect(
             fixture.connections.capture().unwrap().revision(),
@@ -413,7 +419,7 @@ fn seed_pair(fixture: &Fixture) {
 }
 
 fn seed_stored(fixture: &Fixture) {
-    let complete = crate::model_service::CompleteModelBinding::from_durable_json(
+    let complete = CompleteModelBinding::from_durable_json(
         r#"{"provider":"qwencloud","account":"default","model":"alpha","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
     )
     .unwrap();

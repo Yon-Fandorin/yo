@@ -1,3 +1,9 @@
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -24,7 +30,7 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn new(name: &str) -> Self {
-        let temp_dir = fs::canonicalize(std::env::temp_dir())
+        let temp_dir = fs::canonicalize(env::temp_dir())
             .expect("the fixture temp directory must resolve to its physical path");
         let root = allocate_fixture_root(
             &temp_dir,
@@ -179,7 +185,7 @@ fn allocate_fixture_root(
 fn fixture_root_candidate(parent: &Path, name: &str, candidate: u64) -> PathBuf {
     parent.join(format!(
         "yo-connection-operation-{}-{name}-{candidate}",
-        std::process::id()
+        process::id()
     ))
 }
 
@@ -262,8 +268,8 @@ mod fixture_allocation_tests {
                 second.join().expect("the second fixture must be created"),
             )
         });
-        let physical_temp = fs::canonicalize(std::env::temp_dir())
-            .expect("the physical temp directory must resolve");
+        let physical_temp =
+            fs::canonicalize(env::temp_dir()).expect("the physical temp directory must resolve");
 
         assert_ne!(first.root, second.root);
         assert_eq!(first.root.parent(), Some(physical_temp.as_path()));
@@ -307,7 +313,7 @@ mod fixture_allocation_tests {
     fn allocation_bounds_collision_retries_and_propagates_other_io_errors() {
         let parent = Path::new("fixture-allocation-test-parent");
         let candidate = Cell::new(u64::MAX - 1);
-        let attempted = std::cell::RefCell::new(Vec::new());
+        let attempted = RefCell::new(Vec::new());
         let exhausted = allocate_fixture_root(
             parent,
             "exhausted",

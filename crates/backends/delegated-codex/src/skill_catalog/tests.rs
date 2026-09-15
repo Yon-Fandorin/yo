@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::env;
 use std::{
     fs,
     os::unix::fs::symlink,
@@ -130,7 +132,7 @@ struct SkillFixture(PathBuf);
 
 impl SkillFixture {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("yo-skill-catalog-{}", uuid::Uuid::now_v7()));
+        let path = env::temp_dir().join(format!("yo-skill-catalog-{}", uuid::Uuid::now_v7()));
         fs::create_dir(&path).unwrap();
         Self(path)
     }
@@ -230,7 +232,7 @@ fn unusable_skill_files_remain_disabled_catalog_rows() {
 #[test]
 fn fifo_skill_is_rejected_without_waiting_for_a_writer() {
     const CHILD_PATH: &str = "YO_SKILL_CATALOG_FIFO_TEST_PATH";
-    if let Some(path) = std::env::var_os(CHILD_PATH) {
+    if let Some(path) = env::var_os(CHILD_PATH) {
         let candidate = candidate_at(Path::new(&path));
         assert!(
             matches!(candidate.availability(), SkillAvailability::Disabled(reason)
@@ -241,7 +243,7 @@ fn fifo_skill_is_rejected_without_waiting_for_a_writer() {
     let fixture = SkillFixture::new();
     let fifo = fixture.0.join("SKILL.md");
     assert!(wait_bounded(Command::new("mkfifo").arg(&fifo).spawn().unwrap()).success());
-    let child = Command::new(std::env::current_exe().unwrap())
+    let child = Command::new(env::current_exe().unwrap())
         .args([
             "--exact",
             "skill_catalog::tests::fifo_skill_is_rejected_without_waiting_for_a_writer",

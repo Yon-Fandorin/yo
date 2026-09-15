@@ -1,8 +1,12 @@
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::{BTreeSet, HashSet},
+    fmt,
+    io::{Error as IoError, Result as IoResult, Write},
+};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
-    de::{Error as _, MapAccess, SeqAccess, Visitor},
+    de::{Error as SerdeDeError, MapAccess, SeqAccess, Visitor},
     ser::{SerializeMap, SerializeSeq},
 };
 use serde_json::{Value, json};
@@ -292,7 +296,7 @@ impl<'de> Deserialize<'de> for ProviderPrivateReplayPayload {
 
             fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
             where
-                E: serde::de::Error,
+                E: SerdeDeError,
             {
                 serde_json::Number::from_f64(value)
                     .map(ProviderPrivateReplayPayload::Number)
@@ -455,8 +459,8 @@ pub struct ModelReplay {
     contract: Option<ModelReplayContract>,
     items: Vec<ModelReplayItem>,
     encoded_prefix_bytes: usize,
-    known_calls: std::collections::BTreeSet<String>,
-    answered_calls: std::collections::BTreeSet<String>,
+    known_calls: BTreeSet<String>,
+    answered_calls: BTreeSet<String>,
 }
 
 impl ModelReplay {
@@ -578,13 +582,7 @@ impl ModelReplay {
 
 fn validate_replay_delta(
     delta: &ModelReplayDelta,
-) -> Result<
-    (
-        std::collections::BTreeSet<String>,
-        std::collections::BTreeSet<String>,
-    ),
-    &'static str,
-> {
+) -> Result<(BTreeSet<String>, BTreeSet<String>), &'static str> {
     if !delta.is_valid() {
         return Err("model replay delta is invalid or exceeds its bounds");
     }
@@ -593,15 +591,9 @@ fn validate_replay_delta(
 
 fn validate_replay_items(
     items: &[ModelReplayItem],
-) -> Result<
-    (
-        std::collections::BTreeSet<String>,
-        std::collections::BTreeSet<String>,
-    ),
-    &'static str,
-> {
-    let mut known_calls = std::collections::BTreeSet::new();
-    let mut answered_calls = std::collections::BTreeSet::new();
+) -> Result<(BTreeSet<String>, BTreeSet<String>), &'static str> {
+    let mut known_calls = BTreeSet::new();
+    let mut answered_calls = BTreeSet::new();
     for (index, item) in items.iter().enumerate() {
         match item {
             ModelReplayItem::FunctionCall {
@@ -745,18 +737,18 @@ fn encoded_item_len(item: &ModelReplayItem) -> usize {
             parts: &'a [ModelInputPart],
         }
         struct EncodedBudget(usize);
-        impl std::io::Write for EncodedBudget {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        impl Write for EncodedBudget {
+            fn write(&mut self, bytes: &[u8]) -> IoResult<usize> {
                 self.0 = self
                     .0
                     .checked_add(bytes.len())
                     .filter(|length| *length <= MAX_REPLAY_PREFIX_BYTES)
                     .ok_or_else(|| {
-                        std::io::Error::other("multimodal replay exceeds the prefix byte budget")
+                        IoError::other("multimodal replay exceeds the prefix byte budget")
                     })?;
                 Ok(bytes.len())
             }
-            fn flush(&mut self) -> std::io::Result<()> {
+            fn flush(&mut self) -> IoResult<()> {
                 Ok(())
             }
         }

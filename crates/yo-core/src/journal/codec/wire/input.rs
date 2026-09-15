@@ -1,4 +1,13 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use std::{
+    fmt::{Formatter, Result as FmtResult},
+    io::{Error as IoError, Result as IoResult, Write},
+    ops::Range,
+};
+
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{IgnoredAny, SeqAccess, Visitor},
+};
 
 use super::super::JournalCodecError;
 use crate::{
@@ -35,15 +44,12 @@ fn images_field<'de, D: Deserializer<'de>>(
     decoder: D,
 ) -> Result<Option<Vec<InputImage>>, D::Error> {
     struct ImagesVisitor;
-    impl<'de> serde::de::Visitor<'de> for ImagesVisitor {
+    impl<'de> Visitor<'de> for ImagesVisitor {
         type Value = Vec<InputImage>;
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn expecting(&self, f: &mut Formatter<'_>) -> FmtResult {
             f.write_str("one to sixteen input image occurrences")
         }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(
-            self,
-            mut sequence: A,
-        ) -> Result<Self::Value, A::Error> {
+        fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
             use serde::de::Error as _;
             let mut images = Vec::new();
             let mut source_bytes = 0_u64;
@@ -67,7 +73,7 @@ fn images_field<'de, D: Deserializer<'de>>(
                 }
                 images.push(image);
             }
-            if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+            if sequence.next_element::<IgnoredAny>()?.is_some() {
                 return Err(A::Error::custom("input image occurrence limit exceeded"));
             }
             Ok(images)
@@ -345,7 +351,7 @@ impl TryFrom<WireInputReference> for InputReference {
     }
 }
 
-fn decoded_span(start: u64, end: u64) -> Result<std::ops::Range<usize>, JournalCodecError> {
+fn decoded_span(start: u64, end: u64) -> Result<Range<usize>, JournalCodecError> {
     Ok(usize::try_from(start)
         .map_err(|_| JournalCodecError::new("input reference start cannot be addressed"))?
         ..usize::try_from(end)
@@ -486,19 +492,17 @@ pub(crate) fn validate_image_input_encoding(input: &UserInput) -> Result<(), Jou
 
 fn validate_wire_image_encoding(input: &WireUserInput) -> Result<(), JournalCodecError> {
     struct EncodedBudget(usize);
-    impl std::io::Write for EncodedBudget {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+    impl Write for EncodedBudget {
+        fn write(&mut self, bytes: &[u8]) -> IoResult<usize> {
             let total = self
                 .0
                 .checked_add(bytes.len())
                 .filter(|total| *total <= InputImage::MAX_ENCODED_INPUT_BYTES)
-                .ok_or_else(|| {
-                    std::io::Error::other("complete encoded image input exceeds 16 MiB")
-                })?;
+                .ok_or_else(|| IoError::other("complete encoded image input exceeds 16 MiB"))?;
             self.0 = total;
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> {
+        fn flush(&mut self) -> IoResult<()> {
             Ok(())
         }
     }

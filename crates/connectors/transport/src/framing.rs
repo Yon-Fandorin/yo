@@ -1,3 +1,5 @@
+use std::str;
+
 use yo_core::{ConnectorError, ConnectorFailureKind};
 
 pub struct SseFrame {
@@ -77,7 +79,7 @@ impl SseFramer {
         if self.event_count > self.maximum_events {
             return Err(self.limit_failure("SSE event count limit exceeded"));
         }
-        let text = std::str::from_utf8(bytes)
+        let text = str::from_utf8(bytes)
             .map_err(|_| self.protocol_failure("SSE event is not valid UTF-8"))?;
         let mut declared_event = None;
         let mut data_lines = Vec::new();

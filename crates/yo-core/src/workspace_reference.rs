@@ -1,7 +1,9 @@
 //! Frontend-neutral identities and search messages for execution-workspace references.
 
 use std::{
+    error::Error,
     fmt,
+    ops::Range,
     task::{Context, Poll},
 };
 
@@ -166,7 +168,7 @@ impl fmt::Display for WorkspaceReferencePathError {
     }
 }
 
-impl std::error::Error for WorkspaceReferencePathError {}
+impl Error for WorkspaceReferencePathError {}
 
 impl WorkspaceReferenceCandidate {
     #[must_use]
@@ -209,7 +211,7 @@ impl WorkspaceReferenceSearchRequest {
         request_id: u64,
         editor_revision: u64,
         cursor: usize,
-        replacement: std::ops::Range<usize>,
+        replacement: Range<usize>,
         expected_trigger: impl Into<String>,
         query: impl Into<String>,
     ) -> Self {
@@ -240,7 +242,7 @@ impl WorkspaceReferenceSearchRequest {
         self.cursor
     }
     #[must_use]
-    pub const fn replacement(&self) -> std::ops::Range<usize> {
+    pub const fn replacement(&self) -> Range<usize> {
         self.replacement_start..self.replacement_end
     }
     #[must_use]

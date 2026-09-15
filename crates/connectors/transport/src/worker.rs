@@ -3,7 +3,7 @@ use std::{sync::mpsc, thread, time::Instant};
 use futures_util::StreamExt;
 use reqwest::{Client, Url, header};
 use serde_json::Value;
-use tokio::sync::mpsc as async_mpsc;
+use tokio::{runtime::Builder, sync::mpsc as async_mpsc, time};
 use yo_core::{
     ApiCredential, ConnectorError, ConnectorFailureKind, ModelConnectorCancellation,
     ModelConnectorEvent, ModelConnectorLimits,
@@ -92,10 +92,7 @@ fn run_worker(
     event_sender: async_mpsc::Sender<ModelConnectorEvent>,
     outcome_sender: mpsc::SyncSender<Result<(), ConnectorError>>,
 ) {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
+    let runtime = match Builder::new_current_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(_) => {
             let _ = acceptance_sender.send(Err(ConnectorError::new(
@@ -302,7 +299,7 @@ pub(super) async fn send_event(
     tokio::select! {
         biased;
         () = cancellation.cancelled() => Err(cancelled_failure()),
-        result = tokio::time::timeout(timeout.duration, sender.send(event)) => {
+        result = time::timeout(timeout.duration, sender.send(event)) => {
             result
                 .map_err(|_| ConnectorError::new(ConnectorFailureKind::Timeout, timeout.message))?
                 .map_err(|_| cancelled_failure())

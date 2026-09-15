@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::JournalCodecError;
 use crate::{
-    ContinuationStrategy, JournalSequence, ReplayExecutor, TurnId,
+    ContinuationStrategy, JournalSequence, ReplayExecutor, TurnId, backend,
     journal::codec::{
         BindingCloseReason, BindingTransition, CacheState, DetailAvailability, ExchangeDirection,
         ExchangeKind, OperationId, TransitionMode, VersionedIdentity,
@@ -217,7 +217,7 @@ impl From<ContinuationStrategy> for WireContinuationStrategy {
             } => Self::ExactReplay {
                 executor: executor.into(),
                 replay_profile: (replay_profile != crate::ReplayProfile::SemanticOnly)
-                    .then(|| crate::backend::replay_profile_id(replay_profile).to_owned()),
+                    .then(|| backend::replay_profile_id(replay_profile).to_owned()),
             },
             ContinuationStrategy::BackendManagedState => Self::BackendManagedState,
         }

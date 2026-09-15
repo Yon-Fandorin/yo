@@ -1,9 +1,12 @@
 use std::{
     error::Error,
     fmt, fs,
+    io::ErrorKind,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
 };
+
+use rustix::process;
 
 use super::{
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationJournalEntry,
@@ -11,9 +14,9 @@ use super::{
     ExternalConnectionError, LocalConnectionOperationJournal, plan_connection_recovery,
 };
 use crate::model_service::{
-    ConnectionCommit, ConnectionRepositoryError, ConnectionSnapshot, LocalConnectionOperationGuard,
-    LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStoreError,
-    PreparedConnectionMutation,
+    ConnectionCommit, ConnectionRepositoryError, ConnectionSnapshot, CredentialSnapshot,
+    LocalConnectionOperationGuard, LocalConnectionRepository, LocalCredentialRepository,
+    LocalCredentialStoreError, PreparedConnectionMutation,
 };
 
 const CONNECTION_FILE: &str = "connections.yaml";
@@ -310,13 +313,13 @@ fn prepare_identity_directory(path: &Path) -> Result<(), ConnectionOperationExec
             match fs::symlink_metadata(&current) {
                 Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => break,
                 Ok(_) => return Err(invalid(&current)),
-                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                Err(source) if source.kind() == ErrorKind::NotFound => {
                     match fs::create_dir(&current) {
                         Ok(()) => {
                             fs::set_permissions(&current, fs::Permissions::from_mode(0o700))
                                 .map_err(|_| invalid(&current))?;
                         },
-                        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {},
+                        Err(source) if source.kind() == ErrorKind::AlreadyExists => {},
                         Err(_) => return Err(invalid(&current)),
                     }
                 },
@@ -355,7 +358,7 @@ impl LocalConnectionOperationSession<'_> {
     /// Captures private credential state while retaining the same serialized operation lane.
     pub fn capture_credentials(
         &self,
-    ) -> Result<crate::model_service::CredentialSnapshot, ConnectionOperationExecutionError> {
+    ) -> Result<CredentialSnapshot, ConnectionOperationExecutionError> {
         self.directory_identity.revalidate()?;
         self.repositories
             .credentials
@@ -466,7 +469,7 @@ fn validate_path_components(
                 });
             },
             Ok(_) => {},
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => break,
+            Err(source) if source.kind() == ErrorKind::NotFound => break,
             Err(_) => {
                 return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
                     repository,
@@ -504,7 +507,7 @@ impl LocalDirectoryIdentity {
                 path: path.to_owned(),
             }
         })?;
-        if !metadata.is_dir() || metadata.uid() != rustix::process::geteuid().as_raw() {
+        if !metadata.is_dir() || metadata.uid() != process::geteuid().as_raw() {
             return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
                 repository: ConnectionOperationRepositoryKind::Public,
                 path: path.to_owned(),

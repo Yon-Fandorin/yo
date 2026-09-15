@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{error::Error, fmt};
 
 use super::schema::ToolDefinition;
 
@@ -49,4 +49,4 @@ impl fmt::Display for ToolSemanticAdmissionError {
     }
 }
 
-impl std::error::Error for ToolSemanticAdmissionError {}
+impl Error for ToolSemanticAdmissionError {}

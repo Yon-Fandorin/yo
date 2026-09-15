@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::env;
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -108,7 +110,7 @@ fn concurrent_first_openers_converge_on_one_complete_identity() {
 #[test]
 fn nested_creation_establishes_exact_modes_under_a_restrictive_umask() {
     const CHILD_PATH: &str = "YO_HOST_UMASK_TEST_PATH";
-    if let Some(path) = std::env::var_os(CHILD_PATH) {
+    if let Some(path) = env::var_os(CHILD_PATH) {
         let path = Arc::new(PathBuf::from(path));
         let barrier = Arc::new(Barrier::new(8));
         let workers = (0..8)
@@ -140,7 +142,7 @@ fn nested_creation_establishes_exact_modes_under_a_restrictive_umask() {
             .arg("umask \"$1\"; shift; exec \"$@\"")
             .arg("sh")
             .arg(mask)
-            .arg(std::env::current_exe().unwrap())
+            .arg(env::current_exe().unwrap())
             .arg("--exact")
             .arg("host::tests::persistence::nested_creation_establishes_exact_modes_under_a_restrictive_umask")
             .arg("--nocapture")

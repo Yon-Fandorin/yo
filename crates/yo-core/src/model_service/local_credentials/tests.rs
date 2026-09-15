@@ -1,3 +1,7 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -18,9 +22,9 @@ impl TestDirectory {
             .duration_since(UNIX_EPOCH)
             .expect("the system clock is after the Unix epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "yo-credential-repository-{}-{name}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir_all(&path).unwrap();
         Self(path)

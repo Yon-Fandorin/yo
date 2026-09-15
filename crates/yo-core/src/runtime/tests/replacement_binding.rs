@@ -1,6 +1,16 @@
+#[cfg(test)]
+use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 
 use super::super::*;
+#[cfg(test)]
+use crate::journal::SemanticRecord;
+#[cfg(test)]
+use crate::journal::codec::CacheState;
+#[cfg(test)]
+use crate::journal::codec::TransitionMode;
+#[cfg(test)]
+use crate::session_repository;
 use crate::{
     BackendCapabilities, BackendIdentity, BackendOutcomeEvidence, BackendRequestEvidence,
     BackendScriptStep, InputImageHistory, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
@@ -188,18 +198,15 @@ fn native_model_rebind_allows_a_source_free_unused_binding() {
         .iter()
         .rev()
         .find_map(|entry| match entry.record() {
-            crate::journal::SemanticRecord::BackendBindingOpened(binding) => Some(binding),
+            SemanticRecord::BackendBindingOpened(binding) => Some(binding),
             _ => None,
         })
         .unwrap();
     assert_eq!(
         opened.transition().mode(),
-        crate::journal::codec::TransitionMode::BackendNativeModelRebind
+        TransitionMode::BackendNativeModelRebind
     );
-    assert_eq!(
-        opened.transition().cache(),
-        crate::journal::codec::CacheState::Unknown
-    );
+    assert_eq!(opened.transition().cache(), CacheState::Unknown);
     assert!(opened.transition().source_anchor_sequence().is_none());
     runtime.shutdown().unwrap();
 }
@@ -209,10 +216,7 @@ fn native_model_rebind_allows_a_source_free_unused_binding() {
 #[test]
 fn native_model_rebind_uses_the_newest_source_anchor_after_model_work() {
     let session_id = crate::fixture_session(42);
-    let turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
-    );
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
     let source = native_binding("binding-a", "model-a", "thread-a");
     let replacement = native_binding("binding-b", "model-b", "thread-b");
     let request = BackendRequestEvidence::new(
@@ -281,13 +285,13 @@ fn native_model_rebind_uses_the_newest_source_anchor_after_model_work() {
         .iter()
         .rev()
         .find_map(|entry| match entry.record() {
-            crate::journal::SemanticRecord::BackendBindingOpened(binding) => Some(binding),
+            SemanticRecord::BackendBindingOpened(binding) => Some(binding),
             _ => None,
         })
         .unwrap();
     assert_eq!(opened.transition().source_anchor_sequence(), Some(anchor));
     let continuation =
-        crate::session_repository::recover_stored_session_continuation(&mut repository, session_id)
+        session_repository::recover_stored_session_continuation(&mut repository, session_id)
             .unwrap();
     assert!(!continuation.target().binding_has_accepted_request());
     runtime.shutdown().unwrap();
@@ -298,10 +302,7 @@ fn native_model_rebind_uses_the_newest_source_anchor_after_model_work() {
 #[test]
 fn native_model_rebind_rejects_an_unanchored_accepted_request() {
     let session_id = crate::fixture_session(43);
-    let turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
-    );
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
     let source = native_binding("binding-a", "model-a", "thread-a");
     let current = ScriptedBackend::new([
         BackendScriptStep::AcceptCommandWithEvidence {
@@ -361,14 +362,8 @@ fn native_model_rebind_rejects_an_unanchored_accepted_request() {
 #[test]
 fn native_model_rebind_rejects_a_stale_anchor_before_candidate_fork() {
     let session_id = crate::fixture_session(44);
-    let first_turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
-    );
-    let second_turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
-    );
+    let first_turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
+    let second_turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
     let source = native_binding("binding-a", "model-a", "thread-a");
     let request = |id: &str| {
         BackendRequestEvidence::new(

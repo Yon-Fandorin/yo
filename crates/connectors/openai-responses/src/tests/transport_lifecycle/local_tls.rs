@@ -1,3 +1,9 @@
+#[cfg(test)]
+use std::ffi::OsString;
+#[cfg(test)]
+use std::process;
+#[cfg(test)]
+use std::process::ExitStatus;
 use std::{
     any::Any,
     env,
@@ -437,7 +443,7 @@ impl ChildGuard {
         }
     }
 
-    fn failure_message(&mut self, message: &str, status: std::process::ExitStatus) -> String {
+    fn failure_message(&mut self, message: &str, status: ExitStatus) -> String {
         let mut diagnostic = format!(
             "{message} (child exited with {})",
             status
@@ -849,7 +855,7 @@ fn omits_child_stderr_when_a_sensitive_path_is_not_safely_representable() {
         {
             use std::os::unix::ffi::OsStringExt;
 
-            std::ffi::OsString::from_vec(vec![b'/', 0xff])
+            OsString::from_vec(vec![b'/', 0xff])
         }
         #[cfg(not(unix))]
         {
@@ -1199,10 +1205,7 @@ fn unique_temp_dir_candidate(prefix: &str, now: SystemTime) -> io::Result<PathBu
         })?
         .as_nanos();
     let sequence = TEMP_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    Ok(env::temp_dir().join(format!(
-        "{prefix}-{}-{stamp}-{sequence}",
-        std::process::id()
-    )))
+    Ok(env::temp_dir().join(format!("{prefix}-{}-{stamp}-{sequence}", process::id())))
 }
 
 // TLS material에 필요한 정상 wall clock 전제를 pre-epoch 오류로 명시하고, 같은 정상 시각의

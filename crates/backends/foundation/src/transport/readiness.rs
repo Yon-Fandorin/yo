@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::mpsc;
 use std::{
     sync::{
         Arc, Mutex,
@@ -181,7 +183,7 @@ mod tests {
     // 하나로 합쳐진 알림 뒤에도 bounded batch가 남긴 큐 항목은 다음 batch를 계속 깨웁니다.
     #[test]
     fn receiver_stays_ready_across_bounded_batch_boundaries() {
-        let (sender, receiver) = std::sync::mpsc::channel();
+        let (sender, receiver) = super::mpsc::channel();
         let readiness = Arc::new(Readiness::new());
         let mut receiver = ReadyReceiver::new(receiver, Arc::clone(&readiness));
         for value in 0..513 {

@@ -1,13 +1,15 @@
 use std::{
     ffi::OsStr,
     fs,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Result as IoResult, Write},
     os::unix::{
         ffi::OsStrExt,
         fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     },
     path::{Path, PathBuf},
 };
+
+use rustix::process;
 
 use super::{
     ConnectionOperationError, ConnectionOperationJournalEntry, ConnectionOperationPhase,
@@ -37,7 +39,7 @@ pub(super) fn capture(
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(ConnectionOperationError::io(path, source)),
     };
     let before = MetadataSnapshot::capture(path, &file)?;
@@ -78,7 +80,7 @@ pub(super) fn publish_intent(
             .map_err(|source| ConnectionOperationError::io(&temporary, source))?;
         match fs::hard_link(&temporary, path) {
             Ok(()) => {},
-            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(source) if source.kind() == ErrorKind::AlreadyExists => {
                 return Err(ConnectionOperationError::Conflict(path.to_owned()));
             },
             Err(source) => return Err(ConnectionOperationError::io(path, source)),
@@ -208,7 +210,7 @@ fn create_temporary(parent: &Path) -> Result<(PathBuf, fs::File), ConnectionOper
             .open(&temporary)
         {
             Ok(file) => return Ok((temporary, file)),
-            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {},
+            Err(source) if source.kind() == ErrorKind::AlreadyExists => {},
             Err(source) => return Err(ConnectionOperationError::io(&temporary, source)),
         }
     }
@@ -243,8 +245,8 @@ fn cleanup_pending_residues_with(
     parent: &Path,
     validate_all: impl FnOnce(&Path) -> Result<(), ConnectionOperationError>,
     mut next_candidate: impl FnMut(&Path) -> Result<Option<PathBuf>, ConnectionOperationError>,
-    mut remove_file: impl FnMut(&Path) -> std::io::Result<()>,
-    mut sync_directory: impl FnMut(&fs::File) -> std::io::Result<()>,
+    mut remove_file: impl FnMut(&Path) -> IoResult<()>,
+    mut sync_directory: impl FnMut(&fs::File) -> IoResult<()>,
 ) -> Result<(), ConnectionOperationError> {
     let directory = fs::OpenOptions::new()
         .read(true)
@@ -308,8 +310,8 @@ pub(super) fn cleanup_pending_residues_in_order_for_test(
     parent: &Path,
     validation_order: &[PathBuf],
     removal_order: &[PathBuf],
-    remove_file: impl FnMut(&Path) -> std::io::Result<()>,
-    sync_directory: impl FnMut(&fs::File) -> std::io::Result<()>,
+    remove_file: impl FnMut(&Path) -> IoResult<()>,
+    sync_directory: impl FnMut(&fs::File) -> IoResult<()>,
 ) -> Result<(), ConnectionOperationError> {
     let mut removal_order = removal_order.iter();
     cleanup_pending_residues_with(
@@ -348,7 +350,7 @@ pub(super) fn pending_residue_path_for_test(parent: &Path, random: [u8; 16]) -> 
 }
 
 fn capture_pending_residue(path: &Path) -> Result<MetadataSnapshot, ConnectionOperationError> {
-    capture_pending_residue_for_user(path, rustix::process::geteuid().as_raw())
+    capture_pending_residue_for_user(path, process::geteuid().as_raw())
 }
 
 fn capture_pending_residue_for_user(
@@ -432,7 +434,7 @@ impl MetadataSnapshot {
                 path.to_owned(),
             ));
         }
-        if self.user != rustix::process::geteuid().as_raw() {
+        if self.user != process::geteuid().as_raw() {
             return Err(ConnectionOperationError::WrongOwner(path.to_owned()));
         }
         if self.mode & 0o077 != 0 {

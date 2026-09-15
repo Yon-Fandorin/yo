@@ -1,3 +1,7 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     ffi::OsString,
     io::{BufRead, BufReader, Read, Write},
@@ -651,9 +655,9 @@ mod tests {
 
         fn spawn_fixture(label: &str, body: &str) -> (PathBuf, StdioJsonlPeer) {
             let suffix = NEXT_SCRIPT.fetch_add(1, Ordering::Relaxed);
-            let directory = std::env::temp_dir().join(format!(
+            let directory = env::temp_dir().join(format!(
                 "yo-backend-stdio-jsonl-{label}-{}-{suffix}",
-                std::process::id()
+                process::id()
             ));
             fs::create_dir(&directory).unwrap();
             let script = directory.join("fake-backend");

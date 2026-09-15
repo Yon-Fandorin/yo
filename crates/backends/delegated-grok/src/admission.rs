@@ -1,5 +1,6 @@
 //! Grok configuration and bounded-review admission checks.
 
+use std::{env, ffi::OsStr, io::ErrorKind, process};
 #[cfg(target_os = "linux")]
 use std::{
     fs::{self, OpenOptions},
@@ -34,8 +35,8 @@ pub(crate) fn validate_config(config: &GrokBackendConfig) -> Result<(), BackendF
 
 fn verify_outer_sandbox(config: &GrokBackendConfig) -> Result<(), BackendFailure> {
     if !config.read_only_review()
-        || std::env::var_os(OUTER_SANDBOX_REVIEW_ENV).as_deref()
-            != Some(std::ffi::OsStr::new(OUTER_SANDBOX_REVIEW_PROFILE))
+        || env::var_os(OUTER_SANDBOX_REVIEW_ENV).as_deref()
+            != Some(OsStr::new(OUTER_SANDBOX_REVIEW_PROFILE))
     {
         return Err(initialization_failure(
             "Yo outer Grok review isolation was requested without its exact bounded-runner profile",
@@ -88,7 +89,7 @@ fn require_workspace_write_blocked(workspace: &Path) -> Result<(), BackendFailur
     let sequence = OUTER_SANDBOX_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let probe = workspace.join(format!(
         ".yo-grok-outer-sandbox-write-probe-{}-{sequence}",
-        std::process::id()
+        process::id()
     ));
     match OpenOptions::new().write(true).create_new(true).open(&probe) {
         Ok(file) => {
@@ -102,8 +103,7 @@ fn require_workspace_write_blocked(workspace: &Path) -> Result<(), BackendFailur
             )))
         },
         Err(error)
-            if error.kind() == std::io::ErrorKind::PermissionDenied
-                || error.raw_os_error() == Some(30) =>
+            if error.kind() == ErrorKind::PermissionDenied || error.raw_os_error() == Some(30) =>
         {
             Ok(())
         },

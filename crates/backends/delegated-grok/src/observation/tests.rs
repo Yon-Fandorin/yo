@@ -1,3 +1,11 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
+use std::fs::OpenOptions;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Duration};
 
 use serde_json::{Value, json};
@@ -143,11 +151,11 @@ fn billing_config(used_percent: f64) -> Value {
     })
 }
 
-struct UsageLog(std::path::PathBuf);
+struct UsageLog(PathBuf);
 
 impl UsageLog {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "yo-grok-account-billing-{}.jsonl",
             uuid::Uuid::now_v7()
         ));
@@ -155,14 +163,14 @@ impl UsageLog {
             "msg": "billing: fetched credits config",
             "ctx": {"config": billing_config(12.1)}
         });
-        std::fs::write(&path, format!("{event}\n")).unwrap();
+        fs::write(&path, format!("{event}\n")).unwrap();
         Self(path)
     }
 }
 
 impl Drop for UsageLog {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -262,10 +270,7 @@ fn skips_malformed_legacy_periods_and_preserves_the_previous_valid_capacity() {
     use std::io::Write;
 
     let log = UsageLog::new();
-    let mut file = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&log.0)
-        .unwrap();
+    let mut file = OpenOptions::new().append(true).open(&log.0).unwrap();
     for period in [
         json!([]),
         json!({"type": 7, "end": "2999-09-01T14:45:00Z"}),

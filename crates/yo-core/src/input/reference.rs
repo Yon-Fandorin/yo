@@ -1,7 +1,7 @@
-use std::{fmt, ops::Range};
+use std::{error::Error, fmt, ops::Range};
 
 use super::{InputImage, projection};
-use crate::{ModelInputPart, SkillReference, WorkspaceReference};
+use crate::{ModelInputPart, SkillReference, WorkspaceReference, journal::codec};
 
 /// One typed reference attached to an exact byte span in the visible input.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -384,7 +384,7 @@ impl UserInput {
 
     fn validate_image_encoding(&self) -> Result<(), UserInputError> {
         if !self.images.is_empty() {
-            crate::journal::codec::validate_image_input_encoding(self)
+            codec::validate_image_input_encoding(self)
                 .map_err(|_| UserInputError::EncodedImageInputTooLarge)?;
         }
         Ok(())
@@ -489,4 +489,4 @@ impl fmt::Display for UserInputError {
     }
 }
 
-impl std::error::Error for UserInputError {}
+impl Error for UserInputError {}

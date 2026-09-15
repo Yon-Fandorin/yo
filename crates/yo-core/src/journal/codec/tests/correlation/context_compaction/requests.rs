@@ -1,4 +1,9 @@
+#[cfg(test)]
+use std::num::NonZeroU64;
+
 use super::*;
+#[cfg(test)]
+use crate::journal::CommittedCommand;
 
 // 한 Turn의 첫 provider request가 이미 durable하게 수락된 뒤 도구 결과로 이어지는
 // successor request는 SubmissionId가 없으므로 writer가 정한 deterministic identity로
@@ -105,7 +110,7 @@ fn accepts_the_first_writer_assigned_request_after_an_active_checkpoint() {
     let mut commits = current_history();
     let second_turn = crate::TurnRef::new(
         super::super::super::activity().session_id(),
-        crate::TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
+        crate::TurnId::new(NonZeroU64::new(2).unwrap()),
     );
     let submission_id = super::super::super::submission(43);
     commits.push(JournalCommit::incremental_through(
@@ -115,7 +120,7 @@ fn accepts_the_first_writer_assigned_request_after_an_active_checkpoint() {
                 12,
                 11,
                 JournalRecord::CommandCommitted(
-                    crate::journal::CommittedCommand::submission(
+                    CommittedCommand::submission(
                         AgentCommand::StartTurn {
                             turn: second_turn,
                             input: crate::UserInput::new("round zero"),

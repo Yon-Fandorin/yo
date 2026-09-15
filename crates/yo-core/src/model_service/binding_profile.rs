@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, de::Error};
 use serde_json::json;
 
 use super::{
@@ -248,7 +248,7 @@ where
     ) {
         Ok(Some(value))
     } else {
-        Err(serde::de::Error::custom(
+        Err(Error::custom(
             "present replay_profile is outside the closed supported set",
         ))
     }

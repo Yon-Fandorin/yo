@@ -1,3 +1,5 @@
+use std::error::Error;
+
 mod local;
 mod workspace;
 
@@ -61,7 +63,7 @@ impl fmt::Display for WorkspaceHostIdError {
     }
 }
 
-impl std::error::Error for WorkspaceHostIdError {}
+impl Error for WorkspaceHostIdError {}
 
 #[derive(Clone, Debug)]
 pub enum WorkspaceHostIdGenerationError {
@@ -79,8 +81,8 @@ impl fmt::Display for WorkspaceHostIdGenerationError {
     }
 }
 
-impl std::error::Error for WorkspaceHostIdGenerationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for WorkspaceHostIdGenerationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Entropy(error) => Some(error),
         }

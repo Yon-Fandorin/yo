@@ -1,7 +1,9 @@
 use std::{
-    fmt, io,
+    error::Error,
+    fmt, fs, io,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
+    str,
 };
 
 /// Opaque canonical workspace path produced by the Host that owns it.
@@ -15,7 +17,7 @@ impl HostWorkspacePath {
     /// Resolves one local macOS or Linux workspace to its stable absolute path.
     pub fn normalize_local(path: impl AsRef<Path>) -> Result<Self, HostWorkspacePathError> {
         let path = path.as_ref();
-        let canonical = std::fs::canonicalize(path).map_err(|source| HostWorkspacePathError {
+        let canonical = fs::canonicalize(path).map_err(|source| HostWorkspacePathError {
             path: path.to_owned(),
             source,
         })?;
@@ -58,7 +60,7 @@ impl fmt::Display for HostWorkspacePath {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut remaining = self.as_unix_bytes();
         while !remaining.is_empty() {
-            match std::str::from_utf8(remaining) {
+            match str::from_utf8(remaining) {
                 Ok(valid) => {
                     write_escaped(valid, formatter)?;
                     break;
@@ -66,8 +68,7 @@ impl fmt::Display for HostWorkspacePath {
                 Err(error) => {
                     let (valid, invalid) = remaining.split_at(error.valid_up_to());
                     write_escaped(
-                        std::str::from_utf8(valid)
-                            .expect("the UTF-8 validator reported this prefix"),
+                        str::from_utf8(valid).expect("the UTF-8 validator reported this prefix"),
                         formatter,
                     )?;
                     let invalid_length = error.error_len().unwrap_or(1);
@@ -114,8 +115,8 @@ impl fmt::Display for HostWorkspacePathError {
     }
 }
 
-impl std::error::Error for HostWorkspacePathError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for HostWorkspacePathError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(&self.source)
     }
 }

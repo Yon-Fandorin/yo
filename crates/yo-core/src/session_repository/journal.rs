@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt, slice,
+};
 
 use super::{
     AppendError, AppendReceipt, DurableRecord, DurableRecordKind, RecordDiscovery, RepositoryError,
@@ -17,7 +21,7 @@ pub(crate) struct JournalRepository<R> {
     repository: R,
     live_gaps: HashSet<SessionId>,
     loaded_sessions: HashSet<SessionId>,
-    recovered: std::collections::HashMap<SessionId, RecoveredJournal>,
+    recovered: HashMap<SessionId, RecoveredJournal>,
 }
 
 impl<R> JournalRepository<R>
@@ -29,7 +33,7 @@ where
             repository,
             live_gaps: HashSet::new(),
             loaded_sessions: HashSet::new(),
-            recovered: std::collections::HashMap::new(),
+            recovered: HashMap::new(),
         }
     }
 
@@ -68,7 +72,7 @@ where
         let candidate_recovery = if commit.kind() == JournalCommitKind::Snapshot
             || !self.recovered.contains_key(&session_id)
         {
-            recover(std::slice::from_ref(commit)).map_err(|error| {
+            recover(slice::from_ref(commit)).map_err(|error| {
                 JournalRepositoryError::Codec(error.context("candidate semantic commit"))
             })?
         } else {
@@ -307,8 +311,8 @@ impl fmt::Display for JournalRepositoryError {
     }
 }
 
-impl std::error::Error for JournalRepositoryError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for JournalRepositoryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Codec(error) => Some(error),
             Self::Append(error) => Some(error),

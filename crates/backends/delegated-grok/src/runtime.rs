@@ -1,3 +1,5 @@
+use crate::admission;
+
 mod events;
 
 #[cfg(test)]
@@ -34,7 +36,7 @@ pub struct GrokBackend {
 impl GrokBackend {
     /// Spawns `grok agent stdio`; initialization and cached-token authentication are deferred.
     pub fn spawn(config: GrokBackendConfig) -> Result<Self, BackendFailure> {
-        crate::admission::validate_config(&config)?;
+        admission::validate_config(&config)?;
         let cwd = config
             .working_directory()
             .to_str()

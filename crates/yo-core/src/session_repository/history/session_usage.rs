@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, error::Error, fmt};
 
 use serde_json::Value;
 
@@ -364,7 +364,7 @@ impl fmt::Display for SessionUsageError {
     }
 }
 
-impl std::error::Error for SessionUsageError {}
+impl Error for SessionUsageError {}
 
 #[derive(Default)]
 struct PendingModelWork {

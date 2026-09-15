@@ -8,6 +8,8 @@ use std::{
     time::Instant,
 };
 
+#[cfg(test)]
+use tokio::runtime::Builder;
 use tokio::sync::mpsc as async_mpsc;
 use yo_core::{ModelConnectorCancellation, ModelConnectorLimits, ModelConnectorPoll};
 
@@ -55,10 +57,7 @@ fn drop_cancels_and_joins_a_worker_blocked_by_event_backpressure() {
     let finished = Arc::new(AtomicBool::new(false));
     let worker_finished = Arc::clone(&finished);
     let worker = thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
+        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
         let result = runtime.block_on(send_event(
             &event_sender,
             &worker_cancellation,

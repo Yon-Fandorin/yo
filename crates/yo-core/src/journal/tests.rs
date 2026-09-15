@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::slice;
 use std::{
     num::NonZeroU64,
     sync::{
@@ -50,7 +52,7 @@ fn transcript_cursor_preserves_events_after_sparse_recovery() {
     let started = AgentEvent::TurnStarted {
         turn: turn(session_id, 2),
     };
-    journal.append_events(std::slice::from_ref(&started));
+    journal.append_events(slice::from_ref(&started));
 
     let resumed = reader.read_after(cursor);
     assert_eq!(resumed.entries().len(), 1);
@@ -308,7 +310,7 @@ fn recovers_an_initial_descriptor_gap_with_the_complete_session_snapshot() {
         DurableRecordKind::Snapshot
     );
     let commit = decode(state.entries[0].record().payload()).unwrap();
-    let recovered = recover(std::slice::from_ref(&commit)).unwrap();
+    let recovered = recover(slice::from_ref(&commit)).unwrap();
     assert_eq!(recovered.descriptor(), Some(&descriptor));
     assert_eq!(
         recovered.journal_cutoff().map(JournalSequence::get),

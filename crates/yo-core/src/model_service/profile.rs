@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fmt};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
-    de::{Error as _, MapAccess, SeqAccess, Visitor},
+    de::{DeserializeSeed, Error as SerdeDeError, MapAccess, SeqAccess, Visitor},
     ser::{SerializeMap, SerializeSeq},
 };
 
@@ -172,7 +172,7 @@ impl<'de> Visitor<'de> for ProfileValueVisitor {
 
     fn visit_i128<E>(self, value: i128) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: SerdeDeError,
     {
         if value < 0 {
             i64::try_from(value)
@@ -187,7 +187,7 @@ impl<'de> Visitor<'de> for ProfileValueVisitor {
 
     fn visit_u128<E>(self, value: u128) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: SerdeDeError,
     {
         u64::try_from(value)
             .map(ProfileValue::Unsigned)
@@ -196,7 +196,7 @@ impl<'de> Visitor<'de> for ProfileValueVisitor {
 
     fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: SerdeDeError,
     {
         if !value.is_finite() {
             return Err(E::custom("profile floating-point value must be finite"));
@@ -243,7 +243,7 @@ impl<'de> Visitor<'de> for ProfileValueVisitor {
 
 struct ProfileMapKeySeed;
 
-impl<'de> serde::de::DeserializeSeed<'de> for ProfileMapKeySeed {
+impl<'de> DeserializeSeed<'de> for ProfileMapKeySeed {
     type Value = String;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -274,7 +274,7 @@ impl<'de> Visitor<'de> for ProfileMapKeyVisitor {
 
 struct ProfileValueSeed;
 
-impl<'de> serde::de::DeserializeSeed<'de> for ProfileValueSeed {
+impl<'de> DeserializeSeed<'de> for ProfileValueSeed {
     type Value = ProfileValue;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>

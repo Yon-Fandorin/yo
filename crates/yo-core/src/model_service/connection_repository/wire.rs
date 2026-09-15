@@ -1,9 +1,13 @@
 use std::{
     fmt,
     path::{Path, PathBuf},
+    str,
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    de::{Error, Unexpected},
+};
 
 use super::{
     super::{AccountId, HostId, ModelId, ModelSelection, ProviderId, StartupTarget},
@@ -48,7 +52,7 @@ pub(super) fn decode(
     path: &Path,
     encoded: &[u8],
 ) -> Result<DecodedSnapshot, ConnectionRepositoryError> {
-    let contents = std::str::from_utf8(encoded)
+    let contents = str::from_utf8(encoded)
         .map_err(|_| ConnectionRepositoryError::InvalidContents(path.to_owned()))?;
     let wire: WireSnapshot = yo_yaml::from_str(contents)
         .map_err(|_| ConnectionRepositoryError::InvalidContents(path.to_owned()))?;
@@ -297,9 +301,8 @@ fn deserialize_non_null_profile_parameters<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    Option::<ModelProfileParameters>::deserialize(deserializer)?.ok_or_else(|| {
-        serde::de::Error::invalid_type(serde::de::Unexpected::Unit, &"a structured profile value")
-    })
+    Option::<ModelProfileParameters>::deserialize(deserializer)?
+        .ok_or_else(|| Error::invalid_type(Unexpected::Unit, &"a structured profile value"))
 }
 
 fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -321,7 +324,7 @@ where
     ) {
         Ok(Some(value))
     } else {
-        Err(serde::de::Error::custom(
+        Err(Error::custom(
             "present replay_profile is outside the closed supported set",
         ))
     }
@@ -333,9 +336,7 @@ where
 {
     let enabled = bool::deserialize(deserializer)?;
     if enabled {
-        Err(serde::de::Error::custom(
-            "present enabled must be exact boolean false",
-        ))
+        Err(Error::custom("present enabled must be exact boolean false"))
     } else {
         Ok(Some(false))
     }

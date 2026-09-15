@@ -1,3 +1,8 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
+
 use super::{
     CompleteModelBinding, ConnectionCommit, ConnectionOperationExecutionError, CredentialRevision,
     LocalConnectionOperationRepositories, ModelLastFailure, ModelRequestFailureKind,
@@ -125,11 +130,11 @@ mod tests {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let temp_dir = fs::canonicalize(std::env::temp_dir())
+            let temp_dir = fs::canonicalize(env::temp_dir())
                 .expect("the observation fixture temp directory must resolve physically");
             let root = temp_dir.join(format!(
                 "yo-model-observation-{}-{name}-{nonce}",
-                std::process::id()
+                process::id()
             ));
             fs::create_dir_all(&root).unwrap();
             let repositories =

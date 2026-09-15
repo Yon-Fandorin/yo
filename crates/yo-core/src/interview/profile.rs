@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -155,7 +157,7 @@ impl Capture {
                 current_question_id,
                 ..
             } => {
-                let mut ids = std::collections::HashSet::new();
+                let mut ids = HashSet::new();
                 for q in questions {
                     q.validate()?;
                     if !ids.insert(&q.id) {

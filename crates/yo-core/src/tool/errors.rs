@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{error::Error, fmt};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolValidationFailure {
@@ -58,7 +58,7 @@ impl fmt::Display for ToolValidationError {
     }
 }
 
-impl std::error::Error for ToolValidationError {}
+impl Error for ToolValidationError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolRegistryError(String);
@@ -75,7 +75,7 @@ impl fmt::Display for ToolRegistryError {
     }
 }
 
-impl std::error::Error for ToolRegistryError {}
+impl Error for ToolRegistryError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolExecutionError(String);
@@ -92,4 +92,4 @@ impl fmt::Display for ToolExecutionError {
     }
 }
 
-impl std::error::Error for ToolExecutionError {}
+impl Error for ToolExecutionError {}

@@ -4,6 +4,7 @@ use std::{
 };
 
 use reqwest::StatusCode;
+use tokio::time;
 use yo_core::{ConnectorError, ConnectorFailureKind, ModelConnectorCancellation};
 
 pub fn configuration_failure(message: impl Into<String>) -> ConnectorError {
@@ -129,7 +130,7 @@ where
     tokio::select! {
         biased;
         () = cancellation.cancelled() => Err(cancelled_failure()),
-        result = tokio::time::timeout(timeout.duration, future) => {
+        result = time::timeout(timeout.duration, future) => {
             result.map_err(|_| ConnectorError::new(ConnectorFailureKind::Timeout, timeout.message))
         },
     }

@@ -1,3 +1,7 @@
+use std::{collections::VecDeque, mem, slice};
+
+use crate::journal::SemanticRecord;
+
 mod error;
 
 #[cfg(test)]
@@ -59,7 +63,7 @@ pub struct AgentRuntime<B> {
     accepted_requests: HashMap<TurnRef, JournalSequence>,
     accepted_submissions: HashMap<TurnRef, SubmissionId>,
     interview_start: Option<AgentEvent>,
-    interview_delivery: std::collections::VecDeque<AgentEvent>,
+    interview_delivery: VecDeque<AgentEvent>,
     interview_backend: Option<BackendEvent>,
 }
 
@@ -95,7 +99,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             accepted_requests: HashMap::new(),
             accepted_submissions: HashMap::new(),
             interview_start: None,
-            interview_delivery: std::collections::VecDeque::new(),
+            interview_delivery: VecDeque::new(),
             interview_backend: None,
         }
     }
@@ -218,9 +222,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.submission_ids = entries
             .iter()
             .filter_map(|entry| match entry.record() {
-                crate::journal::SemanticRecord::CommandCommitted(committed) => {
-                    committed.submission_id()
-                },
+                SemanticRecord::CommandCommitted(committed) => committed.submission_id(),
                 _ => None,
             })
             .collect();
@@ -585,7 +587,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         match self.backend.poll_event() {
             Ok(BackendPoll::Pending) => {
                 if let Some(event) = self.interview_start.take() {
-                    self.journal.append_events(std::slice::from_ref(&event));
+                    self.journal.append_events(slice::from_ref(&event));
                     return Ok(RuntimePoll::Event(event));
                 }
                 if self.idle_context_checkpoint_committed {
@@ -669,13 +671,13 @@ impl<B: AgentBackend> AgentRuntime<B> {
                     },
                     Err(_) => {
                         // Preserve the started observation before the ordinary update rejection.
-                        self.journal.append_events(std::slice::from_ref(&start));
+                        self.journal.append_events(slice::from_ref(&start));
                         self.interview_backend =
                             Some(BackendEvent::ActivityUpdated { activity, update });
                     },
                 }
             } else {
-                self.journal.append_events(std::slice::from_ref(&start));
+                self.journal.append_events(slice::from_ref(&start));
                 self.interview_backend = Some(event);
             }
             return Ok(RuntimePoll::Event(start));
@@ -930,7 +932,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                         Ok(BackendPoll::Event(next)) => self.apply_backend_event(next),
                         Ok(BackendPoll::Pending | BackendPoll::Closed) => {
                             let start = self.interview_start.take().expect("held request start");
-                            self.journal.append_events(std::slice::from_ref(&start));
+                            self.journal.append_events(slice::from_ref(&start));
                             Ok(RuntimePoll::Event(start))
                         },
                         Err(failure) => {
@@ -942,8 +944,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
                         },
                     };
                 }
-                self.clear_terminal_correlations(std::slice::from_ref(&event));
-                self.journal.append_events(std::slice::from_ref(&event));
+                self.clear_terminal_correlations(slice::from_ref(&event));
+                self.journal.append_events(slice::from_ref(&event));
                 Ok(RuntimePoll::Event(event))
             },
             Err(rejection) => {
@@ -975,7 +977,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
     fn fail_active_turn(&mut self, failure: &crate::BackendFailure) -> Vec<AgentEvent> {
         if let Some(start) = self.interview_start.take() {
-            self.journal.append_events(std::slice::from_ref(&start));
+            self.journal.append_events(slice::from_ref(&start));
         }
         let events = self
             .engine
@@ -1210,7 +1212,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
         } else {
             self.replay_contract_rebind_required = true;
         }
-        let mut previous = std::mem::replace(&mut self.backend, candidate);
+        let mut previous = mem::replace(&mut self.backend, candidate);
         Ok(previous.shutdown().err())
     }
 }

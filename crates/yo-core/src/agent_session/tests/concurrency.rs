@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 use std::{
     collections::VecDeque,
     sync::{
@@ -266,8 +268,7 @@ impl BackendAdapter for ShutdownProbeBackend {
     }
 
     fn shutdown(&mut self) -> Result<(), BackendFailure> {
-        self.shutdown_calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
         self.failure.clone().map_or(Ok(()), Err)
     }
 }
@@ -476,7 +477,7 @@ fn busy_replacement_rejection_shuts_down_the_candidate() {
         AgentSessionError::WorkerUnavailable(ref detail)
             if detail.contains("requires an idle Session")
     ));
-    assert_eq!(shutdown_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(shutdown_calls.load(Ordering::SeqCst), 1);
     release_tx.send(()).unwrap();
     next_poll(&mut app).unwrap();
     app.shutdown().unwrap();
@@ -527,7 +528,7 @@ fn busy_replacement_rejection_reports_candidate_cleanup_failure() {
         AgentSessionError::BackendCleanup(ref failure)
             if failure.kind() == BackendFailureKind::Cleanup
     ));
-    assert_eq!(shutdown_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(shutdown_calls.load(Ordering::SeqCst), 1);
     release_tx.send(()).unwrap();
     next_poll(&mut app).unwrap();
     app.shutdown().unwrap();

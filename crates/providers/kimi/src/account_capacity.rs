@@ -2,9 +2,12 @@ use std::{error::Error, fmt, time::Duration};
 
 use futures_util::StreamExt;
 use jiff::Timestamp;
-use reqwest::{Client, Url, header, redirect};
+use reqwest::{Client, Url, header, redirect, retry};
 use serde_json::{Map, Value};
-use tokio::time::{Instant, timeout_at};
+use tokio::{
+    runtime::Builder,
+    time::{Instant, timeout_at},
+};
 use yo_core::{
     AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
     ApiCredential,
@@ -82,7 +85,7 @@ pub fn read_kimi_account_capacity(
     let client = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .redirect(redirect::Policy::none())
-        .retry(reqwest::retry::never())
+        .retry(retry::never())
         .build()
         .map_err(|_| {
             failure(
@@ -90,7 +93,7 @@ pub fn read_kimi_account_capacity(
                 "cannot initialize the Kimi account-capacity HTTP client",
             )
         })?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| {
@@ -772,14 +775,14 @@ mod tests {
         let client = Client::builder()
             .add_root_certificate(roots[0].clone())
             .redirect(redirect::Policy::none())
-            .retry(reqwest::retry::never())
+            .retry(retry::never())
             .build()
             .unwrap();
         let url = NormalizedEndpoint::parse(server.endpoint())
             .unwrap()
             .append_path_segment("usages")
             .unwrap();
-        let received = tokio::runtime::Builder::new_current_thread()
+        let received = Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
@@ -825,14 +828,14 @@ mod tests {
         let client = Client::builder()
             .add_root_certificate(roots[0].clone())
             .redirect(redirect::Policy::none())
-            .retry(reqwest::retry::never())
+            .retry(retry::never())
             .build()
             .unwrap();
         let url = NormalizedEndpoint::parse(server.endpoint())
             .unwrap()
             .append_path_segment("me")
             .unwrap();
-        let received = tokio::runtime::Builder::new_current_thread()
+        let received = Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()

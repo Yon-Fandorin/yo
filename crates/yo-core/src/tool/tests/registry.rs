@@ -1,3 +1,8 @@
+#[cfg(test)]
+use std::collections::HashSet;
+#[cfg(test)]
+use std::iter;
+
 use serde_json::json;
 
 use super::{
@@ -100,7 +105,7 @@ fn definition_raw_argument_limit_accepts_four_mebibytes_and_rejects_first_excess
     .unwrap()
     .freeze();
     let mut raw = r#"{"path":"a"}"#.to_owned();
-    raw.extend(std::iter::repeat_n(' ', LIMIT - raw.len()));
+    raw.extend(iter::repeat_n(' ', LIMIT - raw.len()));
     let call = registry
         .validate_call("call", "command_tool", &raw, 101 * 1024 * 1024)
         .unwrap();
@@ -431,6 +436,6 @@ fn current_tool_validation_failure_codes_are_stable_and_distinct() {
     let unique_codes = expected
         .iter()
         .map(|(failure, _)| failure.code())
-        .collect::<std::collections::HashSet<_>>();
+        .collect::<HashSet<_>>();
     assert_eq!(unique_codes.len(), expected.len());
 }

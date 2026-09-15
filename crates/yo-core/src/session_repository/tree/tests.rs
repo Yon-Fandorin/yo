@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::env;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -18,7 +20,7 @@ struct Directory(PathBuf);
 
 impl Directory {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "yo-session-tree-{}",
             WorkspaceHostId::new().unwrap()
         ));

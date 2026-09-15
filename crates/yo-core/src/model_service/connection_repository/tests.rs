@@ -1,3 +1,7 @@
+#[cfg(test)]
+use std::env;
+#[cfg(test)]
+use std::process;
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -16,10 +20,7 @@ impl TestDirectory {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "yo-connections-{}-{name}-{nonce}",
-            std::process::id()
-        ));
+        let path = env::temp_dir().join(format!("yo-connections-{}-{name}-{nonce}", process::id()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }

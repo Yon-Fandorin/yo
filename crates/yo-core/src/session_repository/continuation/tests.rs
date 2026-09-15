@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::num::NonZeroU64;
 use std::{
     sync::{
         Arc, Mutex,
@@ -192,12 +194,9 @@ fn durable_resumable_session_with_binding(
     input: UserInput,
 ) -> (MemoryRepository, StoredSessionContinuation) {
     let session_id = crate::fixture_session(1);
-    let turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
-    );
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
     let submission = stored_submission();
-    let activity = ActivityRef::new(turn, ActivityId::new(std::num::NonZeroU64::new(1).unwrap()));
+    let activity = ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(1).unwrap()));
     let request = BackendRequestEvidence::new(
         "codex.app-server/turn-start/v1",
         BackendIdentity::new("codex.app-server/json-rpc-request/v1", "3"),
@@ -398,10 +397,7 @@ fn rejects_an_unanchored_suffix_instead_of_falling_back_to_an_older_anchor() {
     let before = repository.entries.lock().unwrap().len();
     let target = continuation.target().clone();
     let session_id = continuation.descriptor().session_id();
-    let next_turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
-    );
+    let next_turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
     let request = BackendRequestEvidence::new(
         "codex.app-server/turn-start/v1",
         BackendIdentity::new("codex.app-server/json-rpc-request/v1", "4"),
@@ -583,10 +579,7 @@ fn failed_idle_replacement_keeps_the_previous_backend_usable() {
     let (repository, continuation) = durable_resumable_session();
     let target = continuation.target().clone();
     let session_id = continuation.descriptor().session_id();
-    let turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
-    );
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
     let current = ScriptedBackend::new([
         BackendScriptStep::Resume {
             target: Box::new(target.clone()),
@@ -678,10 +671,7 @@ fn replacement_resume_publishes_a_new_binding_epoch_from_the_exact_anchor() {
     let before = repository.entries.lock().unwrap().len();
     let previous_replay = target.model_replay().clone();
     let session_id = continuation.descriptor().session_id();
-    let turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
-    );
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
     let replacement = replacement_binding();
     let backend = ScriptedBackend::new([
         BackendScriptStep::ReplaceBinding {
@@ -770,10 +760,7 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
     let (mut repository, continuation) = durable_resumable_session();
     let target = continuation.target().clone();
     let session_id = continuation.descriptor().session_id();
-    let second_turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
-    );
+    let second_turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
     let second_submission = SubmissionId::new().unwrap();
     let request = BackendRequestEvidence::new(
         "codex.app-server/turn-start/v1",

@@ -1,3 +1,7 @@
+#[cfg(test)]
+use std::os::unix::fs as UnixFs;
+#[cfg(test)]
+use std::path::Path;
 use std::{
     fs,
     sync::{
@@ -14,6 +18,8 @@ use super::{
     super::{LocalWorkspaceReferenceProvider, worker},
     support::{TempFixture, host_id},
 };
+#[cfg(test)]
+use crate::readiness::Readiness;
 use crate::{
     WorkspaceReferenceKind, WorkspaceReferenceProvider, WorkspaceReferenceProviderPoll,
     WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchStatus,
@@ -147,7 +153,7 @@ fn worker_coalesces_queued_requests_to_the_newest_request() {
     let fixture = TempFixture::new("worker-coalescing");
     let (request_sender, request_receiver) = mpsc::channel();
     let (update_sender, update_receiver) = mpsc::channel();
-    let readiness = Arc::new(crate::readiness::Readiness::new());
+    let readiness = Arc::new(Readiness::new());
     request_sender.send(request(1, "old")).unwrap();
     request_sender.send(request(2, "new")).unwrap();
 
@@ -177,7 +183,7 @@ fn worker_exits_when_request_sender_or_update_receiver_closes() {
     let request_sender_case = TempFixture::new("worker-request-close");
     let (request_sender, request_receiver) = mpsc::channel();
     let (update_sender, _update_receiver) = mpsc::channel();
-    let readiness = Arc::new(crate::readiness::Readiness::new());
+    let readiness = Arc::new(Readiness::new());
     let (finished_sender, finished_receiver) = mpsc::channel();
     let worker_thread = thread::spawn({
         let root = request_sender_case.path().to_path_buf();
@@ -197,7 +203,7 @@ fn worker_exits_when_request_sender_or_update_receiver_closes() {
     let (request_sender, request_receiver) = mpsc::channel();
     let (update_sender, update_receiver) = mpsc::channel();
     drop(update_receiver);
-    let readiness = Arc::new(crate::readiness::Readiness::new());
+    let readiness = Arc::new(Readiness::new());
     let (finished_sender, finished_receiver) = mpsc::channel();
     let worker_thread = thread::spawn({
         let root = update_receiver_case.path().to_path_buf();
@@ -321,7 +327,7 @@ fn output_links_reject_queued_directory_replacement() {
     }
 }
 
-fn selected_input(root: &std::path::Path, path: &str) -> crate::UserInput {
+fn selected_input(root: &Path, path: &str) -> crate::UserInput {
     use crate::{InputReference, UserInput, workspace_reference_projection};
     let mut provider = LocalWorkspaceReferenceProvider::start(root, host_id()).unwrap();
     let (update, _) = wait_for_provider_update(&mut provider, request(1, path));
@@ -365,7 +371,7 @@ fn local_admission_revalidates_selected_paths_without_reading_contents() {
         SubmissionRejectionKind::StaleReference
     );
     fs::remove_dir(&file).unwrap();
-    std::os::unix::fs::symlink("/etc/passwd", &file).unwrap();
+    UnixFs::symlink("/etc/passwd", &file).unwrap();
     assert_eq!(
         host.validate(&input).unwrap_err().kind(),
         SubmissionRejectionKind::StaleReference
@@ -395,7 +401,7 @@ fn local_admission_rejects_root_and_ancestor_replacement() {
     fs::rename(&old, &root).unwrap();
     host.validate(&input).unwrap();
     fs::rename(root.join("src"), root.join("original-src")).unwrap();
-    std::os::unix::fs::symlink("original-src", root.join("src")).unwrap();
+    UnixFs::symlink("original-src", root.join("src")).unwrap();
     assert_eq!(
         host.validate(&input).unwrap_err().kind(),
         SubmissionRejectionKind::StaleReference

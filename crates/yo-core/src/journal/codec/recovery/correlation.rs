@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
+    mem,
 };
 
 use sha2::{Digest, Sha256};
@@ -16,6 +17,7 @@ use crate::{
     AgentCommand, AgentEvent, BackendBindingEvidence, BackendIdentity, ContinuationStrategy,
     JournalSequence, ModelReplay, ModelReplayItem, ReplayProfile, SessionId, TurnId, TurnOutcome,
     backend::{provider_private_schema, validate_provider_private_replay_sequence},
+    journal::CommittedCommand,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1565,11 +1567,7 @@ impl CorrelationRecovery {
         Ok(())
     }
 
-    fn observe_command(
-        &mut self,
-        sequence: JournalSequence,
-        command: &crate::journal::CommittedCommand,
-    ) {
+    fn observe_command(&mut self, sequence: JournalSequence, command: &CommittedCommand) {
         let Some(submission_id) = command.submission_id() else {
             return;
         };
@@ -2067,12 +2065,12 @@ impl CorrelationRecovery {
             fork_group_index: None,
             image_losses,
         };
-        for mut group in std::mem::take(&mut self.replay_groups) {
+        for mut group in mem::take(&mut self.replay_groups) {
             if group.fork_group_index.is_some() {
                 if !local_items.is_empty() {
                     self.replay_groups.push(local_group(
-                        std::mem::take(&mut local_items),
-                        std::mem::take(&mut local_losses),
+                        mem::take(&mut local_items),
+                        mem::take(&mut local_losses),
                     ));
                 }
                 group.epoch = epoch;

@@ -1,5 +1,8 @@
 //! Runtime test support shared by lifecycle, event, and session coverage.
 
+#[cfg(test)]
+use std::num::NonZeroU64;
+
 mod events;
 mod lifecycle;
 mod session;
@@ -109,7 +112,7 @@ fn session(value: u64) -> SessionId {
 fn turn(session_id: SessionId, value: u64) -> TurnRef {
     TurnRef::new(
         session_id,
-        yo_core::TurnId::new(std::num::NonZeroU64::new(value).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(value).unwrap()),
     )
 }
 

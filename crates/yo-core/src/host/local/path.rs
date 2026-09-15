@@ -1,11 +1,13 @@
 use std::{
     fs,
+    io::ErrorKind,
     os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
     path::{Component, Path, PathBuf},
     thread,
     time::Duration,
 };
 
+use rustix::process;
 use trust::{resolve_trusted_existing_path, validate_original_existing_prefix};
 
 use super::{LocalWorkspaceHostIdentityError, io_error, sync_directory};
@@ -38,7 +40,7 @@ pub(super) fn open_existing_state_root(
 ) -> Result<Option<PathBuf>, LocalWorkspaceHostIdentityError> {
     match fs::symlink_metadata(root) {
         Ok(_) => validate_existing_state_root(root).map(Some),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) if source.kind() == ErrorKind::NotFound => Ok(None),
         Err(source) => Err(io_error("inspect", root, source)),
     }
 }
@@ -101,7 +103,7 @@ fn create_directory_path(
         match builder.create(&current) {
             Ok(()) => fs::set_permissions(&current, fs::Permissions::from_mode(DIRECTORY_MODE))
                 .map_err(|source| io_error("set permissions on", &current, source))?,
-            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(source) if source.kind() == ErrorKind::AlreadyExists => {
                 wait_for_created_directory(&current)?;
             },
             Err(source) => return Err(io_error("create", &current, source)),
@@ -173,7 +175,7 @@ fn is_restricted_creation_mode(metadata: &fs::Metadata, mode: u32) -> bool {
 }
 
 fn effective_user() -> u32 {
-    rustix::process::geteuid().as_raw()
+    process::geteuid().as_raw()
 }
 
 fn sync_directory_entry(path: &Path) -> Result<(), LocalWorkspaceHostIdentityError> {

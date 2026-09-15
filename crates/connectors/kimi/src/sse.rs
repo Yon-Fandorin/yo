@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
+#[cfg(test)]
+use std::iter;
 
 use serde_json::{Value, json};
 use yo_connector_transport::{DecodeBatch, SseDecoder, SseFrame, SseFramer};
@@ -80,7 +82,7 @@ impl ChatCompletionsSseDecoder {
         model: String,
         private_replay: bool,
     ) -> Self {
-        let replay_budget = yo_core::ModelReplayDelta::replay_budget(None, std::iter::empty())
+        let replay_budget = yo_core::ModelReplayDelta::replay_budget(None, iter::empty())
             .expect("an empty replay delta prefix fits its canonical bound");
         Self::new_kimi_with_replay_budget(limits, model, private_replay, replay_budget)
     }

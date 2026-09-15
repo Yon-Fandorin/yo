@@ -1,3 +1,6 @@
+#[cfg(test)]
+use std::str;
+
 use super::*;
 
 fn provider() -> ProviderId {
@@ -41,7 +44,7 @@ fn builds_exact_qwencloud_gateway_request() {
         cookie.expose_secret()
     );
     let body = request.body().and_then(reqwest::Body::as_bytes).unwrap();
-    let body = std::str::from_utf8(body).unwrap();
+    let body = str::from_utf8(body).unwrap();
     assert!(body.contains("product=sfm_bailian"));
     assert!(body.contains("action=IntlBroadScopeAspnGateway"));
     assert!(body.contains("region=ap-southeast-1"));

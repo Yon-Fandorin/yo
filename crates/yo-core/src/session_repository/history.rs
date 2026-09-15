@@ -1,5 +1,9 @@
 //! Validated semantic history recovered from one stored Session snapshot.
 
+use std::error::Error;
+
+use crate::{interview, interview::InterviewCatalog, journal::SemanticRecord};
+
 mod normalizer;
 mod request_trace;
 mod session_usage;
@@ -190,8 +194,8 @@ impl StoredSessionHistory {
     }
     /// Revalidates durable question and answer provenance, excluding inherited archives.
     #[must_use]
-    pub fn interviews(&self) -> crate::interview::InterviewCatalog {
-        crate::interview::InterviewCatalog::from_records(&self.records)
+    pub fn interviews(&self) -> InterviewCatalog {
+        InterviewCatalog::from_records(&self.records)
     }
     #[must_use]
     pub const fn descriptor(&self) -> &SessionDescriptor {
@@ -420,8 +424,8 @@ impl fmt::Display for StoredSessionReadError {
     }
 }
 
-impl std::error::Error for StoredSessionReadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for StoredSessionReadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Repository(error) => Some(error),
             Self::NotFound { .. } | Self::Incomplete { .. } | Self::Invalid { .. } => None,
@@ -465,7 +469,7 @@ pub fn read_stored_session(
     let accepted_initial = semantic
         .iter()
         .find_map(|entry| match entry.record() {
-            crate::journal::SemanticRecord::CommandCommitted(command)
+            SemanticRecord::CommandCommitted(command)
                 if matches!(command.command(), crate::AgentCommand::StartTurn { .. }) =>
             {
                 command.submission_id()
@@ -473,7 +477,7 @@ pub fn read_stored_session(
             _ => None,
         })
         .and_then(|id| {
-            crate::interview::initial_submission_evidence(
+            interview::initial_submission_evidence(
                 &semantic,
                 id,
                 crate::JournalDurability::Durable {

@@ -1,7 +1,11 @@
 use std::{env, fs};
 
+#[cfg(test)]
+use reqwest::retry;
 use reqwest::{Client, redirect};
 use serde_json::json;
+#[cfg(test)]
+use tokio::runtime::Builder;
 use yo_core::{AccountId, ProviderId, VersionedProfileId};
 use yo_test_support::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
 
@@ -268,14 +272,14 @@ fn fetches_one_authenticated_kimi_inventory_over_local_tls() {
     let client = Client::builder()
         .add_root_certificate(roots[0].clone())
         .redirect(redirect::Policy::none())
-        .retry(reqwest::retry::never())
+        .retry(retry::never())
         .build()
         .unwrap();
     let url = yo_core::NormalizedEndpoint::parse(server.endpoint())
         .unwrap()
         .append_path_segment("models")
         .unwrap();
-    let received = tokio::runtime::Builder::new_current_thread()
+    let received = Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()

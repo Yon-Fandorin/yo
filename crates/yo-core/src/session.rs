@@ -1,4 +1,4 @@
-use std::{fmt, num::NonZeroU64, str::FromStr, time::SystemTimeError};
+use std::{error::Error, fmt, num::NonZeroU64, str::FromStr, time::SystemTimeError};
 
 use uuid::{Builder, Uuid, Variant, Version};
 
@@ -93,7 +93,7 @@ impl fmt::Display for SessionIdError {
     }
 }
 
-impl std::error::Error for SessionIdError {}
+impl Error for SessionIdError {}
 
 #[derive(Clone, Debug)]
 pub enum SessionIdGenerationError {
@@ -116,8 +116,8 @@ impl fmt::Display for SessionIdGenerationError {
     }
 }
 
-impl std::error::Error for SessionIdGenerationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for SessionIdGenerationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Clock(error) => Some(error),
             Self::Entropy(error) => Some(error),
