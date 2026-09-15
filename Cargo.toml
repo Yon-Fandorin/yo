@@ -41,8 +41,7 @@ unreachable_patterns = "deny"
 unexpected_cfgs = "deny"
 
 [workspace.lints.clippy]
-# 기존 절대 경로 정리 중 경고 유지
-absolute_paths = "warn"
+absolute_paths = "deny"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
