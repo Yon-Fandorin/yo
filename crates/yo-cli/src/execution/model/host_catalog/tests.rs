@@ -1,3 +1,5 @@
+use std::{slice, sync};
+
 use yo_core::{
     AccountId, ApiDialect, EffectiveModelBinding, HostCatalogModel, HostModelCatalog, ModelCatalog,
     ModelCatalogEntry, ModelContextProfile, ModelId, ModelSelection, ModelSelectionController,
@@ -12,7 +14,7 @@ use super::*;
 fn inventory_routes_chat_warnings_only_to_the_active_codex_host() {
     let codex = HostId::codex();
     let grok = HostId::grok();
-    let observer: CodexWarningObserver = std::sync::Arc::new(|_| {});
+    let observer: CodexWarningObserver = sync::Arc::new(|_| {});
     for active in [
         None,
         Some((&grok, DelegatedExecutionProfile::Standard)),
@@ -29,7 +31,7 @@ fn inventory_routes_chat_warnings_only_to_the_active_codex_host() {
                 assert_eq!(workspace, Path::new("/workspace"));
                 assert_eq!(received.is_some(), expected_observer);
                 if let Some(received) = received {
-                    assert!(std::sync::Arc::ptr_eq(&received, &observer));
+                    assert!(sync::Arc::ptr_eq(&received, &observer));
                     assert_eq!(execution, active.unwrap().1);
                 } else {
                     assert_eq!(execution, DelegatedExecutionProfile::Standard);
@@ -330,7 +332,7 @@ fn host_catalog(host: HostId) -> HostModelCatalog {
         _ => unreachable!("the test constructs only built-in hosts"),
     };
     let revision =
-        derive_host_catalog_revision(&host, &account, Some(&model), std::slice::from_ref(&model));
+        derive_host_catalog_revision(&host, &account, Some(&model), slice::from_ref(&model));
     HostModelCatalog::new(
         host.clone(),
         match host.as_str() {

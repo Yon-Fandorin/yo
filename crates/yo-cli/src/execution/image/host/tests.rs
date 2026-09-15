@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs, process,
     sync::atomic::AtomicUsize,
     time::{Duration, Instant},
 };
@@ -20,9 +20,9 @@ struct Directory(PathBuf);
 impl Directory {
     fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "yo-image-host-{}-{}",
-            std::process::id(),
+            process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&path).unwrap();

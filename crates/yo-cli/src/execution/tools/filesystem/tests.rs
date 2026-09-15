@@ -5,6 +5,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+use nix::{sys::stat, unistd};
 use yo_core::ToolExecutionHost;
 
 use super::{
@@ -134,7 +135,7 @@ fn lists_only_immediate_children_without_opening_them() {
     fs::write(&visible, "visible").unwrap();
     fs::create_dir(listed.join(".git")).unwrap();
     symlink("visible.txt", listed.join("link")).unwrap();
-    nix::unistd::mkfifo(&listed.join("pipe"), nix::sys::stat::Mode::S_IRUSR).unwrap();
+    unistd::mkfifo(&listed.join("pipe"), stat::Mode::S_IRUSR).unwrap();
     fs::set_permissions(&nested, fs::Permissions::from_mode(0o000)).unwrap();
     fs::set_permissions(&visible, fs::Permissions::from_mode(0o000)).unwrap();
 

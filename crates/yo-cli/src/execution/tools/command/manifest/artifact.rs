@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, VecDeque},
     ffi::OsString,
     fs::{File, Metadata, OpenOptions},
+    io,
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
@@ -136,7 +137,7 @@ impl<'a> VerificationPass<'a> {
             .open(path)
         {
             Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(invalid("command tool credential identity is unavailable")),
         };
         let metadata = file

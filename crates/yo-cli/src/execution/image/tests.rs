@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs,
     path::PathBuf,
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -13,9 +14,9 @@ struct TestDirectory(PathBuf);
 impl TestDirectory {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "yo-image-prepare-{}-{}",
-            std::process::id(),
+            process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&path).unwrap();

@@ -5,6 +5,7 @@
 //! its relay after dispositions are restored but before the original thread mask is restored.
 
 use std::{
+    io,
     io::Read,
     os::{
         fd::{AsRawFd, RawFd},
@@ -74,7 +75,7 @@ pub(super) struct TerminationNotifier {
 }
 
 impl TerminationNotifier {
-    pub(super) fn install(readiness: Arc<TerminationReadiness>) -> Result<Self, std::io::Error> {
+    pub(super) fn install(readiness: Arc<TerminationReadiness>) -> Result<Self, io::Error> {
         let (reader, writer) = UnixStream::pair()?;
         writer.set_nonblocking(true)?;
         let worker = thread::Builder::new()
@@ -87,8 +88,8 @@ impl TerminationNotifier {
         {
             drop(writer);
             let _ = worker.join();
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
                 "the process signal readiness bridge is already installed",
             ));
         }
@@ -120,7 +121,7 @@ fn relay(mut reader: UnixStream, readiness: &TerminationReadiness) {
         match reader.read(&mut buffer) {
             Ok(0) => return,
             Ok(_) => readiness.notify(),
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
             Err(_) => return,
         }
     }

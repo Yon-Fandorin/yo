@@ -1,3 +1,7 @@
+use std::cmp;
+
+use memchr::memmem;
+
 #[derive(Clone, Debug)]
 pub(super) struct ExactEdit {
     old_text: String,
@@ -44,11 +48,10 @@ pub(super) fn plan_replacements(
 }
 
 fn overlapping_matches(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
-    let Some(first) = memchr::memmem::find(haystack, needle) else {
+    let Some(first) = memmem::find(haystack, needle) else {
         return Vec::new();
     };
-    let second =
-        memchr::memmem::find(&haystack[first + 1..], needle).map(|second| first + 1 + second);
+    let second = memmem::find(&haystack[first + 1..], needle).map(|second| first + 1 + second);
     second.map_or_else(|| vec![first], |second| vec![first, second])
 }
 
@@ -59,7 +62,7 @@ pub(super) fn apply_replacements(
 ) -> Vec<u8> {
     let mut result = original.to_vec();
     let mut ordered = starts.iter().copied().zip(edits).collect::<Vec<_>>();
-    ordered.sort_unstable_by_key(|(start, _)| std::cmp::Reverse(*start));
+    ordered.sort_unstable_by_key(|(start, _)| cmp::Reverse(*start));
     for (start, edit) in ordered {
         result.splice(
             start..start + edit.old_text.len(),

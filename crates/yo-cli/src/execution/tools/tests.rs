@@ -1,7 +1,7 @@
 use std::{
-    fs,
+    env, fs, num,
     path::PathBuf,
-    thread,
+    process, thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -25,8 +25,7 @@ impl TestDirectory {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("yo-local-tools-{}-{nonce}", std::process::id()));
+        let path = env::temp_dir().join(format!("yo-local-tools-{}-{nonce}", process::id()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
@@ -47,7 +46,7 @@ pub(super) fn request(
         maximum_retained_output_bytes: None,
         turn: TurnRef::new(
             SessionId::new().unwrap(),
-            TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
+            TurnId::new(num::NonZeroU64::new(1).unwrap()),
         ),
         call: registry
             .freeze()

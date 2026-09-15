@@ -7,7 +7,10 @@ use std::{
 
 use nix::{
     fcntl::{OFlag, openat},
-    sys::stat::{Mode, SFlag, fstat},
+    sys::{
+        stat,
+        stat::{Mode, SFlag, fstat},
+    },
 };
 use yo_core::ToolExecutionError;
 
@@ -91,8 +94,8 @@ fn capture_new_file_mode() -> u32 {
     let _guard = UMASK_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let current = nix::sys::stat::umask(Mode::empty());
-    nix::sys::stat::umask(current);
+    let current = stat::umask(Mode::empty());
+    stat::umask(current);
     permission_mode_u32(0o666 & !current.bits())
 }
 

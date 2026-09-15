@@ -7,7 +7,7 @@ use yo_core::{
     ModelSelection, ProviderId, SessionDescriptor, session_repository::StoredSessionContinuation,
 };
 
-use crate::{AppError, state::config::Config};
+use crate::{AppError, execution::tools, state::config::Config};
 
 mod admission;
 mod host_catalog;
@@ -37,7 +37,7 @@ pub(crate) enum StartupBackend {
         account: AccountId,
         model: ModelId,
         replace_binding: bool,
-        registry_revision: crate::execution::tools::LocalToolRegistryRevision,
+        registry_revision: tools::LocalToolRegistryRevision,
         execution_manifest_digest: Option<String>,
     },
 }
@@ -96,9 +96,7 @@ impl StartupBackend {
         }
     }
 
-    pub(crate) const fn registry_revision(
-        &self,
-    ) -> Option<crate::execution::tools::LocalToolRegistryRevision> {
+    pub(crate) const fn registry_revision(&self) -> Option<tools::LocalToolRegistryRevision> {
         match self {
             Self::Host(_) | Self::ReadOnlyHost(_) => None,
             Self::Native {
@@ -118,7 +116,7 @@ impl StartupBackend {
 
 pub(crate) fn replacement(
     selection: &ModelSelection,
-    registry_revision: crate::execution::tools::LocalToolRegistryRevision,
+    registry_revision: tools::LocalToolRegistryRevision,
     execution_manifest_digest: Option<&str>,
 ) -> StartupBackend {
     startup::replacement(selection, registry_revision, execution_manifest_digest)
@@ -193,11 +191,12 @@ pub(crate) fn credentials_for_startup<'a>(
 #[cfg(test)]
 mod tests {
     use std::{
-        fs,
+        env, fs, process,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
+    use crate::{execution::tools, state::config};
 
     // backend facade는 host와 native selection의 label·좌표·replacement flag를 각각
     // 보존하고, replacement helper도 같은 좌표를 durable binding 교체로 표시한다.
@@ -219,7 +218,7 @@ mod tests {
             account: selection.account().clone(),
             model: selection.model().clone(),
             replace_binding: false,
-            registry_revision: crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            registry_revision: tools::LocalToolRegistryRevision::BasicFiles,
             execution_manifest_digest: None,
         };
         assert_eq!(native.label(None), "qwencloud · qwen3.8max");
@@ -228,7 +227,7 @@ mod tests {
 
         let replacement = replacement(
             &selection,
-            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            tools::LocalToolRegistryRevision::BasicFiles,
             None,
         );
         assert_eq!(replacement.label(None), "qwencloud · qwen3.8max");
@@ -247,7 +246,7 @@ mod tests {
         let digest = format!("sha256:{}", "a".repeat(64));
         let replacement = replacement(
             &selection,
-            crate::execution::tools::LocalToolRegistryRevision::CommandTools,
+            tools::LocalToolRegistryRevision::CommandTools,
             Some(&digest),
         );
         assert!(replacement.replaces_binding());
@@ -288,15 +287,13 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "yo-credential-selection-{}-{nonce}",
-            std::process::id()
-        ));
+        let path =
+            env::temp_dir().join(format!("yo-credential-selection-{}-{nonce}", process::id()));
         fs::create_dir_all(&path).unwrap();
         let config_path = path.join("config.yaml");
         fs::write(&config_path, "session: {}\n").unwrap();
         fs::write(path.join("credentials.yaml"), "invalid: [").unwrap();
-        let config = crate::state::config::load_from(&config_path).unwrap();
+        let config = config::load_from(&config_path).unwrap();
         let mut retained = None;
 
         assert!(
@@ -315,7 +312,7 @@ mod tests {
             account: AccountId::new("account").unwrap(),
             model: ModelId::new("model").unwrap(),
             replace_binding: false,
-            registry_revision: crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
+            registry_revision: tools::LocalToolRegistryRevision::BasicFiles,
             execution_manifest_digest: None,
         };
         let error = credentials_for_startup(&config, &mut retained, &native).unwrap_err();

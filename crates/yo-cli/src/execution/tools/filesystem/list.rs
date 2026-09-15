@@ -8,6 +8,7 @@ use std::{
 use nix::{
     dir::Dir,
     errno::Errno,
+    fcntl,
     sys::stat::{SFlag, fstatat},
 };
 
@@ -94,7 +95,7 @@ enum ListedEntryKind {
 }
 
 fn classify_list_entry(directory: &Dir, name: &OsStr) -> Result<ListedEntryKind, Errno> {
-    let metadata = fstatat(directory, name, nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW)?;
+    let metadata = fstatat(directory, name, fcntl::AtFlags::AT_SYMLINK_NOFOLLOW)?;
     let file_type = SFlag::from_bits_truncate(metadata.st_mode) & SFlag::S_IFMT;
     Ok(if file_type == SFlag::S_IFDIR {
         ListedEntryKind::Directory

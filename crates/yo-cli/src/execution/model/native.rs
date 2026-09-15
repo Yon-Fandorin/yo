@@ -275,7 +275,10 @@ pub(super) fn open_credentials(path: &Path) -> Result<CredentialSnapshot, AppErr
 
 #[cfg(test)]
 mod tests {
+    use std::{env, fs, process, time};
+
     use super::*;
+    use crate::state::config;
 
     fn fixture_complete() -> yo_core::CompleteModelBinding {
         yo_core::CompleteModelBinding::from_durable_json(
@@ -423,9 +426,9 @@ mod tests {
     // backend 종류가 잘못된 호출이라는 고정 진단으로 즉시 거절한다.
     #[test]
     fn native_startup_rejects_host_backend_before_catalog_resolution() {
-        let credentials = LocalCredentialRepository::new(std::env::temp_dir().join(format!(
+        let credentials = LocalCredentialRepository::new(env::temp_dir().join(format!(
             "yo-native-wrong-backend-{}-missing.yaml",
-            std::process::id()
+            process::id()
         )))
         .capture()
         .unwrap();
@@ -450,19 +453,19 @@ mod tests {
     // startup 오류를 유지하면서 exact stored model에 local_configuration warning을 남깁니다.
     #[test]
     fn missing_startup_credential_records_local_configuration_failure() {
-        let temp_dir = std::fs::canonicalize(std::env::temp_dir())
+        let temp_dir = fs::canonicalize(env::temp_dir())
             .expect("the native startup fixture temp directory must resolve physically");
         let root = temp_dir.join(format!(
             "yo-native-missing-credential-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            process::id(),
+            time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&root).unwrap();
         let config_path = root.join("config.yaml");
-        let mut config = crate::state::config::load_from(&config_path).unwrap();
+        let mut config = config::load_from(&config_path).unwrap();
         let complete = fixture_complete();
         let account = yo_core::ConnectionAccount::new(
             complete.binding().provider_id().clone(),
@@ -503,6 +506,6 @@ mod tests {
             captured.models()[0].last_failure().unwrap().kind(),
             ModelRequestFailureKind::LocalConfiguration
         );
-        let _ = std::fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(root);
     }
 }

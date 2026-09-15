@@ -1,6 +1,8 @@
 use std::{
+    env, io,
     io::Write,
     os::unix::process::ExitStatusExt,
+    process,
     process::{Command, Stdio},
     sync::{Arc, mpsc},
     task::{Context, Poll, Wake, Waker},
@@ -11,7 +13,10 @@ use std::{
 use nix::sys::signal::{
     SaFlags, SigAction, SigHandler, SigSet, SigmaskHow, Signal, pthread_sigmask,
 };
-use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+use signal_hook::{
+    consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM},
+    low_level,
+};
 
 use super::super::{
     PROCESS_STATE, SignalOs, TerminationCoordinator, UnixSignalOs, disposition,
@@ -58,8 +63,8 @@ impl SignalOs for FailingInstallOs {
 
 const CHILD_ENV: &str = "YO_TERMINATION_SUBPROCESS";
 
-fn run_child(test_name: &str) -> std::process::Output {
-    let executable = std::env::current_exe().unwrap();
+fn run_child(test_name: &str) -> process::Output {
+    let executable = env::current_exe().unwrap();
     let mut child = Command::new("/bin/sh")
         .args(["-c", "ulimit -c 0; exec \"$@\"", "yo-test"])
         .arg(executable)
@@ -88,7 +93,7 @@ fn run_child(test_name: &str) -> std::process::Output {
 }
 
 fn assert_child() {
-    assert_eq!(std::env::var(CHILD_ENV).as_deref(), Ok("1"));
+    assert_eq!(env::var(CHILD_ENV).as_deref(), Ok("1"));
 }
 
 // 실제 SIGINT에서도 active session cleanup 출력이 프로세스 signal 종료보다 먼저 끝난다.
@@ -113,13 +118,13 @@ fn subprocess_child_signal_waits_for_active_cleanup() {
     let (active_tx, active_rx) = mpsc::sync_channel(0);
     let _sender = thread::spawn(move || {
         active_rx.recv().unwrap();
-        signal_hook::low_level::raise(SIGINT).unwrap();
+        low_level::raise(SIGINT).unwrap();
     });
 
     let _: Result<(), String> = coordinator
         .with_active_session(|events| {
             println!("SESSION_READY");
-            std::io::stdout().flush().unwrap();
+            io::stdout().flush().unwrap();
             active_tx.send(()).unwrap();
             let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
             let mut context = Context::from_waker(&waker);
@@ -128,7 +133,7 @@ fn subprocess_child_signal_waits_for_active_cleanup() {
                 thread::park();
             }
             println!("CLEANUP_DONE");
-            std::io::stdout().flush().unwrap();
+            io::stdout().flush().unwrap();
             Ok(())
         })
         .unwrap();
@@ -166,7 +171,7 @@ fn subprocess_child_idle_overrides_an_ignored_action() {
     disposition::replace_for_test(Signal::SIGTERM, &ignored).unwrap();
     let _coordinator = TerminationCoordinator::install().unwrap();
 
-    signal_hook::low_level::raise(SIGTERM).unwrap();
+    low_level::raise(SIGTERM).unwrap();
     panic!("idle default replay must terminate the child");
 }
 
@@ -196,7 +201,7 @@ fn subprocess_child_idle_overrides_a_custom_action() {
     disposition::replace_for_test(Signal::SIGHUP, &custom).unwrap();
     let _coordinator = TerminationCoordinator::install().unwrap();
 
-    signal_hook::low_level::raise(SIGHUP).unwrap();
+    low_level::raise(SIGHUP).unwrap();
     panic!("idle default replay must replace the custom handler");
 }
 
@@ -315,7 +320,7 @@ struct CleanupMarker;
 impl Drop for CleanupMarker {
     fn drop(&mut self) {
         println!("PANIC_CLEANUP_DONE");
-        std::io::stdout().flush().unwrap();
+        io::stdout().flush().unwrap();
     }
 }
 
@@ -395,7 +400,7 @@ fn subprocess_child_selected_termination_cleans_shared_resource_before_replay() 
             |resource| {
                 assert_eq!(resource.take(), Some("live"));
                 println!("RESOURCE_CLEANUP_DONE");
-                std::io::stdout().flush().unwrap();
+                io::stdout().flush().unwrap();
                 Ok::<_, &'static str>(())
             },
         )

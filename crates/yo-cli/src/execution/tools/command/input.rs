@@ -1,6 +1,6 @@
 //! Nonblocking one-shot JSON stdin, serviced alongside output and process lifecycle.
 
-use std::{io::Write, process::ChildStdin};
+use std::{io, io::Write, process::ChildStdin};
 
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 
@@ -56,7 +56,7 @@ impl CommandInput {
             Err(error)
                 if matches!(
                     error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                 ) =>
             {
                 Ok(())

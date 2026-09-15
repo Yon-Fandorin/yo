@@ -1,5 +1,5 @@
 use std::{
-    io,
+    io, mem,
     process::{Child, ExitStatus},
     sync::mpsc::{self, Receiver, SyncSender, TryRecvError},
     thread::{self, JoinHandle},
@@ -128,7 +128,7 @@ fn wait_for_child_exit_without_reaping(child: Pid) -> Result<(), ()> {
     loop {
         // SAFETY: waitid initializes siginfo_t on success. P_PID names the exact child
         // owned by this process, and WNOWAIT observes without consuming its wait status.
-        let mut information = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+        let mut information = unsafe { mem::zeroed::<libc::siginfo_t>() };
         let result = unsafe {
             libc::waitid(
                 libc::P_PID,

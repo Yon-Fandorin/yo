@@ -1,22 +1,25 @@
 use std::{
-    fs,
+    env, fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::PathBuf,
+    thread,
     time::{Duration, Instant},
 };
 
+use nix::{sys::stat, unistd};
 use serde_json::json;
 use yo_core::{
     ToolExecution, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionResult, ToolId,
 };
 
 use super::{super::CommandExecution, PreparedCommandTools, encoding};
+use crate::state::config;
 
 struct Fixture(PathBuf);
 
 impl Fixture {
     fn new() -> Self {
-        let path = std::env::temp_dir().canonicalize().unwrap().join(format!(
+        let path = env::temp_dir().canonicalize().unwrap().join(format!(
             "yo-command-manifest-{}",
             yo_core::SessionId::new().unwrap()
         ));
@@ -27,22 +30,17 @@ impl Fixture {
         Self(path)
     }
 
-    fn config(
-        &self,
-        executable: &str,
-        script: Option<&str>,
-        argv: &[&str],
-    ) -> crate::state::config::Config {
+    fn config(&self, executable: &str, script: Option<&str>, argv: &[&str]) -> config::Config {
         let mut command = json!({"id":"configured","name":"configured","description":"Run the configured fixture.","executable": executable,"parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false},"argv":argv});
         if let Some(script) = script {
             command["script"] = json!(script);
         }
         let path = self.0.join("config.json");
         fs::write(&path, json!({"tools":{"commands":[command]}}).to_string()).unwrap();
-        crate::state::config::load_from(&path).unwrap()
+        config::load_from(&path).unwrap()
     }
 
-    fn prepare(&self, config: &crate::state::config::Config) -> PreparedCommandTools {
+    fn prepare(&self, config: &config::Config) -> PreparedCommandTools {
         PreparedCommandTools::prepare(
             config.command_tools(),
             &self.0,
@@ -74,7 +72,7 @@ fn wait(execution: &mut CommandExecution) -> ToolExecutionResult {
                     Instant::now() < deadline,
                     "configured command did not finish"
                 );
-                std::thread::sleep(Duration::from_millis(5));
+                thread::sleep(Duration::from_millis(5));
             },
         }
     }
@@ -221,13 +219,13 @@ fn configured_tool_order_changes_the_frozen_manifest_digest() {
         .unwrap()
         .push(second);
     fs::write(&path, value.to_string()).unwrap();
-    let first = fixture.prepare(&crate::state::config::load_from(&path).unwrap());
+    let first = fixture.prepare(&config::load_from(&path).unwrap());
     value["tools"]["commands"]
         .as_array_mut()
         .unwrap()
         .swap(0, 1);
     fs::write(&path, value.to_string()).unwrap();
-    let second = fixture.prepare(&crate::state::config::load_from(&path).unwrap());
+    let second = fixture.prepare(&config::load_from(&path).unwrap());
     assert_ne!(first.digest(), second.digest());
 }
 
@@ -292,9 +290,9 @@ fn artifact_admission_rejects_credential_aliases_scripts_links_and_nonregular_fi
     fs::write(fixture.0.join("credentials.yaml"), b"credential fixture").unwrap();
     fs::hard_link(fixture.0.join("credentials.yaml"), fixture.0.join("alias")).unwrap();
     symlink("script.sh", fixture.0.join("linked-script")).unwrap();
-    nix::unistd::mkfifo(
+    unistd::mkfifo(
         &fixture.0.join("fifo"),
-        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        stat::Mode::S_IRUSR | stat::Mode::S_IWUSR,
     )
     .unwrap();
     for script in ["alias", "linked-script", "fifo"] {
@@ -458,7 +456,7 @@ fn final_artifact_verification_prevents_spawn_and_blocked_stdin_is_cancellable()
     fs::write(fixture.0.join("script.sh"), b"sleep 30\n").unwrap();
     let prepared = fixture.prepare(&config);
     let mut execution = start(&fixture, &prepared, &"x".repeat(1024 * 1024));
-    std::thread::sleep(Duration::from_millis(100));
+    thread::sleep(Duration::from_millis(100));
     execution.cancel();
     let result = wait(&mut execution);
     assert_eq!(result.outcome(), ToolExecutionOutcome::Interrupted);

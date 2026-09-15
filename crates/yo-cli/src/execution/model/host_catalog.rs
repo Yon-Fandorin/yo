@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    thread,
+};
 
 use yo_backend_delegated_codex::CodexWarningObserver;
 use yo_core::{AccountId, HostId, HostModelCatalog, ModelId, ModelSelectionController};
@@ -122,7 +125,7 @@ fn read_builtin_host_catalogs(
     let codex_workspace = workspace.to_path_buf();
     let grok_workspace = workspace.to_path_buf();
 
-    std::thread::scope(|scope| {
+    thread::scope(|scope| {
         let codex_reader = scope.spawn(move || {
             read_codex(
                 codex_workspace,

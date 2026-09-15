@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, ffi, fs, io, path,
     path::PathBuf,
+    process, sync,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -30,15 +31,12 @@ use super::{
 // 비로그인 `/bin/sh -c` argv만 구성하는지 고정합니다.
 #[test]
 fn command_shell_does_not_load_a_login_profile() {
-    let command = shell_command(std::path::Path::new("/tmp"), "printf exact");
+    let command = shell_command(path::Path::new("/tmp"), "printf exact");
     let arguments: Vec<_> = command.get_args().collect();
 
     assert_eq!(
         arguments,
-        [
-            std::ffi::OsStr::new("-c"),
-            std::ffi::OsStr::new("printf exact")
-        ]
+        [ffi::OsStr::new("-c"), ffi::OsStr::new("printf exact")]
     );
 }
 
@@ -46,7 +44,7 @@ fn command_shell_does_not_load_a_login_profile() {
 // 있으므로, clear된 lease가 이후 signal을 보내지 않는지 검증합니다.
 #[test]
 fn cleared_process_group_lease_cannot_signal_a_reused_identity() {
-    let shared = std::sync::Mutex::new(None);
+    let shared = sync::Mutex::new(None);
     let process_group = Pid::from_raw(42);
     let signals = AtomicUsize::new(0);
     let mut lease = ProcessGroupLease::publish(&shared, process_group).unwrap();
@@ -133,7 +131,7 @@ fn unique_pid_path(label: &str) -> PathBuf {
         .as_nanos();
     PathBuf::from(format!(
         "/tmp/yo-command-{label}-{}-{nonce}.pid",
-        std::process::id()
+        process::id()
     ))
 }
 
@@ -178,17 +176,17 @@ fn assert_process_disappears(pid: i32) {
 // run_command cleanup이 local read end를 닫았을 때만 marker를 게시합니다.
 #[test]
 fn detached_pipe_holder_helper() {
-    let Some(pid_path) = std::env::var_os("YO_COMMAND_DETACHED_PIPE_PID") else {
+    let Some(pid_path) = env::var_os("YO_COMMAND_DETACHED_PIPE_PID") else {
         return;
     };
-    let closed_path = std::env::var_os("YO_COMMAND_DETACHED_PIPE_CLOSED").unwrap();
+    let closed_path = env::var_os("YO_COMMAND_DETACHED_PIPE_CLOSED").unwrap();
     setsid().unwrap();
-    fs::write(&pid_path, std::process::id().to_string()).unwrap();
+    fs::write(&pid_path, process::id().to_string()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
-    let mut stdout = std::io::stdout().lock();
+    let mut stdout = io::stdout().lock();
     while Instant::now() < deadline {
-        if std::io::Write::write_all(&mut stdout, b"x")
-            .and_then(|()| std::io::Write::flush(&mut stdout))
+        if io::Write::write_all(&mut stdout, b"x")
+            .and_then(|()| io::Write::flush(&mut stdout))
             .is_err()
         {
             fs::write(closed_path, "closed").unwrap();
@@ -293,7 +291,7 @@ fn leader_exit_terminates_a_descendant_that_holds_the_output_pipe() {
 fn cleanup_releases_pipe_readers_held_by_an_escaped_writer() {
     let pid_path = unique_pid_path("escaped-writer");
     let closed_path = unique_pid_path("escaped-writer-closed");
-    let executable = std::env::current_exe().unwrap();
+    let executable = env::current_exe().unwrap();
     let executable = shell_quote(executable.to_str().unwrap());
     let pid_argument = shell_quote(pid_path.to_str().unwrap());
     let closed_argument = shell_quote(closed_path.to_str().unwrap());

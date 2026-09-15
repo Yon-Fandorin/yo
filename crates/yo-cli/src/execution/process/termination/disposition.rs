@@ -1,6 +1,7 @@
-use std::process;
+use std::{process, ptr};
 
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+use signal_hook::low_level;
 
 use super::{PROCESS_STATE, readiness::signal_wake_fd, state::Publication};
 
@@ -56,7 +57,7 @@ fn wake_frontend() {
     let byte = 1_u8;
     // SAFETY: fd names the installed nonblocking UnixStream endpoint and the
     // one-byte buffer remains valid for the duration of async-signal-safe write.
-    let _ = unsafe { libc::write(fd, std::ptr::from_ref(&byte).cast(), 1) };
+    let _ = unsafe { libc::write(fd, ptr::from_ref(&byte).cast(), 1) };
 }
 
 #[cfg(test)]
@@ -65,6 +66,6 @@ pub(super) fn wake_frontend_for_test() {
 }
 
 pub(super) fn default_now(signal: i32) -> ! {
-    let _ = signal_hook::low_level::emulate_default_handler(signal);
+    let _ = low_level::emulate_default_handler(signal);
     process::abort()
 }

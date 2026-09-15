@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 use yo_core::HostModelCatalog;
 
@@ -10,7 +10,7 @@ pub(super) fn read_catalog(
 ) -> Result<HostModelCatalog, String> {
     let outer_sandboxed_review = should_use_outer_sandboxed_review(
         execution,
-        std::env::var_os(yo_backend_delegated_grok::OUTER_SANDBOX_REVIEW_ENV).is_some(),
+        env::var_os(yo_backend_delegated_grok::OUTER_SANDBOX_REVIEW_ENV).is_some(),
     );
     let config = yo_backend_delegated_grok::GrokBackendConfig::new(workspace)
         .with_read_only_review(execution.is_read_only_review())

@@ -1,8 +1,10 @@
 use std::{
     ffi::{OsStr, OsString},
     fs::File,
+    io,
     io::{Read, Write},
     os::unix::fs::MetadataExt,
+    panic, str,
     sync::{
         Arc, Mutex, MutexGuard, TryLockError,
         atomic::{AtomicBool, Ordering},
@@ -64,7 +66,7 @@ pub(super) fn catch_failure(
     cleanup: &UnwindCleanup,
     operation: impl FnOnce() -> ToolExecutionResult,
 ) -> ToolExecutionResult {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).unwrap_or_else(|_| {
+    panic::catch_unwind(panic::AssertUnwindSafe(operation)).unwrap_or_else(|_| {
         mutation_error(
             path,
             if cleanup.failed() {
@@ -224,7 +226,7 @@ fn execute_edit_after_capture(
     if original.len() > MAX_FILE_BYTES {
         return mutation_error(request.path.display(), "too_large");
     }
-    if std::str::from_utf8(&original).is_err() {
+    if str::from_utf8(&original).is_err() {
         return mutation_error(request.path.display(), "non_utf8");
     }
     let replacements = match super::mutation_plan::plan_replacements(&original, &request.edits) {
@@ -422,7 +424,7 @@ fn publish_in_parent_after_mode(
                     .expect("scratch descriptor remains present"),
                 Mode::from_bits_truncate(mode as _),
             )
-            .map_err(std::io::Error::other)
+            .map_err(io::Error::other)
         });
     if write_result.is_err() {
         return scratch.finish(path.display(), Terminal::Failed("write_failed"));
@@ -661,7 +663,7 @@ struct Capture {
 }
 
 impl Capture {
-    fn from_file(file: &File) -> std::io::Result<Self> {
+    fn from_file(file: &File) -> io::Result<Self> {
         let metadata = file.metadata()?;
         Ok(Self {
             identity: FileIdentity {

@@ -1,10 +1,13 @@
 use std::{
     collections::VecDeque,
+    io,
     io::Read,
+    mem,
     os::{
         fd::{AsRawFd, RawFd},
         unix::net::UnixStream,
     },
+    str,
     sync::{
         Arc, Mutex,
         mpsc::{SyncSender, TrySendError},
@@ -32,14 +35,14 @@ impl ProgressSnapshot {
     }
 
     pub(super) fn take(&mut self) -> Option<ToolExecutionProgress> {
-        if !std::mem::take(&mut self.dirty) {
+        if !mem::take(&mut self.dirty) {
             return None;
         }
         fn text(bytes: &[u8]) -> String {
             let mut end = bytes.len();
             let mut cursor = 0;
             while cursor < bytes.len() {
-                match std::str::from_utf8(&bytes[cursor..]) {
+                match str::from_utf8(&bytes[cursor..]) {
                     Ok(_) => break,
                     Err(error) => match error.error_len() {
                         Some(invalid) => cursor += error.valid_up_to() + invalid,
@@ -177,8 +180,8 @@ pub(super) fn spawn_pipe_reader(
                             Err(TrySendError::Disconnected(())) => {},
                         }
                     },
-                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {},
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
                     Err(_) => break true,
                 }
             };
@@ -228,7 +231,7 @@ fn wait_for_input_or_shutdown(reader: RawFd, shutdown: RawFd) -> Result<bool, ()
             )
         };
         if result < 0 {
-            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
                 continue;
             }
             return Err(());
@@ -335,6 +338,7 @@ mod tests {
         fs::File,
         io::{self, Read, Write},
         os::fd::{AsRawFd, RawFd},
+        str,
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -482,7 +486,7 @@ mod tests {
             .position(|window| window == b" bytes omitted]\n")
             .map(|index| index + b" bytes omitted]\n".len())
             .expect("omission marker must be complete");
-        let omitted: usize = std::str::from_utf8(
+        let omitted: usize = str::from_utf8(
             &rendered[marker_start + b"\n[yo: ".len()..marker_end - b" bytes omitted]\n".len()],
         )
         .unwrap()

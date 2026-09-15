@@ -1,8 +1,10 @@
 use std::{
     fs::File,
+    io,
     io::Read,
     ops::Range,
     os::unix::fs::MetadataExt,
+    str,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -29,7 +31,7 @@ pub(super) fn read_file(
         return interrupted();
     }
     match result {
-        Ok((mut bytes, truncated)) => match std::str::from_utf8(&bytes) {
+        Ok((mut bytes, truncated)) => match str::from_utf8(&bytes) {
             Ok(_) => completed(
                 String::from_utf8(bytes).expect("validated UTF-8 remains valid"),
                 truncated,
@@ -47,7 +49,7 @@ pub(super) fn read_file(
     }
 }
 
-fn read_bounded(mut reader: impl Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
+fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<(Vec<u8>, bool)> {
     let mut output = Vec::with_capacity(limit.min(64 * 1024));
     let mut chunk = [0_u8; 8 * 1024];
     let target = limit.saturating_add(1);
@@ -217,7 +219,7 @@ fn read_item_after_capture(
     if bytes.len() > MAX_FILE_BYTES {
         return error(request.path.display(), "too_large");
     }
-    let Ok(content) = std::str::from_utf8(&bytes) else {
+    let Ok(content) = str::from_utf8(&bytes) else {
         return error(request.path.display(), "non_utf8");
     };
     render_window(request, content)
@@ -235,7 +237,7 @@ struct Snapshot {
 }
 
 impl Snapshot {
-    fn capture(file: &File) -> std::io::Result<Self> {
+    fn capture(file: &File) -> io::Result<Self> {
         let metadata = file.metadata()?;
         Ok(Self {
             device: metadata.dev(),
@@ -338,6 +340,7 @@ mod tests {
     use std::{
         ffi::OsString,
         fs::{self, OpenOptions},
+        io,
         io::{Read, Write},
         sync::{
             Arc,
@@ -364,7 +367,7 @@ mod tests {
     }
 
     impl Read for CountingReader {
-        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
             self.reads.fetch_add(1, Ordering::Relaxed);
             buffer.fill(b'x');
             Ok(buffer.len())

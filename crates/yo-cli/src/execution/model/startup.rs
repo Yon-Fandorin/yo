@@ -9,8 +9,9 @@ use yo_core::{
 use super::{DelegatedExecutionProfile, StartupBackend};
 use crate::{
     AppError,
-    execution::tools::{
-        LocalToolRegistryRevision, PreparedCommandTools, revision_for_replay_contract,
+    execution::{
+        host,
+        tools::{LocalToolRegistryRevision, PreparedCommandTools, revision_for_replay_contract},
     },
     state::config::Config,
 };
@@ -203,7 +204,7 @@ fn resolve_resume(
 }
 
 fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> {
-    if let Some(host) = crate::execution::host::from_backend_kind(kind) {
+    if let Some(host) = host::from_backend_kind(kind) {
         return Ok(DurableBackendKind::Host(host));
     }
     if kind == "yo-managed-model" {
@@ -218,7 +219,7 @@ fn resolve_host(
     host: HostId,
     execution: DelegatedExecutionProfile,
 ) -> Result<StartupBackend, AppError> {
-    crate::execution::host::require_supported(&host)?;
+    host::require_supported(&host)?;
     Ok(match execution {
         DelegatedExecutionProfile::Standard => StartupBackend::Host(host),
         DelegatedExecutionProfile::ReadOnlyReview => StartupBackend::ReadOnlyHost(host),
@@ -419,11 +420,12 @@ struct DurableBinding {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, time::SystemTime};
+    use std::{env, fs, path::PathBuf, process, time::SystemTime};
 
     use yo_core::{EffectiveModelProfile, ModelProfileParameters, VersionedProfileId};
 
     use super::*;
+    use crate::state::config;
 
     struct TestDirectory(PathBuf);
 
@@ -433,9 +435,9 @@ mod tests {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path = std::env::temp_dir().join(format!(
+            let path = env::temp_dir().join(format!(
                 "yo-cli-model-startup-{}-{name}-{nonce}",
-                std::process::id()
+                process::id()
             ));
             fs::create_dir_all(&path).unwrap();
             Self(path)
@@ -1094,7 +1096,7 @@ mod tests {
             "executable":directory.0.join("missing-executable"),
             "script":"missing-script", "parameters":{"type":"object","properties":{},"additionalProperties":false}
         }]}}).to_string()).unwrap();
-        let mut config = crate::state::config::load_from(&path).unwrap();
+        let mut config = config::load_from(&path).unwrap();
         config.replace_model_catalog(selection_catalog(&[("qwencloud", "default", "model")]));
         assert!(matches!(
             resolve(&config, None, Some("host:codex"), false, false, None).unwrap(),

@@ -1,9 +1,12 @@
 use std::{
     io::{Cursor, Write},
-    os::unix::{fs::PermissionsExt, net::UnixListener},
+    os::unix::{fs as unix_fs, fs::PermissionsExt, net::UnixListener},
     path::PathBuf,
+    process,
     sync::atomic::{AtomicUsize, Ordering},
 };
+
+use nix::sys::wait;
 
 use super::*;
 
@@ -15,7 +18,7 @@ impl Directory {
         // Keep nested fixture socket paths below macOS's sockaddr_un limit.
         let path = fs::canonicalize("/tmp").unwrap().join(format!(
             "yo-clipboard-{}-{}",
-            std::process::id(),
+            process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&path).unwrap();
@@ -140,10 +143,7 @@ fn deadline_kills_and_reaps_child_after_stdout_eof() {
     assert!(started.elapsed() < Duration::from_secs(2));
     let pid: i32 = fs::read_to_string(pid_path).unwrap().parse().unwrap();
     assert_eq!(
-        nix::sys::wait::waitpid(
-            Pid::from_raw(pid),
-            Some(nix::sys::wait::WaitPidFlag::WNOHANG)
-        ),
+        wait::waitpid(Pid::from_raw(pid), Some(wait::WaitPidFlag::WNOHANG)),
         Err(Errno::ECHILD)
     );
 }
@@ -212,7 +212,7 @@ fn unsafe_socket_paths_are_rejected_before_connect() {
     let _listener = UnixListener::bind(&socket).unwrap();
     validate_socket(&socket).unwrap();
     let symlink = directory.0.join("linked.sock");
-    std::os::unix::fs::symlink(&socket, &symlink).unwrap();
+    unix_fs::symlink(&socket, &symlink).unwrap();
     assert!(validate_socket(&symlink).is_err());
     fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(validate_socket(&socket).is_err());
@@ -230,7 +230,7 @@ fn intermediate_symlink_ancestor_is_rejected() {
     let _listener = UnixListener::bind(&socket).unwrap();
     validate_socket(&socket).unwrap();
     let linked = directory.0.join("linked");
-    std::os::unix::fs::symlink(&real, &linked).unwrap();
+    unix_fs::symlink(&real, &linked).unwrap();
     assert!(validate_socket(&linked.join("private/clipboard.sock")).is_err());
 }
 

@@ -1,13 +1,16 @@
 use std::{
+    convert,
     error::Error,
-    fmt,
+    fmt, io,
     marker::PhantomData,
+    panic,
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
     },
+    task,
     thread::{self, ThreadId},
 };
 
@@ -213,7 +216,7 @@ where
         self.with_active_resource(
             &mut (),
             |events, ()| operation(events),
-            |()| Ok::<(), std::convert::Infallible>(()),
+            |()| Ok::<(), convert::Infallible>(()),
         )
     }
 
@@ -252,21 +255,21 @@ where
             let cleanup = catch_unwind(AssertUnwindSafe(|| termination_cleanup(resource)));
             if let Ok(Err(error)) = &result {
                 use std::io::Write;
-                let _ = writeln!(std::io::stderr().lock(), "yo: {error}");
+                let _ = writeln!(io::stderr().lock(), "yo: {error}");
             }
             match cleanup {
                 Ok(Ok(())) => {},
                 Ok(Err(error)) => {
                     use std::io::Write;
                     let _ = writeln!(
-                        std::io::stderr().lock(),
+                        io::stderr().lock(),
                         "yo: process termination resource cleanup: {error}"
                     );
                 },
                 Err(_) => {
                     use std::io::Write;
                     let _ = writeln!(
-                        std::io::stderr().lock(),
+                        io::stderr().lock(),
                         "yo: process termination resource cleanup panicked"
                     );
                 },
@@ -276,7 +279,7 @@ where
 
         match result {
             Ok(value) => Ok(value),
-            Err(payload) => std::panic::resume_unwind(payload),
+            Err(payload) => panic::resume_unwind(payload),
         }
     }
 
@@ -368,16 +371,16 @@ pub(crate) struct TerminationEvents {
 impl yo_tui::TerminationSource for TerminationEvents {
     fn poll_termination(
         &mut self,
-        context: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<yo_tui::TerminationEvent> {
+        context: &mut task::Context<'_>,
+    ) -> task::Poll<yo_tui::TerminationEvent> {
         if self.shared.observe_termination() {
-            return std::task::Poll::Ready(yo_tui::TerminationEvent::Requested);
+            return task::Poll::Ready(yo_tui::TerminationEvent::Requested);
         }
         let _ = self.readiness.poll(context);
         if self.shared.observe_termination() {
-            std::task::Poll::Ready(yo_tui::TerminationEvent::Requested)
+            task::Poll::Ready(yo_tui::TerminationEvent::Requested)
         } else {
-            std::task::Poll::Pending
+            task::Poll::Pending
         }
     }
 }
