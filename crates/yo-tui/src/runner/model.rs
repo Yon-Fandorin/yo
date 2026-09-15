@@ -69,13 +69,13 @@ impl ModelSelectionState {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, time::SystemTime};
+    use std::{fs, path::PathBuf};
 
     use yo_core::{
         AccountId, CompleteModelBinding, ConnectionAccount, HostCatalogModel, HostId,
         HostModelCatalog, LocalConnectionRepository, ModelId, ModelLastFailure,
-        ModelRequestFailureKind, ModelSelectionController, ProviderId, StoredModelBinding,
-        derive_host_catalog_revision,
+        ModelRequestFailureKind, ModelSelectionController, ProviderId, SessionId,
+        StoredModelBinding, derive_host_catalog_revision,
     };
 
     use super::ModelSelectionState;
@@ -89,15 +89,11 @@ mod tests {
 
     impl TestDirectory {
         fn new() -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
             let path = std::env::temp_dir().join(format!(
-                "yo-tui-model-observation-{}-{nonce}",
-                std::process::id()
+                "yo-tui-model-observation-{}",
+                SessionId::new().unwrap()
             ));
-            fs::create_dir_all(&path).unwrap();
+            fs::create_dir(&path).unwrap();
             Self(path)
         }
     }

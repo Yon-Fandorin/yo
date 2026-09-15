@@ -27,8 +27,10 @@ struct Fixture {
 }
 impl Fixture {
     fn new(submitted: bool) -> Self {
-        let root =
-            std::env::temp_dir().join(format!("yo-tui-interview-{}", SubmissionId::new().unwrap()));
+        // macOS의 /var 임시 경로 링크를 저장소의 경로 검증 대상으로 섞지 않는다.
+        let temp = std::fs::canonicalize(std::env::temp_dir())
+            .expect("the TUI interview fixture temp directory must resolve physically");
+        let root = temp.join(format!("yo-tui-interview-{}", SubmissionId::new().unwrap()));
         std::fs::create_dir(&root).unwrap();
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let turn = turn();
