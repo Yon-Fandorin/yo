@@ -45,8 +45,20 @@ durable acceptance, 충돌과 복구 실패를 검사한다.
 paste와 `Ctrl+C` 지우기가 통과했다. 첫 cold Fullscreen 입력 시도는 `yo`가
 시작되는 동안 5초 준비 제한을 넘겼다. 나머지 다섯 시나리오는 통과했고,
 Fullscreen을 한 번 준비한 뒤 같은 입력 시나리오도 통과했다. Model 요청은
-없었다. 실제 IME 조합, terminal application의 Command-V mapping, 실제
-Provider send는 이번 실행에서 반복하지 않았다.
+없었다. 실제 Provider send는 이번 실행에서 수행하지 않았다.
+
+사용자 보조 후속 검사에서는 같은 Mac에서 최종 `develop` 커밋 `35d3e47f`를
+빌드하고 전용 tmux pane에 Fullscreen 입력창을 열었다. 사용자는 물리 키보드의
+한영 전환과 IME 조합, Backspace와 방향키 편집, terminal application의 실제
+Command-V를 통한 한글·ASCII·emoji 두 줄 붙여넣기, `Ctrl+C` 초안 지우기를
+수행했으며 입력 이상을 보고하지 않았다. 첫 임시 결과 pane은 종료 후 marker를
+읽기 전에 사라졌고, 이어 사용한 zsh 결과 wrapper는 Yo가 반환된 뒤 shell의
+읽기 전용 `status` 변수에 값을 할당해 실패했다. 결과를 보존하는 Bash wrapper로
+빈 입력의 `Ctrl+D`를 반복한 뒤 종료 상태 0, alternate screen 해제와 shell
+termios의 정확한 복원을 기록했다. 검사한 binary SHA256은
+`e25e97801ad161e930335ae669079913fd79870f4351149a3b4bc960bbc3860b`다.
+격리된 Session repository의 backend binding, accepted request와 finished Turn은
+모두 0건이었고 native sandbox는 network access를 거부했다.
 
 ## 저장된 Mac의 큰 본문 페이지 검증
 

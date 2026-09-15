@@ -48,8 +48,21 @@ cursor/delete operations, multiline bracketed paste and `Ctrl+C` clearing.
 The first cold Fullscreen input attempt exceeded its five-second readiness
 bound while `yo` was still starting; the other five scenarios passed, and the
 exact input scenario passed after one successful Fullscreen warm-up. No model
-request occurred. This run did not repeat physical IME composition, the
-terminal application's Command-V mapping, or a live-provider send.
+request occurred. This run did not perform a live-provider send.
+
+A user-assisted follow-up built final `develop` commit `35d3e47f` on the same
+Mac and opened its Fullscreen composer in a dedicated tmux pane. The user
+completed physical Korean/English switching and IME composition, Backspace and
+direction-key editing, a two-line Korean/ASCII/emoji paste through the terminal
+application's actual Command-V, and `Ctrl+C` draft clearing without reporting
+an input fault. The first ephemeral result pane disappeared before its post-exit
+markers could be read, and a subsequent zsh result wrapper failed after Yo
+returned because it assigned the shell's read-only `status` variable. A Bash
+result-preserving repeat then recorded empty-`Ctrl+D` exit status 0, alternate
+screen release and exact shell termios restoration. The tested binary SHA256 was
+`e25e97801ad161e930335ae669079913fd79870f4351149a3b4bc960bbc3860b`.
+Its isolated Session repositories contained zero backend bindings, accepted
+requests or finished Turns, and the native sandbox denied network access.
 
 ## Large-body paging on the saved Mac
 
