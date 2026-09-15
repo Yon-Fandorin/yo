@@ -126,9 +126,11 @@ local checks = new Mapping<String, Step> {
             "tools/**/Cargo.toml",
             "Cargo.lock",
             "Cargo.toml",
+            "clippy.toml",
             ".github/workflows/unix-compile.yml",
         )
-        check = "cargo clippy --quiet --locked --workspace --all-targets -- -D warnings"
+        # 기존 절대 경로 정리 동안 이 경고만 엄격 검사에서 제외
+        check = "cargo clippy --quiet --locked --workspace --all-targets -- -D warnings -A clippy::absolute_paths"
     }
     ["yo-cli-unix-matrix"] = new Step {
         glob = List(

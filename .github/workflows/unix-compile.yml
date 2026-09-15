@@ -24,4 +24,5 @@ jobs:
       - name: Compile yo-cli
         run: cargo check --locked -p yo-cli --all-targets
       - name: Lint workspace
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        # 기존 절대 경로 정리 동안 이 경고만 엄격 검사에서 제외
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings -A clippy::absolute_paths

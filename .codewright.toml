@@ -1,0 +1,6 @@
+version = 1
+
+[language]
+comments = "ko"
+api_documentation = "ko"
+test_descriptions = "ko"
