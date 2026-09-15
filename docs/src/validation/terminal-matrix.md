@@ -805,7 +805,7 @@ restored the requested presentation mode. Exiting the nested session also
 restored the outer local PTY. These SSH observations used a real remote host;
 they are evidence records rather than part of the normal test set.
 
-### Current Apple Silicon build and input check
+### Apple Silicon build and injected-input check (2026-09-11)
 
 On 2026-09-11, the corrected tree based on `f57e61e5` was checked on macOS
 26.6.2 arm64 with the pinned `nightly-2026-05-22` toolchain.

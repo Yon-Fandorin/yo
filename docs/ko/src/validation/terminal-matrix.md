@@ -733,7 +733,7 @@ pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다
 획득했다. 중첩 session 종료 뒤 바깥 로컬 PTY도 복원됐다. 이 SSH 관찰은
 실제 원격 host를 사용했으며 일반 test set이 아니라 증거 기록이다.
 
-### 현재 Apple Silicon 빌드와 입력 검사
+### Apple Silicon 빌드와 주입 입력 검사 (2026-09-11)
 
 2026-09-11 `f57e61e5` 기반 수정 트리를 macOS 26.6.2 arm64에서 고정된
 `nightly-2026-05-22` toolchain으로 검사했다.
