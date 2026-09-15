@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 #[cfg(test)]
 use yo_core::TranscriptRecord;
 use yo_core::{
-    SessionId,
+    SessionId, session_repository,
     session_repository::{SessionUsageError, SessionUsageProjection, UsageAggregate},
 };
 
@@ -15,7 +15,7 @@ mod format;
 use format::{aggregate_text, cache_read_text, safe_text, source_text, value_text};
 
 pub(super) fn project(
-    history: &yo_core::session_repository::StoredSessionHistory,
+    history: &session_repository::StoredSessionHistory,
     glyph_profile: GlyphProfile,
 ) -> Result<String, ArchivedProjectionError> {
     let projection = history.session_usage().map_err(projection_error)?;

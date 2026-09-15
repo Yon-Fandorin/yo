@@ -4,6 +4,7 @@ use std::{
     io::{self, Cursor, Read},
     num::NonZeroU64,
     task::{Context, Poll},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -533,8 +534,8 @@ impl AgentConnection for TestAgent {
             self.armed = true;
             let delay = self.next.saturating_duration_since(Instant::now());
             let waker = cx.waker().clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(delay);
+            thread::spawn(move || {
+                thread::sleep(delay);
                 waker.wake();
             });
         }

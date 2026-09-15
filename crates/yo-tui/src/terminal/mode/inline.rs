@@ -1,7 +1,7 @@
 mod renderer;
 mod transaction;
 
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, slice};
 
 pub(crate) use renderer::{
     InlineRecovery, InlineRenderError, InlineRenderReceipt, InlineRenderer, InlineRestoreOutcome,
@@ -15,7 +15,7 @@ pub(crate) trait PublicationSource {
 
 impl PublicationSource for Surface {
     fn pages(&self) -> &[Surface] {
-        std::slice::from_ref(self)
+        slice::from_ref(self)
     }
 }
 

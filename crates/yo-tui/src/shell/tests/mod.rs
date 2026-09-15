@@ -11,6 +11,7 @@ use crate::{
         editor::{EditorEffect, PromptEditor},
         event::InputEvent,
     },
+    overlay,
     overlay::{
         PanelSnapshot, SelectionEntry, SelectionPanel, SelectionPanelAppearance,
         SelectionPanelGlyphs, SelectionPanelStyles,
@@ -161,7 +162,7 @@ fn render_into_with_overlay(
                 },
                 activity_motion: ActivityMotionFrame::still("·"),
                 overlay: Some(panel),
-                overlay_bindings: &crate::overlay::OverlayBindings::default(),
+                overlay_bindings: &overlay::OverlayBindings::default(),
             },
             state,
             || {},

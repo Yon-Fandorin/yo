@@ -1,6 +1,6 @@
 //! Prompt editing assembled from semantic input, text storage, and control policy.
 
-use std::{num::NonZeroU16, time::Duration};
+use std::{num::NonZeroU16, ops::Range, time::Duration};
 
 pub(crate) mod binding;
 pub(crate) mod layout;
@@ -58,11 +58,7 @@ impl PromptEditor {
         self.newline_binding
     }
 
-    pub(crate) fn replace_range(
-        &mut self,
-        range: std::ops::Range<usize>,
-        replacement: &str,
-    ) -> bool {
+    pub(crate) fn replace_range(&mut self, range: Range<usize>, replacement: &str) -> bool {
         self.control.cancel_exit_sequence();
         self.last_kill = false;
         self.buffer.replace_range(range, replacement)

@@ -1,7 +1,7 @@
 use std::num::NonZeroU16;
 
 use super::{TextFlowError, flow_literal_prose, flow_tail_text, flow_text, flow_text_with_cursor};
-use crate::surface::Point;
+use crate::{surface, surface::Point};
 
 fn width(value: u16) -> NonZeroU16 {
     NonZeroU16::new(value).unwrap()
@@ -191,7 +191,7 @@ fn shared_flow_preserves_unrenderable_grapheme_error() {
         flow_text("\u{301}", width(4)),
         Err(TextFlowError::UnrenderableGrapheme {
             byte_index: 0,
-            cause: crate::surface::GraphemeError::ZeroWidth,
+            cause: surface::GraphemeError::ZeroWidth,
         })
     );
 }

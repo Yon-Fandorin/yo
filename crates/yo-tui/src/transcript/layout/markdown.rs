@@ -12,7 +12,7 @@ mod diagram;
 mod image;
 mod paged;
 mod table;
-use std::{collections::BTreeMap, num::NonZeroU16};
+use std::{collections::BTreeMap, mem, num::NonZeroU16};
 
 use chart::{ChartKind, chart_blocks};
 use code::highlight_code;
@@ -694,12 +694,12 @@ impl Document {
                 .push_str(&" ".repeat(usize::from(self.code_padding)));
         }
         self.current.format = self.format;
-        self.current.gap = std::mem::take(&mut self.gap);
+        self.current.gap = mem::take(&mut self.gap);
     }
 
     fn flush(&mut self) {
         if !self.current.text.is_empty() {
-            let mut block = std::mem::take(&mut self.current);
+            let mut block = mem::take(&mut self.current);
             self.annotate_web_urls(&mut block);
             if block.format == BlockFormat::Diff {
                 block.spans.clear();
@@ -759,7 +759,7 @@ impl Document {
                     // Resolve the table's surrounding quote/list prefix once. Cells
                     // own only their inline content and styles.
                     self.begin_block();
-                    let context = std::mem::take(&mut self.current);
+                    let context = mem::take(&mut self.current);
                     self.table = Some(table::Table::new(alignments, context.prefix, context.gap));
                 },
                 Tag::TableHead => self.push_style(Some(Role::Heading), Attributes::BOLD),
@@ -875,7 +875,7 @@ impl Document {
             },
             Event::End(tag) => match tag {
                 TagEnd::TableCell => {
-                    let mut cell = std::mem::take(&mut self.current);
+                    let mut cell = mem::take(&mut self.current);
                     self.annotate_web_urls(&mut cell);
                     self.table
                         .as_mut()
@@ -957,7 +957,7 @@ impl Document {
                     self.blocks.push(DocumentBlock::Image {
                         source,
                         alt,
-                        context: std::mem::take(&mut self.current),
+                        context: mem::take(&mut self.current),
                     });
                     self.gap = true;
                 },

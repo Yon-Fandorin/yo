@@ -1,5 +1,8 @@
 //! The TuiSession-owned working-copy controller. The runtime remains the sole Journal writer.
-use std::time::{Duration, Instant};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use yo_core::{
     ActivityRequestRef, ActivityResponse, SubmissionOutcome, TranscriptReader, TranscriptRecord,
@@ -39,8 +42,8 @@ struct PendingInterview {
     expected: Option<u64>,
     receipt_seen: bool,
 }
-impl std::fmt::Debug for InterviewController {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for InterviewController {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InterviewController")
             .field("editing", &self.editing)
             .field("dirty", &self.dirty)

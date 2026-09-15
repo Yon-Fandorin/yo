@@ -5,6 +5,7 @@ use yo_core::{ActivityId, ActivityRef, TurnId, TurnRef};
 use super::state::TuiState;
 use crate::{
     appearance::AppearanceState,
+    input,
     input::event::{InputEvent, KeyAction, KeyCode, KeyEvent as YoKeyEvent, KeyState},
     surface::{CellContent, Point, Size},
 };
@@ -31,7 +32,7 @@ mod state_edges;
 mod viewport;
 mod views;
 
-fn key(code: KeyCode, modifiers: crate::input::event::KeyModifiers) -> InputEvent {
+fn key(code: KeyCode, modifiers: input::event::KeyModifiers) -> InputEvent {
     InputEvent::Key(YoKeyEvent {
         code,
         modifiers,

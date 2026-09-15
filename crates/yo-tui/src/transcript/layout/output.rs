@@ -1,4 +1,4 @@
-use std::num::NonZeroU16;
+use std::{iter, num::NonZeroU16};
 
 use yo_core::MessageContent;
 
@@ -92,6 +92,6 @@ fn append_gap(output: &mut String, row: &mut usize, column: &mut u16, x: u16, y:
         x >= *column,
         "prepared transcript glyphs must be ordered and non-overlapping"
     );
-    output.extend(std::iter::repeat_n(' ', usize::from(x - *column)));
+    output.extend(iter::repeat_n(' ', usize::from(x - *column)));
     *column = x;
 }

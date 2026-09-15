@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, panic};
 
 use super::transaction::{CleanupFailureCause, CleanupStep, SessionFailureCause, TerminalSession};
 use crate::terminal::backend::TerminalBackend;
@@ -350,7 +350,7 @@ fn drop_is_non_panicking_and_continues_after_backend_panic() {
         ..RecordingBackend::default()
     };
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
         let _session =
             TerminalSession::enter(&mut backend, [Mode::Paste, Mode::AlternateScreen]).unwrap();
     }));

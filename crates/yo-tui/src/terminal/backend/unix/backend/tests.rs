@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use super::{UnixBackend, UnixBackendError, UnixMode};
 use crate::{
     surface::{Point, Size, Surface},
+    terminal,
     terminal::{
         backend::{
             TerminalBackend,
@@ -80,7 +81,7 @@ impl Write for RecordingWriter {
     }
 }
 
-impl crate::terminal::backend::UnbufferedTerminalOutput for RecordingWriter {}
+impl terminal::backend::UnbufferedTerminalOutput for RecordingWriter {}
 
 fn backend(writer: RecordingWriter) -> UnixBackend<RecordingTermios, RecordingWriter> {
     UnixBackend::new(TtyStateAdapter::new(RecordingTermios::default()), writer)
@@ -252,7 +253,7 @@ fn fullscreen_recipe_owns_the_alternate_screen() {
 #[test]
 fn inline_renderer_writes_through_the_active_session_backend() {
     let mut backend = backend(RecordingWriter::default());
-    let mut viewport = crate::terminal::mode::inline::InlineViewport::default();
+    let mut viewport = terminal::mode::inline::InlineViewport::default();
     let current = Surface::new(Size::new(2, 1)).unwrap();
 
     let mut session = enter_screen(&mut backend, ScreenMode::Inline).unwrap();

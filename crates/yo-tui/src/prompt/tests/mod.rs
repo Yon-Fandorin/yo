@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{num, time::Duration};
 
 use super::{
     PromptFrame, PromptGlyphs, PromptRenderError, PromptStyles, PromptViewState, measure, render,
@@ -119,14 +119,11 @@ fn projects_prompt_content_and_cursor() {
         frame,
         PromptFrame {
             cursor: Point::new(2, 2),
-            content_height: std::num::NonZeroU16::new(2).unwrap(),
+            content_height: num::NonZeroU16::new(2).unwrap(),
             first_visible_row: 0,
         }
     );
-    assert_eq!(
-        measurement.desired_height,
-        std::num::NonZeroU16::new(4).unwrap()
-    );
+    assert_eq!(measurement.desired_height, num::NonZeroU16::new(4).unwrap());
     assert!(matches!(
         surface.cell(Point::new(0, 0)).unwrap().content(),
         CellContent::Grapheme { text, .. } if text.as_ref() == "─"

@@ -11,6 +11,7 @@ use super::input::{EventSource, InputReadFailure, InputReader};
 use crate::{
     input::event::InputEvent,
     runner::{TerminationEvent, TerminationSource},
+    surface,
 };
 
 const POST_FLUSH_EVENT_LIMIT: usize = 4_096;
@@ -24,7 +25,7 @@ pub(crate) struct UnixEventReader<E, T> {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PostFlushResizes {
     pub(crate) count: u64,
-    pub(crate) latest: Option<crate::surface::Size>,
+    pub(crate) latest: Option<surface::Size>,
 }
 
 #[derive(Debug)]

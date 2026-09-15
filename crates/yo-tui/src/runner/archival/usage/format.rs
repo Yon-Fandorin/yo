@@ -1,5 +1,7 @@
 //! Terminal-independent text formatting for archived Usage.
 
+use std::str;
+
 use yo_core::{
     CacheReadSummary, SessionUsageReceipt, SessionUsageSource, UsageAggregate, UsageCoverage,
     UsageValue,
@@ -124,7 +126,7 @@ fn format_tokens(value: u64) -> String {
     output.push_str(&digits[..first_group_len]);
     for chunk in digits.as_bytes()[first_group_len..].chunks(3) {
         output.push(',');
-        output.push_str(std::str::from_utf8(chunk).expect("token digits are valid UTF-8"));
+        output.push_str(str::from_utf8(chunk).expect("token digits are valid UTF-8"));
     }
     output
 }

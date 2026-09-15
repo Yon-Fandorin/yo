@@ -1,6 +1,7 @@
 //! Safe placeholder expansion for meter labels and layouts.
 
 use super::{MAX_METER_BYTES, MAX_METER_CELLS, error::MeterTemplateError, format_percent};
+use crate::surface;
 
 /// A layout template for a rendered meter.
 ///
@@ -193,8 +194,7 @@ fn push_name_char(name: &mut String, character: char) -> Result<(), MeterTemplat
 
 fn terminal_cells(value: &str) -> Result<usize, MeterTemplateError> {
     value.split('\n').try_fold(0_usize, |cells, line| {
-        let line_cells =
-            crate::surface::cell_width(line).map_err(MeterTemplateError::InvalidGrapheme)?;
+        let line_cells = surface::cell_width(line).map_err(MeterTemplateError::InvalidGrapheme)?;
         cells
             .checked_add(line_cells)
             .ok_or(MeterTemplateError::OutputTooLarge {

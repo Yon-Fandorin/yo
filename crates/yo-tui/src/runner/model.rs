@@ -69,7 +69,7 @@ impl ModelSelectionState {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{env, fs, path::PathBuf};
 
     use yo_core::{
         AccountId, CompleteModelBinding, ConnectionAccount, HostCatalogModel, HostId,
@@ -89,7 +89,7 @@ mod tests {
 
     impl TestDirectory {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
+            let path = env::temp_dir().join(format!(
                 "yo-tui-model-observation-{}",
                 SessionId::new().unwrap()
             ));

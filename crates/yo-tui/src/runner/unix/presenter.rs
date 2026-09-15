@@ -1,11 +1,15 @@
+use std::time;
+
 use super::{FrameViewport, LoopError};
 use crate::{
+    appearance, runner,
     runner::{
         frame::FrameScheduler,
         session::PublicationRecoveryEvidence,
         state::{MotionDemand, TuiState},
     },
     surface::{Point, Size, Surface},
+    terminal,
     terminal::{
         backend::{ScreenModeBackend, TerminalOutputBackend},
         mode::{
@@ -27,7 +31,7 @@ where
         previous: Option<&Surface>,
         current: &Surface,
         cursor: Point,
-        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
+        publication: Option<&dyn terminal::mode::inline::PublicationSource>,
         terminal_size: Size,
     ) -> Result<RenderReceipt, LoopError>;
 }
@@ -48,9 +52,9 @@ pub(super) struct PresentationState<'session> {
     pub(super) size: Size,
     pub(super) geometry_epoch: u64,
     pub(super) previous: Option<Surface>,
-    pub(super) started: std::time::Instant,
+    pub(super) started: time::Instant,
     pub(super) frame_visible: bool,
-    pub(super) motion_deadline: Option<std::time::Instant>,
+    pub(super) motion_deadline: Option<time::Instant>,
     motion_clock: super::timing::TurnMotionClock,
     recovery_evidence: &'session mut PublicationRecoveryEvidence,
 }
@@ -58,7 +62,7 @@ pub(super) struct PresentationState<'session> {
 impl<'session> PresentationState<'session> {
     pub(super) fn new(
         size: Size,
-        started: std::time::Instant,
+        started: time::Instant,
         recovery_evidence: &'session mut PublicationRecoveryEvidence,
     ) -> Self {
         Self {
@@ -76,8 +80,8 @@ impl<'session> PresentationState<'session> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RedrawOutcome {
-    motion_deadline: Option<std::time::Instant>,
-    marker_deadline: Option<std::time::Instant>,
+    motion_deadline: Option<time::Instant>,
+    marker_deadline: Option<time::Instant>,
     live_committed: bool,
     request_immediate: bool,
 }
@@ -103,7 +107,7 @@ where
         previous: Option<&Surface>,
         current: &Surface,
         cursor: Point,
-        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
+        publication: Option<&dyn terminal::mode::inline::PublicationSource>,
         terminal_size: Size,
     ) -> Result<RenderReceipt, LoopError> {
         render_inline(
@@ -140,7 +144,7 @@ where
         previous: Option<&Surface>,
         current: &Surface,
         cursor: Point,
-        _publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
+        _publication: Option<&dyn terminal::mode::inline::PublicationSource>,
         _terminal_size: Size,
     ) -> Result<RenderReceipt, LoopError> {
         render_fullscreen(session, self, previous, current, cursor)
@@ -162,7 +166,7 @@ fn redraw<B, P>(
     session: &mut TerminalSession<'_, B>,
     viewport: &mut P,
     state: &mut TuiState,
-    appearance: &crate::appearance::AppearanceState,
+    appearance: &appearance::AppearanceState,
     presentation: &mut PresentationState<'_>,
     observe_geometry: &mut impl FnMut() -> Result<GeometryObservation, LoopError>,
 ) -> Result<RedrawOutcome, LoopError>
@@ -172,7 +176,7 @@ where
     P: LivePresenter<B>,
 {
     let appearance = appearance.pin();
-    let now = std::time::Instant::now();
+    let now = time::Instant::now();
     let motion_epoch = presentation
         .motion_clock
         .sample(state.visible_motion_turn(), now);
@@ -192,7 +196,7 @@ where
         &frame.surface,
         frame.cursor,
         frame.publication.as_ref().map(|publication| {
-            &publication.surfaces as &dyn crate::terminal::mode::inline::PublicationSource
+            &publication.surfaces as &dyn terminal::mode::inline::PublicationSource
         }),
         presentation.size,
     )?;
@@ -224,7 +228,7 @@ where
         viewport.abandon_frame();
         presentation.previous = None;
         return Err(LoopError::State(
-            crate::runner::state::StateError::StalePublication,
+            runner::state::StateError::StalePublication,
         ));
     }
     debug_assert_eq!(publication.appearance_revision, frame.appearance_revision);
@@ -276,13 +280,13 @@ where
 
 fn acknowledge_publication(
     state: &mut TuiState,
-    frame: &crate::runner::state::PreparedFrame,
+    frame: &runner::state::PreparedFrame,
 ) -> Result<(), LoopError> {
     if state.acknowledge_publication(frame) {
         Ok(())
     } else {
         Err(LoopError::State(
-            crate::runner::state::StateError::StalePublication,
+            runner::state::StateError::StalePublication,
         ))
     }
 }
@@ -291,7 +295,7 @@ pub(super) fn render_requested_frame<B, P>(
     session: &mut TerminalSession<'_, B>,
     viewport: &mut P,
     state: &mut TuiState,
-    appearance: &crate::appearance::AppearanceState,
+    appearance: &appearance::AppearanceState,
     presentation: &mut PresentationState<'_>,
     frames: &mut FrameScheduler,
     observe_geometry: &mut impl FnMut() -> Result<GeometryObservation, LoopError>,
@@ -301,7 +305,7 @@ where
     B::Mode: PartialEq,
     P: LivePresenter<B>,
 {
-    let now = std::time::Instant::now();
+    let now = time::Instant::now();
     if presentation.size.width == 0 || presentation.size.height == 0 {
         frames.suppress_pending();
         return Ok(());
@@ -319,10 +323,10 @@ where
     )?;
     presentation.motion_deadline = outcome.motion_deadline;
     frames.reserve_marker(outcome.marker_deadline);
-    frames.rendered_with_cost(now, std::time::Instant::now());
+    frames.rendered_with_cost(now, time::Instant::now());
     presentation.frame_visible = outcome.live_committed;
     if outcome.request_immediate {
-        frames.request(crate::runner::frame::FrameRequest::Immediate);
+        frames.request(runner::frame::FrameRequest::Immediate);
     }
     Ok(())
 }

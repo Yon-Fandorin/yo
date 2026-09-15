@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{self, Write},
     panic,
 };
@@ -105,8 +106,8 @@ fn finish_report(
 
 fn emit_entry_panic_cleanup<M, E>(failures: &[CleanupFailure<M, E>])
 where
-    M: std::fmt::Debug,
-    E: std::fmt::Debug,
+    M: fmt::Debug,
+    E: fmt::Debug,
 {
     if !failures.is_empty() {
         let _ = writeln!(
@@ -167,6 +168,7 @@ mod tests {
     use std::{
         io,
         panic::{AssertUnwindSafe, catch_unwind},
+        sync,
     };
 
     use super::{
@@ -175,6 +177,7 @@ mod tests {
     };
     use crate::{
         runner::{ExitReason, TerminalOutcome},
+        terminal,
         terminal::{
             backend::unix::UnixBackendError,
             mode::{
@@ -210,7 +213,7 @@ mod tests {
     fn entry_panic_is_resumed_through_the_outer_route() {
         let _route_test = PANIC_ROUTE_TEST_OWNER
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .unwrap_or_else(sync::PoisonError::into_inner);
         let routed = catch_owner_panic(AssertUnwindSafe(|| {
             let payload = catch_unwind(AssertUnwindSafe(|| panic!("entry panic"))).unwrap_err();
             let failure = SessionFailure::<
@@ -296,7 +299,7 @@ mod tests {
         let report = LiveRunReport {
             operation: Ok(Ok(LoopExit::Termination)),
             cleanup: LiveCleanup::Inline(InlineCloseReport {
-                viewport: Ok(crate::terminal::mode::inline::InlineRestoreOutcome::Cleared),
+                viewport: Ok(terminal::mode::inline::InlineRestoreOutcome::Cleared),
                 terminal: Ok(()),
             }),
             output: Some("retained\n".to_owned()),

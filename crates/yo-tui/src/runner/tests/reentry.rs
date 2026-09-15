@@ -2,7 +2,7 @@ use std::{
     cell::Cell,
     collections::VecDeque,
     convert::Infallible,
-    io,
+    io, num,
     rc::Rc,
     sync::mpsc,
     task::{Context, Poll},
@@ -32,7 +32,9 @@ use crate::{
         state::StateEffect,
         unix::{FrameViewport, GenerationStart, LivePresenter, LoopError, LoopExit, drive},
     },
+    surface,
     surface::{CellContent, Point, Size, Surface},
+    terminal,
     terminal::{
         backend::{
             ScreenModeBackend, TerminalBackend, TerminalOutputBackend,
@@ -44,6 +46,7 @@ use crate::{
             screen::{ScreenMode, enter_screen},
         },
     },
+    transcript,
 };
 
 mod publication;
@@ -404,7 +407,7 @@ impl AgentConnection for SimpleAgent {
                         "01890f00-0000-7000-8000-000000000001"
                             .parse()
                             .expect("the fixture is a UUIDv7"),
-                        yo_core::TurnId::new(std::num::NonZeroU64::MIN),
+                        yo_core::TurnId::new(num::NonZeroU64::MIN),
                     ),
                     input: input.into_input(),
                 },
@@ -452,7 +455,7 @@ impl LivePresenter<Backend> for Presenter {
         previous: Option<&Surface>,
         current: &Surface,
         _cursor: Point,
-        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
+        publication: Option<&dyn terminal::mode::inline::PublicationSource>,
         _terminal_size: Size,
     ) -> Result<super::super::unix::RenderReceipt, LoopError> {
         self.previous_on_render.push(previous.is_some());
@@ -488,7 +491,7 @@ fn surface_text(surface: &Surface) -> String {
         .join("\n")
 }
 
-fn styles_for_ascii_text(surface: &Surface, needle: &str) -> Vec<crate::surface::Style> {
+fn styles_for_ascii_text(surface: &Surface, needle: &str) -> Vec<surface::Style> {
     let expected = needle.chars().collect::<Vec<_>>();
     let size = surface.size();
     for y in 0..size.height {
@@ -642,7 +645,7 @@ fn turn() -> TurnRef {
         "01890f00-0000-7000-8000-000000000001"
             .parse()
             .expect("the fixture is a UUIDv7"),
-        yo_core::TurnId::new(std::num::NonZeroU64::MIN),
+        yo_core::TurnId::new(num::NonZeroU64::MIN),
     )
 }
 
@@ -1007,7 +1010,7 @@ fn next_generation_recovers_a_stale_retained_steer_as_a_submission_rejection() {
     assert!(parts.state.transcript().items().iter().any(|item| {
         matches!(
             item.body(),
-            crate::transcript::TranscriptBody::Message(message)
+            transcript::TranscriptBody::Message(message)
                 if message.text().contains("Submission rejected")
         )
     }));
@@ -1048,11 +1051,11 @@ fn normal_wait_coalesces_input_and_due_motion_into_one_redraw() {
     assert!(surface_text(&presenter.frames[1]).contains('x'));
     assert_eq!(
         styles_for_ascii_text(&presenter.frames[0], "* Working")[0].attributes,
-        crate::surface::Attributes::DIM
+        surface::Attributes::DIM
     );
     assert_eq!(
         styles_for_ascii_text(&presenter.frames[1], "* Working")[0].attributes,
-        crate::surface::Attributes::DIM
+        surface::Attributes::DIM
     );
 }
 
@@ -1311,7 +1314,7 @@ fn initial_zero_size_recovers_one_visible_frame_with_fixed_marker_ink() {
     assert!(surface_text(&presenter.frames[0]).contains("* Working"));
     assert_eq!(
         styles_for_ascii_text(&presenter.frames[0], "* Working")[0].attributes,
-        crate::surface::Attributes::DIM
+        surface::Attributes::DIM
     );
 }
 
@@ -1367,7 +1370,7 @@ fn run_zero_geometry_interval(first: Size, repeated: Size) {
     assert!(surface_text(&presenter.frames[1]).contains("hidden-update"));
     assert_eq!(
         styles_for_ascii_text(&presenter.frames[1], "* Working")[0].attributes,
-        crate::surface::Attributes::DIM
+        surface::Attributes::DIM
     );
 }
 
@@ -1412,8 +1415,8 @@ fn terminal_reentry_keeps_marker_ink_constant() {
     let first_styles = styles_for_ascii_text(&first.frames[0], "* Working");
     let second_styles = styles_for_ascii_text(&second.frames[0], "* Working");
 
-    assert_eq!(first_styles[0].attributes, crate::surface::Attributes::DIM);
-    assert_eq!(second_styles[0].attributes, crate::surface::Attributes::DIM);
+    assert_eq!(first_styles[0].attributes, surface::Attributes::DIM);
+    assert_eq!(second_styles[0].attributes, surface::Attributes::DIM);
 }
 
 // 실행 시각이 marker 주기 중간이어도 실제 presenter가 새 작업의 첫 glyph를 출력한다.

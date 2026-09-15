@@ -1,7 +1,9 @@
 use std::{
     cell::RefCell,
     io::{self, Write},
+    iter,
     rc::Rc,
+    sync,
 };
 
 use super::{
@@ -10,6 +12,7 @@ use super::{
 };
 use crate::{
     surface::{Point, Size, Surface},
+    terminal,
     terminal::{
         backend::{ScreenModeBackend, TerminalBackend, TerminalOutputBackend},
         mode::{
@@ -77,7 +80,7 @@ impl Write for RecordingWriter {
     }
 }
 
-impl crate::terminal::backend::UnbufferedTerminalOutput for RecordingWriter {}
+impl terminal::backend::UnbufferedTerminalOutput for RecordingWriter {}
 
 struct RecordingBackend {
     events: Rc<RefCell<Vec<Event>>>,
@@ -177,7 +180,7 @@ fn backend(clear_behavior: ClearBehavior, fail_restore: bool) -> RecordingBacken
 fn rendered_session<'backend>(
     backend: &'backend mut RecordingBackend,
     viewport: &mut InlineViewport,
-) -> crate::terminal::mode::TerminalSession<'backend, RecordingBackend> {
+) -> terminal::mode::TerminalSession<'backend, RecordingBackend> {
     let mut session = enter_screen(backend, ScreenMode::Inline).unwrap();
     let current = Surface::new(Size::new(1, 1)).unwrap();
     render_inline(
@@ -265,8 +268,7 @@ fn inline_renderer_rejects_a_fullscreen_session() {
 #[test]
 fn inline_renderer_requires_cursor_visibility_ownership() {
     let mut backend = backend(ClearBehavior::Succeed, false);
-    let mut session =
-        crate::terminal::mode::TerminalSession::enter(&mut backend, std::iter::empty()).unwrap();
+    let mut session = terminal::mode::TerminalSession::enter(&mut backend, iter::empty()).unwrap();
     let current = Surface::new(Size::new(1, 1)).unwrap();
     let mut viewport = InlineViewport::default();
 
@@ -338,7 +340,7 @@ fn viewport_and_terminal_failures_are_both_retained() {
     assert_eq!(terminal.failures.len(), 1);
     assert_eq!(
         terminal.failures[0].cause,
-        crate::terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
+        terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
     );
 }
 
@@ -354,7 +356,7 @@ fn viewport_panic_and_terminal_failure_are_both_retained() {
 
     assert!(matches!(
         report.viewport,
-        Err(crate::terminal::mode::transaction::CleanupFailureCause::Panicked(
+        Err(terminal::mode::transaction::CleanupFailureCause::Panicked(
             ref message
         )) if message == "viewport clear panic"
     ));
@@ -362,7 +364,7 @@ fn viewport_panic_and_terminal_failure_are_both_retained() {
     assert_eq!(terminal.failures.len(), 1);
     assert_eq!(
         terminal.failures[0].cause,
-        crate::terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
+        terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
     );
     assert!(events.borrow().contains(&Event::RestoreTty));
 }
@@ -430,7 +432,7 @@ fn inline_boundary_retains_primary_panic_and_both_cleanup_failures() {
     assert_eq!(primary.downcast_ref::<&str>(), Some(&"application panic"));
     assert!(matches!(
         report.cleanup.viewport,
-        Err(crate::terminal::mode::transaction::CleanupFailureCause::Panicked(
+        Err(terminal::mode::transaction::CleanupFailureCause::Panicked(
             ref message
         )) if message == "viewport clear panic"
     ));
@@ -507,7 +509,7 @@ fn fullscreen_boundary_retains_primary_and_terminal_cleanup_failure() {
     assert_eq!(cleanup.failures.len(), 1);
     assert_eq!(
         cleanup.failures[0].cause,
-        crate::terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
+        terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
     );
     assert_eq!(
         routed.diagnostic.unwrap().message,
@@ -515,8 +517,8 @@ fn fullscreen_boundary_retains_primary_and_terminal_cleanup_failure() {
     );
 }
 
-fn lock_panic_route_test() -> std::sync::MutexGuard<'static, ()> {
+fn lock_panic_route_test() -> sync::MutexGuard<'static, ()> {
     PANIC_ROUTE_TEST_OWNER
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_else(sync::PoisonError::into_inner)
 }

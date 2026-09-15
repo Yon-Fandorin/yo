@@ -1,4 +1,5 @@
 use std::{
+    env, iter,
     num::{NonZeroU64, NonZeroUsize},
     sync::{Arc, Mutex},
     thread,
@@ -39,7 +40,7 @@ fn history() -> (SessionDescriptor, Vec<TranscriptRecord>) {
     let descriptor = SessionDescriptor::for_session(
         session_id,
         host,
-        HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+        HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
     );
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
     let activity = ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(1).unwrap()));
@@ -488,7 +489,7 @@ fn archived_request_formats_every_correlation_record_in_journal_order() {
             .request_trace()
             .iter()
             .map(|entry| (entry.sequence().get(), entry.record()))
-            .chain(std::iter::once((close_sequence, &closed))),
+            .chain(iter::once((close_sequence, &closed))),
     );
 
     assert!(output.starts_with("Stored Session Request diagnostic\n"));

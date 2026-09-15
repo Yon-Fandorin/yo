@@ -5,6 +5,7 @@ use yo_core::{ActivityKind, AgentEvent, RequestId};
 use super::{activity, key, nonzero, turn};
 use crate::{
     appearance::AppearanceState,
+    input,
     input::event::{InputEvent, KeyCode},
     overlay::{PanelSnapshot, SelectionEntry, SlotError},
     runner::{
@@ -47,7 +48,7 @@ fn visible_overlay_dismissal_precedes_active_turn_escape_interrupt() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Escape, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Escape, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -60,10 +61,7 @@ fn visible_overlay_dismissal_precedes_active_turn_escape_interrupt() {
     assert_eq!(
         state
             .handle(
-                key(
-                    KeyCode::Character('c'),
-                    crate::input::event::KeyModifiers::CONTROL,
-                ),
+                key(KeyCode::Character('c'), input::event::KeyModifiers::CONTROL,),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -87,10 +85,7 @@ fn resize_and_suspend_preempt_overlay_and_view_input_owners() {
     assert_eq!(
         state
             .handle(
-                key(
-                    KeyCode::Character('z'),
-                    crate::input::event::KeyModifiers::CONTROL,
-                ),
+                key(KeyCode::Character('z'), input::event::KeyModifiers::CONTROL,),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -141,7 +136,7 @@ fn accepted_overlay_receipts_wait_for_their_provider_in_fifo_order() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -163,7 +158,7 @@ fn accepted_overlay_receipts_wait_for_their_provider_in_fifo_order() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -188,7 +183,7 @@ fn hidden_overlay_does_not_steal_active_turn_escape() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Escape, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Escape, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -206,7 +201,7 @@ fn backpressure_still_services_visible_overlay_navigation() {
     assert_eq!(
         handle_backpressured_input(
             &mut state,
-            key(KeyCode::Down, crate::input::event::KeyModifiers::NONE),
+            key(KeyCode::Down, input::event::KeyModifiers::NONE),
             Duration::ZERO,
             false,
         )
@@ -217,7 +212,7 @@ fn backpressure_still_services_visible_overlay_navigation() {
     assert_eq!(
         handle_backpressured_input(
             &mut state,
-            key(KeyCode::Escape, crate::input::event::KeyModifiers::NONE),
+            key(KeyCode::Escape, input::event::KeyModifiers::NONE),
             Duration::ZERO,
             false,
         )
@@ -237,10 +232,7 @@ fn backpressure_preserves_global_view_switch_priority_over_overlay() {
         assert_eq!(
             handle_backpressured_input(
                 &mut state,
-                key(
-                    KeyCode::Function(2),
-                    crate::input::event::KeyModifiers::NONE,
-                ),
+                key(KeyCode::Function(2), input::event::KeyModifiers::NONE,),
                 Duration::ZERO,
                 false,
             )
@@ -271,7 +263,7 @@ fn switching_away_from_chat_closes_overlay_without_resurrection() {
                 .handle(
                     key(
                         KeyCode::Function(function),
-                        crate::input::event::KeyModifiers::NONE,
+                        input::event::KeyModifiers::NONE,
                     ),
                     Duration::ZERO,
                 )
@@ -318,10 +310,7 @@ fn non_chat_view_rejects_new_prompt_overlay() {
     let mut state = TuiState::new();
     state
         .handle(
-            key(
-                KeyCode::Function(2),
-                crate::input::event::KeyModifiers::NONE,
-            ),
+            key(KeyCode::Function(2), input::event::KeyModifiers::NONE),
             Duration::ZERO,
         )
         .unwrap();
@@ -332,10 +321,7 @@ fn non_chat_view_rejects_new_prompt_overlay() {
     );
     state
         .handle(
-            key(
-                KeyCode::Function(1),
-                crate::input::event::KeyModifiers::NONE,
-            ),
+            key(KeyCode::Function(1), input::event::KeyModifiers::NONE),
             Duration::ZERO,
         )
         .unwrap();

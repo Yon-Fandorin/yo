@@ -1,6 +1,6 @@
 //! Ephemeral sandbox: real observations stay on the parent; synthetic input and
 //! observations stay on the child. No provider dispatch escapes this boundary.
-use std::time::Duration;
+use std::{time, time::Duration};
 
 use yo_core::ActivityDocument;
 
@@ -180,7 +180,7 @@ and **End** to follow the latest output. **Alt+O** folds the current activity;
         self.preview.is_some()
     }
 
-    pub(in crate::runner) fn preview_deadline(&self) -> Option<std::time::Instant> {
+    pub(in crate::runner) fn preview_deadline(&self) -> Option<time::Instant> {
         self.preview
             .as_ref()
             .and_then(|preview| preview.agent.next_deadline())

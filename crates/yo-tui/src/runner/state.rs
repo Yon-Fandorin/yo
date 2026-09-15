@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, time::Duration};
+use std::{collections::VecDeque, mem, time::Duration};
 
 use yo_core::{
     ActivityApproval, ActivityDocument, ActivityKind, ActivityNotice, ActivityQuestion,
@@ -6,10 +6,12 @@ use yo_core::{
     DurabilityGapCause, ImagePreparationRequest, InputSubmission, JournalDurability,
     RequestTraceEntry, SkillReferenceSearchRequest, SkillReferenceSearchUpdate, SubmissionId,
     SubmissionOutcome, TranscriptRecord, TurnOutcome, TurnRef, UserInput,
-    WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchUpdate,
+    WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchUpdate, interview,
     session_repository::{DurableCutoff, InheritedSessionHistory},
 };
 
+#[cfg(test)]
+use crate::transcript::TranscriptState;
 use crate::{
     PromptTemplates,
     appearance::AppearancePin,
@@ -78,7 +80,7 @@ pub(super) enum StateError {
 #[derive(Debug, Default)]
 pub(super) struct TuiState {
     pub(super) interview: Option<super::interview::InterviewController>,
-    pub(super) interview_conversation: Option<yo_core::interview::NewConversation>,
+    pub(super) interview_conversation: Option<interview::NewConversation>,
     preview: Option<Box<preview::Preview>>,
     preview_mode: bool,
     chat: ChatProjection,
@@ -177,7 +179,7 @@ impl TuiState {
             .interview
             .as_mut()
             .ok_or_else(|| {
-                yo_core::interview::InterviewError::Invalid(
+                interview::InterviewError::Invalid(
                     "interview recovery storage is unavailable".into(),
                 )
             })
@@ -186,7 +188,7 @@ impl TuiState {
     }
     fn apply_interview_command(
         &mut self,
-        result: Result<super::interview::InterviewCommand, yo_core::interview::InterviewError>,
+        result: Result<super::interview::InterviewCommand, interview::InterviewError>,
         draft: &str,
     ) -> Result<StateEffect, StateError> {
         match result {
@@ -1416,7 +1418,7 @@ impl TuiState {
     }
 
     pub(super) fn take_session_tree_request(&mut self) -> bool {
-        std::mem::take(&mut self.session_tree_requested)
+        mem::take(&mut self.session_tree_requested)
     }
 
     pub(super) fn report_session_tree_failure(&mut self, detail: String) {
@@ -1426,11 +1428,11 @@ impl TuiState {
     }
 
     pub(super) fn take_fork_session_request(&mut self) -> bool {
-        std::mem::take(&mut self.fork_session_requested)
+        mem::take(&mut self.fork_session_requested)
     }
 
     pub(super) fn take_fork_picker_request(&mut self) -> bool {
-        std::mem::take(&mut self.fork_picker_requested)
+        mem::take(&mut self.fork_picker_requested)
     }
 
     pub(super) fn take_fork_boundary_request(&mut self) -> Option<(ForkPickerToken, usize)> {
@@ -1494,7 +1496,7 @@ impl TuiState {
     }
 
     pub(super) fn take_new_session_request(&mut self) -> bool {
-        std::mem::take(&mut self.new_session_requested)
+        mem::take(&mut self.new_session_requested)
     }
 
     pub(super) fn report_new_session_cleanup_failure(&mut self, detail: String) {
@@ -2297,7 +2299,7 @@ fn record_effect(record: &TranscriptRecord) -> StateEffect {
 
 #[cfg(test)]
 impl TuiState {
-    pub(super) fn transcript(&self) -> &crate::transcript::TranscriptState {
+    pub(super) fn transcript(&self) -> &TranscriptState {
         self.chat.transcript()
     }
 

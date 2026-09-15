@@ -1,4 +1,4 @@
-use std::{num::NonZeroU64, time::Duration};
+use std::{env, fs, num::NonZeroU64, path, time::Duration};
 
 use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
@@ -349,10 +349,10 @@ fn chat_preview_preserves_content_and_exports_real_frames() {
                     HtmlSurface::render(&frame.surface)
                 );
                 previews.push_str(&preview);
-                if let Some(directory) = std::env::var_os("YO_TUI_PREVIEW_DIR") {
-                    let directory = std::path::PathBuf::from(directory);
-                    std::fs::create_dir_all(&directory).unwrap();
-                    std::fs::write(
+                if let Some(directory) = env::var_os("YO_TUI_PREVIEW_DIR") {
+                    let directory = path::PathBuf::from(directory);
+                    fs::create_dir_all(&directory).unwrap();
+                    fs::write(
                         directory.join(format!("{scenario}-{label}-{width}.html")),
                         document(&preview),
                     )
@@ -361,7 +361,7 @@ fn chat_preview_preserves_content_and_exports_real_frames() {
                     let diff = FrameDiff::between(&blank, &frame.surface);
                     let mut encoder = AnsiEncoder::new(Vec::new());
                     encoder.encode(&TerminalOps::from_diff(&diff)).unwrap();
-                    std::fs::write(
+                    fs::write(
                         directory.join(format!("{scenario}-{label}-{width}.ansi")),
                         encoder.into_inner(),
                     )
@@ -370,10 +370,10 @@ fn chat_preview_preserves_content_and_exports_real_frames() {
             }
         }
     }
-    if let Some(directory) = std::env::var_os("YO_TUI_PREVIEW_DIR") {
-        let directory = std::path::PathBuf::from(directory);
-        std::fs::create_dir_all(&directory).unwrap();
-        std::fs::write(directory.join("chat.html"), document(&previews)).unwrap();
+    if let Some(directory) = env::var_os("YO_TUI_PREVIEW_DIR") {
+        let directory = path::PathBuf::from(directory);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("chat.html"), document(&previews)).unwrap();
     }
 }
 

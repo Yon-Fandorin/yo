@@ -9,6 +9,7 @@ use std::{
     fmt,
     io::{self, Write},
     panic::{self, PanicHookInfo, UnwindSafe},
+    sync,
     sync::{Arc, Mutex, TryLockError},
     thread,
 };
@@ -114,7 +115,7 @@ pub(crate) fn catch_owner_panic<T>(
         if thread::current().id() == owner {
             let mut slot = hook_captured
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .unwrap_or_else(sync::PoisonError::into_inner);
             if slot.is_none() {
                 *slot = Some(PanicDiagnostic::capture(info));
             }
@@ -130,7 +131,7 @@ pub(crate) fn catch_owner_panic<T>(
     panic::set_hook(Box::new(move |info| previous(info)));
     let diagnostic = captured
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_else(sync::PoisonError::into_inner)
         .take();
     drop(ownership);
 

@@ -1,13 +1,13 @@
 //! Shared concise Chat projection for live and archived Session records.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Range};
 
 use yo_core::{
     ActivityApproval, ActivityDocument, ActivityKind, ActivityNotice, ActivityOutcome,
     ActivityPlan, ActivityQuestion, ActivityReasoning, ActivityRef, ActivitySummary,
     ActivityUpdate, AgentCommand, AgentEvent, ContextCheckpointObservation, ContextPolicyChanged,
     ContextPressureDecision, ContextPressureObservation, SessionUsageProjection,
-    SessionUsageSource, ToolOutput, TranscriptRecord, TurnOutcome, UsageValue,
+    SessionUsageSource, ToolOutput, TranscriptRecord, TurnOutcome, UsageValue, interview,
     session_repository::InheritedSessionHistory,
 };
 
@@ -18,7 +18,7 @@ use crate::transcript::{
 
 #[derive(Debug, Default)]
 pub(super) struct ChatProjection {
-    interviews: yo_core::interview::InterviewCatalog,
+    interviews: interview::InterviewCatalog,
     transcript: TranscriptState,
     publication_cursor: PublicationCursor,
     next_item_id: u64,
@@ -42,12 +42,12 @@ pub(super) struct PublicationBoundary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PublicationCandidate {
     expected: PublicationCursor,
-    range: std::ops::Range<usize>,
+    range: Range<usize>,
     boundary: PublicationBoundary,
 }
 
 impl PublicationCandidate {
-    pub(super) fn range(&self) -> std::ops::Range<usize> {
+    pub(super) fn range(&self) -> Range<usize> {
         self.range.clone()
     }
 }

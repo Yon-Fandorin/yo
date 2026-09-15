@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    iter,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -15,6 +16,7 @@ use super::UnixEventReader;
 use crate::{
     input::event::InputEvent,
     runner::{TerminationEvent, TerminationSource},
+    surface,
     terminal::backend::unix::input::{EventSource, InputReadFailure},
 };
 
@@ -185,7 +187,7 @@ fn post_flush_observation_drains_resizes_and_preserves_ordinary_input() {
     let observed = reader.observe_post_flush_resizes(&mut context).unwrap();
 
     assert_eq!(observed.count, 2);
-    assert_eq!(observed.latest, Some(crate::surface::Size::new(100, 30)));
+    assert_eq!(observed.latest, Some(surface::Size::new(100, 30)));
     assert_eq!(
         reader.poll_input(&mut context),
         Poll::Ready(Ok(InputEvent::Paste("kept".to_owned())))
@@ -222,8 +224,8 @@ fn post_flush_observation_bounds_a_continuously_ready_source() {
     let limit = super::POST_FLUSH_EVENT_LIMIT;
     let mut reader = UnixEventReader::new(
         RecordingEventSource {
-            ready: std::iter::repeat_n(Ok(true), limit).collect(),
-            events: std::iter::repeat_with(|| Ok(Event::Paste("kept".to_owned())))
+            ready: iter::repeat_n(Ok(true), limit).collect(),
+            events: iter::repeat_with(|| Ok(Event::Paste("kept".to_owned())))
                 .take(limit)
                 .collect(),
         },

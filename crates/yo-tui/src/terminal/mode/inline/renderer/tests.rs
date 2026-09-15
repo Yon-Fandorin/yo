@@ -2,6 +2,7 @@ use std::io::{self, Write};
 
 use super::{InlineRenderError, InlineRenderer};
 use crate::{
+    surface,
     surface::{Point, Rect, Size, Style, Surface},
     terminal::mode::inline::{InlineFramePlan, InlineViewport},
 };
@@ -16,7 +17,7 @@ fn surface(size: Size, point: Point, text: &str) -> Surface {
     let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
     view.write(
         point,
-        crate::surface::Grapheme::try_from(text).unwrap(),
+        surface::Grapheme::try_from(text).unwrap(),
         Style::default(),
     );
     surface

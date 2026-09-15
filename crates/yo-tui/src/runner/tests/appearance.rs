@@ -1,14 +1,17 @@
+use std::path;
+
 use yo_core::{
     ActivityKind, ActivityUpdate, AgentCommand, AgentEvent, TranscriptRecord, UserInput,
 };
 
 use super::{activity, turn};
 use crate::{
-    PresentationMode, TuiSessionInfo,
+    PresentationMode, TuiSessionInfo, appearance,
     appearance::{
         AppearanceCandidate, AppearanceState, ColorCapability, GlyphProfile, MotionPreference,
     },
     html::HtmlSurface,
+    overlay,
     prompt::{PromptGlyphs, PromptStyles},
     runner::{session::TuiSession, state::TuiState},
     shell::{AgentShellStyles, ShellChromeStyles},
@@ -380,7 +383,7 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
             glyphs: PromptGlyphs::ascii(),
         },
         chrome: ShellChromeStyles {
-            activity: crate::appearance::ActivityStyles {
+            activity: appearance::ActivityStyles {
                 marker: default,
                 muted: default,
                 trail: default,
@@ -390,9 +393,9 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
             mode: default,
             key_hint: default,
         },
-        overlay: crate::overlay::SelectionPanelAppearance {
-            styles: crate::overlay::SelectionPanelStyles {
-                activity: crate::appearance::ActivityStyles {
+        overlay: overlay::SelectionPanelAppearance {
+            styles: overlay::SelectionPanelStyles {
+                activity: appearance::ActivityStyles {
                     marker: default,
                     muted: default,
                     trail: default,
@@ -408,7 +411,7 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
                 selected: default,
                 disabled: default,
             },
-            glyphs: crate::overlay::SelectionPanelGlyphs::ascii(),
+            glyphs: overlay::SelectionPanelGlyphs::ascii(),
         },
     };
     let appearance = AppearanceState::new(
@@ -6905,7 +6908,7 @@ fn live_host_link_events_replace_and_clear_rendered_destinations() {
         (24, Some("/tmp/second.rs")),
         (80, None),
     ] {
-        let target = path.and_then(|path| Hyperlink::from_file_path(std::path::Path::new(path)));
+        let target = path.and_then(|path| Hyperlink::from_file_path(path::Path::new(path)));
         let expected = target.clone();
         let resolver = target.map(|target| {
             LinkResolver::new(move |destination| (destination == "file.rs").then(|| target.clone()))

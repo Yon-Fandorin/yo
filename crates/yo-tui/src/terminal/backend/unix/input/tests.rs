@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     task::{Context, Poll, Waker},
+    thread,
 };
 
 use crossterm::event::{
@@ -355,7 +356,7 @@ fn production_source_enforces_single_thread_ownership() {
     let _reader = InputReader::new(source);
     drop(_reader);
 
-    let cross_thread = std::thread::spawn(|| match CrosstermEventSource::acquire() {
+    let cross_thread = thread::spawn(|| match CrosstermEventSource::acquire() {
         Err(failure) => failure,
         Ok(_) => panic!("a different thread must not acquire the source"),
     })

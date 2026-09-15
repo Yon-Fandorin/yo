@@ -1,3 +1,5 @@
+use std::time;
+
 use super::{
     super::{
         OverlayBindings, PanelPaintError, SelectionEntry, SelectionPanel, SelectionPanelAppearance,
@@ -6,6 +8,7 @@ use super::{
     support::{enabled, snapshot},
 };
 use crate::{
+    appearance,
     appearance::AppearanceState,
     surface::{
         Attributes, CellContent, Color, Grapheme, Point, Rect, Size, Style, Surface, WriteOutcome,
@@ -16,7 +19,7 @@ fn appearance() -> SelectionPanelAppearance {
     let plain = Style::default();
     SelectionPanelAppearance {
         styles: SelectionPanelStyles {
-            activity: crate::appearance::ActivityStyles {
+            activity: appearance::ActivityStyles {
                 marker: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
                 muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
                 trail: Style::new(Color::Indexed(6), Color::Default, Attributes::DIM),
@@ -58,8 +61,8 @@ fn render_for_turn(
 fn render_with_motion(
     panel: &SelectionPanel,
     size: Size,
-    elapsed: std::time::Duration,
-) -> Option<(Surface, Size, Option<std::time::Duration>)> {
+    elapsed: time::Duration,
+) -> Option<(Surface, Size, Option<time::Duration>)> {
     let appearance_state = AppearanceState::default();
     let pin = appearance_state.pin();
     let prepared = panel.prepare_with_motion(
@@ -101,22 +104,14 @@ fn activity_title_status_moves_a_style_only_sheen_without_relayout() {
             .unwrap(),
     );
 
-    let (first, first_size, first_period) = render_with_motion(
-        &panel,
-        Size::new(48, 6),
-        std::time::Duration::from_millis(500),
-    )
-    .unwrap();
-    let (second, second_size, second_period) = render_with_motion(
-        &panel,
-        Size::new(48, 6),
-        std::time::Duration::from_millis(1_000),
-    )
-    .unwrap();
+    let (first, first_size, first_period) =
+        render_with_motion(&panel, Size::new(48, 6), time::Duration::from_millis(500)).unwrap();
+    let (second, second_size, second_period) =
+        render_with_motion(&panel, Size::new(48, 6), time::Duration::from_millis(1_000)).unwrap();
 
     assert_eq!(row(&first, 0), row(&second, 0));
     assert_eq!(first_size, second_size);
-    assert_eq!(first_period, Some(std::time::Duration::from_millis(16)));
+    assert_eq!(first_period, Some(time::Duration::from_millis(16)));
     assert_eq!(second_period, first_period);
     assert_ne!(first, second);
     assert!((14..23).any(|x| {
@@ -141,16 +136,16 @@ fn static_status_stays_still_while_one_grapheme_activity_pulses() {
     );
 
     assert_eq!(
-        render_with_motion(&static_panel, Size::new(48, 6), std::time::Duration::ZERO)
+        render_with_motion(&static_panel, Size::new(48, 6), time::Duration::ZERO)
             .unwrap()
             .2,
         None
     );
     assert_eq!(
-        render_with_motion(&single_panel, Size::new(48, 6), std::time::Duration::ZERO)
+        render_with_motion(&single_panel, Size::new(48, 6), time::Duration::ZERO)
             .unwrap()
             .2,
-        Some(std::time::Duration::from_millis(16))
+        Some(time::Duration::from_millis(16))
     );
 }
 

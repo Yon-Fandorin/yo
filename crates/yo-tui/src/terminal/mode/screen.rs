@@ -13,7 +13,9 @@ use super::{
     },
 };
 use crate::{
+    surface,
     surface::{Point, Surface},
+    terminal,
     terminal::backend::{ScreenModeBackend, TerminalBackend, TerminalOutputBackend},
 };
 
@@ -58,8 +60,8 @@ pub(crate) fn render_inline<B>(
     previous: Option<&Surface>,
     current: &Surface,
     cursor: Point,
-    publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
-    terminal_size: crate::surface::Size,
+    publication: Option<&dyn terminal::mode::inline::PublicationSource>,
+    terminal_size: surface::Size,
 ) -> Result<InlineRenderReceipt, InlineRenderError>
 where
     B: ScreenModeBackend + TerminalOutputBackend,

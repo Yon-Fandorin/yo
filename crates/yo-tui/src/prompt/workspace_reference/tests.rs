@@ -10,6 +10,7 @@ use super::{
     scan_prompt_trigger,
 };
 use crate::{
+    input,
     input::{editor::PromptEditor, event::InputEvent},
     overlay::{OverlayInputEffect, PanelSnapshot, PromptOverlaySlot, SelectionEntry},
 };
@@ -68,11 +69,11 @@ fn acceptance_replaces_the_whole_trigger_and_preserves_typed_identity() {
     ));
     overlay.set_presented(true);
     let OverlayInputEffect::Accepted(receipt) =
-        overlay.handle(&InputEvent::Key(crate::input::event::KeyEvent {
-            code: crate::input::event::KeyCode::Enter,
-            modifiers: crate::input::event::KeyModifiers::NONE,
-            action: crate::input::event::KeyAction::Press,
-            state: crate::input::event::KeyState::NONE,
+        overlay.handle(&InputEvent::Key(input::event::KeyEvent {
+            code: input::event::KeyCode::Enter,
+            modifiers: input::event::KeyModifiers::NONE,
+            action: input::event::KeyAction::Press,
+            state: input::event::KeyState::NONE,
         }))
     else {
         panic!("the enabled workspace row should accept");
@@ -217,11 +218,11 @@ fn consecutive_queries_keep_the_usable_panel_pending_without_loading_replacement
     assert!(pending.has_activity_title_status());
     overlay.set_presented(true);
     assert_eq!(
-        overlay.handle(&InputEvent::Key(crate::input::event::KeyEvent {
-            code: crate::input::event::KeyCode::Enter,
-            modifiers: crate::input::event::KeyModifiers::NONE,
-            action: crate::input::event::KeyAction::Press,
-            state: crate::input::event::KeyState::NONE,
+        overlay.handle(&InputEvent::Key(input::event::KeyEvent {
+            code: input::event::KeyCode::Enter,
+            modifiers: input::event::KeyModifiers::NONE,
+            action: input::event::KeyAction::Press,
+            state: input::event::KeyState::NONE,
         })),
         OverlayInputEffect::Consumed
     );
@@ -259,11 +260,11 @@ fn stale_workspace_update_cannot_disable_a_replacement_overlay() {
         &mut overlay,
     ));
     assert!(matches!(
-        overlay.handle(&InputEvent::Key(crate::input::event::KeyEvent {
-            code: crate::input::event::KeyCode::Enter,
-            modifiers: crate::input::event::KeyModifiers::NONE,
-            action: crate::input::event::KeyAction::Press,
-            state: crate::input::event::KeyState::NONE,
+        overlay.handle(&InputEvent::Key(input::event::KeyEvent {
+            code: input::event::KeyCode::Enter,
+            modifiers: input::event::KeyModifiers::NONE,
+            action: input::event::KeyAction::Press,
+            state: input::event::KeyState::NONE,
         })),
         OverlayInputEffect::Accepted(_)
     ));
@@ -301,11 +302,11 @@ fn acceptance_projects_control_characters_safely() {
     ));
     overlay.set_presented(true);
     let OverlayInputEffect::Accepted(receipt) =
-        overlay.handle(&InputEvent::Key(crate::input::event::KeyEvent {
-            code: crate::input::event::KeyCode::Enter,
-            modifiers: crate::input::event::KeyModifiers::NONE,
-            action: crate::input::event::KeyAction::Press,
-            state: crate::input::event::KeyState::NONE,
+        overlay.handle(&InputEvent::Key(input::event::KeyEvent {
+            code: input::event::KeyCode::Enter,
+            modifiers: input::event::KeyModifiers::NONE,
+            action: input::event::KeyAction::Press,
+            state: input::event::KeyState::NONE,
         }))
     else {
         panic!("the safe projection should remain selectable");

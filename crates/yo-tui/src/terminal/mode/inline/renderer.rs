@@ -10,6 +10,7 @@ use super::{
 };
 use crate::{
     surface::{Point, Size, Surface},
+    terminal,
     terminal::{AnsiEncoder, RESET_HYPERLINK, TerminalOp, TerminalOps},
 };
 
@@ -122,7 +123,7 @@ impl<Writer: Write> InlineRenderer<Writer> {
         pending: PendingFrame<'_>,
         previous: Option<&Surface>,
         current: &Surface,
-        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
+        publication: Option<&dyn terminal::mode::inline::PublicationSource>,
         terminal_size: Size,
     ) -> Result<InlineRenderReceipt, InlineRenderError> {
         if self.hyperlink_dirty {
@@ -145,7 +146,7 @@ impl<Writer: Write> InlineRenderer<Writer> {
         pending: PendingFrame<'_>,
         previous: Option<&Surface>,
         current: &Surface,
-        publication: Option<&dyn crate::terminal::mode::inline::PublicationSource>,
+        publication: Option<&dyn terminal::mode::inline::PublicationSource>,
         terminal_size: Size,
     ) -> Result<InlineRenderReceipt, InlineRenderError> {
         let Some(publication) = publication else {

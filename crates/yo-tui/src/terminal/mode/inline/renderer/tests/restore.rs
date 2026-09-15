@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use super::super::{InlineRenderError, InlineRenderer, InlineRestoreOutcome};
-use crate::{surface::Size, terminal::mode::inline::InlineViewport};
+use crate::{surface, surface::Size, terminal::mode::inline::InlineViewport};
 
 // 정상 종료는 소유한 두 행만 지우고 former viewport 첫 행, 즉 persistent output 바로 아래에 둔다.
 #[test]
@@ -92,7 +92,7 @@ fn restore_returns_from_the_tracked_prompt_caret_before_clearing() {
     let size = Size::new(4, 3);
     let mut viewport = InlineViewport::default();
     viewport
-        .begin_frame_at(size, crate::surface::Point::new(2, 1))
+        .begin_frame_at(size, surface::Point::new(2, 1))
         .unwrap()
         .commit();
     let pending = viewport.begin_restore();

@@ -1,5 +1,7 @@
 //! A reading body's document rows are indexed once; visible pages acquire cells.
 
+use std::sync;
+
 use yo_core::{ActivityDocument, ActivityNotice, ActivityPlan, ActivityReasoning, ToolOutput};
 
 use super::{
@@ -22,7 +24,7 @@ pub(super) struct PagedBody {
 enum Section {
     Literal(TextPages, Vec<(usize, GlyphRole)>),
     Markdown(markdown::PagedMarkdown),
-    Rows(std::sync::Arc<PagedBody>, usize, usize),
+    Rows(sync::Arc<PagedBody>, usize, usize),
     PlanStep(TextPages, &'static str, NonZeroU16),
 }
 
@@ -289,7 +291,7 @@ impl PagedBody {
             .iter()
             .find(|(_, _, role)| matches!(role, GlyphRole::ActivityBody | GlyphRole::ReasoningBody))
             .map_or(GlyphRole::ActivityBody, |(_, _, role)| *role);
-        let original = std::sync::Arc::new(self);
+        let original = sync::Arc::new(self);
         folded.append(
             Section::Rows(original.clone(), 0, hidden_start),
             GlyphRole::ActivityBody,

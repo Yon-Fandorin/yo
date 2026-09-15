@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use super::super::{InlineRecovery, InlineRenderError, InlineRenderer};
 use crate::{
     surface::{Grapheme, Point, Rect, Size, Style, Surface},
+    terminal,
     terminal::mode::inline::InlineViewport,
 };
 
@@ -195,7 +196,7 @@ fn possible_scroll_without_exact_anchor_refuses_recovery() {
     assert_eq!(occurrences(&renderer.into_inner().bytes, b"\x1b[?25h"), 0);
     assert!(matches!(
         viewport.begin_frame(live.size()).plan(),
-        crate::terminal::mode::inline::InlineFramePlan::Reanchor { .. }
+        terminal::mode::inline::InlineFramePlan::Reanchor { .. }
     ));
 }
 
@@ -220,7 +221,7 @@ fn partial_operation_failure_is_fatal_and_leaves_live_ownership_untrusted() {
     assert_eq!(occurrences(&renderer.into_inner().bytes, b"\x1b[?25h"), 0);
     assert!(matches!(
         viewport.begin_frame(live.size()).plan(),
-        crate::terminal::mode::inline::InlineFramePlan::Reanchor { .. }
+        terminal::mode::inline::InlineFramePlan::Reanchor { .. }
     ));
 }
 

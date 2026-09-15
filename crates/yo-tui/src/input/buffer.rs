@@ -1,5 +1,7 @@
 //! Grapheme-aware editable text without key-binding policy.
 
+use std::{mem, ops::Range};
+
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Text and a cursor kept on an extended grapheme-cluster boundary.
@@ -42,7 +44,7 @@ impl TextBuffer {
         }
 
         self.cursor = 0;
-        Some(std::mem::take(&mut self.text))
+        Some(mem::take(&mut self.text))
     }
 
     pub(crate) fn insert(&mut self, text: &str) -> bool {
@@ -56,11 +58,7 @@ impl TextBuffer {
         true
     }
 
-    pub(crate) fn replace_range(
-        &mut self,
-        range: std::ops::Range<usize>,
-        replacement: &str,
-    ) -> bool {
+    pub(crate) fn replace_range(&mut self, range: Range<usize>, replacement: &str) -> bool {
         if range.start > range.end
             || range.end > self.text.len()
             || !self.text.is_char_boundary(range.start)
@@ -191,7 +189,7 @@ impl TextBuffer {
             .map_or(self.text.len(), |(index, _)| self.cursor + index)
     }
 
-    fn kill_range(&mut self, range: std::ops::Range<usize>) -> String {
+    fn kill_range(&mut self, range: Range<usize>) -> String {
         let start = range.start;
         let removed = self.text.drain(range).collect();
         self.cursor = boundary_at_or_after(&self.text, start);

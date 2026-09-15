@@ -1,4 +1,4 @@
-use std::{num::NonZeroU16, time::Duration};
+use std::{iter, num::NonZeroU16, time::Duration};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -7,6 +7,7 @@ use super::{
     SelectionPanel, SelectionPanelAppearance, VISIBLE_ENTRY_CAP,
 };
 use crate::{
+    appearance,
     appearance::ActivityMotionFrame,
     overlay::binding::{BindingHint, OverlayBindings},
     surface::{Grapheme, Point, Size, Style, SurfaceView, WriteOutcome},
@@ -319,7 +320,7 @@ impl SelectionPanel {
         let mut clusters = entry
             .label
             .graphemes(true)
-            .chain(std::iter::once("\n"))
+            .chain(iter::once("\n"))
             .chain(detail.graphemes(true));
         let text: String = clusters.by_ref().take(limit + 1).collect();
         let mut flow = flow_prose(&text, body_width).ok()?;
@@ -479,7 +480,7 @@ impl PreparedSelectionPanel {
         start: u16,
         end: u16,
         text: &str,
-        activity_styles: crate::appearance::ActivityStyles,
+        activity_styles: appearance::ActivityStyles,
         motion: ActivityMotionFrame<'_>,
     ) {
         let mut visible = Vec::new();

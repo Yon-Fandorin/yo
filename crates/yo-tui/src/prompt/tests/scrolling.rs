@@ -1,11 +1,16 @@
+use std::num;
+
 use super::{
     PromptFrame, PromptViewState, editor_with, move_left, move_right, prompt_styles, render,
     rendered_text,
 };
-use crate::surface::{CellContent, Point, Rect, Size, Surface};
+use crate::{
+    input,
+    surface::{CellContent, Point, Rect, Size, Surface},
+};
 
 fn render_at(
-    editor: &crate::input::editor::PromptEditor,
+    editor: &input::editor::PromptEditor,
     state: &mut PromptViewState,
     size: Size,
 ) -> (PromptFrame, Surface) {
@@ -29,7 +34,7 @@ fn scrolls_to_end_cursor_and_projects_only_visible_rows() {
         frame,
         PromptFrame {
             cursor: Point::new(0, 1),
-            content_height: std::num::NonZeroU16::new(4).unwrap(),
+            content_height: num::NonZeroU16::new(4).unwrap(),
             first_visible_row: 2,
         }
     );
@@ -129,7 +134,7 @@ fn decorated_scroll_preserves_rules_and_prefix_without_repeating_marker() {
         frame,
         PromptFrame {
             cursor: Point::new(2, 1),
-            content_height: std::num::NonZeroU16::new(3).unwrap(),
+            content_height: num::NonZeroU16::new(3).unwrap(),
             first_visible_row: 2,
         }
     );

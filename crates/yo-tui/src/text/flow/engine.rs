@@ -1,6 +1,6 @@
 //! Grapheme scanning and physical-cell placement for text flow.
 
-use std::{collections::VecDeque, num::NonZeroU16};
+use std::{collections::VecDeque, iter, num::NonZeroU16};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -414,9 +414,7 @@ impl TextPages {
                 }
                 pages.advance_to(row);
                 if pages.text.ends_with('\n') || pages.text.is_empty() {
-                    pages
-                        .text
-                        .extend(std::iter::repeat_n(' ', usize::from(column)));
+                    pages.text.extend(iter::repeat_n(' ', usize::from(column)));
                 }
                 let glyph_width = glyph.width().get();
                 pages.push(row, offset + byte, column, glyph)?;

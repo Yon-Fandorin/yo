@@ -11,7 +11,9 @@
 use std::num::NonZeroU16;
 
 use crate::{
+    input,
     input::editor::{PromptEditor, layout::LayoutError},
+    surface,
     surface::{Point, Rect, SurfaceView, WriteOutcome},
 };
 
@@ -32,7 +34,7 @@ pub(crate) struct PromptMeasure {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PreparedPrompt {
-    layout: crate::input::editor::layout::TextLayout,
+    layout: input::editor::layout::TextLayout,
     chrome: PromptChrome,
     empty: bool,
     placeholder: Option<&'static str>,
@@ -142,11 +144,8 @@ pub(crate) fn paint_prepared(
     if let Some(thumbnail) = prepared.image_thumbnail.as_ref() {
         let (width, height) = thumbnail_cells(thumbnail, viewport.content_size.width);
         if viewport.content_size.height > height + 1 && width > 0 {
-            let area = Rect::new(
-                viewport.content_origin,
-                crate::surface::Size::new(width, height),
-            );
-            view.place_raster(crate::surface::RasterImage {
+            let area = Rect::new(viewport.content_origin, surface::Size::new(width, height));
+            view.place_raster(surface::RasterImage {
                 area,
                 png: thumbnail.png.clone(),
             });
@@ -160,7 +159,7 @@ pub(crate) fn paint_prepared(
                         viewport.content_origin.x + column as u16,
                         viewport.content_origin.y + height,
                     ),
-                    crate::surface::Grapheme::try_from(character.to_string().as_str())
+                    surface::Grapheme::try_from(character.to_string().as_str())
                         .expect("preview label is ASCII"),
                     styles.rule,
                 );
@@ -222,7 +221,7 @@ pub(crate) fn paint_prepared(
                     viewport.content_origin.x + column as u16,
                     viewport.content_origin.y,
                 ),
-                crate::surface::Grapheme::try_from(text).expect("the hint is printable ASCII"),
+                surface::Grapheme::try_from(text).expect("the hint is printable ASCII"),
                 styles.rule,
             );
         }

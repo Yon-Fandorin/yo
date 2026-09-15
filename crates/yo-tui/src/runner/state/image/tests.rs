@@ -7,8 +7,10 @@ use yo_core::{
 
 use super::*;
 use crate::{
+    appearance,
     input::event::{InputEvent, KeyAction, KeyCode, KeyEvent, KeyModifiers, KeyState},
     runner::AgentAction,
+    surface,
 };
 
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
@@ -209,8 +211,8 @@ fn ready_thumbnail_is_placed_directly_in_prompt_frame() {
     finish(&mut state, request, 777);
     let frame = state
         .prepare_frame(
-            crate::surface::Size::new(40, 24),
-            &crate::appearance::AppearanceState::default().pin(),
+            surface::Size::new(40, 24),
+            &appearance::AppearanceState::default().pin(),
         )
         .unwrap();
     assert_eq!(frame.surface.rasters.len(), 1);
@@ -364,8 +366,8 @@ fn trailing_attachment_is_blocked_in_a_presented_question_prompt() {
             .unwrap();
         let frame = state
             .prepare_frame(
-                crate::surface::Size::new(80, 24),
-                &crate::appearance::AppearanceState::default().pin(),
+                surface::Size::new(80, 24),
+                &appearance::AppearanceState::default().pin(),
             )
             .unwrap();
         state.commit_frame(&frame);

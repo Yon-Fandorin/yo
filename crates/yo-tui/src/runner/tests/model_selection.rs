@@ -9,6 +9,7 @@ use yo_core::{
 use super::{activity, key, nonzero, turn};
 use crate::{
     appearance::AppearanceState,
+    input,
     input::event::{InputEvent, KeyCode},
     runner::{
         AgentAction,
@@ -98,7 +99,7 @@ fn direct_model_command_resolves_only_inside_the_current_provider_and_account() 
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -118,7 +119,7 @@ fn direct_model_command_resolves_only_inside_the_current_provider_and_account() 
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -144,7 +145,7 @@ fn grouped_model_picker_returns_the_complete_selected_binding() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -157,7 +158,7 @@ fn grouped_model_picker_returns_the_complete_selected_binding() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Down, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Down, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -166,7 +167,7 @@ fn grouped_model_picker_returns_the_complete_selected_binding() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -199,7 +200,7 @@ fn command_palette_model_selection_reuses_the_model_picker() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -215,7 +216,7 @@ fn command_palette_model_selection_reuses_the_model_picker() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Down, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Down, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -224,7 +225,7 @@ fn command_palette_model_selection_reuses_the_model_picker() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -248,7 +249,7 @@ fn model_picker_reselecting_the_current_model_does_not_request_a_switch() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -262,7 +263,7 @@ fn model_picker_reselecting_the_current_model_does_not_request_a_switch() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -286,7 +287,7 @@ fn committed_model_replacement_becomes_current_for_direct_and_picker_paths() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -312,7 +313,7 @@ fn committed_model_replacement_becomes_current_for_direct_and_picker_paths() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -326,7 +327,7 @@ fn committed_model_replacement_becomes_current_for_direct_and_picker_paths() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -339,7 +340,7 @@ fn committed_model_replacement_becomes_current_for_direct_and_picker_paths() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -365,7 +366,7 @@ fn failed_model_replacement_preserves_the_previous_controller() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -382,7 +383,7 @@ fn failed_model_replacement_preserves_the_previous_controller() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -425,7 +426,7 @@ fn active_turn_model_selection_is_reserved_until_durable_completion() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -450,7 +451,7 @@ fn active_turn_model_selection_is_reserved_until_durable_completion() {
         submission,
     }) = state
         .handle(
-            key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+            key(KeyCode::Enter, input::event::KeyModifiers::NONE),
             Duration::ZERO,
         )
         .unwrap()
@@ -504,7 +505,7 @@ fn active_turn_model_picker_acceptance_creates_a_reservation() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -518,7 +519,7 @@ fn active_turn_model_picker_acceptance_creates_a_reservation() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Down, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Down, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -527,7 +528,7 @@ fn active_turn_model_picker_acceptance_creates_a_reservation() {
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -582,7 +583,7 @@ fn later_model_selection_replaces_or_cancels_the_reservation() {
         assert_eq!(
             state
                 .handle(
-                    key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                    key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                     Duration::ZERO,
                 )
                 .unwrap(),
@@ -627,7 +628,7 @@ fn later_model_selection_replaces_or_cancels_the_reservation() {
         assert_eq!(
             state
                 .handle(
-                    key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                    key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                     Duration::ZERO,
                 )
                 .unwrap(),
@@ -671,7 +672,7 @@ fn nondurable_turn_completion_fails_a_model_reservation_visibly() {
             .unwrap();
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap();
@@ -723,7 +724,7 @@ fn pending_activity_keeps_model_selection_local_and_the_next_reply_correlated() 
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),
@@ -738,7 +739,7 @@ fn pending_activity_keeps_model_selection_local_and_the_next_reply_correlated() 
     assert_eq!(
         state
             .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                key(KeyCode::Enter, input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
             .unwrap(),

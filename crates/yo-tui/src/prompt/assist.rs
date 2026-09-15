@@ -1,5 +1,7 @@
 //! One prompt-assist controller for every cursor-local trigger kind.
 
+use std::ops::Range;
+
 use yo_core::{
     SkillReferenceSearchRequest, SkillReferenceSearchUpdate, UserInput, UserInputError,
     WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchUpdate,
@@ -199,7 +201,7 @@ impl PromptAssistController {
     pub(crate) fn attach_image(
         &mut self,
         image: &yo_core::PreparedImageAttachment,
-        span: std::ops::Range<usize>,
+        span: Range<usize>,
     ) -> Result<(), UserInputError> {
         self.images.attach(image, span)
     }

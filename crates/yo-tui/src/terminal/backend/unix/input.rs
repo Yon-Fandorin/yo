@@ -4,6 +4,7 @@
 //! this module so the dependency's single-thread precondition stays enforced.
 
 use std::{
+    io,
     marker::PhantomData,
     pin::Pin,
     rc::Rc,
@@ -114,14 +115,14 @@ impl CrosstermEventSource {
 }
 
 impl EventSource for CrosstermEventSource {
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn poll_event(&mut self, context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
         let stream = self.stream.get_or_insert_with(EventStream::new);
         match futures_core::Stream::poll_next(Pin::new(stream), context) {
             Poll::Ready(Some(event)) => Poll::Ready(event),
-            Poll::Ready(None) => Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
+            Poll::Ready(None) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
                 "the terminal event stream closed",
             ))),
             Poll::Pending => Poll::Pending,

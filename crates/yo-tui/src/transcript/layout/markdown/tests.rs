@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{io::Cursor, iter};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 
@@ -1143,7 +1143,7 @@ fn histogram_limits_constant_and_extreme_values() {
         assert!(!text.contains("NaN") && !text.contains("inf"));
         assert!(!text.contains("0000000000"), "{text}");
     }
-    let accepted = std::iter::repeat_n("1", 64).collect::<Vec<_>>().join(" ");
+    let accepted = iter::repeat_n("1", 64).collect::<Vec<_>>().join(" ");
     for (source, valid) in [
         (accepted.clone(), true),
         (format!("{accepted} 1"), false),
@@ -1246,7 +1246,7 @@ fn scatter_handles_constant_axes_and_rejects_invalid_coordinates() {
                 .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch))
         }));
     }
-    let accepted = std::iter::repeat_n("0,1", 64).collect::<Vec<_>>().join(" ");
+    let accepted = iter::repeat_n("0,1", 64).collect::<Vec<_>>().join(" ");
     for (source, valid) in [
         (accepted.clone(), true),
         (format!("{accepted} 0,1"), false),

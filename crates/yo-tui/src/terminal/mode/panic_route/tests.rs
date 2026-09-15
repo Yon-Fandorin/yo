@@ -1,5 +1,7 @@
 use std::{
+    panic,
     panic::{AssertUnwindSafe, catch_unwind},
+    sync,
     sync::{
         Arc, Barrier,
         atomic::{AtomicUsize, Ordering},
@@ -30,13 +32,13 @@ fn owner_thread_first_panic_is_captured_once() {
 #[test]
 fn previous_hook_receives_other_thread_and_post_restore_panics() {
     let _test_hook_owner = lock_test_hook();
-    let original: Arc<PanicHook> = std::panic::take_hook().into();
+    let original: Arc<PanicHook> = panic::take_hook().into();
     let worker_calls = Arc::new(AtomicUsize::new(0));
     let restored_calls = Arc::new(AtomicUsize::new(0));
     let hook_worker_calls = Arc::clone(&worker_calls);
     let hook_restored_calls = Arc::clone(&restored_calls);
     let hook_original = Arc::clone(&original);
-    std::panic::set_hook(Box::new(move |info| {
+    panic::set_hook(Box::new(move |info| {
         match info.payload().downcast_ref::<&str>() {
             Some(&"worker failure") => {
                 hook_worker_calls.fetch_add(1, Ordering::Relaxed);
@@ -58,7 +60,7 @@ fn previous_hook_receives_other_thread_and_post_restore_panics() {
     })
     .unwrap();
     let _ = catch_unwind(AssertUnwindSafe(|| panic!("after restore")));
-    std::panic::set_hook(Box::new(move |info| original(info)));
+    panic::set_hook(Box::new(move |info| original(info)));
 
     assert!(outcome.result.is_ok());
     assert!(outcome.diagnostic.is_none());
@@ -76,7 +78,7 @@ fn complete_terminal_boundary_cleans_up_before_returning_the_panic() {
         let result: Result<(), _> = catch_unwind(AssertUnwindSafe(|| panic!("operation failure")));
         cleanup_observer.fetch_add(1, Ordering::Relaxed);
         if let Err(payload) = result {
-            std::panic::resume_unwind(payload);
+            panic::resume_unwind(payload);
         }
     }))
     .unwrap();
@@ -138,8 +140,8 @@ fn retained_diagnostic_has_a_stable_owned_projection() {
     );
 }
 
-fn lock_test_hook() -> std::sync::MutexGuard<'static, ()> {
+fn lock_test_hook() -> sync::MutexGuard<'static, ()> {
     PANIC_ROUTE_TEST_OWNER
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_else(sync::PoisonError::into_inner)
 }

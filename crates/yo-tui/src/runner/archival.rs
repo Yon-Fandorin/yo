@@ -1,5 +1,7 @@
 //! Read-only terminal-independent projections of one durable Session history.
 
+use std::error;
+
 use yo_core::session_repository::{
     InheritedHistorySection, InheritedHistorySource, InheritedSessionHistory,
 };
@@ -75,7 +77,7 @@ impl fmt::Display for ArchivedProjectionError {
     }
 }
 
-impl std::error::Error for ArchivedProjectionError {}
+impl error::Error for ArchivedProjectionError {}
 
 /// Projects durable semantic history without acquiring a terminal or starting a backend.
 pub fn project_archived_session(

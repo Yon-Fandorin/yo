@@ -1,7 +1,10 @@
+use std::io;
+
 use super::{
     FullscreenFrameError, FullscreenFramePlan, FullscreenRenderer, FullscreenViewport, Point,
     RecordingWriter, Size, Surface,
 };
+use crate::terminal;
 
 #[derive(Default)]
 struct RecoveringWriter {
@@ -12,11 +15,11 @@ struct RecoveringWriter {
     first_write_limit: Option<usize>,
 }
 
-impl std::io::Write for RecoveringWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+impl io::Write for RecoveringWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.writes += 1;
         if self.fail_write && self.writes == 2 {
-            return Err(std::io::Error::other("write failure"));
+            return Err(io::Error::other("write failure"));
         }
         let count = if self.fail_write && self.writes == 1 {
             self.first_write_limit.unwrap_or(9).min(bytes.len())
@@ -27,10 +30,10 @@ impl std::io::Write for RecoveringWriter {
         Ok(count)
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         self.flushes += 1;
         if !self.fail_write && self.flushes == 1 {
-            return Err(std::io::Error::other("flush failure"));
+            return Err(io::Error::other("flush failure"));
         }
         Ok(())
     }
@@ -51,9 +54,11 @@ fn output_failure_releases_synchronized_update_before_full_recovery() {
         });
         let error = renderer.render(pending, None, &current).unwrap_err();
         match error {
-            super::super::FullscreenRenderError::Ansi(crate::terminal::AnsiEncodeError::Io(
-                error,
-            )) if fail_write => assert_eq!(error.to_string(), "write failure"),
+            super::super::FullscreenRenderError::Ansi(terminal::AnsiEncodeError::Io(error))
+                if fail_write =>
+            {
+                assert_eq!(error.to_string(), "write failure")
+            },
             super::super::FullscreenRenderError::Flush(error) if !fail_write => {
                 assert_eq!(error.to_string(), "flush failure")
             },

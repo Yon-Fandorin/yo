@@ -1,5 +1,6 @@
 use std::{
     error::Error,
+    fmt,
     panic::AssertUnwindSafe,
     sync::Arc,
     task::{Context, Poll, Wake, Waker},
@@ -7,6 +8,7 @@ use std::{
     time::Instant,
 };
 
+use rustix::io;
 use yo_core::{
     ImagePreparationUpdate, SubmissionOutcome, SubmissionRejection, SubmissionRejectionKind,
 };
@@ -14,6 +16,7 @@ use yo_core::{
 use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
     appearance::{ColorCapability, MotionPreference},
+    runner,
     runner::{
         AgentConnection, DispatchOutcome, ExitReason, PresentationMode, RunError, RunOutcome,
         TerminalOutcome, TerminationSource, TuiSession,
@@ -23,6 +26,7 @@ use crate::{
         state::{FrameError, StateEffect, StateError},
     },
     surface::Size,
+    terminal,
     terminal::{
         backend::unix::{
             CrosstermEventSource, DirectTerminalWriter, RustixTermiosDriver, TtyStateAdapter,
@@ -67,7 +71,7 @@ use self::{
     timing::{GEOMETRY_CHECK_INTERVAL, WORKER_RETRY_INTERVAL, request_due_motion, wait_timeout},
 };
 
-pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
+pub(super) type LiveBackendError = UnixBackendError<io::Errno>;
 
 #[derive(Clone, Copy)]
 pub(super) struct GenerationStart {
@@ -134,8 +138,8 @@ impl LoopError {
     }
 }
 
-impl std::fmt::Display for LoopError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for LoopError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.detail())
     }
 }
@@ -379,16 +383,15 @@ pub(super) fn drive<B, E, T, A, P, G, GE>(
     sample_geometry: &mut G,
 ) -> Result<LoopExit, LoopError>
 where
-    B: crate::terminal::backend::ScreenModeBackend
-        + crate::terminal::backend::TerminalOutputBackend,
+    B: terminal::backend::ScreenModeBackend + terminal::backend::TerminalOutputBackend,
     B::Mode: PartialEq,
-    E: crate::terminal::backend::unix::EventSource,
-    E::Error: std::fmt::Debug,
+    E: terminal::backend::unix::EventSource,
+    E::Error: fmt::Debug,
     T: TerminationSource,
     A: AgentConnection,
     P: LivePresenter<B>,
     G: FnMut() -> Result<Size, GE>,
-    GE: std::fmt::Display,
+    GE: fmt::Display,
 {
     let waker = Waker::from(Arc::new(OwnerThreadWake(thread::current())));
     let mut context = Context::from_waker(&waker);
@@ -587,7 +590,7 @@ where
                         frames.request(FrameRequest::Coalesced);
                     },
                     StateEffect::Dispatch(action) => {
-                        let is_interrupt = matches!(&action, crate::runner::AgentAction::Interrupt);
+                        let is_interrupt = matches!(&action, runner::AgentAction::Interrupt);
                         if is_interrupt {
                             *pending_dispatch = None;
                         }
@@ -651,8 +654,8 @@ where
 }
 
 fn apply_admission(
-    state: &mut crate::runner::state::TuiState,
-    retained: &mut Option<crate::runner::PendingDispatch>,
+    state: &mut runner::state::TuiState,
+    retained: &mut Option<runner::PendingDispatch>,
     admission: DispatchOutcome,
 ) -> Result<StateEffect, LoopError> {
     match admission {

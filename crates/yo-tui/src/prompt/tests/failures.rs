@@ -1,7 +1,9 @@
 use super::{PromptRenderError, PromptViewState, editor_with, prompt_style, prompt_styles, render};
 use crate::{
     input::editor::{PromptEditor, layout::LayoutError},
+    prompt,
     prompt::{PromptPaintError, paint_prepared, prepare},
+    surface,
     surface::{Grapheme, Point, Rect, Size, Style, Surface, WriteOutcome},
 };
 
@@ -79,7 +81,7 @@ fn layout_failure_preserves_surface_and_view_state() {
         error,
         PromptRenderError::Layout(LayoutError::UnrenderableGrapheme {
             byte_index: 0,
-            cause: crate::surface::GraphemeError::ZeroWidth
+            cause: surface::GraphemeError::ZeroWidth
         })
     );
     assert_eq!(surface, before_surface);
@@ -115,11 +117,11 @@ fn crossing_surface_footprint_preserves_surface_and_view_state() {
         render(
             &editor,
             &mut component,
-            crate::prompt::PromptStyles {
+            prompt::PromptStyles {
                 body: Style::default(),
                 marker: Style::default(),
                 rule: Style::default(),
-                glyphs: crate::prompt::PromptGlyphs::rich(),
+                glyphs: prompt::PromptGlyphs::rich(),
             },
             &mut state,
         )

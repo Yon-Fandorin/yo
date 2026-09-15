@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     input::event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
+    runner,
     runner::{
         state::{StateEffect, TuiState},
         view::{ObservabilityView, RequestUnavailableReason},
@@ -116,7 +117,7 @@ fn non_chat_modes_enforce_read_only_input_without_dispatch() {
     state
         .handle(function(1, KeyAction::Press), Duration::ZERO)
         .unwrap();
-    let StateEffect::Dispatch(crate::runner::AgentAction::Submit(submission)) = state
+    let StateEffect::Dispatch(runner::AgentAction::Submit(submission)) = state
         .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
         .unwrap()
     else {

@@ -10,13 +10,14 @@ mod model;
 mod preview_agent;
 mod publication;
 mod session;
-pub use interview::InterviewHistoryHost;
 mod skill;
 mod source_schedule;
 mod state;
 mod unix;
 mod view;
 mod workspace;
+
+use std::task;
 
 pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch};
 pub use archival::{
@@ -25,6 +26,7 @@ pub use archival::{
 };
 pub use error::RunError;
 pub use frame::FrameRateLimit;
+pub use interview::InterviewHistoryHost;
 pub use session::{
     PublicationRecoveryEvidence, PublicationRecoveryKind, ResumeSessionEntry, TuiDocument,
     TuiSession, TuiSessionInfo, TuiStatusError, TuiStatusLine,
@@ -32,6 +34,7 @@ pub use session::{
 pub use skill::{SkillReferenceConnection, SkillReferencePoll};
 pub use unix::{run, run_session_with_mode, run_with_mode};
 pub use workspace::{WorkspaceReferenceConnection, WorkspaceReferencePoll};
+use yo_core::interview::NewConversation;
 
 use crate::overlay::OverlayInstanceToken;
 
@@ -56,10 +59,8 @@ pub enum TerminationEvent {
 /// Supplies process-host termination readiness without exposing OS signals.
 pub trait TerminationSource {
     /// Registers the frontend task and observes a pending termination request.
-    fn poll_termination(
-        &mut self,
-        context: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<TerminationEvent>;
+    fn poll_termination(&mut self, context: &mut task::Context<'_>)
+    -> task::Poll<TerminationEvent>;
 }
 
 impl<S> TerminationSource for &mut S
@@ -68,8 +69,8 @@ where
 {
     fn poll_termination(
         &mut self,
-        context: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<TerminationEvent> {
+        context: &mut task::Context<'_>,
+    ) -> task::Poll<TerminationEvent> {
         (**self).poll_termination(context)
     }
 }
@@ -108,7 +109,7 @@ pub enum TerminalOutcome {
     /// The idle frontend requested a new independent session after terminal restoration.
     NewSessionRequested,
     /// Explicit immutable interview preview for the first Turn of a new Session.
-    InterviewConversationRequested(yo_core::interview::NewConversation),
+    InterviewConversationRequested(NewConversation),
     /// Requests an exact branch of the current durable conversation after terminal restoration.
     ForkSessionRequested,
     /// Requests a frozen catalog of historical boundaries for the current idle Session.

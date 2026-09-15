@@ -9,6 +9,7 @@ use crate::{
         ActivityMotionFrame, ActivityStyles, AppearanceCandidate, AppearanceState, ColorCapability,
         GlyphProfile, MotionPreference,
     },
+    input,
     input::editor::binding::NewlineBinding,
     runner::PresentationMode,
     surface::{Attributes, CellContent, Color, Point, Rect, Size, Style, Surface},
@@ -522,7 +523,7 @@ fn queued_footer_preserves_count_pause_and_newline_binding() {
                 .unwrap(),
             queued,
             styles,
-            NewlineBinding::new(crate::input::event::KeyModifiers::ALT).unwrap(),
+            NewlineBinding::new(input::event::KeyModifiers::ALT).unwrap(),
             false,
         )
         .unwrap();

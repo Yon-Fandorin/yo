@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    mem,
+    fmt, mem,
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
@@ -40,11 +40,11 @@ pub(crate) enum SessionFailureCause<E> {
     Panicked(Box<dyn Any + Send>),
 }
 
-impl<E> std::fmt::Debug for SessionFailureCause<E>
+impl<E> fmt::Debug for SessionFailureCause<E>
 where
-    E: std::fmt::Debug,
+    E: fmt::Debug,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Error(error) => formatter.debug_tuple("Error").field(error).finish(),
             Self::Panicked(_) => formatter.write_str("Panicked(..)"),

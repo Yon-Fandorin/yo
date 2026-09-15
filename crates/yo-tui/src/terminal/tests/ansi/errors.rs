@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::{
+    error,
+    io::{self, Write},
+};
 
 use super::write;
 use crate::{
@@ -66,7 +69,7 @@ fn writer_failure_is_reported_without_masking_its_source() {
 
     assert!(matches!(error, AnsiEncodeError::Io(_)));
     assert_eq!(
-        std::error::Error::source(&error)
+        error::Error::source(&error)
             .and_then(|source| source.downcast_ref::<io::Error>())
             .map(io::Error::kind),
         Some(io::ErrorKind::BrokenPipe)

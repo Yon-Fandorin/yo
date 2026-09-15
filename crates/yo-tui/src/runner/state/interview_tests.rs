@@ -1,22 +1,24 @@
-use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{env, fs, num, os::unix::fs::PermissionsExt, path::PathBuf, thread, time};
 
-use yo_core::interview::{
-    AnswerResponse, Capture, InterviewCatalog, InterviewQuestion, InterviewRepository, WorkingCopy,
+use yo_core::{
+    interview,
+    interview::{
+        AnswerResponse, Capture, InterviewCatalog, InterviewQuestion, InterviewRepository,
+        WorkingCopy,
+    },
 };
 
 use super::*;
+use crate::{appearance, input};
 struct Host(InterviewCatalog);
 impl crate::InterviewHistoryHost for Host {
     fn resolve(
         &mut self,
         _: ActivityRequestRef,
-    ) -> Result<InterviewCatalog, yo_core::interview::InterviewError> {
+    ) -> Result<InterviewCatalog, interview::InterviewError> {
         Ok(self.0.clone())
     }
-    fn validate_submission(
-        &mut self,
-        _: &WorkingCopy,
-    ) -> Result<(), yo_core::interview::InterviewError> {
+    fn validate_submission(&mut self, _: &WorkingCopy) -> Result<(), interview::InterviewError> {
         Ok(())
     }
 }
@@ -28,18 +30,18 @@ struct Fixture {
 impl Fixture {
     fn new(submitted: bool) -> Self {
         // macOS의 /var 임시 경로 링크를 저장소의 경로 검증 대상으로 섞지 않는다.
-        let temp = std::fs::canonicalize(std::env::temp_dir())
+        let temp = fs::canonicalize(env::temp_dir())
             .expect("the TUI interview fixture temp directory must resolve physically");
         let root = temp.join(format!("yo-tui-interview-{}", SubmissionId::new().unwrap()));
-        std::fs::create_dir(&root).unwrap();
-        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let turn = turn();
         let request = ActivityRequestRef::new(
             ActivityRef::new(
                 turn,
-                yo_core::ActivityId::new(std::num::NonZeroU64::new(1).unwrap()),
+                yo_core::ActivityId::new(num::NonZeroU64::new(1).unwrap()),
             ),
-            yo_core::RequestId::new(std::num::NonZeroU64::new(1).unwrap()),
+            yo_core::RequestId::new(num::NonZeroU64::new(1).unwrap()),
         );
         let question = InterviewQuestion {
             id: "q1".into(),
@@ -72,7 +74,7 @@ impl Fixture {
             ));
             let activity = ActivityRef::new(
                 turn,
-                yo_core::ActivityId::new(std::num::NonZeroU64::new(2).unwrap()),
+                yo_core::ActivityId::new(num::NonZeroU64::new(2).unwrap()),
             );
             catalog.observe_committed(&TranscriptRecord::EventCommitted(
                 AgentEvent::ActivityStarted {
@@ -129,8 +131,8 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700));
-        let _ = std::fs::remove_dir_all(&self.root);
+        let _ = fs::set_permissions(&self.root, fs::Permissions::from_mode(0o700));
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 fn command(state: &mut TuiState, text: &str) -> StateEffect {
@@ -261,15 +263,15 @@ fn save_conflict_does_not_discard_local_edits() {
 fn turn() -> TurnRef {
     TurnRef::new(
         "01890f00-0000-7000-8000-000000000001".parse().unwrap(),
-        yo_core::TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
+        yo_core::TurnId::new(num::NonZeroU64::new(1).unwrap()),
     )
 }
 fn key(code: KeyCode, modifiers: KeyModifiers) -> InputEvent {
-    InputEvent::Key(crate::input::event::KeyEvent {
+    InputEvent::Key(input::event::KeyEvent {
         code,
         modifiers,
         action: KeyAction::Press,
-        state: crate::input::event::KeyState::NONE,
+        state: input::event::KeyState::NONE,
     })
 }
 
@@ -281,7 +283,7 @@ fn live_selection_is_saved_without_submission() {
     let original = &fixture.catalog.interviews()[0];
     let mut question = original.questions[0].clone();
     question.options = (1..=2)
-        .map(|index| yo_core::interview::InterviewOption {
+        .map(|index| interview::InterviewOption {
             id: index.to_string(),
             label: format!("선택 {index}"),
             description: String::new(),
@@ -328,7 +330,7 @@ fn live_selection_is_saved_without_submission() {
     let frame = state
         .prepare_frame(
             Size::new(80, 16),
-            &crate::appearance::AppearanceState::default().pin(),
+            &appearance::AppearanceState::default().pin(),
         )
         .unwrap();
     state.commit_frame(&frame);
@@ -367,7 +369,7 @@ fn live_selection_is_saved_without_submission() {
 fn local_numeric_answer_retains_notes() {
     let fixture = Fixture::new(false);
     let mut question = fixture.catalog.interviews()[0].questions[0].clone();
-    question.options = vec![yo_core::interview::InterviewOption {
+    question.options = vec![interview::InterviewOption {
         id: "1".into(),
         label: "선택".into(),
         description: String::new(),
@@ -431,14 +433,11 @@ impl crate::InterviewHistoryHost for UnconfirmedHost {
     fn resolve(
         &mut self,
         _: ActivityRequestRef,
-    ) -> Result<InterviewCatalog, yo_core::interview::InterviewError> {
+    ) -> Result<InterviewCatalog, interview::InterviewError> {
         Ok(self.0.clone())
     }
-    fn validate_submission(
-        &mut self,
-        _: &WorkingCopy,
-    ) -> Result<(), yo_core::interview::InterviewError> {
-        Err(yo_core::interview::InterviewError::Invalid(
+    fn validate_submission(&mut self, _: &WorkingCopy) -> Result<(), interview::InterviewError> {
+        Err(interview::InterviewError::Invalid(
             "actual Journal receipt is unconfirmed".into(),
         ))
     }
@@ -449,7 +448,7 @@ impl crate::InterviewHistoryHost for UnconfirmedHost {
 fn stored_submission_without_journal_evidence_is_unavailable() {
     let fixture = Fixture::new(false);
     let mut copy = fixture.copy.clone();
-    copy.submission = Some(yo_core::interview::Submission::NewConversation {
+    copy.submission = Some(interview::Submission::NewConversation {
         turn: TurnRef::new(
             "01890f00-0000-7000-8000-000000000002".parse().unwrap(),
             turn().turn_id(),
@@ -485,12 +484,12 @@ fn recovered_copy_does_not_answer_an_outstanding_live_question() {
     let request = ActivityRequestRef::new(
         ActivityRef::new(
             turn(),
-            yo_core::ActivityId::new(std::num::NonZeroU64::new(3).unwrap()),
+            yo_core::ActivityId::new(num::NonZeroU64::new(3).unwrap()),
         ),
-        yo_core::RequestId::new(std::num::NonZeroU64::new(3).unwrap()),
+        yo_core::RequestId::new(num::NonZeroU64::new(3).unwrap()),
     );
     let mut question = fixture.catalog.interviews()[0].questions[0].clone();
-    question.options = vec![yo_core::interview::InterviewOption {
+    question.options = vec![interview::InterviewOption {
         id: "1".into(),
         label: "선택".into(),
         description: String::new(),
@@ -527,7 +526,7 @@ fn recovered_copy_does_not_answer_an_outstanding_live_question() {
     let frame = state
         .prepare_frame(
             Size::new(80, 16),
-            &crate::appearance::AppearanceState::default().pin(),
+            &appearance::AppearanceState::default().pin(),
         )
         .unwrap();
     state.commit_frame(&frame);
@@ -579,9 +578,9 @@ fn recovered_editor_keeps_new_approval_separate() {
     let request = ActivityRequestRef::new(
         ActivityRef::new(
             turn(),
-            yo_core::ActivityId::new(std::num::NonZeroU64::new(3).unwrap()),
+            yo_core::ActivityId::new(num::NonZeroU64::new(3).unwrap()),
         ),
-        yo_core::RequestId::new(std::num::NonZeroU64::new(3).unwrap()),
+        yo_core::RequestId::new(num::NonZeroU64::new(3).unwrap()),
     );
     state
         .observe_record(TranscriptRecord::EventCommitted(
@@ -662,9 +661,9 @@ fn new_conversation_receipt_survives_save_failure_without_replaying_input() {
     let another = ActivityRequestRef::new(
         ActivityRef::new(
             turn(),
-            yo_core::ActivityId::new(std::num::NonZeroU64::new(3).unwrap()),
+            yo_core::ActivityId::new(num::NonZeroU64::new(3).unwrap()),
         ),
-        yo_core::RequestId::new(std::num::NonZeroU64::new(3).unwrap()),
+        yo_core::RequestId::new(num::NonZeroU64::new(3).unwrap()),
     );
     let capture =
         Capture::batch(another, fixture.catalog.interviews()[0].questions.clone()).unwrap();
@@ -693,10 +692,7 @@ fn new_conversation_receipt_survives_save_failure_without_replaying_input() {
     )
     .unwrap();
     let session_id = descriptor.session_id();
-    let new_turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
-    );
+    let new_turn = TurnRef::new(session_id, TurnId::new(num::NonZeroU64::new(1).unwrap()));
     let binding = BackendBindingEvidence::new(
         "fixture",
         "1",
@@ -758,17 +754,17 @@ fn new_conversation_receipt_survives_save_failure_without_replaying_input() {
             .unwrap(),
         yo_core::CommandAdmission::Queued
     ));
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = time::Instant::now() + Duration::from_secs(2);
     let (accepted, sequence) = loop {
         if let Some(receipt) = reader.accepted_initial_submission(intent.submission.id()) {
             break receipt;
         }
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::yield_now();
+        assert!(time::Instant::now() < deadline);
+        thread::yield_now();
     };
-    std::fs::set_permissions(&fixture.root, std::fs::Permissions::from_mode(0o500)).unwrap();
+    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o500)).unwrap();
     assert!(controller.tick().unwrap().contains("Unsaved"));
-    std::fs::set_permissions(&fixture.root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o700)).unwrap();
     assert!(
         InterviewRepository::open(&fixture.root)
             .unwrap()
@@ -786,7 +782,7 @@ fn new_conversation_receipt_survives_save_failure_without_replaying_input() {
         .unwrap();
     assert_eq!(
         saved.submission,
-        Some(yo_core::interview::Submission::NewConversation {
+        Some(interview::Submission::NewConversation {
             turn: accepted,
             submission_id: intent.submission.id().to_string(),
             accepted_request_sequence: sequence.get()
@@ -808,15 +804,15 @@ fn volatile_capture_cannot_claim_a_saved_recoverable_copy() {
         fn resolve(
             &mut self,
             _: ActivityRequestRef,
-        ) -> Result<InterviewCatalog, yo_core::interview::InterviewError> {
-            Err(yo_core::interview::InterviewError::Invalid(
+        ) -> Result<InterviewCatalog, interview::InterviewError> {
+            Err(interview::InterviewError::Invalid(
                 "volatile Journal".into(),
             ))
         }
         fn validate_submission(
             &mut self,
             _: &WorkingCopy,
-        ) -> Result<(), yo_core::interview::InterviewError> {
+        ) -> Result<(), interview::InterviewError> {
             Ok(())
         }
     }
@@ -872,12 +868,12 @@ fn new_edits_reenable_autosave_after_transient_io_error() {
         &format!("/interview recover {}", fixture.copy.copy_id),
     );
     let controller = state.interview.as_mut().unwrap();
-    std::fs::set_permissions(&fixture.root, std::fs::Permissions::from_mode(0o500)).unwrap();
+    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o500)).unwrap();
     controller.edit_text("첫 편집", None, None);
     assert!(controller.flush().is_some());
-    std::fs::set_permissions(&fixture.root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o700)).unwrap();
     controller.edit_text("다음 편집", None, None);
-    std::thread::sleep(Duration::from_millis(300));
+    thread::sleep(Duration::from_millis(300));
     controller.tick();
     assert_eq!(
         InterviewRepository::open(&fixture.root)
@@ -950,10 +946,7 @@ fn terminal_without_acceptance_restores_editable_copy_and_exact_intent() {
     )
     .unwrap();
     let session_id = descriptor.session_id();
-    let new_turn = TurnRef::new(
-        session_id,
-        TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
-    );
+    let new_turn = TurnRef::new(session_id, TurnId::new(num::NonZeroU64::new(1).unwrap()));
     let backend = ScriptedBackend::new([
         BackendScriptStep::AcceptCommand(AgentCommand::CreateSession { session_id }),
         BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
@@ -983,10 +976,10 @@ fn terminal_without_acceptance_restores_editable_copy_and_exact_intent() {
     session
         .dispatch(AgentIntent::Submit(intent.submission.clone()))
         .unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = time::Instant::now() + Duration::from_secs(2);
     while !reader.initial_submission_terminated(intent.submission.id()) {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(2));
+        assert!(time::Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(2));
     }
     assert!(
         reader

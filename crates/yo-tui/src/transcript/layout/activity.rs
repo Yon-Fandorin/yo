@@ -1,5 +1,7 @@
 //! Typed activity bodies and folding; retained content and plain source stay complete.
 
+use std::iter;
+
 use serde_json::{Map, Value, from_str};
 use yo_core::{
     ActivityDocument, ActivityKind, ActivityNotice, ActivityPlan, ActivityReasoning,
@@ -1482,7 +1484,7 @@ fn shell_output_block(source: &str, preview: Option<(NonZeroU16, u16)>) -> Strin
     for glyph in flow.glyphs {
         let index = usize::from(glyph.point.y);
         let line = &mut lines[index];
-        line.extend(std::iter::repeat_n(
+        line.extend(iter::repeat_n(
             ' ',
             usize::from(glyph.point.x.saturating_sub(columns[index])),
         ));

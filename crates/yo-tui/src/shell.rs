@@ -8,15 +8,19 @@
     )
 )]
 
+use std::time;
+
 use crate::{
     appearance::ActivityMotionFrame,
     input::editor::PromptEditor,
     layout::vertical::VerticalLayoutError,
+    overlay,
     overlay::{OverlayBindings, PanelPaintError, SelectionPanel},
     prompt::{
         PromptFrame, PromptMeasureError, PromptPaintError, PromptStyles, PromptViewState,
         paint_prepared as paint_prompt, prepare as prepare_prompt,
     },
+    runner,
     surface::{Point, Rect, Size, SurfaceView, WriteOutcome},
     transcript::{
         TranscriptLayoutConfig, TranscriptMeasureError, TranscriptPaintError,
@@ -60,7 +64,7 @@ pub(crate) struct AgentShellStyles {
     pub(crate) transcript: TranscriptStyles,
     pub(crate) prompt: PromptStyles,
     pub(crate) chrome: ShellChromeStyles,
-    pub(crate) overlay: crate::overlay::SelectionPanelAppearance,
+    pub(crate) overlay: overlay::SelectionPanelAppearance,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,7 +89,7 @@ pub(crate) struct AgentShellFrame {
     pub(crate) transcript: Option<TranscriptRenderFrame>,
     pub(crate) prompt: PromptFrame,
     pub(crate) cursor: Point,
-    pub(crate) motion_period: Option<std::time::Duration>,
+    pub(crate) motion_period: Option<time::Duration>,
     pub(crate) overlay_area: Option<Rect>,
 }
 
@@ -137,7 +141,7 @@ pub(crate) fn render(
                 status: None,
                 storage_warning: None,
                 workspace: "",
-                mode: crate::runner::PresentationMode::Inline,
+                mode: runner::PresentationMode::Inline,
             },
             activity_motion: ActivityMotionFrame::still("·"),
             overlay: None,
@@ -446,9 +450,9 @@ fn checked_natural_height(
 }
 
 fn earliest_motion_period(
-    left: Option<std::time::Duration>,
-    right: Option<std::time::Duration>,
-) -> Option<std::time::Duration> {
+    left: Option<time::Duration>,
+    right: Option<time::Duration>,
+) -> Option<time::Duration> {
     match (left, right) {
         (Some(left), Some(right)) => Some(left.min(right)),
         (Some(period), None) | (None, Some(period)) => Some(period),

@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, num::NonZeroU16};
+use std::{error::Error, fmt, iter, mem, num::NonZeroU16};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -151,7 +151,7 @@ fn natural_widths(columns: &[Column<'_>], rows: &[Vec<String>]) -> Result<Vec<us
         .map(|(index, column)| {
             rows.iter()
                 .map(|row| cell_width(&row[index]).map_err(ListError::from))
-                .chain(std::iter::once(
+                .chain(iter::once(
                     cell_width(column.heading).map_err(ListError::from),
                 ))
                 .collect::<Result<Vec<_>, _>>()
@@ -443,7 +443,7 @@ fn wrap(value: &str, width: Option<usize>) -> Result<Vec<String>, ListError> {
             });
         }
         if !line.is_empty() && used + grapheme_width > width {
-            lines.push(std::mem::take(&mut line));
+            lines.push(mem::take(&mut line));
             used = 0;
         }
         line.push_str(grapheme);

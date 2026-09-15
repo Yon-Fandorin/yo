@@ -12,9 +12,11 @@ use std::io::{self as std_io, Write};
 
 use rustix::{
     fd::BorrowedFd,
-    io, stdio,
+    io, stdio, termios,
     termios::{OptionalActions, Termios, tcgetattr, tcsetattr},
 };
+
+use crate::{surface, terminal};
 
 mod backend;
 mod event;
@@ -87,7 +89,7 @@ impl Write for DirectTerminalWriter {
     }
 }
 
-impl crate::terminal::backend::UnbufferedTerminalOutput for DirectTerminalWriter {}
+impl terminal::backend::UnbufferedTerminalOutput for DirectTerminalWriter {}
 
 impl RustixTermiosDriver {
     pub(crate) fn stdin() -> Self {
@@ -97,9 +99,9 @@ impl RustixTermiosDriver {
     }
 }
 
-pub(crate) fn terminal_size() -> Result<crate::surface::Size, io::Errno> {
-    let size = rustix::termios::tcgetwinsize(stdio::stdout())?;
-    Ok(crate::surface::Size::new(size.ws_col, size.ws_row))
+pub(crate) fn terminal_size() -> Result<surface::Size, io::Errno> {
+    let size = termios::tcgetwinsize(stdio::stdout())?;
+    Ok(surface::Size::new(size.ws_col, size.ws_row))
 }
 
 impl TermiosDriver for RustixTermiosDriver {

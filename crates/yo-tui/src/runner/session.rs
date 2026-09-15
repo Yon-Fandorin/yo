@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, error::Error, fmt, num::NonZeroU16, sync::Arc};
 
 use yo_core::{
-    ActivityDocument, ActivityNotice, ImagePreparationHost, NoticeLevel, SessionId,
+    ActivityDocument, ActivityNotice, ImagePreparationHost, NoticeLevel, SessionId, interview,
     session_repository::{
         ContinuationEligibility, InheritedHistorySource, InheritedSessionHistory,
         SessionTreeAncestry, SessionTreePlaceholder, StoredSessionForkCatalog,
@@ -23,6 +23,7 @@ use crate::{
         ColorCapability, GlyphProfile, MotionPreference,
     },
     overlay::{AcceptanceReceipt, OverlayInstanceToken, PanelSnapshot, SelectionEntry, SlotError},
+    terminal,
     text::flow::flow_text,
     transcript::TranscriptMeasureError,
 };
@@ -223,7 +224,7 @@ impl TuiSession {
     #[must_use]
     pub fn with_interview_repository(
         mut self,
-        repository: yo_core::interview::InterviewRepository,
+        repository: interview::InterviewRepository,
         host: Box<dyn super::InterviewHistoryHost>,
     ) -> Self {
         self.state.interview = Some(super::interview::InterviewController::new(repository, host));
@@ -233,7 +234,7 @@ impl TuiSession {
     pub fn transfer_interview_to(
         &mut self,
         candidate: &mut Self,
-        intent: yo_core::interview::NewConversation,
+        intent: interview::NewConversation,
         reader: yo_core::TranscriptReader,
     ) {
         if let Some(mut controller) = self.state.interview.take() {
@@ -247,9 +248,7 @@ impl TuiSession {
     pub fn report_interview_failure(&mut self, detail: impl Into<String>) {
         let _ = self.state.chat_notice(detail.into());
     }
-    pub(super) fn take_interview_conversation(
-        &mut self,
-    ) -> Option<yo_core::interview::NewConversation> {
+    pub(super) fn take_interview_conversation(&mut self) -> Option<interview::NewConversation> {
         self.state.interview_conversation.take()
     }
     pub(super) fn flush_interview(&mut self) {
@@ -878,17 +877,17 @@ impl PublicationRecoveryEvidence {
         self.last
     }
 
-    pub(super) fn record(&mut self, recovery: crate::terminal::mode::inline::InlineRecovery) {
+    pub(super) fn record(&mut self, recovery: terminal::mode::inline::InlineRecovery) {
         let (counter, kind) = match recovery {
-            crate::terminal::mode::inline::InlineRecovery::ReversibleRestart => (
+            terminal::mode::inline::InlineRecovery::ReversibleRestart => (
                 &mut self.reversible_restarts,
                 PublicationRecoveryKind::ReversibleRestart,
             ),
-            crate::terminal::mode::inline::InlineRecovery::IrreversibleResume => (
+            terminal::mode::inline::InlineRecovery::IrreversibleResume => (
                 &mut self.irreversible_resumes,
                 PublicationRecoveryKind::IrreversibleResume,
             ),
-            crate::terminal::mode::inline::InlineRecovery::FlushRetry => {
+            terminal::mode::inline::InlineRecovery::FlushRetry => {
                 (&mut self.flush_retries, PublicationRecoveryKind::FlushRetry)
             },
         };
@@ -1122,9 +1121,9 @@ mod tests {
     #[test]
     fn session_tree_keeps_missing_parent_disabled_and_child_selectable_at_narrow_widths() {
         use std::{
-            fs,
+            env, fs,
             num::NonZeroU64,
-            thread,
+            path, thread,
             time::{Duration, Instant},
         };
 
@@ -1137,8 +1136,8 @@ mod tests {
             ReplayExecutor, ReplayProfile, ScriptedBackend, SessionDescriptor, SessionId,
             SubmissionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef, WorkspaceHostId,
             session_repository::{
-                LocalSessionReader, LocalSessionRepository, SessionTreeLimits, StoredSessionReader,
-                read_stored_session_continuation,
+                self, LocalSessionReader, LocalSessionRepository, SessionTreeLimits,
+                StoredSessionReader, read_stored_session_continuation,
             },
         };
 
@@ -1147,9 +1146,9 @@ mod tests {
             runner::state::StateEffect,
             surface::{CellContent, Point, Size},
         };
-        let root = std::env::temp_dir().join(format!("yo-tui-tree-{}", SessionId::new().unwrap()));
+        let root = env::temp_dir().join(format!("yo-tui-tree-{}", SessionId::new().unwrap()));
         fs::create_dir(&root).unwrap();
-        struct Cleanup(std::path::PathBuf);
+        struct Cleanup(path::PathBuf);
         impl Drop for Cleanup {
             fn drop(&mut self) {
                 let _ = fs::remove_dir_all(&self.0);
@@ -1305,7 +1304,7 @@ mod tests {
             tui.state
                 .observe_durability(yo_core::JournalDurability::Durable {
                     journal_sequence: None,
-                    repository_sequence: yo_core::session_repository::RepositorySequence::new(1),
+                    repository_sequence: session_repository::RepositorySequence::new(1),
                 })
                 .unwrap();
             tui.show_session_tree(&tree, parent_id).unwrap();

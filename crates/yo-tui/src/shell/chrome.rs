@@ -7,8 +7,10 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::{
     appearance::{ActivityMotionFrame, ActivityStyles},
     input::{editor::binding::NewlineBinding, key_notation::interrupt_notation},
+    prompt,
     runner::PresentationMode,
     surface::{Point, Rect, Size, Style, SurfaceView, WriteOutcome},
+    text,
     text::flow::{TextFlowError, flow_text},
 };
 
@@ -77,7 +79,7 @@ pub(crate) enum RequestPrompt {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ShellChromeSnapshot<'value> {
-    pub(crate) image_thumbnail: Option<&'value crate::prompt::image::ImageThumbnail>,
+    pub(crate) image_thumbnail: Option<&'value prompt::image::ImageThumbnail>,
     pub(crate) turn_active: bool,
     pub(crate) queued_messages: usize,
     pub(crate) queue_paused: bool,
@@ -528,7 +530,7 @@ fn join_segments(segments: &[StatusSegment]) -> String {
         .join(" · ")
 }
 
-fn row_width(flow: &crate::text::flow::TextFlow) -> usize {
+fn row_width(flow: &text::flow::TextFlow) -> usize {
     flow.glyphs
         .iter()
         .map(|positioned| usize::from(positioned.point.x + positioned.grapheme.width().get()))
@@ -538,7 +540,7 @@ fn row_width(flow: &crate::text::flow::TextFlow) -> usize {
 
 fn paint_flow(
     view: &mut SurfaceView<'_>,
-    flow: crate::text::flow::TextFlow,
+    flow: text::flow::TextFlow,
     offset: u16,
     style: Style,
 ) -> Result<(), ShellChromeError> {
