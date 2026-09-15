@@ -25,6 +25,32 @@ cargo test -p yo-cli execution::process::termination::tests
 These host-integrated checks are part of the ordinary package test run. Their
 passing result does not imply that tmux or SSH behavior ran.
 
+## Nonsecret interview recovery on the saved Mac
+
+On 2026-09-15, the accepted nonsecret interview implementation and its two
+test-only portability corrections were checked on the pinned macOS arm64 host.
+The first run exposed `/var -> /private/var` in test fixture paths and a
+nanosecond-name collision between parallel model tests. Commits `d640857f` and
+`640c7c1a` make those fixtures use physical temporary roots and UUID identities;
+the repository's descriptor-based symlink rejection remains unchanged.
+
+The default profile passed 724 Core tests, Core all-target Clippy, 529 CLI unit
+tests plus five and two integration tests, and the macOS Unix compile matrix.
+The final `640c7c1a` tree passed six frame tests, two zero-size reentry tests,
+940 TUI unit tests, four rendering tests, TUI all-target Clippy, 78 filesystem
+tool tests, and CLI all-target Clippy. These totals overlap and are not additive.
+The interview tests cover recover, reopen, local edits, explicit send, durable
+acceptance, conflicts and recovery failures on the Mac filesystem.
+
+An isolated local-tmux run also passed Inline and Fullscreen empty-`Ctrl+D`
+exit, two suspend/resume generations in both modes, completed-Korean editing,
+cursor/delete operations, multiline bracketed paste and `Ctrl+C` clearing.
+The first cold Fullscreen input attempt exceeded its five-second readiness
+bound while `yo` was still starting; the other five scenarios passed, and the
+exact input scenario passed after one successful Fullscreen warm-up. No model
+request occurred. This run did not repeat physical IME composition, the
+terminal application's Command-V mapping, or a live-provider send.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`

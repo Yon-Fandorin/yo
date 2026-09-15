@@ -24,6 +24,30 @@ cargo test -p yo-cli execution::process::termination::tests
 이 호스트 통합 검사는 일반 package test에 포함된다. 통과했다고 해서 tmux나
 SSH 동작까지 실행되었다는 뜻은 아니다.
 
+## 저장된 Mac의 비밀이 아닌 인터뷰 복구 검증
+
+2026-09-15에 승인된 비밀이 아닌 인터뷰 구현과 test 전용 이식성 수정 두
+건을 고정된 macOS arm64 호스트에서 검사했다. 첫 실행에서 test fixture의
+`/var -> /private/var` 경로와 병렬 model test의 나노초 이름 충돌이 드러났다.
+커밋 `d640857f`와 `640c7c1a`는 fixture에 물리 임시 경로와 UUID identity를
+사용한다. 저장소의 descriptor 기반 symlink 거부 정책은 그대로다.
+
+기본 profile은 Core test 724개, Core all-target Clippy, CLI unit test 529개와
+통합 test 5개·2개, macOS Unix compile matrix를 통과했다. 최종 `640c7c1a`
+tree는 frame test 6개, 크기 0 재진입 test 2개, TUI unit test 940개,
+rendering test 4개, TUI all-target Clippy, filesystem tool test 78개와 CLI
+all-target Clippy를 통과했다. 이 수치는 서로 겹치므로 합산하지 않는다.
+인터뷰 test는 Mac filesystem에서 recover, reopen, 로컬 편집, 명시적 send,
+durable acceptance, 충돌과 복구 실패를 검사한다.
+
+격리된 local tmux에서도 Inline·Fullscreen의 빈 `Ctrl+D` 종료, 두 mode의
+두 번 suspend/resume, 완성된 한글 편집, cursor/delete, 여러 줄 bracketed
+paste와 `Ctrl+C` 지우기가 통과했다. 첫 cold Fullscreen 입력 시도는 `yo`가
+시작되는 동안 5초 준비 제한을 넘겼다. 나머지 다섯 시나리오는 통과했고,
+Fullscreen을 한 번 준비한 뒤 같은 입력 시나리오도 통과했다. Model 요청은
+없었다. 실제 IME 조합, terminal application의 Command-V mapping, 실제
+Provider send는 이번 실행에서 반복하지 않았다.
+
 ## 저장된 Mac의 큰 본문 페이지 검증
 
 2026-09-13에 clean 후보 `af16336de8836475af39022d08bf612d13955110`이
