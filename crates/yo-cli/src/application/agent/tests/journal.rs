@@ -1,5 +1,7 @@
 use std::{
+    convert, env, fmt,
     num::NonZeroU64,
+    path,
     sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
@@ -22,7 +24,7 @@ use super::support::{
 };
 use crate::application::agent::TuiAgentConnection;
 
-fn drain_frontend_until_turn_finished<E: std::fmt::Display>(
+fn drain_frontend_until_turn_finished<E: fmt::Display>(
     timeout: Duration,
     mut poll: impl FnMut() -> Result<AgentPoll, E>,
 ) -> Result<Vec<AgentPoll>, String> {
@@ -459,7 +461,7 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
 fn completed_backend_with_stuck_frontend_poll_fails_within_the_guard() {
     let started = Instant::now();
     let error = drain_frontend_until_turn_finished(Duration::from_millis(5), || {
-        Ok::<_, std::convert::Infallible>(AgentPoll::Pending)
+        Ok::<_, convert::Infallible>(AgentPoll::Pending)
     })
     .unwrap_err();
 
@@ -554,10 +556,9 @@ fn fresh_seed_only_disk_resume_delivers_authoritative_durability() {
             LocalSessionReader, LocalSessionRepository, read_stored_session_continuation,
         },
     };
-    let root =
-        std::env::temp_dir().join(format!("yo-cli-seed-resume-{}", SessionId::new().unwrap()));
+    let root = env::temp_dir().join(format!("yo-cli-seed-resume-{}", SessionId::new().unwrap()));
     fs::create_dir(&root).unwrap();
-    struct Cleanup(std::path::PathBuf);
+    struct Cleanup(path::PathBuf);
     impl Drop for Cleanup {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);

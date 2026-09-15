@@ -1,4 +1,6 @@
-use yo_core::{AgentBackend, AgentSession, AgentSessionError, SessionDescriptor};
+use yo_core::{
+    AgentBackend, AgentSession, AgentSessionError, SessionDescriptor, session_repository,
+};
 use yo_tui::TerminationSource;
 
 use super::{TuiAgentConnection, termination};
@@ -27,7 +29,7 @@ impl TuiAgentConnection {
     ) -> Result<Option<Self>, AgentSessionError>
     where
         B: AgentBackend + Send + 'static,
-        R: yo_core::session_repository::SessionRepository + Send + 'static,
+        R: session_repository::SessionRepository + Send + 'static,
     {
         AgentSession::start_cancellable_with_repository(backend, descriptor, repository, || {
             termination::requested(termination_source)
@@ -37,14 +39,14 @@ impl TuiAgentConnection {
 
     pub(crate) fn start_resumed<B, R>(
         backend: B,
-        continuation: yo_core::session_repository::StoredSessionContinuation,
+        continuation: session_repository::StoredSessionContinuation,
         repository: R,
         replace_binding: bool,
         termination_source: &mut impl TerminationSource,
     ) -> Result<Option<Self>, AgentSessionError>
     where
         B: AgentBackend + Send + 'static,
-        R: yo_core::session_repository::SessionRepository + Send + 'static,
+        R: session_repository::SessionRepository + Send + 'static,
     {
         let started = if replace_binding {
             AgentSession::start_cancellable_with_replacement_continuation(

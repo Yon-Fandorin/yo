@@ -1,4 +1,4 @@
-use std::process::ExitCode;
+use std::{cell::RefCell, io, io::Error, process::ExitCode};
 
 use super::{
     finish_account_output, finish_command_output, write_cli_diagnostics_to,
@@ -12,13 +12,13 @@ use crate::{
 
 struct FlushFails;
 
-impl std::io::Write for FlushFails {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+impl io::Write for FlushFails {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         Ok(bytes.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        Err(std::io::Error::other("flush failed"))
+    fn flush(&mut self) -> io::Result<()> {
+        Err(Error::other("flush failed"))
     }
 }
 
@@ -50,9 +50,9 @@ fn account_output_is_published_before_a_partial_refresh_error() {
 // JSON은 stdout에 정확히 한 문서만 남기고, warning은 그 뒤 stderr에 한 번만 게시합니다.
 #[test]
 fn account_json_routes_warning_after_unchanged_stdout() {
-    let stdout = std::cell::RefCell::new(String::new());
-    let stderr = std::cell::RefCell::new(Vec::new());
-    let events = std::cell::RefCell::new(Vec::new());
+    let stdout = RefCell::new(String::new());
+    let stderr = RefCell::new(Vec::new());
+    let events = RefCell::new(Vec::new());
     let output = "{\"schema\":\"yo.account-capacity/v1alpha3\",\"provider\":\"codex\",\"account\":\"person@example.test\",\"limits\":[],\"errors\":[{\"target\":\"Local Grok\",\"message\":\"login required\"}]}\n";
 
     assert!(matches!(
@@ -163,7 +163,7 @@ fn diagnostic_output_failure_is_fatal_after_stdout() {
 // 모든 one-shot 결과는 stdout을 먼저 게시한 다음 warning을 게시합니다.
 #[test]
 fn command_output_publishes_stdout_before_diagnostics() {
-    let events = std::cell::RefCell::new(Vec::new());
+    let events = RefCell::new(Vec::new());
     let result = finish_command_output(
         "session output\n".to_owned(),
         &[CliDiagnostic::warning("history is read-only")],

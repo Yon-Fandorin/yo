@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io, io::Write};
 
 use crate::{
     command,
@@ -6,7 +6,7 @@ use crate::{
 };
 
 pub(super) fn write_command_output(output: String) -> Result<(), AppError> {
-    let mut stdout = std::io::stdout().lock();
+    let mut stdout = io::stdout().lock();
     stdout
         .write_all(output.as_bytes())
         .and_then(|()| stdout.flush())
@@ -38,7 +38,7 @@ fn finish_command_output(
 }
 
 pub(super) fn write_cli_diagnostics(diagnostics: &[CliDiagnostic]) -> Result<(), AppError> {
-    let mut stderr = std::io::stderr().lock();
+    let mut stderr = io::stderr().lock();
     write_cli_diagnostics_to_and_flush(diagnostics, &mut stderr)
 }
 
@@ -63,8 +63,8 @@ fn write_cli_diagnostics_to_and_flush<W: Write>(
         .map_err(|error| AppError::single("flushing command diagnostics", error))
 }
 
-pub(super) fn write_session_output(output: &str) -> std::io::Result<()> {
-    let mut stdout = std::io::stdout().lock();
+pub(super) fn write_session_output(output: &str) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
     stdout.write_all(output.as_bytes())?;
     stdout.flush()
 }

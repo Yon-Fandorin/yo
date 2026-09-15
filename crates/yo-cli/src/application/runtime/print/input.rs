@@ -1,9 +1,12 @@
-use std::io::{IsTerminal, Read};
+use std::{
+    io,
+    io::{IsTerminal, Read},
+};
 
 use crate::interaction::diagnostic::AppError;
 
 pub(crate) fn read_input(prompt: Option<String>) -> Result<String, AppError> {
-    let stdin = std::io::stdin();
+    let stdin = io::stdin();
     let is_terminal = stdin.is_terminal();
     let mut stdin = stdin.lock();
     read_input_from(prompt, &mut stdin, is_terminal)

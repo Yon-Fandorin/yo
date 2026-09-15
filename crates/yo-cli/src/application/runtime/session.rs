@@ -1,6 +1,9 @@
-use std::task::{Context, Poll, Waker};
+use std::{
+    path,
+    task::{Context, Poll, Waker},
+};
 
-use yo_core::{AgentSessionError, session_repository::StoredSessionForkCatalog};
+use yo_core::{AgentSessionError, interview, session_repository::StoredSessionForkCatalog};
 use yo_tui::{AgentPoll, ForkPickerToken, TerminationEvent, TerminationSource};
 
 use crate::{
@@ -15,7 +18,7 @@ pub(super) struct LiveSession {
     pub(super) agent: agent::TuiAgentConnection,
     pub(super) pending_diagnostic_poll: Option<Result<AgentPoll, AgentSessionError>>,
     pub(super) tui: yo_tui::TuiSession,
-    pub(super) workspace: std::path::PathBuf,
+    pub(super) workspace: path::PathBuf,
     pub(super) local_tool_registry: Option<local_tools::LocalToolRegistryRevision>,
     pub(super) execution_manifest_digest: Option<String>,
     pub(super) fork_catalog: Option<(ForkPickerToken, StoredSessionForkCatalog)>,
@@ -30,7 +33,7 @@ pub(super) enum SessionStep {
     Suspend,
     Continue,
     New,
-    Interview(yo_core::interview::NewConversation),
+    Interview(interview::NewConversation),
     Fork,
     ForkPicker,
     ForkBoundary {

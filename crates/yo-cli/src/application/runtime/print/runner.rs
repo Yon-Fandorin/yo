@@ -132,7 +132,7 @@ fn drain_transcript(
 #[cfg(test)]
 mod tests {
     use std::{
-        fs,
+        env, fs,
         num::NonZeroU64,
         path::PathBuf,
         sync::{Arc, Mutex},
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn resumed_runner_excludes_prior_turn_history() {
         let workspace = HostWorkspacePath::normalize_local(
-            std::env::current_dir().expect("the test process has a working directory"),
+            env::current_dir().expect("the test process has a working directory"),
         )
         .unwrap();
         let descriptor =
@@ -473,7 +473,7 @@ mod tests {
     impl SessionFixture {
         fn new(input: &str, later: impl FnOnce(TurnRef) -> Vec<BackendScriptStep>) -> Self {
             let workspace = HostWorkspacePath::normalize_local(
-                std::env::current_dir().expect("the test process has a working directory"),
+                env::current_dir().expect("the test process has a working directory"),
             )
             .unwrap();
             let descriptor =
@@ -482,8 +482,8 @@ mod tests {
                 descriptor.session_id(),
                 TurnId::new(NonZeroU64::new(1).unwrap()),
             );
-            let root = std::env::temp_dir()
-                .join(format!("yo-print-mode-test-{}", descriptor.session_id()));
+            let root =
+                env::temp_dir().join(format!("yo-print-mode-test-{}", descriptor.session_id()));
             let mut steps = vec![
                 BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
                     session_id: descriptor.session_id(),

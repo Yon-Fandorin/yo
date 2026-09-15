@@ -2,6 +2,8 @@ mod input;
 mod projection;
 mod runner;
 
+use std::env;
+
 use super::{
     super::{
         codex_diagnostics::{
@@ -25,7 +27,7 @@ pub(in crate::application) fn run_print_session(
     options: command::PrintOptions,
 ) -> Result<(), AppError> {
     let input = input::read_input(options.prompt)?;
-    let cwd = std::env::current_dir()
+    let cwd = env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let mut config =
         config::load().map_err(|error| AppError::single("reading Yo configuration", error))?;

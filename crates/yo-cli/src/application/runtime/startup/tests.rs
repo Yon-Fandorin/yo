@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     path::PathBuf,
     thread,
     time::{Duration, Instant},
@@ -115,7 +115,7 @@ struct SkillWorkspace(PathBuf);
 impl SkillWorkspace {
     fn new() -> Self {
         let identity = SessionId::new().unwrap();
-        let path = std::env::temp_dir().join(format!("yo-startup-skills-{identity}"));
+        let path = env::temp_dir().join(format!("yo-startup-skills-{identity}"));
         fs::create_dir(&path).unwrap();
         Self(fs::canonicalize(path).unwrap())
     }

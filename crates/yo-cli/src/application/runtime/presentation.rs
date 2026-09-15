@@ -1,10 +1,12 @@
 //! Session-owned host presentation; provider actions remain on the original connection.
 use std::{
     collections::BTreeMap,
+    env, fs,
     io::{self, Read},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
+    str,
     sync::{Arc, Condvar, Mutex},
     task::{Context, Poll, Waker},
     thread::{self, JoinHandle},
@@ -189,7 +191,7 @@ fn stopped(shared: &Shared) -> bool {
 fn worker(root: &Path, shared: &Shared) {
     let mut previous = None;
     let mut previous_links = None;
-    let canonical = std::fs::canonicalize(root).ok();
+    let canonical = fs::canonicalize(root).ok();
     while !stopped(shared) {
         let current = status(&branch(root, shared));
         if previous.as_ref() != Some(&current) {
@@ -199,7 +201,7 @@ fn worker(root: &Path, shared: &Shared) {
         let links = canonical
             .as_ref()
             .and_then(|canonical| {
-                if std::fs::canonicalize(root).ok().as_ref() != Some(canonical) {
+                if fs::canonicalize(root).ok().as_ref() != Some(canonical) {
                     return None;
                 }
                 let result = run_with_limit(
@@ -265,7 +267,7 @@ fn resolve_link(links: &BTreeMap<String, Hyperlink>, destination: &str) -> Optio
             decoded.push(byte);
         }
     }
-    let path = std::str::from_utf8(&decoded).ok()?;
+    let path = str::from_utf8(&decoded).ok()?;
     links.get(path.strip_prefix("./").unwrap_or(path)).cloned()
 }
 
@@ -275,7 +277,7 @@ fn branch(root: &Path, shared: &Shared) -> String {
         .current_dir(root)
         .args(["symbolic-ref", "--quiet", "--short", "HEAD"]);
     // Ambient Git overrides must not select a different repository or inject config.
-    for (key, _) in std::env::vars_os() {
+    for (key, _) in env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
             command.env_remove(key);
         }
@@ -283,12 +285,9 @@ fn branch(root: &Path, shared: &Shared) -> String {
     command.env("LC_ALL", "C").env("GIT_TERMINAL_PROMPT", "0");
     match run(command, shared, Duration::from_secs(2)) {
         Ok((exit, bytes)) if exit.success() => {
-            match std::str::from_utf8(&bytes)
-                .ok()
-                .map(str::trim)
-                .filter(|value| {
-                    !value.is_empty() && value.len() <= 200 && !value.chars().any(char::is_control)
-                }) {
+            match str::from_utf8(&bytes).ok().map(str::trim).filter(|value| {
+                !value.is_empty() && value.len() <= 200 && !value.chars().any(char::is_control)
+            }) {
                 Some(value) => format!("Git · {value}"),
                 None => "Git status unavailable".into(),
             }

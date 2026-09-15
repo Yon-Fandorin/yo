@@ -1,9 +1,16 @@
+use std::{env, ffi::OsStr, path, path::PathBuf};
+
 use super::{
     super::{codex_diagnostics::CodexWarningCollector, output::write_session_output},
     LiveSession, PreparedAgent, SessionStep,
     session::termination_requested,
 };
-use crate::{command, execution::model, interaction::diagnostic::AppError, state::config};
+use crate::{
+    command,
+    execution::model,
+    interaction::diagnostic::AppError,
+    state::{config, storage},
+};
 
 pub(super) fn build_live_session(
     prepared: PreparedAgent,
@@ -49,7 +56,7 @@ pub(super) fn build_live_session(
     if let Some(skill_references) = skill_references {
         tui = tui.with_skill_references(skill_references);
     }
-    match crate::state::storage::open_interviews() {
+    match storage::open_interviews() {
         Ok(repository) => {
             tui = tui.with_interview_repository(repository, Box::new(super::interview::HistoryHost))
         },
@@ -361,13 +368,9 @@ pub(super) fn run_terminal_generation(
 
 fn terminal_color_capability() -> yo_tui::ColorCapability {
     classify_terminal_color_capability(
-        std::env::var_os("COLORTERM")
-            .as_deref()
-            .and_then(std::ffi::OsStr::to_str),
-        std::env::var_os("TERM")
-            .as_deref()
-            .and_then(std::ffi::OsStr::to_str),
-        std::env::var_os("NO_COLOR").is_some(),
+        env::var_os("COLORTERM").as_deref().and_then(OsStr::to_str),
+        env::var_os("TERM").as_deref().and_then(OsStr::to_str),
+        env::var_os("NO_COLOR").is_some(),
     )
 }
 
@@ -390,15 +393,12 @@ fn classify_terminal_color_capability(
     yo_tui::ColorCapability::Unknown
 }
 
-fn compact_workspace_label(cwd: &std::path::Path) -> String {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+fn compact_workspace_label(cwd: &path::Path) -> String {
+    let home = env::var_os("HOME").map(PathBuf::from);
     compact_workspace_label_with_home(cwd, home.as_deref())
 }
 
-fn compact_workspace_label_with_home(
-    cwd: &std::path::Path,
-    home: Option<&std::path::Path>,
-) -> String {
+fn compact_workspace_label_with_home(cwd: &path::Path, home: Option<&path::Path>) -> String {
     let Some(home) = home else {
         return cwd.to_string_lossy().into_owned();
     };

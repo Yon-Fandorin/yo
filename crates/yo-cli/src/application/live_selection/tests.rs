@@ -1,3 +1,5 @@
+use std::env;
+
 use super::*;
 
 // `discover`가 계약 순서인 최신 UPDATED 우선으로 건넨 목록에서 `--continue`는
@@ -6,7 +8,7 @@ use super::*;
 fn continue_selection_keeps_discovery_order_and_filters_execution_identity() {
     let host = WorkspaceHostId::new().unwrap();
     let other_host = WorkspaceHostId::new().unwrap();
-    let cwd = std::env::current_dir().unwrap();
+    let cwd = env::current_dir().unwrap();
     let workspace = HostWorkspacePath::normalize_local(&cwd).unwrap();
     let other_workspace = HostWorkspacePath::normalize_local(cwd.parent().unwrap()).unwrap();
     let matching = candidate(4, host, workspace.clone(), true);
@@ -30,7 +32,7 @@ fn continue_selection_keeps_discovery_order_and_filters_execution_identity() {
 #[test]
 fn continue_selection_returns_none_without_an_eligible_workspace_candidate() {
     let host = WorkspaceHostId::new().unwrap();
-    let workspace = HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap();
+    let workspace = HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap();
     let sessions = [candidate(
         1,
         WorkspaceHostId::new().unwrap(),
@@ -50,7 +52,7 @@ fn continue_selection_returns_none_without_an_eligible_workspace_candidate() {
 #[test]
 fn continue_selects_the_newest_checkpoint_only_candidate_after_recovery() {
     let host = WorkspaceHostId::new().unwrap();
-    let workspace = HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap();
+    let workspace = HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap();
     let mut checkpoint = candidate(2, host, workspace.clone(), false);
     checkpoint.eligibility = ContinuationEligibility::Unknown;
     let anchored = candidate(1, host, workspace.clone(), true);
@@ -72,7 +74,7 @@ fn continue_selects_the_newest_checkpoint_only_candidate_after_recovery() {
 #[test]
 fn continue_skips_broken_unknown_history_without_promoting_it() {
     let host = WorkspaceHostId::new().unwrap();
-    let workspace = HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap();
+    let workspace = HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap();
     let mut broken = candidate(2, host, workspace.clone(), false);
     broken.eligibility = ContinuationEligibility::Unknown;
     let anchored = candidate(1, host, workspace.clone(), true);
@@ -86,7 +88,7 @@ fn continue_skips_broken_unknown_history_without_promoting_it() {
 #[test]
 fn continue_recovers_unknown_only_after_execution_identity_matches() {
     let host = WorkspaceHostId::new().unwrap();
-    let cwd = std::env::current_dir().unwrap();
+    let cwd = env::current_dir().unwrap();
     let workspace = HostWorkspacePath::normalize_local(&cwd).unwrap();
     let mut foreign = candidate(3, WorkspaceHostId::new().unwrap(), workspace.clone(), false);
     foreign.eligibility = ContinuationEligibility::Unknown;

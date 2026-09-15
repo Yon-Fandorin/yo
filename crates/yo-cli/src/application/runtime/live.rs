@@ -1,5 +1,7 @@
+use std::{env, path};
+
 use yo_core::{
-    HostWorkspacePath,
+    HostWorkspacePath, interview,
     session_repository::{
         SessionForkLimits, SessionTreeLimits, StoredSessionContinuation, StoredSessionReader,
     },
@@ -25,7 +27,7 @@ use crate::{
 pub(in crate::application) fn run_live_session(
     mut options: command::LiveOptions,
 ) -> Result<(), AppError> {
-    let cwd = std::env::current_dir()
+    let cwd = env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let (launch_failure_selection, read_only_storage) =
         match live::prepare(domain_selection(options.selection), &cwd)? {
@@ -159,7 +161,7 @@ pub(in crate::application) fn run_live_session(
 fn run_generation(
     termination: &mut impl yo_tui::TerminationSource,
     live: &mut Option<LiveSession>,
-    cwd: &std::path::Path,
+    cwd: &path::Path,
     options: command::LiveOptions,
     launch_failure_selection: live::LiveSelection,
     read_only_storage: Option<&storage::LocalReadStorage>,
@@ -232,7 +234,7 @@ fn start_new_session(
     live: &mut Option<LiveSession>,
     mut options: command::LiveOptions,
     snapshots: &mut StartupSnapshots<'_>,
-    interview: Option<yo_core::interview::NewConversation>,
+    interview: Option<interview::NewConversation>,
 ) -> Result<SessionStep, AppError> {
     let current = live
         .as_mut()

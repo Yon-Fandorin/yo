@@ -1,9 +1,16 @@
-use std::{fmt, os::unix::ffi::OsStrExt, path::Path};
+use std::{
+    env,
+    ffi::OsStr,
+    fmt,
+    os::unix::ffi::OsStrExt,
+    path,
+    path::{Path, PathBuf},
+};
 
 use yo_core::{
     ImagePreparationHost, InputAdmissionHost, LocalSkillInputAdmission,
     LocalSkillReferenceProvider, LocalSkillRoot, LocalWorkspaceInputAdmission,
-    SkillReferenceProvider, WorkspaceHostId,
+    SkillReferenceProvider, WorkspaceHostId, session_repository,
     session_repository::{InheritedSessionHistory, StoredSessionContinuation},
 };
 
@@ -17,7 +24,7 @@ use super::{
 use crate::{
     application::{agent, live_selection as live},
     command,
-    execution::{model, tools as local_tools},
+    execution::{image, model, tools as local_tools},
     interaction::diagnostic::{AppError, CliDiagnostic},
     state::{config, storage},
 };
@@ -40,7 +47,7 @@ pub(super) struct PreparedAgent {
     pub(super) session_id: yo_core::SessionId,
     pub(super) inherited_history: Option<InheritedSessionHistory>,
     pub(super) agent: agent::TuiAgentConnection,
-    pub(super) workspace: std::path::PathBuf,
+    pub(super) workspace: path::PathBuf,
     pub(super) workspace_references: Option<yo_core::LocalWorkspaceReferenceProvider>,
     pub(super) skill_references: Option<Box<dyn SkillReferenceProvider>>,
     pub(super) image_preparation: Box<dyn ImagePreparationHost>,
@@ -169,23 +176,22 @@ fn prepare_agent_with_target(
                     )
                 },
                 command::LiveSelection::Resume(session_id) => {
-                    let continuation =
-                        match yo_core::session_repository::recover_stored_session_continuation(
-                            &mut repository,
-                            session_id,
-                        ) {
-                            Ok(continuation) => continuation,
-                            Err(error) => {
-                                drop(repository);
-                                return handle_launch_failure(
-                                    launch_failure_selection,
-                                    options.glyph_profile,
-                                    read_only_storage,
-                                    live::ResumeFailureStage::Revalidation,
-                                    error,
-                                );
-                            },
-                        };
+                    let continuation = match session_repository::recover_stored_session_continuation(
+                        &mut repository,
+                        session_id,
+                    ) {
+                        Ok(continuation) => continuation,
+                        Err(error) => {
+                            drop(repository);
+                            return handle_launch_failure(
+                                launch_failure_selection,
+                                options.glyph_profile,
+                                read_only_storage,
+                                live::ResumeFailureStage::Revalidation,
+                                error,
+                            );
+                        },
+                    };
                     if continuation.descriptor().workspace_host_id() != workspace_host_id {
                         drop(repository);
                         return handle_launch_failure(
@@ -207,7 +213,7 @@ fn prepare_agent_with_target(
     };
     let session_cwd = match &launch {
         Launch::New(_) | Launch::Fork { .. } => cwd.to_owned(),
-        Launch::Resume(continuation) => std::path::PathBuf::from(std::ffi::OsStr::from_bytes(
+        Launch::Resume(continuation) => PathBuf::from(OsStr::from_bytes(
             continuation.descriptor().workspace_path().as_unix_bytes(),
         )),
     };
@@ -419,7 +425,7 @@ fn prepare_agent_with_target(
         },
         Some((host, execution)) if host.as_str() == yo_core::HostId::GROK => {
             let outer_sandboxed_review =
-                std::env::var_os(yo_backend_delegated_grok::OUTER_SANDBOX_REVIEW_ENV).is_some();
+                env::var_os(yo_backend_delegated_grok::OUTER_SANDBOX_REVIEW_ENV).is_some();
             let grok_config = yo_backend_delegated_grok::GrokBackendConfig::new(&session_cwd)
                 .with_read_only_review(execution.is_read_only_review())
                 .with_outer_sandboxed_review(outer_sandboxed_review);
@@ -524,7 +530,7 @@ fn prepare_agent_with_target(
             .as_ref()
             .map_or(&[][..], StoredSessionContinuation::transcript_records),
     };
-    let (input_admission, image_preparation) = crate::execution::image::bind(
+    let (input_admission, image_preparation) = image::bind(
         input_admission,
         &session_cwd,
         restored_records,

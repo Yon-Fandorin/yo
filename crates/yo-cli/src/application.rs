@@ -1,4 +1,6 @@
-use std::process::ExitCode;
+#[cfg(test)]
+use std::io;
+use std::{env, process::ExitCode};
 
 use crate::{command, execution::tools, interaction::diagnostic::AppError};
 
@@ -9,7 +11,7 @@ mod output;
 mod runtime;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-pub(crate) fn write_session_output(output: &str) -> std::io::Result<()> {
+pub(crate) fn write_session_output(output: &str) -> io::Result<()> {
     output::write_session_output(output)
 }
 use codex_diagnostics::{
@@ -19,7 +21,7 @@ use output::write_command_output;
 
 pub(super) fn run() -> ExitCode {
     tools::initialize_process_file_mode();
-    let command = match command::parse(std::env::args_os().skip(1)) {
+    let command = match command::parse(env::args_os().skip(1)) {
         Ok(command) => command,
         Err(error) => {
             let exit_code = u8::try_from(error.exit_code()).unwrap_or(1);

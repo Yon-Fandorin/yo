@@ -1,4 +1,4 @@
-use std::env::vars_os;
+use std::{env, env::vars_os, fs, process};
 
 use super::*;
 
@@ -50,7 +50,7 @@ fn shutdown_cancels_collection_and_idle_wait() {
     command.arg("30");
     assert!(run(command, &state, Duration::from_secs(2)).is_err());
     let started = Instant::now();
-    drop(Presentation::start(std::env::temp_dir()));
+    drop(Presentation::start(env::temp_dir()));
     assert!(started.elapsed() < Duration::from_secs(2));
 }
 
@@ -173,12 +173,12 @@ fn coalesced_status_registers_both_readiness_sources() {
 // 실제 Git 저장소의 unborn 브랜치 변경과 실패 경로를 캐시 추측 없이 그대로 반영한다.
 #[test]
 fn git_branch_follows_observed_repository_changes() {
-    let root = std::env::temp_dir().join(format!("yo-host-status-{}", std::process::id()));
-    std::fs::create_dir(&root).unwrap();
+    let root = env::temp_dir().join(format!("yo-host-status-{}", process::id()));
+    fs::create_dir(&root).unwrap();
     struct Cleanup(PathBuf);
     impl Drop for Cleanup {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = fs::remove_dir_all(&self.0);
         }
     }
     let _cleanup = Cleanup(root.clone());
@@ -213,13 +213,13 @@ fn git_branch_follows_observed_repository_changes() {
 // 실제 호스트 연결은 새 파일 링크와 Git ignore를 반영하고 링크 오류 뒤에는 기존 매핑을 해제한다.
 #[test]
 fn execution_host_link_inventory_honors_git_ignore_and_new_files() {
-    let root = std::env::temp_dir().join(format!("yo-host-links-{}", std::process::id()));
-    std::fs::create_dir(&root).unwrap();
+    let root = env::temp_dir().join(format!("yo-host-links-{}", process::id()));
+    fs::create_dir(&root).unwrap();
     let root = root.canonicalize().unwrap();
     struct Cleanup(PathBuf);
     impl Drop for Cleanup {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = fs::remove_dir_all(&self.0);
         }
     }
     let _cleanup = Cleanup(root.clone());
@@ -231,9 +231,9 @@ fn execution_host_link_inventory_honors_git_ignore_and_new_files() {
             .unwrap()
             .success()
     );
-    std::fs::write(root.join(".gitignore"), "ignored\n").unwrap();
-    std::fs::write(root.join("ignored"), "hidden").unwrap();
-    std::fs::write(root.join("visible.rs"), "visible").unwrap();
+    fs::write(root.join(".gitignore"), "ignored\n").unwrap();
+    fs::write(root.join("ignored"), "hidden").unwrap();
+    fs::write(root.join("visible.rs"), "visible").unwrap();
     let state = shared();
     let (exit, bytes) = run_with_limit(
         LocalWorkspaceReferenceProvider::output_link_command(&root),
@@ -248,7 +248,7 @@ fn execution_host_link_inventory_honors_git_ignore_and_new_files() {
     assert!(paths.contains_key("visible.rs"));
     assert!(!paths.contains_key("ignored"));
     assert!(resolver(&paths).is_some());
-    std::fs::remove_file(root.join("visible.rs")).unwrap();
+    fs::remove_file(root.join("visible.rs")).unwrap();
     let paths =
         LocalWorkspaceReferenceProvider::output_links(&root, Some(&bytes), || false).unwrap();
     assert!(!paths.contains_key("visible.rs"));
@@ -279,12 +279,12 @@ fn execution_host_link_inventory_honors_git_ignore_and_new_files() {
 // 실제 background worker가 Git 작업공간의 파일을 게시하고 삭제 후 링크를 해제한 뒤 종료한다.
 #[test]
 fn worker_publishes_and_revokes_workspace_links() {
-    let root = std::env::temp_dir().join(format!("yo-host-refresh-{}", std::process::id()));
-    std::fs::create_dir(&root).unwrap();
+    let root = env::temp_dir().join(format!("yo-host-refresh-{}", process::id()));
+    fs::create_dir(&root).unwrap();
     struct Cleanup(PathBuf);
     impl Drop for Cleanup {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = fs::remove_dir_all(&self.0);
         }
     }
     let _cleanup = Cleanup(root.clone());
@@ -296,7 +296,7 @@ fn worker_publishes_and_revokes_workspace_links() {
             .unwrap()
             .success()
     );
-    std::fs::write(root.join("visible.rs"), "content").unwrap();
+    fs::write(root.join("visible.rs"), "content").unwrap();
     let presentation = Presentation::start(root.clone());
     let wait_links = || {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -312,7 +312,7 @@ fn worker_publishes_and_revokes_workspace_links() {
         }
     };
     assert!(wait_links().is_some());
-    std::fs::remove_file(root.join("visible.rs")).unwrap();
+    fs::remove_file(root.join("visible.rs")).unwrap();
     assert!(wait_links().is_none());
     drop(presentation);
 }
