@@ -1,3 +1,4 @@
+use clap::error;
 use yo_tui::{GlyphProfile, PresentationMode, Theme};
 
 use super::{live::SandboxMode, *};
@@ -790,7 +791,7 @@ fn list_only_options_are_rejected_for_a_direct_session() {
 fn help_is_successful_generated_command_documentation() {
     let help = parse(["--help".into()]).unwrap_err();
 
-    assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+    assert_eq!(help.kind(), error::ErrorKind::DisplayHelp);
     assert_eq!(help.exit_code(), 0);
     assert!(!help.use_stderr());
     let rendered = help.to_string();
@@ -812,7 +813,7 @@ fn help_is_successful_generated_command_documentation() {
 fn version_is_successful_generated_output() {
     let version = parse(["--version".into()]).unwrap_err();
 
-    assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+    assert_eq!(version.kind(), error::ErrorKind::DisplayVersion);
     assert_eq!(version.exit_code(), 0);
     assert!(!version.use_stderr());
     assert_eq!(

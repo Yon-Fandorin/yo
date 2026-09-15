@@ -1,4 +1,9 @@
+use std::{env, fs, num, process, time};
+
 use super::*;
+use crate::{
+    execution::model, interaction, interaction::connection, state::connection as state_connection,
+};
 
 struct ImportInput {
     expected_account: &'static str,
@@ -8,16 +13,13 @@ struct ImportInput {
 }
 
 impl ExternalConnectInput for ImportInput {
-    fn confirm(
-        &mut self,
-        preview: &dyn crate::interaction::connection::ConfirmationView,
-    ) -> Result<bool, AppError> {
+    fn confirm(&mut self, preview: &dyn connection::ConfirmationView) -> Result<bool, AppError> {
         self.confirmations += 1;
         self.preview = Some(
             preview
                 .render_styled(
-                    crate::interaction::connection::default_width(),
-                    crate::interaction::PresentationStyle::Plain,
+                    connection::default_width(),
+                    interaction::PresentationStyle::Plain,
                 )
                 .unwrap(),
         );
@@ -36,17 +38,17 @@ impl ExternalConnectInput for ImportInput {
 // revision에 게시되고, definition-only import는 임의 default를 만들지 않습니다.
 #[test]
 fn grouped_import_publishes_multiple_models_without_selecting_a_default() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-grouped-import-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     let definition = import::parse(explicit_multi_definition()).unwrap();
     let mut input = ImportInput {
         expected_account: "vendor:team",
@@ -98,24 +100,24 @@ fn grouped_import_publishes_multiple_models_without_selecting_a_default() {
         "group-secret"
     );
     assert!(!root.join("connection-operation.yaml").exists());
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // Catalog-only definitions still bind one account credential and one public seed, but they
 // do not invent a routable model or preference during import.
 #[test]
 fn grouped_catalog_import_publishes_a_seed_without_inventing_a_model() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-grouped-catalog-import-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     let definition = import::parse(
         "provider: qwencloud\naccount: default\ncatalog: qwencloud-token-plan-team-intl/v1\n",
     )
@@ -151,24 +153,24 @@ fn grouped_catalog_import_publishes_a_seed_without_inventing_a_model() {
     assert!(snapshot.models().is_empty());
     assert_eq!(snapshot.catalog_seeds().len(), 1);
     assert!(snapshot.preference().is_none());
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // Preview는 모델 목록 외에도 account label과 exact catalog seed 전이를 보여 주고,
 // 변경·삭제되는 complete binding을 사용하는 저장 Session의 resume 위험을 숨기지 않습니다.
 #[test]
 fn grouped_import_previews_seed_metadata_and_resume_transitions() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-grouped-transition-preview-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     let repository = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"));
     let old = import::parse(
             "provider: qwencloud\nprovider_display_name: Old Qwen\naccount: team\naccount_display_name: Old Team\ncatalog: qwencloud-coding-plan-intl/v1\n",
@@ -225,24 +227,24 @@ fn grouped_import_previews_seed_metadata_and_resume_transitions() {
     assert!(compact.contains("qwencloud:team:qwen3-coder-plus"));
     assert!(preview.contains("May not resume"));
     assert!(preview.contains("Remove models"));
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // Account display metadata and the catalog source are separate preview fields, so changing
 // only labels must not report a duplicate `same catalog -> same catalog` transition.
 #[test]
 fn grouped_import_keeps_an_unchanged_seed_when_only_account_metadata_changes() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-grouped-metadata-only-preview-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(
         &root,
         "provider: qwencloud\nprovider_display_name: Old Qwen\naccount: team\naccount_display_name: Old Team\ncatalog: qwencloud-coding-plan-intl/v1\n",
@@ -280,22 +282,22 @@ fn grouped_import_keeps_an_unchanged_seed_when_only_account_metadata_changes() {
         1,
         "unchanged seed must appear once as a kept value: {preview}"
     );
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // Exact target resolution compares canonical spellings made by stored typed coordinates;
 // encoded Account separators and vendor-owned ModelId colons are never split heuristically.
 #[test]
 fn selected_entry_uses_canonical_coordinates_with_encoded_accounts_and_colon_models() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-canonical-selected-entry-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     seed_stored_definition(
         &root,
         "provider: qwencloud\naccount: 'team:west'\ncatalog: qwencloud-coding-plan-intl/v1\n",
@@ -330,7 +332,7 @@ models:
     assert_eq!(selection_for(&catalog).account().as_str(), "team:west");
     let stored = selected_entry(&snapshot, "qwencloud:other:vendor:model").unwrap();
     assert_eq!(selection_for(&stored).model().as_str(), "vendor:model");
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 struct CancelInput {
@@ -339,15 +341,12 @@ struct CancelInput {
 }
 
 impl ExternalConnectInput for CancelInput {
-    fn confirm(
-        &mut self,
-        preview: &dyn crate::interaction::connection::ConfirmationView,
-    ) -> Result<bool, AppError> {
+    fn confirm(&mut self, preview: &dyn connection::ConfirmationView) -> Result<bool, AppError> {
         self.summary = Some(
             preview
                 .render_styled(
-                    crate::interaction::connection::default_width(),
-                    crate::interaction::PresentationStyle::Plain,
+                    connection::default_width(),
+                    interaction::PresentationStyle::Plain,
                 )
                 .unwrap(),
         );
@@ -366,19 +365,19 @@ impl ExternalConnectInput for CancelInput {
 // 거절하면 credential을 읽거나 세 repository 파일을 만들지 않습니다.
 #[test]
 fn cancelled_command_stops_before_secret_or_repository_mutation() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-external-cancel-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(&root, explicit_definition());
-    let before = std::fs::read(root.join("connections.yaml")).unwrap();
+    let before = fs::read(root.join("connections.yaml")).unwrap();
     let mut input = CancelInput {
         summary: None,
         credential_reads: 0,
@@ -403,37 +402,34 @@ fn cancelled_command_stops_before_secret_or_repository_mutation() {
     assert!(summary.contains("+ API key\n  Save vendor:team"));
     assert!(!summary.contains("Connection profile"));
     assert_eq!(input.credential_reads, 0);
-    assert_eq!(
-        std::fs::read(root.join("connections.yaml")).unwrap(),
-        before
-    );
+    assert_eq!(fs::read(root.join("connections.yaml")).unwrap(), before);
     for name in ["credentials.yaml", "connection-operation.yaml"] {
         assert!(!root.join(name).exists(), "{name} must remain absent");
     }
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // `--yes` 경로는 TTY를 열지 않고 plan 준비 뒤 지정 파일을 읽으며, 안전하지 않은
 // credential 파일은 새 intent나 public/credential repository mutation 전에 실패합니다.
 #[test]
 fn non_interactive_file_failure_stops_before_new_repository_mutation() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-external-file-failure-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(&root, explicit_definition());
-    let before = std::fs::read(root.join("connections.yaml")).unwrap();
+    let before = fs::read(root.join("connections.yaml")).unwrap();
     let credential_path = root.join("credential");
-    std::fs::write(&credential_path, b"diagnostic-sentinel-secret").unwrap();
+    fs::write(&credential_path, b"diagnostic-sentinel-secret").unwrap();
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(&credential_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(&credential_path, fs::Permissions::from_mode(0o644)).unwrap();
 
     let error = run_external_connect(
         &config_path,
@@ -451,17 +447,14 @@ fn non_interactive_file_failure_stops_before_new_repository_mutation() {
     assert!(error.contains("0400 or 0600"));
     assert!(!error.contains("diagnostic-sentinel-secret"));
     assert_eq!(
-        std::fs::read(&credential_path).unwrap(),
+        fs::read(&credential_path).unwrap(),
         b"diagnostic-sentinel-secret"
     );
-    assert_eq!(
-        std::fs::read(root.join("connections.yaml")).unwrap(),
-        before
-    );
+    assert_eq!(fs::read(root.join("connections.yaml")).unwrap(), before);
     for name in ["credentials.yaml", "connection-operation.yaml"] {
         assert!(!root.join(name).exists(), "{name} must remain absent");
     }
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // Parser 밖의 injected caller도 두 option 중 하나만 주거나 `--verbose`를 함께 주어
@@ -503,17 +496,17 @@ fn runtime_rejects_an_invalid_non_interactive_option_combination() {
 // confirmation까지 전달해 새 key 추가라고 오해시키지 않으며 취소는 기존 secret을 보존합니다.
 #[test]
 fn cancelled_rotation_discloses_exact_credential_replacement() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-external-replace-preview-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(&root, explicit_definition());
     let credentials = yo_core::LocalCredentialRepository::new(root.join("credentials.yaml"));
     let provider = ProviderId::new("vendor").unwrap();
@@ -554,7 +547,7 @@ fn cancelled_rotation_discloses_exact_credential_replacement() {
             .expose_secret(),
         "existing-secret"
     );
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // 같은 Account에 남는 모든 complete binding을 확인 목록에 포함해야 키 교체 전에
@@ -579,7 +572,7 @@ fn plan_includes_every_retained_binding_for_the_account() {
     assert_eq!(plan.binding_count, 2);
     let preview = plan
         .preview(yo_core::CredentialMutationAction::Replace, true)
-        .render(crate::interaction::connection::default_width())
+        .render(connection::default_width())
         .unwrap();
     assert!(preview.contains("Models (2)"));
     assert!(preview.contains("alpha, beta"));
@@ -587,7 +580,7 @@ fn plan_includes_every_retained_binding_for_the_account() {
     assert_eq!(preview.matches("https://example.test/v1").count(), 1);
     let compact = plan
         .preview(yo_core::CredentialMutationAction::Replace, false)
-        .render(std::num::NonZeroU16::new(160).unwrap())
+        .render(num::NonZeroU16::new(160).unwrap())
         .unwrap();
     let credential_row = compact
         .split("~ API key\n")
@@ -656,7 +649,7 @@ fn plan_discloses_old_and_new_profiles_during_stored_replacement() {
     );
     let preview = plan
         .preview(yo_core::CredentialMutationAction::Replace, true)
-        .render(crate::interaction::connection::default_width())
+        .render(connection::default_width())
         .unwrap();
     assert!(preview.contains("Connection profile 1 of 2"));
     assert!(preview.contains("Connection profile 2 of 2"));
@@ -670,7 +663,7 @@ fn plan_discloses_old_and_new_profiles_during_stored_replacement() {
     assert!(preview.contains(r#"{"effort":"medium"}"#));
     let compact = plan
         .preview(yo_core::CredentialMutationAction::Replace, false)
-        .render(std::num::NonZeroU16::new(80).unwrap())
+        .render(num::NonZeroU16::new(80).unwrap())
         .unwrap();
     assert!(compact.contains("Replace vendor:team · register 1 model"));
     assert!(compact.contains("Models          alpha"));
@@ -704,33 +697,33 @@ fn replacement_excludes_a_displaced_unsupported_profile_from_admission() {
     assert_eq!(plan.bindings, vec![expected]);
     let preview = plan
         .preview(yo_core::CredentialMutationAction::Replace, true)
-        .render(crate::interaction::connection::default_width())
+        .render(connection::default_width())
         .unwrap();
     assert!(preview.contains("Connection profile 1 of 2"));
     assert!(preview.contains("Connection profile 2 of 2"));
     assert!(preview.contains(r#"{"retired":true}"#));
 
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-external-displaced-profile-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let repositories = yo_core::LocalConnectionOperationRepositories::in_directory(&root).unwrap();
     let mut session = repositories.acquire().unwrap();
     let prepared = session
         .prepare_external_connection(
-            &crate::execution::model::NativeBindingAdmission,
+            &model::NativeBindingAdmission,
             plan.connection,
             plan.bindings,
         )
         .unwrap();
     assert_eq!(prepared.binding_count(), 1);
     drop(session);
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // external connect도 startup target policy를 통과해야 하므로 Host 강제 policy에서는
@@ -852,11 +845,11 @@ fn fixture_complete_with_options(
 }
 
 fn fixture_snapshot_with_stored(complete: CompleteModelBinding) -> ConnectionSnapshot {
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
         "yo-external-plan-stored-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
@@ -876,14 +869,14 @@ fn fixture_snapshot_with_stored(complete: CompleteModelBinding) -> ConnectionSna
         .unwrap();
     repository.commit(&mutation).unwrap();
     let snapshot = repository.capture().unwrap();
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
     snapshot
 }
 
 fn fixture_snapshot() -> ConnectionSnapshot {
-    yo_core::LocalConnectionRepository::new(std::env::temp_dir().join(format!(
+    yo_core::LocalConnectionRepository::new(env::temp_dir().join(format!(
         "yo-external-plan-{}-missing/connections.yaml",
-        std::process::id()
+        process::id()
     )))
     .capture()
     .unwrap()

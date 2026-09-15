@@ -1,6 +1,6 @@
-use std::ffi::OsString;
+use std::{ffi::OsString, iter};
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, error};
 use yo_tui::{PresentationMode, Theme};
 
 use super::{
@@ -114,10 +114,10 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
     let subcommands = top_level_subcommand_inventory();
     reject_print_subcommand_overlap(&arguments, &subcommands)?;
     let arguments = normalize_global_output_options(arguments, &subcommands);
-    let cli = Cli::try_parse_from(std::iter::once(OsString::from("yo")).chain(arguments))?;
+    let cli = Cli::try_parse_from(iter::once(OsString::from("yo")).chain(arguments))?;
     if cli.theme.is_some() && (cli.command.is_some() || cli.prompt.is_some()) {
         return Err(Cli::command().error(
-            clap::error::ErrorKind::ArgumentConflict,
+            error::ErrorKind::ArgumentConflict,
             "--theme applies only to the interactive TUI and cannot be used with a subcommand or print prompt",
         ));
     }
@@ -278,7 +278,7 @@ fn reject_print_subcommand_overlap(
     }
     if let (true, Some(subcommand)) = (print_requested, subcommand) {
         Err(super::raw_command_error(
-            clap::error::ErrorKind::ArgumentConflict,
+            error::ErrorKind::ArgumentConflict,
             format!(
                 "-p/--print cannot be combined with the `{subcommand}` subcommand; use `--` before a literal prompt named `{subcommand}`"
             ),
@@ -292,7 +292,7 @@ fn top_level_subcommand_inventory() -> Vec<String> {
     Cli::command()
         .get_subcommands()
         .flat_map(|subcommand| {
-            std::iter::once(subcommand.get_name())
+            iter::once(subcommand.get_name())
                 .chain(subcommand.get_all_aliases())
                 .map(str::to_owned)
         })
@@ -301,6 +301,8 @@ fn top_level_subcommand_inventory() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use clap::error;
+
     use super::{
         super::{LiveSelection, PrintOptions},
         *,
@@ -313,7 +315,7 @@ mod tests {
     fn print_rejects_top_level_subcommands_without_literal_separator() {
         for subcommand in top_level_subcommand_inventory() {
             let error = parse(["-p".into(), subcommand.into()]).unwrap_err();
-            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+            assert_eq!(error.kind(), error::ErrorKind::ArgumentConflict);
             assert!(
                 error
                     .to_string()

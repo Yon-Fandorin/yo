@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs, process,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -39,9 +39,9 @@ fn parses_account_query_scopes() {
 // host cache의 email label을 입력해도 stable 내부 AccountId 좌표로 찾아야 합니다.
 #[test]
 fn resolves_a_host_account_by_its_email_label() {
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
         "yo-account-alias-{}-{}",
-        std::process::id(),
+        process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -88,9 +88,9 @@ fn exact_host_refresh_accepts_the_requested_email_identity() {
 // 저장되지 않은 Kimi 계정은 임의의 cache 행으로 취급하지 않고 선택을 거부합니다.
 #[test]
 fn does_not_select_an_unsupported_cached_account() {
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
         "yo-account-eligibility-{}-{}",
-        std::process::id(),
+        process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -119,9 +119,9 @@ fn does_not_select_an_unsupported_cached_account() {
 // 이전 account- 접두어 cache도 읽을 수 있어 기존 사용자 cache를 잃지 않습니다.
 #[test]
 fn accepts_a_legacy_host_cache_key_after_the_prefix_removal() {
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
         "yo-account-legacy-key-{}-{}",
-        std::process::id(),
+        process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

@@ -1,8 +1,9 @@
 use std::fmt::Write as _;
 
+use jiff::tz;
 use unicode_segmentation::UnicodeSegmentation;
 use yo_core::{AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow};
-use yo_tui::{GlyphProfile, surface::cell_width};
+use yo_tui::{GlyphProfile, meter, surface::cell_width};
 
 use super::{
     AccountOutputWidth,
@@ -621,7 +622,7 @@ fn line_width(value: &str) -> usize {
 }
 
 fn display_percent(percent_basis_points: u16) -> String {
-    yo_tui::meter::format_percent(percent_basis_points)
+    meter::format_percent(percent_basis_points)
 }
 
 fn display_window_label(minutes: u64) -> String {
@@ -641,7 +642,7 @@ fn display_reset(unix_seconds: i64) -> String {
         |_| format!("unix:{unix_seconds}"),
         |timestamp| {
             timestamp
-                .to_zoned(jiff::tz::TimeZone::system())
+                .to_zoned(tz::TimeZone::system())
                 .strftime("%b %-d, %H:%M %Z")
                 .to_string()
         },

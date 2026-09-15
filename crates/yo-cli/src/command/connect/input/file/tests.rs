@@ -1,11 +1,15 @@
 use std::{
-    fs,
+    fs, io,
     os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use rustix::process as process_owner;
+
 use super::*;
+use crate::state::connection;
 
 struct Fixture {
     root: PathBuf,
@@ -18,14 +22,14 @@ impl Fixture {
     fn new(contents: &[u8], mode: u32) -> Self {
         let root = loop {
             let fixture_id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
-            let candidate = crate::state::connection::canonical_test_temp_dir().join(format!(
+            let candidate = connection::canonical_test_temp_dir().join(format!(
                 "yo-credential-input-{}-{}",
-                std::process::id(),
+                process::id(),
                 fixture_id
             ));
             match fs::create_dir(&candidate) {
                 Ok(()) => break candidate,
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
                 Err(error) => panic!("credential fixture directory creation failed: {error}"),
             }
         };
@@ -43,7 +47,7 @@ impl Drop for Fixture {
 }
 
 fn read(path: &Path) -> Result<ApiCredential, AppError> {
-    read_credential_file_with(path, rustix::process::geteuid().as_raw(), || Ok(()))
+    read_credential_file_with(path, process_owner::geteuid().as_raw(), || Ok(()))
 }
 
 // 0400 파일의 마지막 LF 하나만 제거하고 앞뒤 공백을 포함한 나머지 credential bytes는
@@ -111,7 +115,7 @@ fn rejects_wrong_mode_and_owner_without_exposing_secret() {
     }
 
     let fixture = Fixture::new(b"owner-sentinel", 0o600);
-    let actual = rustix::process::geteuid().as_raw();
+    let actual = process_owner::geteuid().as_raw();
     let error = read_credential_file_with(&fixture.path, actual.wrapping_add(1), || Ok(()))
         .unwrap_err()
         .to_string();
@@ -146,13 +150,12 @@ fn enforces_file_and_credential_size_boundaries() {
 fn rejects_a_file_changed_during_capture() {
     let fixture = Fixture::new(b"old-secret", 0o600);
 
-    let error =
-        read_credential_file_with(&fixture.path, rustix::process::geteuid().as_raw(), || {
-            fs::write(&fixture.path, b"new-secret-with-different-size")
-                .map_err(|error| AppError::single("mutating the test credential", error))
-        })
-        .unwrap_err()
-        .to_string();
+    let error = read_credential_file_with(&fixture.path, process_owner::geteuid().as_raw(), || {
+        fs::write(&fixture.path, b"new-secret-with-different-size")
+            .map_err(|error| AppError::single("mutating the test credential", error))
+    })
+    .unwrap_err()
+    .to_string();
 
     assert!(error.contains("changed while"), "{error}");
     assert!(!error.contains("old-secret"));

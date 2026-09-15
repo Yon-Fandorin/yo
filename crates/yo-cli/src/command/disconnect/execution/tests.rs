@@ -2,6 +2,7 @@ use std::{
     fs,
     io::{ErrorKind, Read, Write},
     path::PathBuf,
+    process,
     sync::mpsc,
     thread,
     time::{Duration, Instant, SystemTime},
@@ -17,6 +18,7 @@ use yo_core::{
 };
 
 use super::*;
+use crate::{interaction, interaction::connection, state::connection as state_connection};
 
 struct FakeInput {
     selected: Option<String>,
@@ -33,15 +35,12 @@ impl ExternalDisconnectInput for FakeInput {
             .ok_or_else(|| AppError::message("no fake selection"))
     }
 
-    fn confirm(
-        &mut self,
-        preview: &dyn crate::interaction::connection::ConfirmationView,
-    ) -> Result<bool, AppError> {
+    fn confirm(&mut self, preview: &dyn connection::ConfirmationView) -> Result<bool, AppError> {
         self.summaries.push(
             preview
                 .render_styled(
-                    crate::interaction::connection::default_width(),
-                    crate::interaction::PresentationStyle::Plain,
+                    connection::default_width(),
+                    interaction::PresentationStyle::Plain,
                 )
                 .unwrap(),
         );
@@ -250,10 +249,7 @@ fn preview_resolves_the_exact_lower_priority_startup_target() {
 
     for policy in policies {
         let plan = ExternalDisconnectPlan::prepare(&snapshot, &selection, &policy, false).unwrap();
-        let preview = plan
-            .preview
-            .render(crate::interaction::connection::default_width())
-            .unwrap();
+        let preview = plan.preview.render(connection::default_width()).unwrap();
 
         assert!(preview.contains("✓ New sessions\n  Use host:codex"));
         assert!(!preview.contains("No startup target remains"));
@@ -437,10 +433,7 @@ fn last_explicit_binding_preserves_credential_for_a_stored_catalog_seed() {
         false,
     )
     .unwrap();
-    let preview = plan
-        .preview
-        .render(crate::interaction::connection::default_width())
-        .unwrap();
+    let preview = plan.preview.render(connection::default_width()).unwrap();
 
     assert_eq!(
         plan.credential_action,
@@ -459,10 +452,7 @@ impl ExternalDisconnectInput for ConfigChangingInput {
         Err(AppError::message("the unique target must not prompt"))
     }
 
-    fn confirm(
-        &mut self,
-        _: &dyn crate::interaction::connection::ConfirmationView,
-    ) -> Result<bool, AppError> {
+    fn confirm(&mut self, _: &dyn connection::ConfirmationView) -> Result<bool, AppError> {
         self.confirmation_reads += 1;
         fs::write(&self.config_path, "tui:\n  max_fps: 60\n").unwrap();
         Ok(true)
@@ -730,9 +720,9 @@ impl Fixture {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+        let root = state_connection::canonical_test_temp_dir().join(format!(
             "yo-cli-disconnect-{}-{name}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         fs::create_dir_all(&root).unwrap();
         Self { root }

@@ -1,6 +1,7 @@
 use std::{
-    fs,
+    env, fs, num,
     path::PathBuf,
+    process,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -20,9 +21,9 @@ fn qwencloud_session_prompt_distinguishes_first_save_from_replacement() {
     let account = AccountId::new("default").unwrap();
 
     let missing = qwencloud_account_session_prompt(&provider, &account, false)
-        .render(std::num::NonZeroU16::new(80).unwrap());
+        .render(num::NonZeroU16::new(80).unwrap());
     let expired = qwencloud_account_session_prompt(&provider, &account, true)
-        .render(std::num::NonZeroU16::new(80).unwrap());
+        .render(num::NonZeroU16::new(80).unwrap());
 
     assert!(missing.contains("+ Browser session\n  Not saved · save for future"));
     assert!(expired.contains("~ Browser session\n  Expired · replace the saved session"));
@@ -57,9 +58,9 @@ impl AccountCredentialFixture {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
+        let root = env::temp_dir().canonicalize().unwrap().join(format!(
             "yo-account-session-{}-{name}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let credentials = LocalCredentialRepository::new(root.join("credentials.yaml"));
         let provider = ProviderId::new("qwencloud").unwrap();

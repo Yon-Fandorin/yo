@@ -1,11 +1,17 @@
-use std::{num::NonZeroU16, path::Path};
+use std::{io, num::NonZeroU16, path::Path};
 
 use yo_core::session_repository::{
     ContinuationEligibility, StoredSession, StoredSessionUnavailableReason,
 };
-use yo_tui::plain::{
-    Column, ColumnBehavior, ContinuationLayout, HeadingStyle, ListSpec, OutputWidth, render_list,
+use yo_tui::{
+    plain,
+    plain::{
+        Column, ColumnBehavior, ContinuationLayout, HeadingStyle, ListSpec, OutputWidth,
+        render_list,
+    },
 };
+
+use crate::state::config;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SessionRow {
@@ -23,8 +29,8 @@ pub(super) struct SessionRow {
 impl SessionRow {
     pub(super) fn from_stored(
         session: StoredSession,
-        dates: &crate::state::config::DateFormatter,
-    ) -> Result<Self, crate::state::config::ConfigError> {
+        dates: &config::DateFormatter,
+    ) -> Result<Self, config::ConfigError> {
         let resume = session.session_id().to_string();
         let continuation = eligibility_text(session.continuation_eligibility()).to_owned();
         Ok(match session {
@@ -65,7 +71,7 @@ pub(super) fn format_rows(
     details: bool,
     width: OutputWidth,
     heading_style: HeadingStyle,
-) -> Result<String, yo_tui::plain::ListError> {
+) -> Result<String, plain::ListError> {
     if rows.is_empty() {
         return Ok(String::new());
     }
@@ -165,7 +171,7 @@ pub(super) fn format_rows(
 
 pub(super) fn output_width(
     stdout_is_terminal: bool,
-    observed: std::io::Result<NonZeroU16>,
+    observed: io::Result<NonZeroU16>,
 ) -> OutputWidth {
     if stdout_is_terminal {
         OutputWidth::Bounded(

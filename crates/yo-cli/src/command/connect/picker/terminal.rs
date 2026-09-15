@@ -1,5 +1,6 @@
 use std::{
     fs::File,
+    io,
     io::{Read, Write},
     num::NonZeroU16,
     os::fd::{AsRawFd, RawFd},
@@ -7,6 +8,7 @@ use std::{
 };
 
 use nix::sys::termios::{self, InputFlags, LocalFlags, SetArg, SpecialCharacterIndices, Termios};
+use rustix::termios as terminal_termios;
 
 use super::{PickerChoice, PickerIdentity, PickerState, render_lines};
 use crate::{AppError, interaction::PresentationStyle};
@@ -75,7 +77,7 @@ impl PickerTerminalScope {
         Ok(())
     }
 
-    fn clear_panel(&mut self) -> std::io::Result<()> {
+    fn clear_panel(&mut self) -> io::Result<()> {
         if self.rendered_rows > 0 {
             write!(self.terminal, "\x1b[{}A\r\x1b[J", self.rendered_rows)?;
             self.rendered_rows = 0;
@@ -259,8 +261,8 @@ fn read_optional_byte(mut terminal: &File, deadline: Instant) -> Result<Option<u
 
 fn read_optional_byte_until(
     deadline: Instant,
-    mut wait: impl FnMut(Duration) -> std::io::Result<bool>,
-    mut read: impl FnMut(&mut [u8; 1]) -> std::io::Result<usize>,
+    mut wait: impl FnMut(Duration) -> io::Result<bool>,
+    mut read: impl FnMut(&mut [u8; 1]) -> io::Result<usize>,
     mut now: impl FnMut() -> Instant,
 ) -> Result<Option<u8>, AppError> {
     loop {
@@ -271,7 +273,7 @@ fn read_optional_byte_until(
         match wait(deadline.saturating_duration_since(observed)) {
             Ok(true) => {},
             Ok(false) => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => {
                 return Err(AppError::single("waiting for a terminal escape key", error));
             },
@@ -284,8 +286,8 @@ fn read_optional_byte_until(
             Ok(1) => return Ok(Some(byte[0])),
             Ok(0) => return Ok(None),
             Ok(_) => unreachable!("one-byte terminal read cannot return more than one byte"),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {},
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
             Err(error) => {
                 return Err(AppError::single("reading a terminal escape key", error));
             },
@@ -298,7 +300,7 @@ fn read_optional_byte_until(
 // The crate does not enable nix's poll feature, so this keeps the raw boundary
 // local instead of widening the dependency feature surface for one descriptor.
 #[allow(unsafe_code)]
-fn wait_for_terminal_input(terminal: RawFd, timeout: Duration) -> std::io::Result<bool> {
+fn wait_for_terminal_input(terminal: RawFd, timeout: Duration) -> io::Result<bool> {
     let timeout_millis = timeout.as_millis().clamp(1, i32::MAX as u128) as i32;
     let mut descriptor = libc::pollfd {
         fd: terminal,
@@ -309,13 +311,13 @@ fn wait_for_terminal_input(terminal: RawFd, timeout: Duration) -> std::io::Resul
     // pointer names exactly one initialized pollfd for the duration of the call.
     let result = unsafe { libc::poll(&mut descriptor, 1, timeout_millis) };
     if result < 0 {
-        return Err(std::io::Error::last_os_error());
+        return Err(io::Error::last_os_error());
     }
     if result == 0 {
         return Ok(false);
     }
     if descriptor.revents & libc::POLLNVAL != 0 {
-        return Err(std::io::Error::other(
+        return Err(io::Error::other(
             "terminal descriptor became invalid while waiting for input",
         ));
     }
@@ -323,7 +325,7 @@ fn wait_for_terminal_input(terminal: RawFd, timeout: Duration) -> std::io::Resul
         return Ok(true);
     }
     if descriptor.revents & libc::POLLERR != 0 {
-        return Err(std::io::Error::other(
+        return Err(io::Error::other(
             "terminal reported an input readiness error",
         ));
     }
@@ -345,7 +347,7 @@ fn valid_utf8_continuation(first: u8, index: usize, byte: u8) -> bool {
 }
 
 fn terminal_width(terminal: &File) -> usize {
-    rustix::termios::tcgetwinsize(terminal)
+    terminal_termios::tcgetwinsize(terminal)
         .ok()
         .and_then(|size| NonZeroU16::new(size.ws_col))
         .unwrap_or_else(super::default_width)
@@ -355,7 +357,7 @@ fn terminal_width(terminal: &File) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, fs::File, thread, time::Instant};
+    use std::{cell::Cell, fs::File, io, iter, thread, time::Instant};
 
     use nix::{pty::openpty, unistd::write};
 
@@ -414,15 +416,15 @@ mod tests {
     fn read_terminal_lifecycle_output(
         output: &mut File,
         timeout: Duration,
-    ) -> std::io::Result<[u8; 12]> {
+    ) -> io::Result<[u8; 12]> {
         let deadline = Instant::now() + timeout;
         let mut lifecycle_output = [0_u8; 12];
         let mut filled = 0;
         while filled < lifecycle_output.len() {
             let observed = Instant::now();
             if observed >= deadline {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
                     format!(
                         "test terminal published {filled} of {} lifecycle bytes before its deadline",
                         lifecycle_output.len()
@@ -435,13 +437,13 @@ mod tests {
             ) {
                 Ok(true) => {},
                 Ok(false) => continue,
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => return Err(error),
             }
             match output.read(&mut lifecycle_output[filled..]) {
                 Ok(0) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
                         format!(
                             "test terminal closed after {filled} of {} lifecycle bytes",
                             lifecycle_output.len()
@@ -449,8 +451,8 @@ mod tests {
                     ));
                 },
                 Ok(read) => filled += read,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {},
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
                 Err(error) => return Err(error),
             }
         }
@@ -474,7 +476,7 @@ mod tests {
 
         let error = read_terminal_lifecycle_output(&mut master, ESCAPE_SEQUENCE_WAIT).unwrap_err();
 
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("0 of 12 lifecycle bytes"));
         assert!(started.elapsed() < Duration::from_secs(1));
     }
@@ -507,14 +509,14 @@ mod tests {
                 let wait = waits.get() + 1;
                 waits.set(wait);
                 if wait <= 2 {
-                    Err(std::io::ErrorKind::Interrupted.into())
+                    Err(io::ErrorKind::Interrupted.into())
                 } else {
-                    Err(std::io::Error::other("poll retried after its deadline"))
+                    Err(io::Error::other("poll retried after its deadline"))
                 }
             },
             |_| {
                 reads.set(reads.get() + 1);
-                Err(std::io::Error::other("read occurred without readiness"))
+                Err(io::Error::other("read occurred without readiness"))
             },
             || {
                 let observation = observations.get() + 1;
@@ -599,7 +601,7 @@ mod tests {
         for mut sequence in [
             {
                 let mut bytes = b"\x1b[".to_vec();
-                bytes.extend(std::iter::repeat_n(b'1', 40));
+                bytes.extend(iter::repeat_n(b'1', 40));
                 bytes.push(b'~');
                 bytes
             },

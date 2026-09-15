@@ -1,3 +1,4 @@
+use jiff::tz;
 use yo_core::{AccountCapacityBucket, AccountCapacitySnapshot};
 use yo_tui::{GlyphProfile, surface::cell_width};
 
@@ -293,7 +294,7 @@ fn table_observed_at_cell(value: &str) -> TableCell {
         return TableCell::plain(display_observed_at_with_age(value));
     };
     let displayed = timestamp
-        .to_zoned(jiff::tz::TimeZone::system())
+        .to_zoned(tz::TimeZone::system())
         .strftime("%Y-%m-%d %H:%M %Z")
         .to_string();
     let age = jiff::Timestamp::now()

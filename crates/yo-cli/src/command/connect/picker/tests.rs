@@ -1,7 +1,9 @@
 use std::{
+    io,
     io::Read as _,
+    panic,
     panic::AssertUnwindSafe,
-    thread,
+    slice, thread,
     time::{Duration, Instant},
 };
 
@@ -323,7 +325,7 @@ fn kimi_cross_product_rows_do_not_borrow_reasoning_presentation() {
             .map(|model| ModelPickerItem::from_kimi(&model))
             .next()
             .unwrap();
-        let identity = PickerIdentity::from_models(std::slice::from_ref(&item)).unwrap();
+        let identity = PickerIdentity::from_models(slice::from_ref(&item)).unwrap();
         let choices = [PickerChoice::from(&item)];
         let mut state = PickerState::new(&choices);
         assert_eq!(state.accept_selected(&choices), None);
@@ -373,8 +375,8 @@ fn kimi_k26_missing_or_malformed_reasoning_is_explicitly_unknown_and_off() {
                 provider: "kimi".to_owned(),
                 account: "team".to_owned(),
             },
-            &PickerState::new(std::slice::from_ref(&choice)),
-            std::slice::from_ref(&choice),
+            &PickerState::new(slice::from_ref(&choice)),
+            slice::from_ref(&choice),
             160,
             PresentationStyle::Plain,
         )
@@ -406,7 +408,7 @@ fn panic_unwind_restores_terminal_mode_and_cleans_the_panel() {
                         break;
                     }
                 },
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     assert!(
                         Instant::now() < deadline,
                         "picker cleanup did not reach the PTY peer"
@@ -421,7 +423,7 @@ fn panic_unwind_restores_terminal_mode_and_cleans_the_panel() {
     let choices = choices(2);
     let state = PickerState::new(&choices);
 
-    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+    let panic = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut scope = PickerTerminalScope::enter(&terminal).unwrap();
         scope
             .render(&identity(), &state, &choices, PresentationStyle::Ansi)

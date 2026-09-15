@@ -8,15 +8,11 @@ use super::{
     },
     Command,
 };
+use crate::{interaction::diagnostic, state::storage};
 
-pub(crate) fn run(
-    command: Command,
-) -> Result<SessionOutput, crate::interaction::diagnostic::AppError> {
-    let storage = crate::state::storage::open_default_reader().map_err(|error| {
-        crate::interaction::diagnostic::AppError::single(
-            "opening read-only local Yo storage",
-            error,
-        )
+pub(crate) fn run(command: Command) -> Result<SessionOutput, diagnostic::AppError> {
+    let storage = storage::open_default_reader().map_err(|error| {
+        diagnostic::AppError::single("opening read-only local Yo storage", error)
     })?;
     let reader = storage
         .reader()
@@ -27,14 +23,11 @@ pub(crate) fn run(
 pub(crate) fn show_from_reader(
     reader: Option<&dyn StoredSessionReader>,
     command: Command,
-) -> Result<SessionOutput, crate::interaction::diagnostic::AppError> {
+) -> Result<SessionOutput, diagnostic::AppError> {
     let history = read_history_from_reader(reader, command.session_id)?;
     let stdout =
         project_archived_usage(&history, command.output.glyph_profile).map_err(|error| {
-            crate::interaction::diagnostic::AppError::single(
-                "projecting stored Session history",
-                error,
-            )
+            diagnostic::AppError::single("projecting stored Session history", error)
         })?;
     Ok(SessionOutput {
         stdout: with_final_newline(stdout),

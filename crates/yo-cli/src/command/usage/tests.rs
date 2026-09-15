@@ -1,4 +1,5 @@
 use std::{
+    env,
     num::NonZeroU64,
     sync::{Arc, Mutex},
     thread,
@@ -19,6 +20,7 @@ use yo_core::{
 use yo_tui::GlyphProfile;
 
 use super::{Command, execution::show_from_reader};
+use crate::command::output;
 
 #[derive(Clone, Default)]
 struct MemoryRepository {
@@ -87,7 +89,7 @@ fn usage_session_id() -> SessionId {
 fn usage_command(session_id: SessionId, glyph_profile: GlyphProfile) -> Command {
     Command {
         session_id,
-        output: crate::command::output::OutputOptions {
+        output: output::OutputOptions {
             format: super::super::output::OutputFormat::Text,
             glyph_profile,
         },
@@ -100,7 +102,7 @@ fn durable_usage_repository(receipt: Option<String>) -> MemoryRepository {
     let descriptor = SessionDescriptor::for_session(
         session_id,
         host,
-        HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+        HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
     );
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
     let activity = ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(1).unwrap()));

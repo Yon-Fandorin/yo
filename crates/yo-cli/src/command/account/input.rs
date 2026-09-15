@@ -1,5 +1,6 @@
 use std::num::NonZeroU16;
 
+use rustix::termios;
 use yo_core::ApiCredential;
 
 use crate::{
@@ -103,7 +104,7 @@ pub(crate) fn read_hidden_secret(
     let mut input = TtyPrompt::new();
     let terminal_width = {
         let terminal = input.terminal()?;
-        rustix::termios::tcgetwinsize(&*terminal)
+        termios::tcgetwinsize(&*terminal)
             .ok()
             .and_then(|size| NonZeroU16::new(size.ws_col))
             .unwrap_or_else(default_width)

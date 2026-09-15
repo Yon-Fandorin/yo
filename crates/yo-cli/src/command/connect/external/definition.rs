@@ -13,6 +13,8 @@ use super::super::{
 use crate::{
     AppError,
     command::connect::input::ExternalConnectInput,
+    execution::model,
+    interaction::connection,
     state::{
         config,
         connection::{complete_binding_details, display_target, operation_repositories},
@@ -90,7 +92,7 @@ pub(super) fn execute_definition_import_with(
     };
     let prepared = session
         .prepare_external_definition(
-            &crate::execution::model::NativeBindingAdmission,
+            &model::NativeBindingAdmission,
             mutation,
             &provider,
             &account_id,
@@ -289,11 +291,11 @@ fn account_metadata_summary(account: Option<&ConnectionAccount>) -> String {
     };
     let provider = account
         .provider_display_name()
-        .map(crate::interaction::connection::escape_remote_text)
+        .map(connection::escape_remote_text)
         .unwrap_or_else(|| "unset".to_owned());
     let account = account
         .account_display_name()
-        .map(crate::interaction::connection::escape_remote_text)
+        .map(connection::escape_remote_text)
         .unwrap_or_else(|| "unset".to_owned());
     format!("provider_display_name={provider}; account_display_name={account}")
 }

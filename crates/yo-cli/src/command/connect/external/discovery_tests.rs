@@ -1,24 +1,26 @@
-use std::path::Path;
+use std::{fs, path, path::Path, process, slice, time};
 
 use super::*;
 use crate::{
     AppError,
     command::{ConnectCommand, connect::input::ExternalConnectInput},
+    interaction::connection as interaction_connection,
+    state::connection,
 };
 
 // 두 부분 target은 정확히 configured OpenRouter/Kimi discovery와 QwenCloud catalog에만
 // 예약하고, 다른 Provider나 세 부분 exact ModelTarget과 섞이지 않는지 판별합니다.
 #[test]
 fn recognizes_only_the_closed_two_part_onboarding_shapes() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = connection::canonical_test_temp_dir().join(format!(
         "yo-catalog-pairs-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     for definition in [
         discovery_definition(),
         "provider: qwencloud\naccount: team\ncatalog: qwencloud-coding-plan-intl/v1\n",
@@ -50,7 +52,7 @@ fn recognizes_only_the_closed_two_part_onboarding_shapes() {
             .to_string()
             .contains("unsupported")
     );
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // discovery는 모델을 추측할 수 없는 interactive-only 흐름이므로 file/yes 조합도 config나
@@ -59,11 +61,8 @@ fn recognizes_only_the_closed_two_part_onboarding_shapes() {
 fn discovery_rejects_non_interactive_options_before_io() {
     for target in ["openrouter:team", "qwencloud:team", "kimi:team"] {
         for (credential_file, yes) in [
-            (Some(std::path::PathBuf::from("/not/read/credential")), true),
-            (
-                Some(std::path::PathBuf::from("/not/read/credential")),
-                false,
-            ),
+            (Some(path::PathBuf::from("/not/read/credential")), true),
+            (Some(path::PathBuf::from("/not/read/credential")), false),
             (None, true),
         ] {
             let error = run_external_connect(
@@ -90,7 +89,7 @@ struct DiscoveryCancelInput {
 impl ExternalConnectInput for DiscoveryCancelInput {
     fn confirm(
         &mut self,
-        _: &dyn crate::interaction::connection::ConfirmationView,
+        _: &dyn interaction_connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         panic!("discovery cancellation must happen before confirmation")
     }
@@ -107,19 +106,19 @@ impl ExternalConnectInput for DiscoveryCancelInput {
 // discovery picker 취소 시 plan·preview·세 repository mutation 전에 멈추는지 판별합니다.
 #[test]
 fn discovery_cancellation_discards_the_candidate_before_mutation() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = connection::canonical_test_temp_dir().join(format!(
         "yo-external-discovery-cancel-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(&root, discovery_definition());
-    let before = std::fs::read(root.join("connections.yaml")).unwrap();
+    let before = fs::read(root.join("connections.yaml")).unwrap();
     let mut input = DiscoveryCancelInput {
         credential_reads: 0,
     };
@@ -149,14 +148,11 @@ fn discovery_cancellation_discards_the_candidate_before_mutation() {
     assert_eq!(output, "Connection cancelled; nothing changed.\n");
     assert_eq!(input.credential_reads, 1);
     assert_eq!(discovery_calls, 1);
-    assert_eq!(
-        std::fs::read(root.join("connections.yaml")).unwrap(),
-        before
-    );
+    assert_eq!(fs::read(root.join("connections.yaml")).unwrap(), before);
     for name in ["credentials.yaml", "connection-operation.yaml"] {
         assert!(!root.join(name).exists(), "{name} must remain absent");
     }
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 struct DiscoverySuccessInput {
@@ -167,7 +163,7 @@ struct DiscoverySuccessInput {
 impl ExternalConnectInput for DiscoverySuccessInput {
     fn confirm(
         &mut self,
-        _: &dyn crate::interaction::connection::ConfirmationView,
+        _: &dyn interaction_connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         self.confirmations += 1;
         Ok(true)
@@ -185,17 +181,17 @@ impl ExternalConnectInput for DiscoverySuccessInput {
 // publication boundary에 도달해, 선택 뒤 credential 재입력이나 다른 model 선택을 막습니다.
 #[test]
 fn successful_discovery_binds_one_candidate_and_selected_row_to_publication() {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = connection::canonical_test_temp_dir().join(format!(
         "yo-external-discovery-success-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(&root, discovery_definition());
     let mut input = DiscoverySuccessInput {
         credential_reads: 0,
@@ -227,7 +223,7 @@ fn successful_discovery_binds_one_candidate_and_selected_row_to_publication() {
             assert_eq!(candidate.expose_secret(), "one-candidate-secret");
             assert_eq!(
                 prepared.bindings(),
-                std::slice::from_ref(selected.complete_binding().unwrap())
+                slice::from_ref(selected.complete_binding().unwrap())
             );
             config.verify_unchanged().unwrap();
             Ok(())
@@ -239,7 +235,7 @@ fn successful_discovery_binds_one_candidate_and_selected_row_to_publication() {
     assert_eq!(input.credential_reads, 1);
     assert_eq!(input.confirmations, 1);
     assert_eq!(finalizations, 1);
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn discovered_entry(model: &str) -> ModelCatalogEntry {

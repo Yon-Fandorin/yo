@@ -1,6 +1,6 @@
 use clap::Args;
 
-use crate::command::output::OutputOptions;
+use crate::command::{output, output::OutputOptions};
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Arguments {
@@ -27,7 +27,7 @@ pub(crate) struct Command {
 
 impl Arguments {
     pub(crate) fn into_command(self, output: OutputOptions) -> Result<Command, clap::Error> {
-        crate::command::output::validate(output, "account", true, true)?;
+        output::validate(output, "account", true, true)?;
         Ok(Command {
             source: self.source,
             refresh: self.refresh,

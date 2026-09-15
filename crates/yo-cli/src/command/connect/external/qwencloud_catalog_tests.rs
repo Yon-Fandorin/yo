@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs, panic,
+    path::{Path, PathBuf},
+    process, time,
+};
 
 use super::*;
 use crate::{
@@ -7,6 +11,8 @@ use crate::{
         ConnectCommand,
         connect::input::{ExternalConnectInput, ModelPickerItem},
     },
+    interaction::connection,
+    state::connection as state_connection,
 };
 
 struct CatalogCancelInput {
@@ -15,10 +21,7 @@ struct CatalogCancelInput {
 }
 
 impl ExternalConnectInput for CatalogCancelInput {
-    fn confirm(
-        &mut self,
-        _: &dyn crate::interaction::connection::ConfirmationView,
-    ) -> Result<bool, AppError> {
+    fn confirm(&mut self, _: &dyn connection::ConfirmationView) -> Result<bool, AppError> {
         panic!("catalog cancellation must happen before confirmation")
     }
 
@@ -46,9 +49,9 @@ impl ExternalConnectInput for CatalogCancelInput {
 fn qwencloud_catalog_cancellation_happens_before_secret_or_mutation() {
     let root = test_root("cancel");
     let config_path = root.path().join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(root.path(), token_plan_definition());
-    let before = std::fs::read(root.path().join("connections.yaml")).unwrap();
+    let before = fs::read(root.path().join("connections.yaml")).unwrap();
     let mut input = CatalogCancelInput {
         selections: 0,
         credential_reads: 0,
@@ -67,7 +70,7 @@ fn qwencloud_catalog_cancellation_happens_before_secret_or_mutation() {
     assert_eq!(input.selections, 1);
     assert_eq!(input.credential_reads, 0);
     assert_eq!(
-        std::fs::read(root.path().join("connections.yaml")).unwrap(),
+        fs::read(root.path().join("connections.yaml")).unwrap(),
         before
     );
     assert_secret_repositories_absent(root.path());
@@ -78,10 +81,7 @@ struct CatalogSuccessInput {
 }
 
 impl ExternalConnectInput for CatalogSuccessInput {
-    fn confirm(
-        &mut self,
-        _: &dyn crate::interaction::connection::ConfirmationView,
-    ) -> Result<bool, AppError> {
+    fn confirm(&mut self, _: &dyn connection::ConfirmationView) -> Result<bool, AppError> {
         self.events.push("confirm");
         Ok(true)
     }
@@ -107,7 +107,7 @@ impl ExternalConnectInput for CatalogSuccessInput {
 fn qwencloud_catalog_selection_reuses_the_external_connect_transaction() {
     let root = test_root("success");
     let config_path = root.path().join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(root.path(), token_plan_definition());
     let mut input = CatalogSuccessInput { events: Vec::new() };
     let mut finalized = false;
@@ -144,10 +144,7 @@ struct ExactInput {
 }
 
 impl ExternalConnectInput for ExactInput {
-    fn confirm(
-        &mut self,
-        _: &dyn crate::interaction::connection::ConfirmationView,
-    ) -> Result<bool, AppError> {
+    fn confirm(&mut self, _: &dyn connection::ConfirmationView) -> Result<bool, AppError> {
         Ok(true)
     }
 
@@ -169,7 +166,7 @@ impl ExternalConnectInput for ExactInput {
 fn exact_qwencloud_catalog_row_bypasses_the_picker() {
     let root = test_root("exact");
     let config_path = root.path().join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(root.path(), token_plan_definition());
     let mut input = ExactInput {
         selections: 0,
@@ -209,9 +206,9 @@ fn exact_qwencloud_catalog_rejects_disabled_or_unknown_rows_before_secret() {
     ] {
         let root = test_root("reject");
         let config_path = root.path().join("config.yaml");
-        std::fs::write(&config_path, "session: {}\n").unwrap();
+        fs::write(&config_path, "session: {}\n").unwrap();
         seed_stored_definition(root.path(), token_plan_definition());
-        let before = std::fs::read(root.path().join("connections.yaml")).unwrap();
+        let before = fs::read(root.path().join("connections.yaml")).unwrap();
         let mut input = ExactInput {
             selections: 0,
             credential_reads: 0,
@@ -227,7 +224,7 @@ fn exact_qwencloud_catalog_rejects_disabled_or_unknown_rows_before_secret() {
         assert!(error.to_string().contains(expected), "{error}");
         assert_eq!(input.credential_reads, 0);
         assert_eq!(
-            std::fs::read(root.path().join("connections.yaml")).unwrap(),
+            fs::read(root.path().join("connections.yaml")).unwrap(),
             before
         );
         assert_secret_repositories_absent(root.path());
@@ -263,20 +260,20 @@ impl TestRoot {
 
 impl Drop for TestRoot {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
 fn test_root(label: &str) -> TestRoot {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-qwencloud-catalog-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir(&root).unwrap();
+    fs::create_dir(&root).unwrap();
     TestRoot(root)
 }
 
@@ -294,8 +291,8 @@ fn qwencloud_catalog_fixture_cleanup_is_scoped_during_unwind() {
     let doomed = test_root("cleanup-panic");
     let doomed_path = doomed.path().to_owned();
 
-    let outcome = std::panic::catch_unwind(move || {
-        std::fs::write(doomed.path().join("config.yaml"), "session: {}\n").unwrap();
+    let outcome = panic::catch_unwind(move || {
+        fs::write(doomed.path().join("config.yaml"), "session: {}\n").unwrap();
         seed_stored_definition(doomed.path(), token_plan_definition());
         panic!("injected catalog assertion failure");
     });

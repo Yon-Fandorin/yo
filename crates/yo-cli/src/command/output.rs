@@ -1,4 +1,4 @@
-use clap::ValueEnum;
+use clap::{ValueEnum, error};
 use yo_tui::GlyphProfile;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -45,13 +45,13 @@ pub(super) fn validate(
 ) -> Result<(), clap::Error> {
     if output.format == OutputFormat::Json && !supports_json {
         return Err(super::raw_command_error(
-            clap::error::ErrorKind::ArgumentConflict,
+            error::ErrorKind::ArgumentConflict,
             format!("--format json is not supported by `{command}`"),
         ));
     }
     if output.glyph_profile == GlyphProfile::Ascii && !supports_ascii {
         return Err(super::raw_command_error(
-            clap::error::ErrorKind::ArgumentConflict,
+            error::ErrorKind::ArgumentConflict,
             format!("--ascii is not supported by `{command}`"),
         ));
     }

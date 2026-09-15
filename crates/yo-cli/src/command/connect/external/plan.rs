@@ -9,6 +9,7 @@ use super::super::presentation::StoredConnectionChange;
 use super::super::presentation::{Confirmation, ConnectPreview};
 use crate::{
     AppError,
+    interaction::connection,
     state::connection::{complete_binding_details, display_target},
 };
 
@@ -22,7 +23,7 @@ pub(super) struct ExternalConnectPlan {
     pub(super) default_after: String,
     pub(super) stored_change: StoredConnectionChange,
     pub(super) default_changed: bool,
-    pub(super) binding_details: Vec<crate::interaction::connection::BindingDetails>,
+    pub(super) binding_details: Vec<connection::BindingDetails>,
 }
 
 impl ExternalConnectPlan {
@@ -126,7 +127,7 @@ impl ExternalConnectPlan {
             binding_count,
             preference,
             target: display_target(Some(&StartupTarget::Model(selection.clone()))),
-            account: crate::interaction::connection::escape_remote_text(&format!(
+            account: connection::escape_remote_text(&format!(
                 "{}:{}",
                 selection.provider(),
                 selection.account()

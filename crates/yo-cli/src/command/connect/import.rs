@@ -1,12 +1,13 @@
 use std::{
     collections::HashSet,
-    fs,
+    fs, io,
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
+    str,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, de};
 use yo_core::{
     AccountId, ConnectionAccount, ConnectionCatalogSeed, EffectiveModelBinding,
     EffectiveModelProfile, ModelId, ModelProfileLayer, ModelProfileParameters, NormalizedEndpoint,
@@ -45,7 +46,7 @@ impl ImportedDefinition {
 
 pub(super) fn read(source: &Path) -> Result<ImportedDefinition, AppError> {
     let bytes = if source.as_os_str() == "-" {
-        read_bounded(std::io::stdin().lock(), "standard input")?
+        read_bounded(io::stdin().lock(), "standard input")?
     } else {
         if !source.is_absolute() {
             return Err(AppError::message(format!(
@@ -55,7 +56,7 @@ pub(super) fn read(source: &Path) -> Result<ImportedDefinition, AppError> {
         }
         read_file(source)?
     };
-    let contents = std::str::from_utf8(&bytes)
+    let contents = str::from_utf8(&bytes)
         .map_err(|_| AppError::message("connection definition must contain valid UTF-8"))?;
     parse(contents)
 }
@@ -211,7 +212,7 @@ where
     {
         Option::<T>::deserialize(deserializer)?
             .map(Self::Present)
-            .ok_or_else(|| serde::de::Error::custom("authored fields cannot be null"))
+            .ok_or_else(|| de::Error::custom("authored fields cannot be null"))
     }
 }
 

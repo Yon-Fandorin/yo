@@ -41,9 +41,10 @@ use super::picker;
 mod confirmation_tests {
     use std::{
         fs::{self, File, OpenOptions},
+        io,
         io::Read,
         path::PathBuf,
-        thread,
+        process, thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
@@ -106,7 +107,7 @@ mod confirmation_tests {
             match master.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => output.extend_from_slice(&buffer[..count]),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     assert!(
                         Instant::now() < deadline,
                         "confirmation prompt did not appear"
@@ -145,7 +146,7 @@ mod confirmation_tests {
             .as_nanos();
         let path = PathBuf::from(format!(
             "/tmp/yo-confirmation-flush-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let terminal = OpenOptions::new()
             .create_new(true)

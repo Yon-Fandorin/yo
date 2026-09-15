@@ -1,7 +1,12 @@
+use std::{fs, path, process, slice, time};
+
 use super::*;
 use crate::{
     AppError,
     command::{ConnectCommand, connect::input::ExternalConnectInput},
+    interaction,
+    interaction::connection,
+    state::connection as state_connection,
 };
 
 struct KimiInput {
@@ -10,16 +15,13 @@ struct KimiInput {
 }
 
 impl ExternalConnectInput for KimiInput {
-    fn confirm(
-        &mut self,
-        preview: &dyn crate::interaction::connection::ConfirmationView,
-    ) -> Result<bool, AppError> {
+    fn confirm(&mut self, preview: &dyn connection::ConfirmationView) -> Result<bool, AppError> {
         self.events.push("confirm");
         self.preview = Some(
             preview
                 .render_styled(
-                    crate::interaction::connection::default_width(),
-                    crate::interaction::PresentationStyle::Plain,
+                    connection::default_width(),
+                    interaction::PresentationStyle::Plain,
                 )
                 .unwrap(),
         );
@@ -40,7 +42,7 @@ impl ExternalConnectInput for KimiInput {
 fn kimi_discovery_selection_reaches_preview_and_publication_unchanged() {
     let root = test_root("success");
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(&root, kimi_definition());
     let selected = kimi_k3_entry();
     let selected_for_discovery = selected.clone();
@@ -67,7 +69,7 @@ fn kimi_discovery_selection_reaches_preview_and_publication_unchanged() {
             assert_eq!(candidate.expose_secret(), "one-kimi-candidate");
             assert_eq!(
                 prepared.bindings(),
-                std::slice::from_ref(selected.complete_binding().unwrap())
+                slice::from_ref(selected.complete_binding().unwrap())
             );
             let profile = prepared.bindings()[0].profile();
             assert_eq!(
@@ -86,7 +88,7 @@ fn kimi_discovery_selection_reaches_preview_and_publication_unchanged() {
     assert!(preview.contains("Private replay"));
     assert!(preview.contains("unencrypted"));
     assert!(finalized);
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 // 같은 kimi:Account 진입점에서 Code catalog seed를 선택하면 별도 .com endpoint와
@@ -95,7 +97,7 @@ fn kimi_discovery_selection_reaches_preview_and_publication_unchanged() {
 fn kimi_code_selection_preserves_product_endpoint_and_private_consent() {
     let root = test_root("code-success");
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, "session: {}\n").unwrap();
+    fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(&root, kimi_code_definition());
     let selected = kimi_code_entry();
     let selected_for_discovery = selected.clone();
@@ -132,7 +134,7 @@ fn kimi_code_selection_preserves_product_endpoint_and_private_consent() {
     assert!(output.contains("kimi:team:k3-256k"));
     assert_eq!(input.events, ["credential", "confirm"]);
     assert!(input.preview.unwrap().contains("Private replay"));
-    std::fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn command() -> ConnectCommand {
@@ -195,15 +197,15 @@ catalog: kimi-code-membership/v1
 "#
 }
 
-fn test_root(label: &str) -> std::path::PathBuf {
-    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
+fn test_root(label: &str) -> path::PathBuf {
+    let root = state_connection::canonical_test_temp_dir().join(format!(
         "yo-kimi-catalog-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        process::id(),
+        time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).unwrap();
     root
 }

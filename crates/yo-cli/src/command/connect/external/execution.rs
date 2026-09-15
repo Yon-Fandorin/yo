@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{error, path::Path};
 
 use yo_core::{ModelCatalogEntry, StartupPolicy, StartupTarget};
 use yo_provider_kimi::KimiCatalogSeed;
@@ -19,6 +19,8 @@ use super::{
 use crate::{
     AppError,
     command::connect::input::ExternalConnectInput,
+    execution::model,
+    interaction::connection,
     state::{
         config,
         connection::{display_target, operation_repositories},
@@ -202,11 +204,7 @@ where
         binding_details,
     } = plan;
     let prepared = session
-        .prepare_external_connection(
-            &crate::execution::model::NativeBindingAdmission,
-            connection,
-            bindings,
-        )
+        .prepare_external_connection(&model::NativeBindingAdmission, connection, bindings)
         .map_err(|error| {
             safe_discovery_source("preparing the external connection", error, remote_selected)
         })?;
@@ -247,9 +245,7 @@ where
 
 fn safe_discovery_error(error: AppError, discovered: bool) -> AppError {
     if discovered {
-        AppError::message(crate::interaction::connection::escape_remote_text(
-            &error.to_string(),
-        ))
+        AppError::message(connection::escape_remote_text(&error.to_string()))
     } else {
         error
     }
@@ -257,13 +253,13 @@ fn safe_discovery_error(error: AppError, discovered: bool) -> AppError {
 
 fn safe_discovery_source(
     context: &'static str,
-    error: impl std::error::Error,
+    error: impl error::Error,
     discovered: bool,
 ) -> AppError {
     if discovered {
         AppError::message(format!(
             "{context}: {}",
-            crate::interaction::connection::escape_remote_text(&error.to_string())
+            connection::escape_remote_text(&error.to_string())
         ))
     } else {
         AppError::single(context, error)

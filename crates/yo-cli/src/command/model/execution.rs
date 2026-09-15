@@ -67,6 +67,7 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
+        process,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -81,7 +82,7 @@ mod tests {
                 .unwrap()
                 .as_nanos();
             let path = connection::canonical_test_temp_dir()
-                .join(format!("yo-cli-model-{}-{nonce}", std::process::id()));
+                .join(format!("yo-cli-model-{}-{nonce}", process::id()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }

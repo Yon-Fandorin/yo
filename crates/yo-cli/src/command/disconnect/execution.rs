@@ -20,7 +20,7 @@ use crate::{
         prompt::TtyPrompt,
     },
     state::{
-        config,
+        config, connection,
         connection::{
             complete_binding_details, display_target, operation_repositories, selection_for_binding,
         },
@@ -28,7 +28,7 @@ use crate::{
 };
 
 pub(crate) fn run(command: DisconnectCommand) -> Result<String, AppError> {
-    let config_path = crate::state::connection::absolute_config_path(
+    let config_path = connection::absolute_config_path(
         config::selected_path()
             .map_err(|error| AppError::single("locating Yo configuration", error))?,
     )?;

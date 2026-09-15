@@ -11,12 +11,13 @@ use yo_tui::{
 };
 
 use super::{Command, Content, Output, View};
+use crate::{interaction::diagnostic, state::storage};
 
 pub(super) fn run(
-    storage: &crate::state::storage::LocalReadStorage,
+    storage: &storage::LocalReadStorage,
     session_id: SessionId,
     command: Command,
-) -> Result<Output, crate::interaction::diagnostic::AppError> {
+) -> Result<Output, diagnostic::AppError> {
     let reader = storage
         .reader()
         .map(|reader| reader as &dyn StoredSessionReader);
@@ -28,7 +29,7 @@ pub(crate) fn read_only_resume_from(
     session_id: SessionId,
     glyph_profile: yo_tui::GlyphProfile,
     reason: &str,
-) -> Result<Output, crate::interaction::diagnostic::AppError> {
+) -> Result<Output, diagnostic::AppError> {
     let mut output = show_from_reader(
         Some(reader),
         session_id,
@@ -45,7 +46,7 @@ pub(crate) fn read_only_resume_from(
             content: None,
         },
     )?;
-    output.diagnostics.push(crate::interaction::diagnostic::CliDiagnostic::warning(format!(
+    output.diagnostics.push(diagnostic::CliDiagnostic::warning(format!(
         "stored Session {session_id} continuation is unavailable ({reason}); opened durable history read-only"
     )));
     Ok(output)
@@ -55,7 +56,7 @@ fn show_from_reader(
     reader: Option<&dyn StoredSessionReader>,
     session_id: SessionId,
     command: Command,
-) -> Result<Output, crate::interaction::diagnostic::AppError> {
+) -> Result<Output, diagnostic::AppError> {
     let history = read_history_from_reader(reader, session_id)?;
     let view = match command.view {
         View::Chat => ArchivedSessionView::Chat,
@@ -76,9 +77,7 @@ fn show_from_reader(
         command.output.glyph_profile,
         options,
     )
-    .map_err(|error| {
-        crate::interaction::diagnostic::AppError::single("projecting stored Session history", error)
-    })?;
+    .map_err(|error| diagnostic::AppError::single("projecting stored Session history", error))?;
     let diagnostics = archival_diagnostics(
         session_id,
         command.view,
@@ -94,21 +93,16 @@ fn show_from_reader(
 pub(in crate::command) fn read_history_from_reader(
     reader: Option<&dyn StoredSessionReader>,
     session_id: SessionId,
-) -> Result<StoredSessionHistory, crate::interaction::diagnostic::AppError> {
+) -> Result<StoredSessionHistory, diagnostic::AppError> {
     let reader = reader.ok_or_else(|| {
-        crate::interaction::diagnostic::AppError::many([format!(
-            "stored Session {session_id} was not found"
-        )])
+        diagnostic::AppError::many([format!("stored Session {session_id} was not found")])
     })?;
     read_stored_session(reader, session_id).map_err(|error| match &error {
         StoredSessionReadError::NotFound { .. } | StoredSessionReadError::Incomplete { .. } => {
-            crate::interaction::diagnostic::AppError::many([error.to_string()])
+            diagnostic::AppError::many([error.to_string()])
         },
         StoredSessionReadError::Repository(_) | StoredSessionReadError::Invalid { .. } => {
-            crate::interaction::diagnostic::AppError::single(
-                "reading stored Session history",
-                error,
-            )
+            diagnostic::AppError::single("reading stored Session history", error)
         },
     })
 }
@@ -118,10 +112,10 @@ fn archival_diagnostics(
     view: View,
     continuity: StoredSessionContinuity,
     discovery_validation: StoredDiscoveryValidation,
-) -> Vec<crate::interaction::diagnostic::CliDiagnostic> {
+) -> Vec<diagnostic::CliDiagnostic> {
     let mut diagnostics = Vec::new();
     if view == View::Chat && continuity == StoredSessionContinuity::NotObservable {
-        diagnostics.push(crate::interaction::diagnostic::CliDiagnostic::warning(format!(
+        diagnostics.push(diagnostic::CliDiagnostic::warning(format!(
             "stored Session {session_id} may omit a volatile suffix; v1 durability continuity is not observable"
         )));
     }
@@ -132,11 +126,11 @@ fn archival_diagnostics(
 pub(in crate::command) fn discovery_diagnostics(
     session_id: SessionId,
     discovery_validation: StoredDiscoveryValidation,
-) -> Vec<crate::interaction::diagnostic::CliDiagnostic> {
+) -> Vec<diagnostic::CliDiagnostic> {
     match discovery_validation {
         StoredDiscoveryValidation::Consistent => Vec::new(),
         StoredDiscoveryValidation::Mismatch(mismatch) => {
-            vec![crate::interaction::diagnostic::CliDiagnostic::warning(
+            vec![diagnostic::CliDiagnostic::warning(
                 discovery_mismatch_diagnostic(session_id, mismatch),
             )]
         },

@@ -1,4 +1,5 @@
 use std::{
+    env,
     num::{NonZeroU64, NonZeroUsize},
     sync::{Arc, Mutex},
     thread,
@@ -10,6 +11,7 @@ use yo_core::{
     AgentEvent, AgentIntent, AgentSession, BackendEvent, BackendScriptStep, CommandAdmission,
     HostWorkspacePath, InputSubmission, ScriptedBackend, SessionDescriptor, SessionId,
     SubmissionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput, WorkspaceHostId,
+    session_repository,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, GROK_USAGE_SCHEMA, RepositoryEntry,
         RepositoryError, RepositorySequence, SessionRepository, StoredDiscoveryMismatch,
@@ -94,7 +96,7 @@ fn durable_usage_repository(receipt: Option<String>) -> MemoryRepository {
     let descriptor = SessionDescriptor::for_session(
         session_id,
         host,
-        HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+        HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
     );
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
     let activity = ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(1).unwrap()));
@@ -236,7 +238,7 @@ fn chat_preserves_continuity_and_typed_discovery_diagnostics_together() {
     let session_id = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
     let mismatch = StoredDiscoveryMismatch::new(
         RepositorySequence::new(10),
-        yo_core::session_repository::StoredDiscoveryMismatchKind::BindingEpoch { claimed: 4 },
+        session_repository::StoredDiscoveryMismatchKind::BindingEpoch { claimed: 4 },
     );
 
     let diagnostics = archival_diagnostics(

@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rustix::process;
 use yo_core::ApiCredential;
 
 use super::ExternalConnectInput;
@@ -43,7 +44,7 @@ impl ExternalConnectInput for AuthorizedCredentialFileInput {
 }
 
 fn read_credential_file(path: &Path) -> Result<ApiCredential, AppError> {
-    read_credential_file_with(path, rustix::process::geteuid().as_raw(), || Ok(()))
+    read_credential_file_with(path, process::geteuid().as_raw(), || Ok(()))
 }
 
 fn read_credential_file_with(

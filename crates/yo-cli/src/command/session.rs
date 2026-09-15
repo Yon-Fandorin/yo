@@ -1,8 +1,9 @@
 use std::num::NonZeroUsize;
 
-use clap::{Args, ValueEnum};
+use clap::{Args, ValueEnum, error};
 
 use super::output::OutputOptions;
+use crate::{interaction::diagnostic, state::storage};
 
 mod list;
 mod output;
@@ -72,7 +73,7 @@ impl Arguments {
         let view = self.view.unwrap_or(View::Chat);
         if view != View::Transcript && (self.limit.is_some() || self.content.is_some()) {
             return Err(super::raw_command_error(
-                clap::error::ErrorKind::ArgumentConflict,
+                error::ErrorKind::ArgumentConflict,
                 "--limit and --content are supported only with --view transcript",
             ));
         }
@@ -94,12 +95,9 @@ impl Arguments {
     }
 }
 
-pub(crate) fn run(command: Command) -> Result<Output, crate::interaction::diagnostic::AppError> {
-    let storage = crate::state::storage::open_default_reader().map_err(|error| {
-        crate::interaction::diagnostic::AppError::single(
-            "opening read-only local Yo storage",
-            error,
-        )
+pub(crate) fn run(command: Command) -> Result<Output, diagnostic::AppError> {
+    let storage = storage::open_default_reader().map_err(|error| {
+        diagnostic::AppError::single("opening read-only local Yo storage", error)
     })?;
     match command.session_id {
         Some(session_id) => run_show(&storage, session_id, command),

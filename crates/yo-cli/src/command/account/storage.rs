@@ -1,11 +1,12 @@
 use std::{
     error::Error,
-    fmt, fs,
+    fmt, fs, io,
     io::{Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
+use rustix::process;
 use serde::{Deserialize, Serialize};
 use yo_core::{
     AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
@@ -33,10 +34,7 @@ const REGULAR_FILE_MODE: u32 = libc::S_IFREG;
 
 #[derive(Debug)]
 pub(super) enum StorageError {
-    Io {
-        path: PathBuf,
-        source: std::io::Error,
-    },
+    Io { path: PathBuf, source: io::Error },
     InvalidPath(PathBuf),
     UnsupportedFileType(PathBuf),
     WrongOwner(PathBuf),
@@ -48,7 +46,7 @@ pub(super) enum StorageError {
 }
 
 impl StorageError {
-    fn io(path: &Path, source: std::io::Error) -> Self {
+    fn io(path: &Path, source: io::Error) -> Self {
         Self::Io {
             path: path.to_owned(),
             source,
@@ -290,7 +288,7 @@ fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, StorageError> {
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(StorageError::io(path, source)),
     };
     let before = MetadataSnapshot::capture(path, &file)?;
@@ -376,8 +374,8 @@ fn validate_parent(parent: &Path) -> Result<(), StorageError> {
         return Err(StorageError::UnsupportedFileType(parent.to_owned()));
     }
     let shared_sticky_directory =
-        metadata.uid() != rustix::process::geteuid().as_raw() && metadata.mode() & 0o1000 != 0;
-    if metadata.uid() != rustix::process::geteuid().as_raw() && !shared_sticky_directory {
+        metadata.uid() != process::geteuid().as_raw() && metadata.mode() & 0o1000 != 0;
+    if metadata.uid() != process::geteuid().as_raw() && !shared_sticky_directory {
         return Err(StorageError::WrongOwner(parent.to_owned()));
     }
     if metadata.mode() & 0o022 != 0 && !shared_sticky_directory {
@@ -414,7 +412,7 @@ fn create_temporary(parent: &Path) -> Result<(PathBuf, fs::File), StorageError> 
             .open(&temporary)
         {
             Ok(file) => return Ok((temporary, file)),
-            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {},
+            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {},
             Err(source) => return Err(StorageError::io(&temporary, source)),
         }
     }
@@ -458,7 +456,7 @@ impl MetadataSnapshot {
         if self.mode & FILE_TYPE_MASK != REGULAR_FILE_MODE {
             return Err(StorageError::UnsupportedFileType(path.to_owned()));
         }
-        if self.user != rustix::process::geteuid().as_raw() {
+        if self.user != process::geteuid().as_raw() {
             return Err(StorageError::WrongOwner(path.to_owned()));
         }
         if self.mode & 0o077 != 0 {
@@ -601,8 +599,9 @@ impl WireCredits {
 #[cfg(test)]
 mod tests {
     use std::{
-        fs,
-        os::unix::fs::PermissionsExt,
+        env, fs,
+        os::unix::{fs as unix_fs, fs::PermissionsExt},
+        process, slice,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -615,9 +614,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-cache-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         let snapshot = AccountCapacitySnapshot::new(
@@ -637,7 +636,7 @@ mod tests {
             .with_account_label("kimi-default")
             .with_observed_at("2026-09-03T01:02:03Z".to_owned());
 
-        upsert(&path, std::slice::from_ref(&report)).unwrap();
+        upsert(&path, slice::from_ref(&report)).unwrap();
         let loaded = load(&path).unwrap();
 
         assert_eq!(loaded.len(), 1);
@@ -662,9 +661,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-label-boundary-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         let boundary_path = root.join("account-capacity-boundary.yaml");
@@ -677,13 +676,13 @@ mod tests {
             .with_account_label("a".repeat(256))
             .with_observed_at("2026-09-03T01:02:03Z".to_owned());
 
-        upsert(&boundary_path, std::slice::from_ref(&report)).unwrap();
+        upsert(&boundary_path, slice::from_ref(&report)).unwrap();
         let loaded = load(&boundary_path).unwrap();
         assert_eq!(loaded[0].account_label().len(), 256);
 
         let too_long = report.with_account_label("a".repeat(257));
         assert!(matches!(
-            upsert(&path, std::slice::from_ref(&too_long)),
+            upsert(&path, slice::from_ref(&too_long)),
             Err(StorageError::InvalidContents(_))
         ));
         assert!(!path.exists());
@@ -697,9 +696,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-duplicate-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         fs::create_dir_all(&root).unwrap();
@@ -732,9 +731,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-legacy-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         fs::create_dir_all(&root).unwrap();
@@ -770,9 +769,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-host-switch-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         let old = AccountCapacityReport::plain(AccountCapacitySnapshot::new(
@@ -788,8 +787,8 @@ mod tests {
         ))
         .with_observed_at("2026-09-03T01:03:03Z".to_owned());
 
-        upsert(&path, std::slice::from_ref(&old)).unwrap();
-        upsert(&path, std::slice::from_ref(&new)).unwrap();
+        upsert(&path, slice::from_ref(&old)).unwrap();
+        upsert(&path, slice::from_ref(&new)).unwrap();
 
         let loaded = load(&path).unwrap();
 
@@ -805,9 +804,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-insecure-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         fs::create_dir_all(&root).unwrap();
@@ -821,7 +820,7 @@ mod tests {
             .with_observed_at("2026-09-03T01:02:03Z".to_owned());
 
         assert!(matches!(
-            upsert(&path, std::slice::from_ref(&report)),
+            upsert(&path, slice::from_ref(&report)),
             Err(StorageError::InsecurePermissions(_))
         ));
         let _ = fs::set_permissions(&root, fs::Permissions::from_mode(DIRECTORY_MODE));
@@ -835,16 +834,16 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-symlink-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         let target = root.join("outside.yaml");
         fs::create_dir_all(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(DIRECTORY_MODE)).unwrap();
         fs::write(&target, b"outside").unwrap();
-        std::os::unix::fs::symlink(&target, &path).unwrap();
+        unix_fs::symlink(&target, &path).unwrap();
         let report = AccountCapacityReport::plain(AccountCapacitySnapshot::new(
             ProviderId::new("kimi").unwrap(),
             AccountId::new("default").unwrap(),
@@ -853,7 +852,7 @@ mod tests {
         .with_observed_at("2026-09-03T01:02:03Z".to_owned());
 
         assert!(matches!(
-            upsert(&path, std::slice::from_ref(&report)),
+            upsert(&path, slice::from_ref(&report)),
             Err(StorageError::UnsupportedFileType(found)) if found == path
         ));
         assert_eq!(fs::read(&target).unwrap(), b"outside");
@@ -867,9 +866,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-directory-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         fs::create_dir_all(&path).unwrap();
@@ -889,9 +888,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = env::temp_dir().join(format!(
             "yo-account-capacity-file-mode-{}-{nonce}",
-            std::process::id()
+            process::id()
         ));
         let path = root.join("account-capacity.yaml");
         fs::create_dir_all(&root).unwrap();

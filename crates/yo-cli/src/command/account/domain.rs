@@ -1,3 +1,5 @@
+use std::{env, fs};
+
 use yo_core::{AccountCapacitySnapshot, AccountId, ProviderId};
 use yo_provider_kimi::KimiCatalogSeed;
 
@@ -261,12 +263,12 @@ pub(super) fn has_kimi_code_membership_binding(
 }
 
 pub(super) fn host_command_available(command: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
+    let Some(path) = env::var_os("PATH") else {
         return false;
     };
-    std::env::split_paths(&path).any(|directory| {
+    env::split_paths(&path).any(|directory| {
         let candidate = directory.join(command);
-        let Ok(metadata) = std::fs::metadata(candidate) else {
+        let Ok(metadata) = fs::metadata(candidate) else {
             return false;
         };
         metadata.is_file() && {

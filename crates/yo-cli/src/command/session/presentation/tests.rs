@@ -1,3 +1,5 @@
+use std::io;
+
 use super::*;
 
 fn unbounded(rows: &[SessionRow], all: bool, details: bool) -> String {
@@ -82,7 +84,7 @@ fn output_width_policy_distinguishes_terminals_from_pipes() {
         OutputWidth::Bounded(observed)
     );
     assert_eq!(
-        output_width(true, Err(std::io::Error::other("unavailable"))),
+        output_width(true, Err(io::Error::other("unavailable"))),
         OutputWidth::Bounded(NonZeroU16::new(80).unwrap())
     );
     assert_eq!(output_width(false, Ok(observed)), OutputWidth::Unbounded);

@@ -1,9 +1,10 @@
-use std::{io::IsTerminal as _, num::NonZeroU16};
+use std::{io, io::IsTerminal as _, num::NonZeroU16};
 
 use yo_tui::{
     GlyphProfile,
     meter::{MeterGlyphs, MeterShape, MeterSpec, MeterTemplate},
     surface::cell_width,
+    terminal,
 };
 
 use crate::{
@@ -36,11 +37,10 @@ pub(super) enum AccountOutputWidth {
 }
 
 pub(super) fn account_output_width() -> AccountOutputWidth {
-    if !std::io::stdout().is_terminal() {
+    if !io::stdout().is_terminal() {
         return AccountOutputWidth::Unbounded;
     }
-    yo_tui::terminal::current_width()
-        .map_or(AccountOutputWidth::Unknown, AccountOutputWidth::Bounded)
+    terminal::current_width().map_or(AccountOutputWidth::Unknown, AccountOutputWidth::Bounded)
 }
 
 pub(super) struct AccountRenderOptions<'a> {

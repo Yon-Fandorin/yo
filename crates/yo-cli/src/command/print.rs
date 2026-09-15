@@ -1,3 +1,5 @@
+use clap::error;
+
 use super::live::{LiveSelection, SandboxMode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,7 +23,7 @@ pub(super) fn from_cli(
     let selection = resume.map_or(LiveSelection::New, LiveSelection::Resume);
     if selection != LiveSelection::New && model.is_some() {
         return Err(super::raw_command_error(
-            clap::error::ErrorKind::ArgumentConflict,
+            error::ErrorKind::ArgumentConflict,
             "--print --resume uses the stored model binding and cannot be combined with --model",
         ));
     }

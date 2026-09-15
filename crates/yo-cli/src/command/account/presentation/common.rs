@@ -1,3 +1,4 @@
+use jiff::tz;
 use yo_core::{AccountCapacityBucket, AccountCapacitySnapshot};
 
 use crate::{
@@ -10,7 +11,7 @@ pub(in crate::command::account) fn display_observed_at(value: &str) -> String {
         |_| terminal_safe(value),
         |timestamp| {
             timestamp
-                .to_zoned(jiff::tz::TimeZone::system())
+                .to_zoned(tz::TimeZone::system())
                 .strftime("%Y-%m-%d %H:%M:%S %Z")
                 .to_string()
         },

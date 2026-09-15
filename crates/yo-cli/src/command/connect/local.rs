@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{env, path::Path};
 
 use yo_core::{
     ConnectionOperationExecutionError, ConnectionRepositoryError, HostId, StartupTarget,
@@ -7,6 +7,7 @@ use yo_core::{
 use super::Command as ConnectCommand;
 use crate::{
     AppError,
+    execution::host,
     state::{
         config,
         connection::{self, display_target},
@@ -18,15 +19,11 @@ fn verify_local_host_with_codex_warning_observer(
     host: &HostId,
     warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
 ) -> Result<(), AppError> {
-    let workspace = std::env::current_dir()
+    let workspace = env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let _workspace_host_id = storage::open_default_host_identity()
         .map_err(|error| AppError::single("opening the stable workspace Host identity", error))?;
-    crate::execution::host::verify_at_with_codex_warning_observer(
-        host,
-        &workspace,
-        warning_observer,
-    )
+    host::verify_at_with_codex_warning_observer(host, &workspace, warning_observer)
 }
 
 pub(super) fn validate_options(command: &ConnectCommand) -> Result<(), AppError> {
@@ -128,6 +125,7 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
+        process,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -141,10 +139,8 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path = connection::canonical_test_temp_dir().join(format!(
-                "yo-cli-local-connect-{}-{nonce}",
-                std::process::id()
-            ));
+            let path = connection::canonical_test_temp_dir()
+                .join(format!("yo-cli-local-connect-{}-{nonce}", process::id()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }

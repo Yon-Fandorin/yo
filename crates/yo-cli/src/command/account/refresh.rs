@@ -1,3 +1,5 @@
+use std::env;
+
 use yo_backend_delegated_codex::{
     CodexBackendConfig, read_account_capacity as read_codex_account_capacity,
 };
@@ -228,7 +230,7 @@ pub(super) fn qwencloud_account_session_prompt(
 
 pub(super) fn read_codex_capacity() -> Result<(AccountCapacityReport, Vec<CliDiagnostic>), AppError>
 {
-    let cwd = std::env::current_dir()
+    let cwd = env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let read = read_codex_account_capacity(CodexBackendConfig::new(cwd))
         .map_err(|error| AppError::single("refreshing Codex account capacity", error))?;
@@ -241,7 +243,7 @@ pub(super) fn read_codex_capacity() -> Result<(AccountCapacityReport, Vec<CliDia
 }
 
 pub(super) fn read_grok_capacity() -> Result<AccountCapacityReport, AppError> {
-    let cwd = std::env::current_dir()
+    let cwd = env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let snapshot = read_grok_account_capacity(GrokBackendConfig::new(cwd))
         .map_err(|error| AppError::single("refreshing Grok account capacity", error))?;
