@@ -1841,7 +1841,7 @@ TuiSession controller는 플랫폼 Yo state 디렉터리의 `interviews` 아래�
 
 `/interview preview`는 원본 질문과 편집 답안을 순서대로 사용자 문맥만 더해 표시하며 일반 텍스트 편집을 허용한다. preview 편집은 이번 제출을 위해 메모리에 보관하고 재시작하면 저장된 답안·문맥을 복구한다. `/interview send`는 현재 백엔드/모델과 일반 입력 검증으로 새 Session과 첫 Turn을 명시적으로 만든다. 활성·대기 Turn은 busy로 보고 복사본을 유지한다. backpressure에서 같은 불변 preview와 SubmissionId를 유지한다. 모호한 실패는 자동 재시도하지 않는다. 제출 표시는 일치하는 SubmissionId, 새 TurnRef, 양의 JournalSequence가 있는 실제 durable 최초 StartTurn 수락 기록을 요구하며 실행 완료를 뜻하지 않는다. preview는 UTF-8 기준64KiB, 전체 인코딩 복사본은256KiB까지이며 첫 초과는 자르지 않고 거부한다.
 
-검증은 실제 질문과 위장 표지 구분, 모든 답변/최종 완료 상관관계, 오래된 답변과 이동, 여러 segment 최초 캡처의 atomic 게시, durable 복구, 안전하지 않은 저장소, generation 충돌/동시 writer, 별도 다시 열기와 UTF-8 한도를 다룬다. 실제 provider RPC 재생과 비밀 입력·저장·복원은 후속 기능이다. 수정 빌드의 실제 Mac 검증은 사용자 요청으로 백로그에 남긴다.
+검증은 실제 질문과 위장 표지 구분, 모든 답변/최종 완료 상관관계, 오래된 답변과 이동, 여러 segment 최초 캡처의 atomic 게시, durable 복구, 안전하지 않은 저장소, generation 충돌/동시 writer, 별도 다시 열기와 UTF-8 한도를 다룬다. 실제 provider RPC 재생과 비밀 입력·저장·복원은 후속 기능이다. 수정 빌드의 실제 Mac 입력은 승인된 runtime tree에서 통과했다. [현재 직접 입력 검증](terminal-matrix.md#현재-mac-직접-입력-검증)을 참고한다.
 
 `/`로 시작하는 문자 그대로의 답변은 첫 슬래시를 두 번 입력합니다(`//interview ...`). 저장된 답변에는 슬래시가 정확히 하나 남습니다. 일시 저장 오류 뒤 새 편집은 자동 저장을 다시 시도합니다. 실제 저장된 원본 캡처만 복구 가능 상태를 표시하고, volatile 캡처는 회복 불가를 표시합니다. 접수 미확인 첫 Turn이 종료되면 불변 intent를 유지하면서 프리뷰 편집을 복구하며 자동 재전송하지 않습니다. 이후 known cutoff gap이 생겨도 앞서 내구성 경계 안에 저장된 접수 증거는 유효합니다. 예약된 우리 임시 파일은 exclusive lease에서 회수하고 unknown·unsafe 파일은 보존합니다. wire 답변 전송은 성공했지만 최종 seal이 유효하지 않거나 상한을 초과하면 완전한 회복 불가 이유를 명시합니다.
 

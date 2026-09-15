@@ -48,21 +48,9 @@ cursor/delete operations, multiline bracketed paste and `Ctrl+C` clearing.
 The first cold Fullscreen input attempt exceeded its five-second readiness
 bound while `yo` was still starting; the other five scenarios passed, and the
 exact input scenario passed after one successful Fullscreen warm-up. No model
-request occurred. This run did not perform a live-provider send.
-
-A user-assisted follow-up built final `develop` commit `35d3e47f` on the same
-Mac and opened its Fullscreen composer in a dedicated tmux pane. The user
-completed physical Korean/English switching and IME composition, Backspace and
-direction-key editing, a two-line Korean/ASCII/emoji paste through the terminal
-application's actual Command-V, and `Ctrl+C` draft clearing without reporting
-an input fault. The first ephemeral result pane disappeared before its post-exit
-markers could be read, and a subsequent zsh result wrapper failed after Yo
-returned because it assigned the shell's read-only `status` variable. A Bash
-result-preserving repeat then recorded empty-`Ctrl+D` exit status 0, alternate
-screen release and exact shell termios restoration. The tested binary SHA256 was
-`e25e97801ad161e930335ae669079913fd79870f4351149a3b4bc960bbc3860b`.
-Its isolated Session repositories contained zero backend bindings, accepted
-requests or finished Turns, and the native sandbox denied network access.
+request occurred. Physical IME and Command-V were repeated on the accepted candidate
+in the [current direct input verification](#current-mac-direct-input-verification).
+A live-provider send remains unverified.
 
 ## Large-body paging on the saved Mac
 
@@ -759,25 +747,32 @@ accepted requests, finished Turns and loopback inference connections remained ze
 Ordinary Yo state and the read-only Mac source repository were unchanged. All
 test-owned tmux resources and temporary state, followed by the disposable
 checkout, packet and build/log files, were removed. Physical keys, IME
-preedit/commit and terminal Command-V were checked separately below.
+preedit/commit and terminal Command-V were covered by the
+[current direct input verification](#current-mac-direct-input-verification).
 
 ## Current Mac direct input verification
 
-On 2026-09-13, candidate `fb396aa0` built with the locked dependencies on the
-configured arm64 Mac. In the user's existing tmux pane `%17` (`mac_yo`), the
-user confirmed normal Korean/English switching, IME composition and Backspace,
-direction-key editing, and two-line text pasted through the terminal's actual
-Command-V. Ctrl+C and then empty-prompt Ctrl+D each exited with status 0;
-recorded termios values were restored, allowing macOS's queued-input `PENDIN`
-flag. The tested binary SHA256 was
-`f07383917d56c280750e7524207832cb48f32ab1e022a85ffa1676b086d509ad`.
+On 2026-09-15, accepted `develop` commit `35d3e47f` built with the locked
+dependencies on the configured arm64 Mac. In a dedicated tmux pane, the user
+completed physical Korean/English switching and IME composition, Backspace and
+direction-key editing, a two-line Korean/ASCII/emoji paste through the terminal
+application's actual Command-V, and `Ctrl+C` draft clearing without reporting
+an input fault.
 
-The stock Fullscreen TUI used a fake credential and isolated config/Session
-state under a native macOS sandbox denying network access and writes outside
-the owned temporary directory. This establishes physical terminal input and
-exit behavior. It does not establish model-service behavior. The temporary
-checkout, build, input state and failed old-binary probe were removed; the
-user's tmux pane, installed Yo and clipboard setup were preserved.
+The post-exit observation was repeated after two result-wrapper faults outside
+Yo: the first pane did not retain its markers, and the next zsh wrapper assigned
+the shell's read-only `status` variable after Yo returned. A Bash
+result-preserving run recorded empty-`Ctrl+D` exit status 0, alternate-screen
+release and exact shell termios restoration. The tested binary SHA256 was
+`e25e97801ad161e930335ae669079913fd79870f4351149a3b4bc960bbc3860b`.
+
+The stock Fullscreen TUI used an offline Provider and isolated config, Codex and
+Session state under a native macOS sandbox that denied network access. The
+Session repositories contained zero backend bindings, accepted requests and
+finished Turns. This establishes physical terminal input and exit behavior; it
+does not establish model-service behavior. The dedicated tmux session,
+temporary checkout, build and state were removed. Installed Yo, normal
+credentials, existing tmux sessions and clipboard setup were preserved.
 
 ## macOS real-host evidence
 

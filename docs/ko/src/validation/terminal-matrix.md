@@ -45,20 +45,9 @@ durable acceptance, 충돌과 복구 실패를 검사한다.
 paste와 `Ctrl+C` 지우기가 통과했다. 첫 cold Fullscreen 입력 시도는 `yo`가
 시작되는 동안 5초 준비 제한을 넘겼다. 나머지 다섯 시나리오는 통과했고,
 Fullscreen을 한 번 준비한 뒤 같은 입력 시나리오도 통과했다. Model 요청은
-없었다. 실제 Provider send는 이번 실행에서 수행하지 않았다.
-
-사용자 보조 후속 검사에서는 같은 Mac에서 최종 `develop` 커밋 `35d3e47f`를
-빌드하고 전용 tmux pane에 Fullscreen 입력창을 열었다. 사용자는 물리 키보드의
-한영 전환과 IME 조합, Backspace와 방향키 편집, terminal application의 실제
-Command-V를 통한 한글·ASCII·emoji 두 줄 붙여넣기, `Ctrl+C` 초안 지우기를
-수행했으며 입력 이상을 보고하지 않았다. 첫 임시 결과 pane은 종료 후 marker를
-읽기 전에 사라졌고, 이어 사용한 zsh 결과 wrapper는 Yo가 반환된 뒤 shell의
-읽기 전용 `status` 변수에 값을 할당해 실패했다. 결과를 보존하는 Bash wrapper로
-빈 입력의 `Ctrl+D`를 반복한 뒤 종료 상태 0, alternate screen 해제와 shell
-termios의 정확한 복원을 기록했다. 검사한 binary SHA256은
-`e25e97801ad161e930335ae669079913fd79870f4351149a3b4bc960bbc3860b`다.
-격리된 Session repository의 backend binding, accepted request와 finished Turn은
-모두 0건이었고 native sandbox는 network access를 거부했다.
+없었다. 승인된 후보의 실제 IME와 Command-V는
+[현재 직접 입력 검증](#현재-mac-직접-입력-검증)에서 반복했다. 실제 Provider
+send는 아직 검증하지 않았다.
 
 ## 저장된 Mac의 큰 본문 페이지 검증
 
@@ -689,7 +678,29 @@ Thread binding, 수락된 요청, 완료된 Turn과 loopback inference 연결은
 모두 0이었다. 일반 Yo 상태와 읽기 전용 Mac source repository는 변하지 않았다.
 Test 소유 tmux 자원과 임시 상태를 모두 제거하고, 이어 일회용 checkout, packet과
 build/log 파일도 삭제했다. 실제 keyboard, IME의 조합 중 문자열·확정 과정과 terminal
-Command-V는 아직 검증하지 않았다.
+Command-V는 [현재 직접 입력 검증](#현재-mac-직접-입력-검증)에서 확인했다.
+
+## 현재 Mac 직접 입력 검증
+
+2026-09-15에 설정된 arm64 Mac에서 승인된 `develop` 커밋 `35d3e47f`를 locked
+dependency로 빌드했다. 전용 tmux pane에서 사용자는 물리 키보드의 한영 전환과
+IME 조합, Backspace와 방향키 편집, terminal application의 실제 Command-V를
+통한 한글·ASCII·emoji 두 줄 붙여넣기, `Ctrl+C` 초안 지우기를 수행했으며 입력
+이상을 보고하지 않았다.
+
+종료 후 관찰은 Yo 밖의 결과 wrapper 오류 두 건 때문에 반복했다. 첫 pane은
+marker를 보존하지 않았고, 다음 zsh wrapper는 Yo가 반환된 뒤 shell의 읽기 전용
+`status` 변수에 값을 할당했다. 결과를 보존하는 Bash 실행은 빈 입력의 `Ctrl+D`
+종료 상태 0, alternate screen 해제와 shell termios의 정확한 복원을 기록했다.
+검사한 binary SHA256은
+`e25e97801ad161e930335ae669079913fd79870f4351149a3b4bc960bbc3860b`다.
+
+Stock Fullscreen TUI는 offline Provider와 격리된 config, Codex, Session state를
+사용했고 macOS native sandbox가 network access를 거부했다. Session repository의
+backend binding, accepted request와 finished Turn은 모두 0건이었다. 이는 물리
+terminal 입력과 종료 동작을 입증하지만 model service 동작은 입증하지 않는다.
+전용 tmux session, 임시 checkout, build와 state는 제거했다. 설치된 Yo, 정상
+credential, 기존 tmux session과 clipboard 설정은 유지했다.
 
 ## macOS 실제 host 증거
 
@@ -747,22 +758,6 @@ Native preview 바이너리 SHA256은
 
 임시 체크아웃, 소스 전송 파일과 테스트 프로세스를 정리했다. 사용자의 tmux Session과
 기존 클립보드 설치는 보존했다.
-
-## 현재 Mac 직접 입력 검증
-
-2026-09-13에 설정된 arm64 Mac에서 후보 `fb396aa0`를 locked dependency로
-빌드했다. 사용자의 기존 tmux pane `%17` (`mac_yo`)에서 한영 전환, IME 조합과
-Backspace, 방향키 편집, 터미널의 실제 Command-V를 통한 두 줄 붙여넣기가
-모두 정상임을 사용자가 확인했다. Ctrl+C와 빈 입력의 Ctrl+D는 각각 status 0으로
-종료됐으며, macOS의 queued-input `PENDIN` flag를 허용하고 기록된 termios
-복구를 확인했다. 검증 바이너리 SHA256은
-`f07383917d56c280750e7524207832cb48f32ab1e022a85ffa1676b086d509ad`다.
-
-실제 Fullscreen TUI는 가짜 인증과 격리된 설정·Session state를 사용했다.
-macOS native sandbox가 네트워크와 테스트 디렉터리 밖 쓰기를 차단했다.
-이는 물리 터미널 입력과 종료 검증이며 모델 서비스 검증은 아니다. 임시 체크아웃,
-빌드, 입력 state와 이전 바이너리의 실패 probe는 제거했다. 사용자의 tmux pane,
-설치된 Yo와 클립보드 설정은 보존했다.
 
 ## Mac 클립보드에서 Linux yo로
 
