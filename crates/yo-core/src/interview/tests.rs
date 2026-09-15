@@ -142,7 +142,11 @@ fn next_question(
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
-        let p = std::env::temp_dir().join(format!(
+        // macOS의 임시 경로는 /var -> /private/var 링크를 거칠 수 있으므로,
+        // descriptor 기반 저장소에는 fixture의 물리 경로를 전달한다.
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .expect("the interview fixture temp directory must resolve physically");
+        let p = root.join(format!(
             "yo-interview-test-{}",
             working_copy::new_id().unwrap()
         ));
