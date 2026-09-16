@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, error::Error, fmt, num::NonZeroU16, sync::Arc};
 
-use yo_core::{ActivityDocument, ActivityNotice, ContinuationEligibility, NoticeLevel, SessionId};
+use yo_core::{
+    ActivityDocument, ActivityNotice, NoticeLevel, SessionId,
+    session_repository::ContinuationEligibility,
+};
 
 use crate::text::flow::flow_text;
 
