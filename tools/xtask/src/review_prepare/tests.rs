@@ -206,6 +206,21 @@ fn changed_authority_policy_v1alpha2_fails_closed_for_ambiguous_workflow() {
         authority_paths_for_changed_paths_v1alpha2(&["tools/xtask/src/lib.rs".to_owned()]),
         expected
     );
+    for path in [
+        "tools/xtask/src/cli.rs",
+        "tools/xtask/src/cli/check.rs",
+        "tools/xtask/src/cli/docs.rs",
+        "tools/xtask/src/cli/slice.rs",
+        "tools/xtask/src/cli/slice/lifecycle.rs",
+        "tools/xtask/src/cli/slice/review.rs",
+        "tools/xtask/src/cli/tests/mod.rs",
+    ] {
+        assert_eq!(
+            authority_paths_for_changed_paths_v1alpha2(&[path.to_owned()]),
+            expected,
+            "neutral CLI facade must retain the fail-closed authority set for {path}"
+        );
+    }
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/bounded_file.rs".to_owned(),

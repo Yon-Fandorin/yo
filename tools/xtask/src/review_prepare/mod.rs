@@ -859,8 +859,11 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
 fn is_neutral_workflow_facade(path: &str) -> bool {
     matches!(
         path,
-        "tools/xtask/src/lib.rs" | "tools/xtask/src/main.rs" | "tools/xtask/Cargo.toml"
-    )
+        "tools/xtask/src/lib.rs"
+            | "tools/xtask/src/main.rs"
+            | "tools/xtask/Cargo.toml"
+            | "tools/xtask/src/cli.rs"
+    ) || path.starts_with("tools/xtask/src/cli/")
 }
 
 fn is_ambiguous_shared_workflow(path: &str) -> bool {
