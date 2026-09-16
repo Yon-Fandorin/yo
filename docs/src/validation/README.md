@@ -54,7 +54,7 @@ For the completed real-host basic/structured editing experiment, see the
 | Two Slice contracts have a common current integration base and disjoint declared ownership | `cargo xtask check slice-parallel <left.json> <right.json>` | Direct Slices use `develop`; Wave Slices use their Wave branch |
 | One clean Slice candidate has validation, review, risk, and approval evidence bound to the same identity | `cargo xtask slice gate <request.json>` | Returns exactly one next action without rerunning validation or review |
 | A ready Slice needs an exact commit message and close record without identity transcription | Run `cargo xtask slice commit prepare <gate.json> <message-source> <message-out>`, commit the exact squash, then run `cargo xtask slice close prepare <request.json>` before `close plan/apply` | The first prepare runs in the clean Slice worktree; close prepare runs in the clean integration worktree after the accepted commit |
-| Repository hook policy or structured development checks | `cargo test -p xtask` | `tools/xtask/src` |
+| Repository hook policy or structured development checks | `cargo test -p xtask` | [`tools/xtask/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/lib.rs) for module registration and re-exports; [`tools/xtask/src/cli.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/cli.rs) for top-level dispatch and argument routing; command-family children under `tools/xtask/src/cli/` |
 | Prospective activation ContextBuild and review-packet identity | `cargo test -p methexis activation_review_context` and `cargo test -p xtask review_packet::tests::prospective` | Exact activation request, proposed Checkpoint/active record, authority mode, packet replay, and active-authority cross-use rejection |
 | tmux, SSH, or nested tmux behavior | See the [terminal environment matrix](./terminal-matrix.md) | Ignored `yo-cli` environment tests |
 
@@ -385,7 +385,7 @@ workspace stays empty. Startup, admission and each turn have explicit time bound
 Run the same command above with this test name. This proves native continuation for
 the installed Codex environment; it does not establish managed replay or compaction.
 
-`backend::tests::context_replay::automatic_compaction_survives_disk_resume_with_exact_retained_connector_input`
+`backend::tests::context_replay::active_resume::automatic_compaction_survives_disk_resume_with_exact_retained_connector_input`
 in `yo-backend-managed` covers automatic compaction across actual local storage and
 restart. Three ordinary turns trigger one summary; the successor connector checks
 that the checkpoint is already readable from disk. After shutdown and repository
@@ -894,7 +894,7 @@ Slice's coordination directory. See the integration workflow in
 ## Useful owners
 
 - Hook selection: [`hk.pkl`](https://github.com/Yon-Fandorin/yo/blob/develop/hk.pkl)
-- Structured repository checks: [`tools/xtask`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/lib.rs)
+- Structured repository checks: [`tools/xtask/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/lib.rs) for module registration and re-exports, and [`tools/xtask/src/cli.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/cli.rs) for CLI dispatch and argument routing
 - Unix host compile check: [`tools/validation/yo-cli-unix-matrix.sh`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/validation/yo-cli-unix-matrix.sh)
 - Rendering parity fixture: [`crates/yo-tui/tests/fixtures/rendering-parity/README.md`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/tests/fixtures/rendering-parity/README.md)
 - Test explanation policy: [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#test-code)

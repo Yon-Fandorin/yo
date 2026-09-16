@@ -54,7 +54,7 @@ command, host, credential, platform을 기록한다.
 | 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
 | 하나의 깨끗한 Slice 후보에서 검증, 리뷰, 위험, 승인 증거가 모두 같은 identity에 결속됐는지 | `cargo xtask slice gate <request.json>` | 검증이나 리뷰를 다시 실행하지 않고 다음 행동 하나만 반환 |
 | ready Slice의 정확한 commit message와 close 기록을 identity 전사 없이 준비하는지 | `cargo xtask slice commit prepare <gate.json> <message-source> <message-out>` 실행 후 exact squash를 commit하고, `close plan/apply` 전에 `cargo xtask slice close prepare <request.json>` 실행 | 첫 prepare는 깨끗한 Slice worktree, close prepare는 accepted commit 이후 깨끗한 통합 worktree에서 실행 |
-| 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | `tools/xtask/src` |
+| 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | module registration과 re-export는 [`tools/xtask/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/lib.rs), top-level dispatch와 argument routing은 [`tools/xtask/src/cli.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/cli.rs), command-family child는 `tools/xtask/src/cli/` |
 | Prospective activation ContextBuild와 review-packet identity | `cargo test -p methexis activation_review_context`와 `cargo test -p xtask review_packet::tests::prospective` | 정확한 activation request, 제안 Checkpoint·active record, authority mode, packet 재생, active-authority 교차 사용 거절 |
 | tmux, SSH, SSH 내부 tmux 동작 | [터미널 환경 매트릭스](./terminal-matrix.md) 참고 | ignored `yo-cli` 환경 test |
 
@@ -300,7 +300,7 @@ backend 종료, 저장소 재열기, durable continuation 복구를 사이에 �
 환경의 native continuation을 입증하며 managed replay나 compaction을 입증하지는 않는다.
 
 `yo-backend-managed`의
-`backend::tests::context_replay::automatic_compaction_survives_disk_resume_with_exact_retained_connector_input`은
+`backend::tests::context_replay::active_resume::automatic_compaction_survives_disk_resume_with_exact_retained_connector_input`은
 실제 로컬 저장소와 재시작을 거치는 자동 압축을 검증한다. 일반 입력 세 턴이 요약 한 번을
 유발하고, 후속 connector는 요청 시작 전에 checkpoint를 디스크에서 읽을 수 있는지 확인한다.
 종료·저장소 재열기 후 새 backend는 복구 중 요청을 보내지 않고 네 번째 입력에 요청 하나만
@@ -755,7 +755,7 @@ plan은 제거할 worktree와 해당 Slice coordination 디렉터리 바깥에 �
 ## 유용한 소유자
 
 - hook 선택: [`hk.pkl`](https://github.com/Yon-Fandorin/yo/blob/develop/hk.pkl)
-- 구조화된 저장소 검사: [`tools/xtask`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/lib.rs)
+- 구조화된 저장소 검사: module registration·re-export는 [`tools/xtask/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/lib.rs), CLI dispatch·argument routing은 [`tools/xtask/src/cli.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/cli.rs)
 - Unix host compile 검사: [`tools/validation/yo-cli-unix-matrix.sh`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/validation/yo-cli-unix-matrix.sh)
 - rendering parity fixture: [`crates/yo-tui/tests/fixtures/rendering-parity/README.md`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/tests/fixtures/rendering-parity/README.md)
 - test 설명 정책: [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#test-code)
