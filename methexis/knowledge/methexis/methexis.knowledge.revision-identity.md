@@ -12,12 +12,12 @@ relations:
     - methexis.relation.vocabulary
     - methexis.source.reference-pinning
   validated_by:
-    - tools/methexis/src/check.rs::tests::semantic_revision_ignores_yaml_order_and_line_endings
-    - tools/methexis/src/check.rs::tests::semantic_revision_sorts_sources_and_typed_relations
-    - tools/methexis/src/check.rs::tests::body_change_changes_revision
-    - tools/methexis/src/check.rs::tests::semantic_revision_has_a_golden_digest
+    - tools/methexis/src/check/tests.rs::semantic_revision_ignores_yaml_order_and_line_endings
+    - tools/methexis/src/check/tests.rs::semantic_revision_sorts_sources_and_typed_relations
+    - tools/methexis/src/check/tests.rs::body_change_changes_revision
+    - tools/methexis/src/check/tests.rs::semantic_revision_has_a_golden_digest
   applies_to:
-    - tools/methexis/src/check.rs::knowledge_revision
+    - tools/methexis/src/check/revision.rs::knowledge_revision
 ---
 # Knowledge revision identity
 

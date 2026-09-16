@@ -18,10 +18,10 @@ relations:
     - tools/methexis/tests/check.rs::duplicate_knowledge_ids_are_reported_for_each_path
     - tools/methexis/tests/check.rs::repeated_checks_and_physical_relocation_preserve_identity
     - tools/methexis/tests/check.rs::authority_root_symlinks_are_rejected_without_following_them
-    - tools/methexis/src/check.rs::tests::diagnostic_order_uses_location_before_message
+    - tools/methexis/src/check/tests.rs::diagnostic_order_uses_location_before_message
   applies_to:
-    - tools/methexis/src/check.rs::load_records
-    - tools/methexis/src/check.rs::validate_global
+    - tools/methexis/src/check/foundation.rs::load_records
+    - tools/methexis/src/check/validation.rs::validate_global
     - tools/methexis/src/check/runner.rs::check_repository_selected
 ---
 # All-or-nothing structural validation snapshot

@@ -12,8 +12,8 @@ relations:
   validated_by:
     - tools/methexis/tests/check.rs::global_failures_include_missing_targets_and_cycles
   applies_to:
-    - tools/methexis/src/check.rs::validate_global
-    - tools/methexis/src/check.rs::validate_cycles
+    - tools/methexis/src/check/validation.rs::validate_global
+    - tools/methexis/src/check/validation.rs::cycle_diagnostics
 ---
 # Required relation graph
 

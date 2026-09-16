@@ -16,7 +16,7 @@ relations:
     - tools/methexis/tests/check.rs::global_failures_include_missing_targets_and_cycles
     - tools/methexis/tests/checkpoint_flow/failures.rs::checkpoint_cannot_select_a_replacement_with_its_superseded_unit
   applies_to:
-    - tools/methexis/src/check.rs::validate_global
+    - tools/methexis/src/check/validation.rs::validate_global
     - tools/methexis/src/checkpoint/validation.rs::select_from_foundation
 ---
 # Knowledge semantic continuity

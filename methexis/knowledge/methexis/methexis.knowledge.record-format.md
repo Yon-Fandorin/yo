@@ -12,9 +12,9 @@ relations:
     - methexis.knowledge.unit
   validated_by:
     - tools/methexis/tests/check.rs::local_failures_are_aggregated_and_block_global_validation
-    - tools/methexis/src/check.rs::tests::norway_rejects_yaml_merge_keys_at_the_typed_boundary
+    - tools/methexis/src/check/tests.rs::norway_rejects_yaml_merge_keys_at_the_typed_boundary
   applies_to:
-    - tools/methexis/src/check.rs::load_records
+    - tools/methexis/src/check/foundation.rs::load_records
     - tools/methexis/src/model.rs::KnowledgeMetadata
 ---
 # Knowledge record format

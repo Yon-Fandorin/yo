@@ -11,11 +11,11 @@ relations:
     - methexis.knowledge.kind-vocabulary
     - methexis.knowledge.record-format
   validated_by:
-    - tools/methexis/src/check.rs::tests::headings_inside_fenced_code_do_not_satisfy_body_sections
-    - tools/methexis/src/check.rs::tests::headings_inside_html_comments_make_the_body_invalid
-    - tools/methexis/src/check.rs::tests::raw_html_spelling_inside_fenced_code_is_allowed
+    - tools/methexis/src/check/tests.rs::headings_inside_fenced_code_do_not_satisfy_body_sections
+    - tools/methexis/src/check/tests.rs::headings_inside_html_comments_make_the_body_invalid
+    - tools/methexis/src/check/tests.rs::raw_html_spelling_inside_fenced_code_is_allowed
   applies_to:
-    - tools/methexis/src/check.rs::validate_metadata
+    - tools/methexis/src/check/validation.rs::validate_metadata
 ---
 # Canonical body contract
 

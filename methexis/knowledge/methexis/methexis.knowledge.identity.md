@@ -13,7 +13,7 @@ relations:
     - tools/methexis/tests/check.rs::local_failures_are_aggregated_and_block_global_validation
     - tools/methexis/tests/check.rs::repeated_checks_and_physical_relocation_preserve_identity
   applies_to:
-    - tools/methexis/src/check.rs::is_semantic_id
+    - tools/methexis/src/check/validation.rs::is_semantic_id
 ---
 # Knowledge identity
 

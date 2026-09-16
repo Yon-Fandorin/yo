@@ -13,7 +13,7 @@ relations:
   validated_by:
     - tools/methexis/tests/checkpoint_flow/failures.rs::checkpoint_cannot_select_a_replacement_with_its_superseded_unit
   applies_to:
-    - tools/methexis/src/check.rs::validate_global
+    - tools/methexis/src/check/validation.rs::validate_global
     - tools/methexis/src/checkpoint/validation.rs::select_from_foundation
 ---
 # Split and merge supersession
