@@ -1,5 +1,3 @@
-use std::ffi::OsString;
-
 use super::docs_accept_translation_usage;
 use crate::cli::run;
 

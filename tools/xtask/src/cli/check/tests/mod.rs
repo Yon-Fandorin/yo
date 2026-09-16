@@ -1,6 +1,3 @@
-use std::ffi::OsString;
-
-use super::usage;
 use crate::cli::run;
 
 // test-explanations 뒤의 불필요한 인자는 조용히 무시하지 않고 해당 명령의
