@@ -6,7 +6,7 @@ mod slice_contract;
 #[cfg(test)]
 mod tests;
 
-use std::ffi::OsString;
+use std::{env::current_dir, ffi::OsString, path::PathBuf};
 
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let mut arguments = arguments.into_iter();
@@ -26,8 +26,8 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
     }
 }
 
-fn current_repository() -> Result<std::path::PathBuf, String> {
-    std::env::current_dir().map_err(|error| format!("cannot locate the repository: {error}"))
+fn current_repository() -> Result<PathBuf, String> {
+    current_dir().map_err(|error| format!("cannot locate the repository: {error}"))
 }
 
 fn general_usage() -> String {
