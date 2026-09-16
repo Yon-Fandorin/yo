@@ -7,8 +7,6 @@ use super::{
     },
     sample_request,
 };
-use crate::review_result;
-
 // 입력 정규화는 중복 authority와 지원되지 않는 host를 초기에 거부하여 ContextBuild나
 // packet publication을 시작하기 전에 사람이 고칠 수 있는 작은 오류로 남깁니다.
 #[test]
