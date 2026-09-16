@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use super::config::initialization_failure;
 
-pub(super) const MESSAGE_QUEUE_CAPACITY: usize = 256;
+const MESSAGE_QUEUE_CAPACITY: usize = 256;
 const STDERR_TAIL_BYTES: usize = 16 * 1024;
 
 pub(super) enum ReaderMessage {
