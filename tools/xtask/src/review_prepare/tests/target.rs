@@ -1,3 +1,5 @@
+use std::fs::{create_dir_all, write};
+
 use serde_json::json;
 
 use super::{
@@ -20,8 +22,8 @@ fn managed_route_documents_bind_current_authorization_and_delivery_shape() {
     let authorization = workspace
         .0
         .join(".local-exclude/authorizations/external-review.json");
-    std::fs::create_dir_all(authorization.parent().unwrap()).unwrap();
-    std::fs::write(&authorization, b"managed authority\n").unwrap();
+    create_dir_all(authorization.parent().unwrap()).unwrap();
+    write(&authorization, b"managed authority\n").unwrap();
     let request = sample_request(json!({
         "kind": "managed_model",
         "provider": "qwencloud",
@@ -55,8 +57,8 @@ fn delegated_route_documents_keep_host_owned_identity() {
     let authorization = workspace
         .0
         .join(".local-exclude/authorizations/external-review-delegated.json");
-    std::fs::create_dir_all(authorization.parent().unwrap()).unwrap();
-    std::fs::write(&authorization, b"delegated authority\n").unwrap();
+    create_dir_all(authorization.parent().unwrap()).unwrap();
+    write(&authorization, b"delegated authority\n").unwrap();
     let request = sample_request(json!({
         "kind": "delegated_host",
         "host": "codex",
