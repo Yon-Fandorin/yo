@@ -5,10 +5,10 @@ use yo_core::{
 };
 
 use super::super::state::{
-    Backend, MAX_ACP_IDENTIFIER_BYTES, format_tool_summary, identifier_at, non_empty_text,
-    raw_input_summary, wire_key,
+    ApprovalBinding, Backend, MAX_ACP_IDENTIFIER_BYTES, format_tool_summary, identifier_at,
+    non_empty_text, raw_input_summary, wire_key,
 };
-use crate::{READ_ONLY_REVIEW_PROFILE, protocol, transport::JsonPeer};
+use crate::{protocol, transport::JsonPeer};
 
 pub(super) fn map_server_request<P: JsonPeer>(
     backend: &mut Backend<P>,

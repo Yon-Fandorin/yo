@@ -123,16 +123,14 @@ impl<P: JsonPeer> Backend<P> {
             .as_ref()
             .filter(|binding| binding.yo == session_id)
             .map(|binding| binding.grok.as_str())
-            .ok_or_else(|| {
-                crate::protocol::protocol_failure("Grok ACP Session binding was not found")
-            })
+            .ok_or_else(|| protocol::protocol_failure("Grok ACP Session binding was not found"))
     }
 
     pub(super) fn active_turn(&self) -> Result<TurnRef, BackendFailure> {
         self.prompt
             .as_ref()
             .map(|prompt| prompt.turn)
-            .ok_or_else(|| crate::protocol::protocol_failure("Grok ACP update has no active Turn"))
+            .ok_or_else(|| protocol::protocol_failure("Grok ACP update has no active Turn"))
     }
 
     pub(super) fn ensure_activity_capacity(&self) -> Result<(), BackendFailure> {
@@ -149,11 +147,9 @@ impl<P: JsonPeer> Backend<P> {
                     .sum::<usize>(),
             )
             .and_then(|count| count.checked_add(self.approvals.len()))
-            .ok_or_else(|| {
-                crate::protocol::protocol_failure("Grok active activity count overflowed")
-            })?;
+            .ok_or_else(|| protocol::protocol_failure("Grok active activity count overflowed"))?;
         if active >= Self::MAX_ACTIVE_ACTIVITIES {
-            return Err(crate::protocol::protocol_failure(format!(
+            return Err(protocol::protocol_failure(format!(
                 "Grok ACP exceeded the per-Turn active activity limit of {}",
                 Self::MAX_ACTIVE_ACTIVITIES
             )));
@@ -164,24 +160,22 @@ impl<P: JsonPeer> Backend<P> {
     pub(super) fn next_activity(&mut self, turn: TurnRef) -> Result<ActivityRef, BackendFailure> {
         let id = NonZeroU64::new(self.next_activity_id)
             .map(ActivityId::new)
-            .ok_or_else(|| {
-                crate::protocol::protocol_failure("Grok Activity id space was exhausted")
-            })?;
-        self.next_activity_id = self.next_activity_id.checked_add(1).ok_or_else(|| {
-            crate::protocol::protocol_failure("Grok Activity id space was exhausted")
-        })?;
+            .ok_or_else(|| protocol::protocol_failure("Grok Activity id space was exhausted"))?;
+        self.next_activity_id = self
+            .next_activity_id
+            .checked_add(1)
+            .ok_or_else(|| protocol::protocol_failure("Grok Activity id space was exhausted"))?;
         Ok(ActivityRef::new(turn, id))
     }
 
     pub(super) fn next_request(&mut self) -> Result<RequestId, BackendFailure> {
         let id = NonZeroU64::new(self.next_request_id)
             .map(RequestId::new)
-            .ok_or_else(|| {
-                crate::protocol::protocol_failure("Grok request id space was exhausted")
-            })?;
-        self.next_request_id = self.next_request_id.checked_add(1).ok_or_else(|| {
-            crate::protocol::protocol_failure("Grok request id space was exhausted")
-        })?;
+            .ok_or_else(|| protocol::protocol_failure("Grok request id space was exhausted"))?;
+        self.next_request_id = self
+            .next_request_id
+            .checked_add(1)
+            .ok_or_else(|| protocol::protocol_failure("Grok request id space was exhausted"))?;
         Ok(id)
     }
 

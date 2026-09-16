@@ -60,7 +60,7 @@ impl<P: JsonPeer> Backend<P> {
         self.resume_binding(target.session_id(), target.binding())
     }
 
-    fn resume_binding(
+    pub(super) fn resume_binding(
         &mut self,
         session_id: SessionId,
         binding: &BackendBindingEvidence,
