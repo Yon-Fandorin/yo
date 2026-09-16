@@ -7,7 +7,7 @@ use super::{
     },
     artifact::{
         artifact, canonical_json, combine_failures, publish_claim, publish_exact,
-        publish_provider_usage, route, sha256_file,
+        publish_provider_usage, require_exact_file_hash, route, sha256_file,
     },
     model::{
         CLAIM_SCHEMA, CLAIM_SCHEMA_V1_ALPHA2, Claim, DELIVERY_RECEIPT_SCHEMA, DeliveryOutcome,
@@ -24,7 +24,7 @@ use super::{
 };
 use crate::review_egress;
 
-pub(super) fn run_original(
+pub(super) fn run(
     repository: &Path,
     request: Request,
     admission: Option<AdmissionReference>,

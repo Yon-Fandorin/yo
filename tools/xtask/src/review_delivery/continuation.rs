@@ -5,7 +5,7 @@ use super::{
     admission::{AdmissionReference, evaluate_admission},
     artifact::{
         artifact, canonical_json, combine_failures, publish_claim, publish_exact,
-        publish_provider_usage, route, sha256_file,
+        publish_provider_usage, require_exact_file_hash, route, sha256_file,
     },
     model::{
         CONTINUATION_CLAIM_SCHEMA, CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2,
@@ -24,7 +24,7 @@ use super::{
 };
 use crate::review_continuation_preflight;
 
-pub(super) fn run_continuation(
+pub(super) fn run(
     repository: &Path,
     request: ContinuationRequest,
     admission: Option<AdmissionReference>,
