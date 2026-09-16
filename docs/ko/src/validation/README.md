@@ -159,7 +159,9 @@ idle preview는 주기적 poll을 예약하지 않는다. 대기 중인 합성 �
 제공하며, motion과 실제 agent backpressure deadline을 함께 고려한다.
 
 구현은 `command/preview.rs`가 command 등록, `runner/state/preview.rs`가 격리와
-lifecycle, `runner/preview_agent.rs`가 합성 event 생성을 담당한다.
+lifecycle, `runner/preview_agent/agent.rs`가 합성 event 생성을,
+`runner/preview_agent/scenario.rs`가 scenario 응답을,
+`runner/preview_agent/media.rs`가 rich-media fixture를 담당한다.
 `cargo test --locked -p yo-tui`와 인접 `yo-cli` PTY test로 검증한다.
 
 승인 프로필은 선택적인 `related_change`로 같은 Turn에서 관측한 파일 변경 활동의

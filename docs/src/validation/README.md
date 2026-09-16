@@ -169,7 +169,9 @@ its own deadline, combined with motion and real-agent backpressure deadlines.
 
 Implementation: `command/preview.rs` registers the command;
 `runner/state/preview.rs` owns isolation and lifecycle;
-`runner/preview_agent.rs` owns synthetic event generation. Check with
+`runner/preview_agent/agent.rs` owns synthetic event generation;
+`runner/preview_agent/scenario.rs` owns scenario responses;
+`runner/preview_agent/media.rs` owns rich-media fixtures. Check with
 `cargo test --locked -p yo-tui` and the neighboring `yo-cli` PTY tests.
 
 Approval profiles may carry an optional `related_change`: a nonzero observed file-change
