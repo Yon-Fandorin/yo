@@ -1,7 +1,7 @@
 pub(super) const MAX_REPLAY_ITEMS: usize = 4_096;
-pub(crate) const MAX_REPLAY_TEXT_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const MAX_REPLAY_CONTRACT_BYTES: usize = 1024 * 1024;
-pub(crate) const MAX_REPLAY_DELTA_BYTES: usize = 16 * 1024 * 1024;
+pub(in crate::evidence) const MAX_REPLAY_TEXT_BYTES: usize = 16 * 1024 * 1024;
+pub(in crate::evidence) const MAX_REPLAY_CONTRACT_BYTES: usize = 1024 * 1024;
+pub(in crate::evidence) const MAX_REPLAY_DELTA_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const MAX_REPLAY_PREFIX_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
