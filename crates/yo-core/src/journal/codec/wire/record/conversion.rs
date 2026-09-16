@@ -22,7 +22,7 @@ use super::{
     required_journal_sequence, with_context_epoch,
 };
 use crate::{
-    AgentEvent, JournalSequence, ModelReplayDelta, SessionDescriptor, SessionId,
+    AgentEvent, JournalSequence, SessionDescriptor, SessionId,
     journal::codec::{
         BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved,
         BackendRequestAccepted, BackendResumableOutcome, CONTEXT_ARTIFACT_PROFILE,

@@ -10,7 +10,7 @@ use std::{
 };
 
 use super::*;
-use crate::{AccountId, ModelId, ModelSelection, ProviderId, VersionedProfileId};
+use crate::{AccountId, ModelId, ModelSelection, ProviderId, StartupTarget, VersionedProfileId};
 
 struct TestDirectory(PathBuf);
 

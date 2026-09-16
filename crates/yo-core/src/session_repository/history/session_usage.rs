@@ -14,6 +14,4 @@ pub use model::{
     SessionUsageProvider, SessionUsageReceipt, SessionUsageSource, UsageAggregate, UsageCoverage,
     UsageValue,
 };
-pub(super) use projection::build_projection;
 use projection::{coverage, project_session_usage};
-use receipts::{parse_codex, parse_grok_diagnostic, parse_managed, parse_receipt};

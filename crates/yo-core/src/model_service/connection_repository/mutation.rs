@@ -7,7 +7,7 @@ use super::{
     ConnectionAccount, ConnectionCatalogSeed, ConnectionRepositoryError, ConnectionRevision,
     ConnectionSnapshot, MAX_CONNECTION_BYTES, ModelLastFailure, StoredModelBinding,
     account_matches_binding, binding_matches_selection, decode_snapshot, encode_snapshot,
-    new_revision, validate_catalog_seeds, validate_state,
+    new_revision, validate_state,
 };
 use crate::{
     AccountId, CompleteModelBinding, ModelCatalog, ModelSelection, ProviderId, StartupTarget,
