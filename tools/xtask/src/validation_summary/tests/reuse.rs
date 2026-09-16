@@ -1,4 +1,4 @@
-use std::{env, path};
+use std::env;
 
 use serde_json::json;
 
