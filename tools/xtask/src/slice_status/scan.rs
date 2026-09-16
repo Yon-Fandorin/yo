@@ -7,8 +7,8 @@ use std::{
 use super::{
     delivery,
     model::{
-        Artifacts, CoordinationScope, EffectiveValidation, JSON_LIMIT, MAX_JSON_FILES,
-        MAX_SCAN_DEPTH, ScanBudget, ValidationSummary,
+        Artifacts, CoordinationScope, JSON_LIMIT, MAX_JSON_FILES, MAX_SCAN_DEPTH, ScanBudget,
+        ValidationSummary,
     },
 };
 use crate::{bounded_file, review_protocol};

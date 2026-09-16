@@ -1,15 +1,15 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use super::{
-    model::{EffectiveValidation, ReviewLineage, ScanBudget, SliceState},
+    model::{EffectiveValidation, JSON_LIMIT, ReviewLineage, ScanBudget, SliceState},
     scan::{collect_json, resolve_status_path},
 };
-use crate::{bounded_file, git, review_protocol, slice_contract, slice_worktree};
+use crate::{bounded_file, git, slice_contract, slice_worktree};
 
-pub(super) fn locate(repository: &Path, slice: &str) -> Result<SliceState, String> {
+pub(crate) fn locate(repository: &Path, slice: &str) -> Result<SliceState, String> {
     validate_slice_name(slice)?;
     let mut matches = Vec::new();
     for worktree in slice_worktree::worktrees(repository)? {
