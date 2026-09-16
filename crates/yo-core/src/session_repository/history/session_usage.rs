@@ -1,4 +1,4 @@
-//! Receipt models, parsers, and semantic projections for stored Session history.
+//! 저장된 세션 이력의 영수증 모델, 파서, 의미 투영.
 
 mod model;
 mod projection;

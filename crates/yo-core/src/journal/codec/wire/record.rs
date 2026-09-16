@@ -1,4 +1,4 @@
-//! Wire record grammar and responsibility-scoped semantic conversions.
+//! Wire 레코드 문법과 책임별 의미 변환.
 
 mod conversion;
 mod fork;
