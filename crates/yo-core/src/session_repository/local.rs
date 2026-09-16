@@ -65,6 +65,7 @@ pub struct LocalSessionReader {
 impl LocalSessionReader {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, RepositoryError> {
         let requested = root.into();
+        validate_repository_root(&requested)?;
         let original = fs::symlink_metadata(&requested)?;
         let root = open_existing_root(&requested)?;
         let tree_root = pin_reader_root(&root)?;
@@ -75,6 +76,11 @@ impl LocalSessionReader {
             });
         }
         Ok(Self { root, tree_root })
+    }
+
+    #[cfg(test)]
+    pub(super) fn root_path(&self) -> &Path {
+        &self.root
     }
 
     fn session_path(&self, session_id: SessionId) -> PathBuf {
@@ -348,7 +354,9 @@ impl StoredSessionReader for LocalSessionReader {
 
 impl LocalSessionRepository {
     pub fn open(root: impl Into<PathBuf>, capacity_bytes: u64) -> Result<Self, RepositoryError> {
-        let root = prepare_root(&root.into())?;
+        let requested = root.into();
+        validate_repository_root(&requested)?;
+        let root = prepare_root(&requested)?;
         let legacy_compatibility_guard = LegacyWriterCompatibilityGuard::acquire(&root)?;
 
         Ok(Self {
@@ -469,6 +477,15 @@ impl LocalSessionRepository {
             source,
         }
     }
+}
+
+fn validate_repository_root(root: &Path) -> Result<(), RepositoryError> {
+    if root.as_os_str().is_empty() || !root.is_absolute() {
+        return Err(RepositoryError::Unavailable {
+            message: "Session repository root must be a non-empty absolute path".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 impl SessionWriterRepository for LocalSessionRepository {

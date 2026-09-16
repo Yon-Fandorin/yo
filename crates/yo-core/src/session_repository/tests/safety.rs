@@ -119,6 +119,49 @@ fn resolves_the_repository_root_once_when_opening() {
     );
 }
 
+// reader와 writer 모두 빈 경로·상대 경로를 filesystem access 전에 같은 typed error로 거절한다.
+#[test]
+fn rejects_empty_and_relative_repository_roots_for_both_openers() {
+    let roots = ["", ".", "./relative", "relative"];
+    for root in roots {
+        let reader_error = LocalSessionReader::open(root)
+            .expect_err("a reader must reject a non-absolute repository root");
+        assert!(matches!(
+            reader_error,
+            RepositoryError::Unavailable { message }
+                if message == "Session repository root must be a non-empty absolute path"
+        ));
+
+        let writer_error = LocalSessionRepository::open(root, 32_768)
+            .expect_err("a writer must reject a non-absolute repository root");
+        assert!(matches!(
+            writer_error,
+            RepositoryError::Unavailable { message }
+                if message == "Session repository root must be a non-empty absolute path"
+        ));
+    }
+}
+
+// absolute 경로의 dot segment는 입력 계약을 만족하므로 두 opener가 canonical root로 고정한다.
+#[test]
+fn accepts_absolute_dot_segments_and_canonicalizes_for_both_openers() {
+    let directory = TestDirectory::new("absolute-dot-segments");
+    let name = directory
+        .path()
+        .file_name()
+        .expect("the test directory has a name");
+    let unresolved = directory.path().join(".").join("..").join(name);
+    let canonical = fs::canonicalize(directory.path()).expect("the root canonicalizes");
+
+    let repository =
+        LocalSessionRepository::open(&unresolved, 32_768).expect("the writer root opens");
+    assert_eq!(repository.root_path(), canonical);
+    drop(repository);
+
+    let reader = LocalSessionReader::open(&unresolved).expect("the reader root opens");
+    assert_eq!(reader.root_path(), canonical);
+}
+
 // 다른 경로를 가리키는 symlink를 세션 로그로 따라가거나 수정하지 않는지 검증합니다.
 #[test]
 fn rejects_a_symbolic_link_at_a_session_log_path() {
