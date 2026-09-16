@@ -33,9 +33,11 @@ impl TuiSession {
             candidate.state.interview = Some(controller);
         }
     }
+    /// 인터뷰 처리 중 보류된 명령을 세션에 보존하여 후속 실행에서 재시도할 수 있게 합니다.
     pub fn retain_interview_backpressure(&mut self, pending: PendingDispatch) {
         self.pending_dispatch = Some(pending);
     }
+    /// 인터뷰 처리 실패 내용을 대화 알림으로 남깁니다.
     pub fn report_interview_failure(&mut self, detail: impl Into<String>) {
         let _ = self.state.chat_notice(detail.into());
     }
