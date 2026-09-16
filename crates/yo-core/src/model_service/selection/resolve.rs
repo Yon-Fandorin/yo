@@ -87,7 +87,7 @@ impl ModelSelectionController {
         let mut matches = self
             .choices
             .iter()
-            .filter(|choice| choice.selection.row_identity() == identity);
+            .filter(|choice| choice.selection().row_identity() == identity);
         let Some(choice) = matches.next() else {
             return Err(ModelServiceError::new(
                 "the selected model binding is stale or no longer configured",
@@ -98,7 +98,7 @@ impl ModelSelectionController {
                 "the selected model binding identity is ambiguous",
             ));
         }
-        self.accept_exact(&choice.selection)
+        self.accept_exact(choice.selection())
     }
 
     pub fn accept_exact(

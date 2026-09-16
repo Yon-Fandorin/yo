@@ -236,7 +236,7 @@ impl ModelPickerTarget {
     }
 }
 
-pub(super) fn encode_coordinate_segment(value: &str) -> String {
+pub(crate) fn encode_coordinate_segment(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for character in value.chars() {
         match character {
