@@ -17,7 +17,7 @@ relations:
     - tools/methexis/tests/cli.rs::check_only_rejects_unknown_and_empty_selectors
   applies_to:
     - tools/methexis/src/check/runner.rs::check_repository_selected
-    - tools/methexis/src/cli.rs::parse_check_selection
+    - tools/methexis/src/cli/check.rs::parse_check_selection
 ---
 # Ordered validation check classes
 

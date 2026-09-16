@@ -16,8 +16,8 @@ relations:
     - tools/methexis/tests/cli/bounded_check.rs::check_unit_rejects_unbounded_and_pre_authority_combinations
     - tools/methexis/tests/cli/bounded_check.rs::check_summary_preserves_the_full_failure_report
   applies_to:
-    - tools/methexis/src/cli.rs::run_check
-    - tools/methexis/src/cli.rs::parse_check_selection
+    - tools/methexis/src/cli/check.rs::run_check
+    - tools/methexis/src/cli/check.rs::parse_check_selection
 ---
 # Bounded successful validation output
 
