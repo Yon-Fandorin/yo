@@ -286,10 +286,41 @@ readonly lease_key
 trap cleanup EXIT
 
 started_at=$(date +%s)
+child_pid=""
+received_signal_status=""
+forward_signal() {
+    local signal_name=$1
+    case ${signal_name} in
+        HUP) received_signal_status=129 ;;
+        INT) received_signal_status=130 ;;
+        TERM) received_signal_status=143 ;;
+    esac
+    if [[ -n ${child_pid} ]]; then
+        kill -s "${signal_name}" -- "-${child_pid}" 2>/dev/null || true
+    fi
+}
+set -m
+trap 'forward_signal HUP' HUP
+trap 'forward_signal INT' INT
+trap 'forward_signal TERM' TERM
+"$@" >"${log_path}" 2>&1 &
+child_pid=$!
 set +e
-"$@" >"${log_path}" 2>&1
-command_status=$?
+while :; do
+    wait "${child_pid}"
+    wait_status=$?
+    if kill -0 "${child_pid}" 2>/dev/null; then
+        continue
+    fi
+    command_status=${wait_status}
+    break
+done
 set -e
+set +m
+trap - HUP INT TERM
+if [[ -n ${received_signal_status} ]]; then
+    command_status=${received_signal_status}
+fi
 finished_at=$(date +%s)
 
 readonly elapsed_seconds=$((finished_at - started_at))

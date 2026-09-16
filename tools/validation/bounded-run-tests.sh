@@ -5,7 +5,18 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
 
 readonly checker="$(pwd)/tools/validation/bounded-run.sh"
 fixture=$(mktemp -d)
-trap 'rm -rf "${fixture}"' EXIT
+interruption_wrapper_pid=""
+interruption_child_pid=""
+cleanup() {
+    if [[ -n ${interruption_wrapper_pid} ]] && kill -0 "${interruption_wrapper_pid}" 2>/dev/null; then
+        kill -KILL "${interruption_wrapper_pid}" 2>/dev/null || true
+    fi
+    if [[ -n ${interruption_child_pid} ]] && kill -0 "${interruption_child_pid}" 2>/dev/null; then
+        kill -KILL "${interruption_child_pid}" 2>/dev/null || true
+    fi
+    rm -rf "${fixture}"
+}
+trap cleanup EXIT
 
 readonly log_root="${fixture}/logs"
 mkdir -p "${log_root}"
@@ -118,6 +129,92 @@ if [[ -s "${fixture}/leased.err" ||
     "${leased_summary}" != *'"status":"acquired"'* ||
     -d "${clean_repository}/.local-exclude/validation-leases/cargo-heavy" ]]; then
     echo "resource lease: expected one released cargo-heavy lease and v1alpha4 evidence" >&2
+    exit 1
+fi
+
+interruption_child_script="${fixture}/interruption-child.sh"
+interruption_child_pid_file="${fixture}/interruption-child.pid"
+interruption_child_marker="${fixture}/interruption-child.signal"
+cat >"${interruption_child_script}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$$" >"${INTERRUPTION_CHILD_PID_FILE}"
+record_signal() {
+    printf '%s\n' "$1" >"${INTERRUPTION_CHILD_MARKER}"
+    exit "$2"
+}
+trap 'record_signal TERM 143' TERM
+trap 'record_signal INT 130' INT
+trap 'record_signal HUP 129' HUP
+while :; do
+    :
+done
+EOF
+chmod +x "${interruption_child_script}"
+
+set +e
+(
+    cd "${clean_repository}"
+    INTERRUPTION_CHILD_PID_FILE="${interruption_child_pid_file}" \
+    INTERRUPTION_CHILD_MARKER="${interruption_child_marker}" \
+    PATH="${fixture}/bin:${PATH}" \
+    SYSTEM_MKTEMP="${system_mktemp}" \
+    YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+        exec bash "${checker}" --summary-out "${summary_root}/interrupted.json" \
+        --resource-class cargo-heavy interrupted -- "${interruption_child_script}"
+) >"${fixture}/interrupted.out" 2>"${fixture}/interrupted.err" &
+interruption_wrapper_pid=$!
+for _ in {1..100}; do
+    if [[ -s "${interruption_child_pid_file}" ]]; then
+        break
+    fi
+    sleep 0.01
+done
+if [[ ! -s "${interruption_child_pid_file}" ]]; then
+    echo "interruption: child did not become ready" >&2
+    exit 1
+fi
+interruption_child_pid=$(<"${interruption_child_pid_file}")
+kill -TERM "${interruption_wrapper_pid}"
+wait "${interruption_wrapper_pid}"
+interrupted_status=$?
+set -e
+interruption_wrapper_pid=""
+interruption_child_alive=false
+if kill -0 "${interruption_child_pid}" 2>/dev/null; then
+    interruption_child_alive=true
+fi
+if [[ ${interrupted_status} -ne 143 ]]; then
+    echo "interruption: wrapper must preserve the forwarded TERM status" >&2
+    exit 1
+fi
+if [[ ! -f "${interruption_child_marker}" ||
+    "$(<"${interruption_child_marker}")" != TERM ||
+    ${interruption_child_alive} == true ||
+    ! -f "${summary_root}/interrupted.json" ||
+    ! -s "${fixture}/interrupted.out" ||
+    -d "${clean_repository}/.local-exclude/validation-leases/cargo-heavy" ]]; then
+    echo "interruption: child, summary, and lease state were not finalized" >&2
+    exit 1
+fi
+if ! cmp -s "${fixture}/interrupted.out" "${summary_root}/interrupted.json" ||
+    ! grep -q '"exit_code":143' "${summary_root}/interrupted.json"; then
+    echo "interruption: published summary must preserve the signal status" >&2
+    exit 1
+fi
+
+(
+    cd "${clean_repository}"
+    PATH="${fixture}/bin:${PATH}" \
+    SYSTEM_MKTEMP="${system_mktemp}" \
+    YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+        bash "${checker}" --resource-class cargo-heavy after-interruption -- true
+) >"${fixture}/after-interruption.out" 2>"${fixture}/after-interruption.err"
+after_interruption_summary=$(<"${fixture}/after-interruption.out")
+if [[ -s "${fixture}/after-interruption.err" ||
+    "${after_interruption_summary}" != *'"status":"passed"'* ||
+    -d "${clean_repository}/.local-exclude/validation-leases/cargo-heavy" ]]; then
+    echo "interruption: a subsequent lease must be acquired after cleanup" >&2
     exit 1
 fi
 
