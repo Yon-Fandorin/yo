@@ -1,0 +1,345 @@
+use super::support::*;
+
+// 한 frame이 측정 뒤 appearance 교체를 만나도 pinned Rich snapshot으로 끝까지 paint한다.
+#[test]
+fn frame_pins_one_snapshot_across_measure_and_paint() {
+    let state = conversation();
+    let mut appearance = AppearanceState::default();
+    let rich = appearance.pin();
+
+    let frame = state
+        .prepare_frame_with_measure_hook(FRAME_SIZE, &rich, || {
+            appearance
+                .commit(AppearanceCandidate::for_profile(GlyphProfile::Ascii))
+                .unwrap();
+        })
+        .unwrap();
+
+    assert_eq!(frame.appearance_revision, rich.revision());
+    assert_eq!(marker(&frame.surface, 0).0, "❯");
+    assert_eq!(marker(&frame.surface, 2).0, "•");
+
+    let ascii = appearance.pin();
+    let next = state.prepare_frame(FRAME_SIZE, &ascii).unwrap();
+    assert_eq!(ascii.revision().get(), rich.revision().get() + 1);
+    assert_eq!(marker(&next.surface, 0).0, ">");
+    assert_eq!(marker(&next.surface, 2).0, "*");
+}
+
+// Rich와 ASCII profile 모두 marker 폭과 무관하게 사용자·assistant 본문을 같은 열에 둔다.
+#[test]
+fn rich_and_ascii_profiles_keep_body_columns_stable() {
+    let state = conversation();
+    let rich = state
+        .prepare_frame(FRAME_SIZE, &AppearanceState::default().pin())
+        .unwrap();
+    let ascii_state =
+        AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii)).unwrap();
+    let ascii = state.prepare_frame(FRAME_SIZE, &ascii_state.pin()).unwrap();
+
+    assert_eq!(marker(&rich.surface, 0).1, 1);
+    assert_eq!(marker(&rich.surface, 2).1, 1);
+    assert_eq!(marker(&ascii.surface, 0).1, 1);
+    assert_eq!(marker(&ascii.surface, 2).1, 1);
+    for surface in [&rich.surface, &ascii.surface] {
+        assert_eq!(grapheme_at(surface, Point::new(2, 0)), "q");
+        assert_eq!(grapheme_at(surface, Point::new(2, 2)), "a");
+    }
+}
+
+// 기본 Rich와 ASCII profile은 충분한 높이에서 각각의 prompt marker/rule glyph를 쓰고,
+// terminal-default 본문·bold marker·dim rule 역할을 resolved Surface에 그대로 남긴다.
+#[test]
+fn default_profiles_resolve_prompt_glyphs_and_visual_roles() {
+    let state = TuiState::new();
+    let size = Size::new(10, 9);
+    let rich = state
+        .prepare_frame(size, &AppearanceState::default().pin())
+        .unwrap();
+    let ascii_state =
+        AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii)).unwrap();
+    let ascii = state.prepare_frame(size, &ascii_state.pin()).unwrap();
+    let body = Style::default();
+    let marker_style = Style::new(Color::Default, Color::Default, Attributes::BOLD);
+    let rule_style = Style::new(Color::Default, Color::Default, Attributes::DIM);
+
+    assert_eq!(marker(&rich.surface, 4), ("─", 1, rule_style));
+    assert_eq!(marker(&rich.surface, 5), ("›", 1, marker_style));
+    assert_eq!(marker(&rich.surface, 6), ("─", 1, rule_style));
+    assert_eq!(marker(&ascii.surface, 4), ("-", 1, rule_style));
+    assert_eq!(marker(&ascii.surface, 5), (">", 1, marker_style));
+    assert_eq!(marker(&ascii.surface, 6), ("-", 1, rule_style));
+    assert_eq!(rich.surface.cell(Point::new(2, 5)).unwrap().style(), body);
+    assert_eq!(ascii.surface.cell(Point::new(2, 5)).unwrap().style(), body);
+}
+
+// public session 생성자로 선택한 ASCII snapshot은 실제 준비 frame과 종료용 plain output에
+// 함께 쓰여 host가 선택한 profile의 일관성과 출력 경계를 지킨다.
+#[test]
+fn public_ascii_session_keeps_frame_and_output_consistent() {
+    let mut session = TuiSession::with_glyph_profile(
+        GlyphProfile::Ascii,
+        ColorCapability::Unknown,
+        MotionPreference::Standard,
+    );
+    *session.parts_mut().state = conversation();
+    let pin = session.appearance_pin();
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame(FRAME_SIZE, &pin)
+        .unwrap();
+    let output = session.session_output().unwrap().unwrap();
+
+    assert_eq!(
+        visible_rows(&frame.surface),
+        "> question\n\n* answer\n\n\n\n--------------------\n>\n--------------------\n\nEnter send    inline"
+    );
+    assert_eq!(output, "> question\n\n* answer\n");
+}
+
+// 명시적인 Unknown·Standard host 선택을 받은 public session은 Rich snapshot을 실제
+// 준비 frame과 plain output에 함께 사용해 기본 glyph profile의 일관성을 지킨다.
+#[test]
+fn public_rich_session_keeps_frame_and_output_consistent() {
+    let mut session = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
+    *session.parts_mut().state = conversation();
+    let pin = session.appearance_pin();
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame(FRAME_SIZE, &pin)
+        .unwrap();
+
+    assert_eq!(
+        visible_rows(&frame.surface),
+        "❯ question\n\n• answer\n\n\n\n────────────────────\n›\n────────────────────\n\nEnter send    inline"
+    );
+    assert_eq!(
+        session.session_output().unwrap().unwrap(),
+        "❯ question\n\n• answer\n"
+    );
+}
+
+// host가 제공한 실제 metadata와 active lifecycle은 같은 frame의 작업 행·metrics·mode로
+// 전달되며, compatibility 기본값을 backend처럼 꾸며내지 않는다.
+#[test]
+fn session_projects_host_metadata_active_work_and_presentation_mode() {
+    let mut session = TuiSession::with_session_info(
+        GlyphProfile::Rich,
+        TuiSessionInfo::new("codex", "~/projects/yo"),
+        ColorCapability::TrueColor,
+        MotionPreference::Standard,
+    );
+    session.set_presentation_mode(PresentationMode::Fullscreen);
+    session
+        .parts_mut()
+        .state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    let pin = session.appearance_pin();
+
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame(Size::new(88, 12), &pin)
+        .unwrap();
+    let rows = visible_rows(&frame.surface);
+
+    assert!(rows.contains("⠋ Working"));
+    assert!(rows.contains("codex · ~/projects/yo"));
+    assert!(rows.ends_with("fullscreen"));
+}
+
+// 실제 Chat 작업 marker가 보일 때만 PreparedFrame이 16ms motion demand를 보고하고,
+// 같은 marker 구간의 서로 다른 elapsed에서도 동일한 frame geometry를 유지한다.
+#[test]
+fn visible_activity_marker_alone_demands_timed_motion() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    let appearance = AppearanceState::new(AppearanceCandidate::for_profile_with_host_preferences(
+        GlyphProfile::Rich,
+        ColorCapability::TrueColor,
+        MotionPreference::Standard,
+    ))
+    .unwrap()
+    .pin();
+
+    let first = state
+        .prepare_frame_at(Size::new(48, 12), &appearance, Duration::from_millis(500))
+        .unwrap();
+    let second = state
+        .prepare_frame_at(Size::new(48, 12), &appearance, Duration::from_millis(516))
+        .unwrap();
+
+    assert_eq!(
+        first.motion_demand.unwrap().period(),
+        Duration::from_millis(16)
+    );
+    assert_eq!(second.motion_demand, first.motion_demand);
+    assert_eq!(first.surface.size(), second.surface.size());
+    assert_eq!(visible_rows(&first.surface), visible_rows(&second.surface));
+    assert!(visible_rows(&first.surface).contains("⠴ Working"));
+    assert_ne!(first.surface, second.surface);
+}
+
+// 실제 public session 경계에서 Reduced를 선택하면 작업 표시는 그대로 보이지만,
+// frame이 16ms motion demand를 만들지 않아 host가 접근성 선택을 실행할 수 있다.
+#[test]
+fn public_reduced_motion_session_keeps_activity_static() {
+    let mut session = TuiSession::new(ColorCapability::TrueColor, MotionPreference::Reduced);
+    session
+        .parts_mut()
+        .state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    let pin = session.appearance_pin();
+
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame_at(Size::new(48, 12), &pin, Duration::from_secs(9))
+        .unwrap();
+
+    assert!(visible_rows(&frame.surface).contains("⠋ Working"));
+    assert_eq!(frame.motion_demand, None);
+}
+
+// 작업 중이어도 marker를 생략하는 좁은 fallback이나 작업 행 자체가 없는 낮은 화면은
+// 보이지 않는 애니메이션을 위해 timer를 요구하지 않는다.
+#[test]
+fn hidden_activity_marker_does_not_demand_timed_motion() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    let appearance = AppearanceState::default().pin();
+
+    let narrow = state
+        .prepare_frame_at(Size::new(6, 12), &appearance, Duration::ZERO)
+        .unwrap();
+    let short = state
+        .prepare_frame_at(Size::new(48, 2), &appearance, Duration::ZERO)
+        .unwrap();
+
+    assert!(visible_rows(&narrow.surface).contains("Esc/^C"));
+    assert_eq!(narrow.motion_demand, None);
+    assert_eq!(short.motion_demand, None);
+}
+
+// 한 TuiSession의 profile 교체는 다른 세션의 snapshot과 revision에 전파되지 않는다.
+#[test]
+fn appearance_replacement_is_isolated_per_session() {
+    let mut first = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
+    let mut second = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
+    populate_session(&mut first);
+    populate_session(&mut second);
+    let second_before = second.appearance_pin();
+
+    first.select_glyph_profile(GlyphProfile::Ascii).unwrap();
+    let first_pin = first.appearance_pin();
+    let first_frame = first
+        .parts_mut()
+        .state
+        .prepare_frame(FRAME_SIZE, &first_pin)
+        .unwrap();
+    let second_current_frame = second
+        .parts_mut()
+        .state
+        .prepare_frame(FRAME_SIZE, &second_before)
+        .unwrap();
+    let second_next = second.appearance_pin();
+
+    assert_eq!(marker(&first_frame.surface, 0).0, ">");
+    assert_eq!(first.session_output().unwrap().unwrap(), "> question\n");
+    assert_eq!(marker(&second_current_frame.surface, 0).0, "❯");
+    assert_eq!(second.session_output().unwrap().unwrap(), "❯ question\n");
+    assert_eq!(second_next, second_before);
+    assert_eq!(
+        second_before.snapshot().transcript_config().user_marker(),
+        "❯"
+    );
+}
+
+// completed Surface의 marker 폭과 style은 terminal op와 HTML projection에 그대로 전달된다.
+#[test]
+fn terminal_and_html_project_the_same_completed_appearance_surface() {
+    let state = conversation();
+    let marker_style = Style::new(Color::Indexed(45), Color::Indexed(17), Attributes::BOLD);
+    let default = Style::default();
+    let styles = AgentShellStyles {
+        transcript: TranscriptStyles {
+            background: default,
+            user_marker: marker_style,
+            user_body: default,
+            assistant_marker: default,
+            assistant_body: default,
+            activity: TranscriptActivityStyles::plain(Style::default()),
+            markdown: MarkdownStyles::plain(Style::default()),
+        },
+        prompt: PromptStyles {
+            body: default,
+            marker: default,
+            rule: default,
+            glyphs: PromptGlyphs::ascii(),
+        },
+        chrome: ShellChromeStyles {
+            activity: appearance::ActivityStyles {
+                marker: default,
+                muted: default,
+                trail: default,
+                peak: default,
+            },
+            metrics: default,
+            mode: default,
+            key_hint: default,
+        },
+        overlay: overlay::SelectionPanelAppearance {
+            styles: overlay::SelectionPanelStyles {
+                activity: appearance::ActivityStyles {
+                    marker: default,
+                    muted: default,
+                    trail: default,
+                    peak: default,
+                },
+                background: default,
+                frame: default,
+                title: default,
+                key_hint: default,
+                hint: default,
+                label: default,
+                detail: default,
+                selected: default,
+                disabled: default,
+            },
+            glyphs: overlay::SelectionPanelGlyphs::ascii(),
+        },
+    };
+    let appearance = AppearanceState::new(
+        AppearanceCandidate::for_profile(GlyphProfile::Ascii).with_styles_for_test(styles),
+    )
+    .unwrap();
+    let frame = state.prepare_frame(FRAME_SIZE, &appearance.pin()).unwrap();
+    let diff = FrameDiff::complete(FRAME_SIZE, &frame.surface);
+    let operations = TerminalOps::from_diff(&diff);
+    let html = HtmlSurface::render(&frame.surface);
+
+    assert_eq!(marker(&frame.surface, 0), (">", 1, marker_style));
+    assert!(operations.as_slice().windows(2).any(|pair| {
+        matches!(
+            pair,
+            [
+                TerminalOp::SetStyle(style),
+                TerminalOp::WriteGrapheme { text: ">", width }
+            ] if *style == marker_style && width.get() == 1
+        )
+    }));
+    assert!(html.contains(
+        "data-column=\"0\" data-width=\"1\" data-fg=\"indexed-45\" \
+         data-bg=\"indexed-17\" data-attrs=\"bold\""
+    ));
+    assert!(html.contains("<span class=\"yo-glyph\""));
+    assert!(html.contains("\">"));
+}
