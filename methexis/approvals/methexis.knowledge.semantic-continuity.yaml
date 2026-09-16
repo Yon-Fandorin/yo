@@ -1,9 +1,7 @@
-schema: methexis.approval/v1alpha1
+schema: methexis.approval/v1alpha2
 knowledge_id: methexis.knowledge.semantic-continuity
-revision: sha256:d299d81adfefdbd2bf61449ef6e1e08138d468dc7018cb20a362318066e61921
+revision: sha256:71b84c148d75f77cb6644fb30a3ed521361b92b664c497627d269836d90b3fc1
 reviewer: methexis
-reviewed_at: 2026-08-09T08:22:33Z
-projection_profile: ko-review/v1alpha1
-projection_compiler: methexis/0.0.0
-projection_hash: sha256:5ac9108b7aeca5ecab488fc7c2a162b62b74b6dc0e111d84a6e702147f6f57fe
-request_hash: sha256:85cd8f8b3a1c066c64948e706a4ca70d4ef517f9cf9ea0cbd291a47deb9f5545
+reviewed_at: 2026-09-16T08:21:48Z
+review_basis: canonical
+request_hash: sha256:117960fc82a98ba861b5c8c065bd1bb32ee216f53839dcb06d2965921a2675eb

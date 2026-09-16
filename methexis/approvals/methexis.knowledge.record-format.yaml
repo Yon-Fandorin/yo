@@ -1,9 +1,7 @@
-schema: methexis.approval/v1alpha1
+schema: methexis.approval/v1alpha2
 knowledge_id: methexis.knowledge.record-format
-revision: sha256:5190f93b930126015f89a0a704ea4391f6325cb6da235b2d68683a773f06d13d
+revision: sha256:547afbaf757ce424235361f17cafdf58d5b420c9d6a26711c771ae2fbbc9ce30
 reviewer: methexis
-reviewed_at: 2026-08-09T02:50:48Z
-projection_profile: ko-review/v1alpha1
-projection_compiler: methexis/0.0.0
-projection_hash: sha256:bc8d3cc78b5e202561224b595de0575a6fc550bc3fed17548b9a571c5f428bce
-request_hash: sha256:d83f2ddabc0fd2d1883795e58728cf40b979b1624c7ac22a6146c91ea16959af
+reviewed_at: 2026-09-16T08:21:47Z
+review_basis: canonical
+request_hash: sha256:8e15dc30885ede937322649f3d6e1779f079f4f83864b3b59f39acfad8b9ba6e

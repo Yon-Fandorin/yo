@@ -1,9 +1,7 @@
-schema: methexis.approval/v1alpha1
+schema: methexis.approval/v1alpha2
 knowledge_id: methexis.knowledge.split-merge-supersession
-revision: sha256:8593d6faf842c5e4fcece9ea1bacdeafddd7974746f365a138bf1ea67f7b8578
+revision: sha256:a9a377ce772395aeb153fecd025f2f862e0c161c4ea31a57d1376a9f3dc4c0bd
 reviewer: methexis
-reviewed_at: 2026-08-09T08:22:33Z
-projection_profile: ko-review/v1alpha1
-projection_compiler: methexis/0.0.0
-projection_hash: sha256:b2ba1508edb843c86aa2ac8a3be87ab25c36e849cb6a9a846b3330262438dbd6
-request_hash: sha256:d109823cc543d578a9cd47c030fd744932cff314d5d0a11183a0c1064be52e97
+reviewed_at: 2026-09-16T08:21:48Z
+review_basis: canonical
+request_hash: sha256:1eb9b62daa5f3c698f7c329e194bd2f205ac217ae160b23aa6f686e609941b8f
