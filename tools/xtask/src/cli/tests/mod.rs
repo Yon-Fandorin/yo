@@ -1,6 +1,6 @@
 use std::{cell::Cell, ffi::OsString, iter};
 
-use super::{general_usage, run};
+use super::run;
 
 // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
 // 인자 없는 검사와 커밋 입력 검사를 각각 실행 가능한 형태로 안내한다.
