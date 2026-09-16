@@ -1,11 +1,9 @@
 use std::{
     env, process,
     sync::{Arc, Mutex},
-    thread,
     time::{Duration, Instant},
 };
 
-use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
     AgentEvent, AgentIntent, AgentSession, ModelConnectorEvent, ToolApprovalRequirement,
     TranscriptRecord, TurnOutcome,

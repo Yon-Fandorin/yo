@@ -1,5 +1,5 @@
 use std::{
-    env, process,
+    env,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };

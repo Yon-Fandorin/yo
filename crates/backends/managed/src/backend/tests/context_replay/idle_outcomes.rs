@@ -12,8 +12,8 @@ use yo_core::{
 
 use super::{
     super::support::{
-        ExactAdmission, MockConnector, MockHost, binding, drain_until_turn, event_rounds, registry,
-        turn,
+        ExactAdmission, MockConnector, MockHost, backend, binding, drain_until_turn, event_rounds,
+        registry, turn,
     },
     fixtures::{SequenceTokenCounter, completed_text_round, portable_summary, turn_number},
 };

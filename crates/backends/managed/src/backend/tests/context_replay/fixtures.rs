@@ -8,9 +8,9 @@ use std::{
 
 use yo_core::{
     AgentEvent, AgentIntent, AgentSession, CommandAdmission, ContextPolicyChanged, ContextStrategy,
-    ModelConnectorEvent, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    ProviderPrivateReplayEnvelope, ToolExecution, ToolExecutionError, ToolExecutionHost,
-    ToolExecutionRequest, ToolId, TranscriptReader, TranscriptRecord, TurnRef,
+    JournalSequence, ModelConnectorEvent, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+    ModelReplayRole, ProviderPrivateReplayEnvelope, ToolExecution, ToolExecutionError,
+    ToolExecutionHost, ToolExecutionRequest, ToolId, TranscriptReader, TranscriptRecord, TurnRef,
 };
 
 use super::super::support::{completed, turn};

@@ -5,7 +5,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
     AgentCommand, AgentEvent, AgentIntent, AgentSession, ModelConnectorEvent,
     ToolApprovalRequirement, TranscriptRecord, TurnOutcome,
