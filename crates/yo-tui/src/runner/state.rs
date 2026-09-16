@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use yo_core::{
-    ActivityRef, ImagePreparationRequest, InputSubmission, JournalDurability,
+    ActivityRef, ActivityRequestRef, ImagePreparationRequest, InputSubmission, JournalDurability,
     SkillReferenceSearchRequest, SubmissionId, TurnRef, UserInput, WorkspaceReferenceSearchRequest,
 };
 

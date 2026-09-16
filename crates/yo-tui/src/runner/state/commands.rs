@@ -4,7 +4,7 @@ use std::mem;
 
 use yo_core::{ActivityDocument, JournalDurability};
 
-use super::{StateEffect, StateError, TuiState};
+use super::{PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
     command::{
         CommandEffect, CommandRegistry, compact_argument, fork_argument, model_argument,

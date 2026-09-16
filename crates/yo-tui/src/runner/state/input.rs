@@ -17,7 +17,7 @@ use crate::{
     overlay::OverlayInputEffect,
     prompt::{assist::PromptAssistRequest, workspace_reference::WorkspaceEdit},
     runner::{
-        AgentAction,
+        AgentAction, ForkPickerToken,
         view::{ObservabilityView, ViewInputEffect},
     },
 };

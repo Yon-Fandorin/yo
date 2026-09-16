@@ -388,7 +388,7 @@ impl PendingRequest {
         }
     }
 
-    const fn activity(self) -> ActivityRef {
+    pub(super) const fn activity(self) -> ActivityRef {
         match self {
             Self::Approval(request) | Self::UserInput(request) => request.activity(),
         }
