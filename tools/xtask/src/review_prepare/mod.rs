@@ -781,6 +781,14 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
     if matches!(
         path,
         "tools/xtask/src/impact/change.rs" | "tools/context.py" | "tools/test_context.py"
+    ) || matches!(
+        path,
+        "tools/chat_preview.py"
+            | "tools/test_chat_preview.py"
+            | "tools/clipboard_bridge.py"
+            | "tools/test_clipboard_bridge.py"
+            | "tools/test_ssh_clipboard_capture.py"
+            | "crates/yo-cli/src/execution/image/clipboard/ssh_capture.py"
     ) {
         Some(CONTRIBUTOR_AUTHORITY)
     } else if path.starts_with("tools/xtask/src/review_packet/")
@@ -790,6 +798,12 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
         || matches!(
             path,
             "tools/validation/bounded-run.sh" | "tools/validation/bounded-run-tests.sh"
+        )
+        || matches!(
+            path,
+            "tools/validation/codex-interview-resume.py"
+                | "tools/validation/codex-policy-persistence.py"
+                | "tools/validation/managed-start-failure.py"
         )
     {
         Some(PACKET_AUTHORITY)
@@ -824,6 +838,14 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
     } else if matches!(
         path,
         "tools/xtask/src/validation_stage.rs" | "tools/xtask/src/test_explanations.rs"
+    ) || matches!(
+        path,
+        "tools/validation/developer-docs-build.sh"
+            | "tools/validation/developer-docs.sh"
+            | "tools/validation/developer-docs-translations-tests.sh"
+            | "tools/validation/developer-docs-translations.sh"
+            | "tools/validation/yo-cli-unix-matrix-tests.sh"
+            | "tools/validation/yo-cli-unix-matrix.sh"
     ) || path.starts_with(".github/")
     {
         Some(CONTRIBUTOR_AUTHORITY)

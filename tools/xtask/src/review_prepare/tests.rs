@@ -278,6 +278,58 @@ fn ordinary_and_formal_workflows_route_to_their_actual_owners() {
     }
 }
 
+// HK가 직접 실행하는 helper와 외부 검증기는 실제 workflow 책임으로만 연결하여,
+// 다른 review owner를 모두 읽게 하는 ambiguous fallback을 피합니다.
+#[test]
+fn executable_helpers_route_to_their_direct_owners() {
+    for (path, owner) in [
+        ("tools/chat_preview.py", "CONTRIBUTING.md"),
+        ("tools/test_chat_preview.py", "CONTRIBUTING.md"),
+        ("tools/clipboard_bridge.py", "CONTRIBUTING.md"),
+        ("tools/test_clipboard_bridge.py", "CONTRIBUTING.md"),
+        ("tools/test_ssh_clipboard_capture.py", "CONTRIBUTING.md"),
+        (
+            "crates/yo-cli/src/execution/image/clipboard/ssh_capture.py",
+            "CONTRIBUTING.md",
+        ),
+        (
+            "tools/validation/developer-docs-build.sh",
+            "CONTRIBUTING.md",
+        ),
+        ("tools/validation/developer-docs.sh", "CONTRIBUTING.md"),
+        (
+            "tools/validation/developer-docs-translations-tests.sh",
+            "CONTRIBUTING.md",
+        ),
+        (
+            "tools/validation/developer-docs-translations.sh",
+            "CONTRIBUTING.md",
+        ),
+        (
+            "tools/validation/yo-cli-unix-matrix-tests.sh",
+            "CONTRIBUTING.md",
+        ),
+        ("tools/validation/yo-cli-unix-matrix.sh", "CONTRIBUTING.md"),
+        (
+            "tools/validation/codex-interview-resume.py",
+            "CONTRIBUTING/review-packets.md",
+        ),
+        (
+            "tools/validation/codex-policy-persistence.py",
+            "CONTRIBUTING/review-packets.md",
+        ),
+        (
+            "tools/validation/managed-start-failure.py",
+            "CONTRIBUTING/review-packets.md",
+        ),
+    ] {
+        assert_eq!(
+            authority_paths_for_changed_paths_v1alpha2(&[path.to_owned()]),
+            vec!["AGENTS.md".to_owned(), owner.to_owned()]
+        );
+    }
+}
+
 // 관리형 준비는 사람이 반복 작성하던 egress와 admission 문서를 동일 manifest 및
 // canonical authorization 해시에 묶고, 실제 Provider 요청 없이 alpha2 delivery로 끝냅니다.
 #[test]
