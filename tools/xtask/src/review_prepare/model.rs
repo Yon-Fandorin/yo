@@ -183,3 +183,9 @@ pub(super) struct DeliveryRequest<'a> {
     pub(super) admission_request_hash: &'a str,
     pub(super) output_directory: &'a str,
 }
+
+#[derive(Serialize)]
+pub(super) struct Artifact<'a> {
+    pub(super) path: String,
+    pub(super) hash: &'a str,
+}
