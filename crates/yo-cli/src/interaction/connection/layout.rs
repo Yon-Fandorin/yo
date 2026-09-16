@@ -13,11 +13,11 @@ const DEFAULT_WIDTH: u16 = 80;
 pub(super) const FIELD_LABEL_WIDTH: usize = 16;
 pub(super) const FIELD_INDENT: usize = 2;
 
-pub(super) fn default_width() -> NonZeroU16 {
+pub(crate) fn default_width() -> NonZeroU16 {
     NonZeroU16::new(DEFAULT_WIDTH).expect("the default terminal width is nonzero")
 }
 
-pub(super) fn push_title(
+pub(crate) fn push_title(
     output: &mut String,
     title: &str,
     target: &str,
@@ -43,7 +43,7 @@ pub(super) fn push_title(
     Ok(())
 }
 
-pub(super) fn push_section_heading(
+pub(crate) fn push_section_heading(
     output: &mut String,
     heading: &str,
     width: usize,
@@ -56,7 +56,7 @@ pub(super) fn push_section_heading(
     Ok(())
 }
 
-pub(super) fn push_change(
+pub(crate) fn push_change(
     output: &mut String,
     action: PlanAction,
     label: &str,
@@ -100,7 +100,7 @@ pub(super) fn push_change(
     Ok(())
 }
 
-pub(super) fn push_detail_field(
+pub(crate) fn push_detail_field(
     output: &mut String,
     label: &str,
     value: &str,
@@ -136,7 +136,7 @@ pub(super) fn push_detail_field(
     Ok(())
 }
 
-pub(super) fn push_model_list_field(
+pub(crate) fn push_model_list_field(
     output: &mut String,
     label: &str,
     values: &[&str],
@@ -182,7 +182,7 @@ pub(super) fn push_model_list_field(
     Ok(())
 }
 
-pub(super) fn display_model_item(model: &str) -> String {
+pub(crate) fn display_model_item(model: &str) -> String {
     if model.chars().any(|character| {
         character == ',' || character == '"' || character == '\\' || character.is_whitespace()
     }) {
@@ -192,7 +192,7 @@ pub(super) fn display_model_item(model: &str) -> String {
     }
 }
 
-pub(super) fn escape_remote_text(value: &str) -> String {
+pub(crate) fn escape_remote_text(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for byte in value.bytes() {
         if matches!(byte, 0x20..=0x7e) && !matches!(byte, b'"' | b'\\') {
@@ -246,7 +246,7 @@ pub(super) fn wrap_list(values: &[&str], width: usize) -> Result<Vec<String>, Pr
     Ok(lines)
 }
 
-pub(super) fn push_plan_summary(
+pub(crate) fn push_plan_summary(
     output: &mut String,
     counts: &PlanCounts,
     width: usize,
@@ -259,7 +259,7 @@ pub(super) fn push_plan_summary(
     Ok(())
 }
 
-pub(super) fn push_bullet(
+pub(crate) fn push_bullet(
     output: &mut String,
     value: &str,
     width: usize,
@@ -289,7 +289,7 @@ pub(super) fn push_bullet(
     Ok(())
 }
 
-pub(super) fn wrap(value: &str, width: usize) -> Result<Vec<String>, PresentationError> {
+pub(crate) fn wrap(value: &str, width: usize) -> Result<Vec<String>, PresentationError> {
     let width = width.max(1);
     let mut lines = Vec::new();
     let mut line = String::new();
@@ -315,25 +315,25 @@ pub(super) fn wrap(value: &str, width: usize) -> Result<Vec<String>, Presentatio
     Ok(lines)
 }
 
-pub(super) fn safe_width(value: &str) -> Result<usize, PresentationError> {
+pub(crate) fn safe_width(value: &str) -> Result<usize, PresentationError> {
     value.graphemes(true).try_fold(0_usize, |width, text| {
         let grapheme = Grapheme::try_from(text)?;
         Ok(width + usize::from(grapheme.width().get()))
     })
 }
 
-pub(super) fn widest_grapheme(value: &str) -> Result<usize, PresentationError> {
+pub(crate) fn widest_grapheme(value: &str) -> Result<usize, PresentationError> {
     value.graphemes(true).try_fold(0_usize, |width, text| {
         let grapheme = Grapheme::try_from(text)?;
         Ok(width.max(usize::from(grapheme.width().get())))
     })
 }
 
-pub(super) fn plural<'a>(count: usize, one: &'a str, many: &'a str) -> &'a str {
+pub(crate) fn plural<'a>(count: usize, one: &'a str, many: &'a str) -> &'a str {
     if count == 1 { one } else { many }
 }
 
-pub(super) fn trim_trailing_newline(output: &mut String) {
+pub(crate) fn trim_trailing_newline(output: &mut String) {
     while output.ends_with('\n') {
         output.pop();
     }

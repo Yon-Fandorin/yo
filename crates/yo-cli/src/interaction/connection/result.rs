@@ -9,7 +9,7 @@ use super::{
 use crate::interaction::{PresentationStyle, TextStyle};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct SuccessPresentation {
+pub(crate) struct SuccessPresentation {
     pub(super) width: NonZeroU16,
     pub(super) style: PresentationStyle,
 }
@@ -48,7 +48,7 @@ impl SuccessPresentation {
     }
 }
 
-pub(super) fn render_success(
+pub(crate) fn render_success(
     presentation: SuccessPresentation,
     heading: &str,
     label_width: usize,

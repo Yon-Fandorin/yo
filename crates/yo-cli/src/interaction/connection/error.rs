@@ -3,7 +3,7 @@ use std::{error, fmt};
 use yo_tui::surface::GraphemeError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum PresentationError {
+pub(crate) enum PresentationError {
     UnsafeText(GraphemeError),
     GraphemeExceedsWidth { grapheme_width: usize, width: usize },
     InvalidPlan(&'static str),

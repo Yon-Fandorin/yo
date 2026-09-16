@@ -3,7 +3,7 @@ use std::num::NonZeroU16;
 use super::error::PresentationError;
 use crate::interaction::PresentationStyle;
 
-pub(super) trait ConfirmationView {
+pub(crate) trait ConfirmationView {
     fn render_styled(
         &self,
         width: NonZeroU16,

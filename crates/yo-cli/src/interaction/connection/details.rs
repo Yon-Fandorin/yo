@@ -7,13 +7,13 @@ use super::{
 use crate::interaction::PresentationStyle;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct BindingDetails {
+pub(crate) struct BindingDetails {
     pub(crate) model: String,
     pub(crate) profile: ProfileDetails,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct ProfileDetails {
+pub(crate) struct ProfileDetails {
     endpoint: String,
     protocol: String,
     connector: String,
@@ -146,7 +146,7 @@ impl ProfileDetails {
     }
 }
 
-pub(super) struct ProfileGroup<'a> {
+pub(crate) struct ProfileGroup<'a> {
     pub(crate) profile: &'a ProfileDetails,
     pub(crate) models: Vec<&'a str>,
 }

@@ -1,7 +1,7 @@
 use crate::interaction::TextStyle;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PlanAction {
+pub(crate) enum PlanAction {
     Add,
     Change,
     Remove,
@@ -33,7 +33,7 @@ impl PlanAction {
 }
 
 #[derive(Default)]
-pub(super) struct PlanCounts {
+pub(crate) struct PlanCounts {
     add: usize,
     change: usize,
     remove: usize,
