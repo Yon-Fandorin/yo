@@ -122,7 +122,7 @@ pub struct CheckReport {
     pub next_actions: Vec<String>,
 }
 
-pub(super) struct Foundation {
+pub(crate) struct Foundation {
     pub(crate) units: Vec<KnowledgeUnit>,
     pub(crate) owners: Vec<Owner>,
     pub(crate) sources: Vec<Source>,

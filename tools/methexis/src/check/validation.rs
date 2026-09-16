@@ -4,12 +4,15 @@ use std::{
 };
 
 use super::{
-    Diagnostic, DiagnosticPhase, KNOWLEDGE_SCHEMA,
+    Diagnostic, DiagnosticPhase,
     body::{BodyLine, classify_body_lines},
     cycles,
 };
 use crate::{
-    model::{KnowledgeKind, KnowledgeMetadata, KnowledgeUnit, Owner, Relations, Source, UnitsById},
+    model::{
+        KNOWLEDGE_SCHEMA, KnowledgeKind, KnowledgeMetadata, KnowledgeUnit, Owner, Relations,
+        Source, UnitsById,
+    },
     source,
 };
 
