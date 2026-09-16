@@ -1,4 +1,5 @@
 use std::{
+    env::current_dir,
     ffi::OsStr,
     io::{self, Write},
     path::Path,
@@ -24,7 +25,7 @@ pub(super) fn run_review_operation(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> io::Result<ExitCode> {
-    let root = std::env::current_dir()?;
+    let root = current_dir()?;
     let service = ReviewService::new(&root);
     let request = Path::new(request);
     let result = match operation {
