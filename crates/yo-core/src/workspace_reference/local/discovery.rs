@@ -1,4 +1,5 @@
 use std::{
+    fs::canonicalize,
     io::Error,
     path::{Component, Path, PathBuf},
     sync::{
@@ -58,7 +59,7 @@ impl LocalWorkspaceReferenceProvider {
         let (update_tx, update_rx) = mpsc::channel();
         let readiness = Arc::new(Readiness::new());
         let worker_readiness = Arc::clone(&readiness);
-        let root = std::fs::canonicalize(root)?;
+        let root = canonicalize(root)?;
         thread::Builder::new()
             .name("yo-workspace-search".to_owned())
             .spawn(move || {
