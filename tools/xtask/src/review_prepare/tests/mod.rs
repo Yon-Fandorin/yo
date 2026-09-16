@@ -7,7 +7,7 @@ use std::{fs, path::PathBuf};
 
 use serde_json::json;
 
-use super::super::model::Request;
+use super::model::Request;
 use crate::{review_packet::PublishedReview, test_support::unique_path};
 
 struct TemporaryDirectory(PathBuf);
