@@ -9,12 +9,16 @@ mod result;
 mod tests;
 
 pub(crate) use confirmation::ConfirmationView;
-pub(crate) use details::{BindingDetails, ProfileDetails, ProfileGroup, group_profiles};
+pub(crate) use details::{BindingDetails, group_profiles};
+#[cfg(test)]
+pub(crate) use details::{ProfileDetails, ProfileGroup};
 pub(crate) use error::PresentationError;
 pub(crate) use layout::{
     default_width, display_model_item, escape_remote_text, plural, push_bullet, push_change,
     push_detail_field, push_model_list_field, push_plan_summary, push_section_heading, push_title,
-    safe_width, trim_trailing_newline, widest_grapheme, wrap,
+    trim_trailing_newline, wrap,
 };
+#[cfg(test)]
+pub(crate) use layout::{safe_width, widest_grapheme};
 pub(crate) use plan::{PlanAction, PlanCounts};
 pub(crate) use result::{SuccessPresentation, render_success};

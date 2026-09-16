@@ -4,7 +4,7 @@ use rustix::termios;
 
 use super::{
     error::PresentationError,
-    layout::{FIELD_INDENT, FIELD_LABEL_WIDTH, default_width, safe_width, widest_grapheme, wrap},
+    layout::{FIELD_INDENT, default_width, safe_width, widest_grapheme, wrap},
 };
 use crate::interaction::{PresentationStyle, TextStyle};
 
