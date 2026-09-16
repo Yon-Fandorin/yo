@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use super::{
     CacheReadSummary, SessionUsage, SessionUsageAggregates, SessionUsageError,
     SessionUsageProjection, SessionUsageReceipt, UsageAggregate, UsageCoverage, UsageValue,
-    parse_receipt,
+    receipts::parse_receipt,
 };
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent, TranscriptRecord,
