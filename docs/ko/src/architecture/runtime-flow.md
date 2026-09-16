@@ -830,8 +830,9 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
 
 조사할 때 유용한 지점은 다음과 같다.
 
-1. [`TuiState::handle`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/state.rs)는
-   변경 불가능한 `InputSubmission` 하나를 캡처한다. 같은 `SubmissionId`의
+1. [`TuiState::handle`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/state/input.rs)는
+   `runner/state.rs` facade를 통해 노출되며 변경 불가능한
+   `InputSubmission` 하나를 캡처한다. 같은 `SubmissionId`의
    `Accepted` outcome이 올 때까지 plain text를 입력창에 보존한다. 그사이
    사용자가 새 draft를 편집했다면 그 새 text는 지우지 않는다. 거절은 draft를
    보존하며, 중복되거나 오래된 outcome은 아무 영향도 주지 않는다.
@@ -929,10 +930,12 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
    indicator는 timer를 활성화하지 않는다. 한 grapheme activity status도 pulse할 수
    있으므로 계속 animated indicator다.
 
-   Inline Chat frame 준비는 두 부분의 transaction이다. `runner/state.rs`는
-   완료된 unpublished item의 최대 연속 prefix를 persistent 출력으로
-   선택하고, 나머지 transcript suffix·prompt·chrome·overlay만 자연 높이의
-   live `Surface`로 조합한다. `terminal/mode/inline`은 persistent 행과 live
+   Inline Chat frame 준비는 두 부분의 transaction이다. `runner/state.rs`
+   facade는 frame·publication receipt를 commit하고,
+   `runner/state/presentation.rs`는 완료된 unpublished item의 최대 연속
+   prefix를 persistent 출력으로 선택한 뒤 나머지 transcript
+   suffix·prompt·chrome·overlay만 자연 높이의 live `Surface`로 조합한다.
+   `terminal/mode/inline`은 persistent 행과 live
    update를 준비한다. persistent 행은 실제 터미널 높이별 Surface 페이지로 나누므로
    논리 행 위치가 u16을 넘어도 전체 후보는 하나의 transaction으로 유지한다. 각 페이지와
    live update를 공유 ANSI encoder 이전에 보존되는 typed `TerminalOp` group으로

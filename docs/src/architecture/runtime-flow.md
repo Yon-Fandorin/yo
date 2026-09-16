@@ -916,8 +916,9 @@ replay-profile/schema interpretation.
 
 The useful inspection points are:
 
-1. [`TuiState::handle`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/state.rs)
-   captures one immutable `InputSubmission`. Plain text stays visible until an
+1. [`TuiState::handle`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/state/input.rs),
+   exposed through the `runner/state.rs` facade, captures one immutable
+   `InputSubmission`. Plain text stays visible until an
    `Accepted` outcome with the matching `SubmissionId` arrives. If the user has
    edited a newer draft meanwhile, that newer text is not cleared. A rejection
    preserves the draft, and duplicate or stale outcomes have no effect.
@@ -1023,10 +1024,12 @@ The useful inspection points are:
    do not arm that timer. A one-grapheme activity status can still pulse and therefore
    remains animated.
 
-   Inline Chat preparation is a two-part transaction. `runner/state.rs` selects
-   the maximal contiguous prefix of complete unpublished items as persistent
-   output, then composes only the remaining transcript suffix, prompt, chrome,
-   and overlay into a natural-height live `Surface`. `terminal/mode/inline`
+   Inline Chat preparation is a two-part transaction. The `runner/state.rs`
+   facade commits frame and publication receipts while
+   `runner/state/presentation.rs` selects the maximal contiguous prefix of
+   complete unpublished items as persistent output, then composes only the
+   remaining transcript suffix, prompt, chrome, and overlay into a
+   natural-height live `Surface`. `terminal/mode/inline`
    prepares persistent rows in terminal-height Surface pages; logical row indices
    can exceed u16 while the complete candidate remains one transaction. It
    compiles those pages and the live update into retained typed
