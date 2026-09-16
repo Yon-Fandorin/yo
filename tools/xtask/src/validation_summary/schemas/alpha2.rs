@@ -12,7 +12,7 @@ use super::{
     },
     ALPHA2_SCHEMA,
 };
-use crate::git;
+use crate::{git, review_protocol::require_commit};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,7 +55,7 @@ pub(in crate::validation_summary) fn verify(
             "reuse_policy must be `{REVIEWED_DESCENDANT_REUSE}`"
         ));
     }
-    crate::review_protocol::require_commit(&summary.head_commit, "validation summary head_commit")?;
+    require_commit(&summary.head_commit, "validation summary head_commit")?;
     if summary.worktree_state != "clean" {
         return Err("worktree_state must be `clean`".to_owned());
     }

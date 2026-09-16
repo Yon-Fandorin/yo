@@ -24,7 +24,7 @@ pub(super) fn verify_command_and_log(
         return Err("command_argv_count does not match the gate request".to_owned());
     }
     canonical_sha256(command_argv_hash, "validation command argv hash")?;
-    let expected_hash = argv_hash(expected_argv);
+    let expected_hash = super::argv_hash(expected_argv);
     if command_argv_hash != expected_hash {
         return Err(format!(
             "command_argv_hash does not match the gate request; expected {expected_hash}"

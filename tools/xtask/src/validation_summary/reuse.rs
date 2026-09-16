@@ -89,7 +89,7 @@ pub(super) fn verify_current_reuse_context(context: &ReuseContext) -> Result<(),
             env::consts::ARCH
         ));
     }
-    let current_toolchain = current_toolchain_hash()?;
+    let current_toolchain = super::current_toolchain_hash()?;
     if context.toolchain_hash != current_toolchain {
         return Err(format!(
             "validation reuse context toolchain changed; expected {} but found {current_toolchain}",
@@ -102,7 +102,7 @@ pub(super) fn verify_current_reuse_context(context: &ReuseContext) -> Result<(),
 fn reusable_context_matches_current(context: &ReuseContext) -> Result<bool, String> {
     Ok(context.platform_os == env::consts::OS
         && context.platform_arch == env::consts::ARCH
-        && context.toolchain_hash == current_toolchain_hash()?)
+        && context.toolchain_hash == super::current_toolchain_hash()?)
 }
 
 pub(super) fn current_toolchain_hash() -> Result<String, String> {
