@@ -11,7 +11,10 @@ use rustix::{
     fs::{AtFlags, Dir, FileType, statat},
 };
 
-use super::{super::WorkspaceReferenceKind, DiscoveryBudget, git::ignored_paths, pin_directory};
+use super::{
+    super::WorkspaceReferenceKind, budget::DiscoveryBudget, discovery::pin_directory,
+    git::ignored_paths,
+};
 
 pub(super) fn discover_entries(
     root: &Path,

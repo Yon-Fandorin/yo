@@ -15,7 +15,7 @@ use rustix::{
     process::{Pid, Signal, kill_process_group},
 };
 
-use super::{super::WorkspaceReferenceKind, DiscoveryBudget, pin_directory};
+use super::{super::WorkspaceReferenceKind, budget::DiscoveryBudget, discovery::pin_directory};
 
 pub(super) fn is_git_workspace(root: &Path) -> Result<bool, String> {
     if !has_git_marker(root)? {

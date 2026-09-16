@@ -7,7 +7,8 @@ use super::{
         WorkspaceReference, WorkspaceReferenceCandidate, WorkspaceReferenceKind,
         WorkspaceReferenceSearchStatus,
     },
-    DiscoveryBudget,
+    budget::DiscoveryBudget,
+    discovery::pin_root,
     filesystem::discover_entries,
     git::{discover_tracked_entries, is_git_workspace},
 };
@@ -22,7 +23,7 @@ pub(super) fn build_inventory(
     root: &Path,
     workspace_host_id: WorkspaceHostId,
 ) -> Result<Inventory, String> {
-    let descriptor = super::pin_root(root)
+    let descriptor = pin_root(root)
         .map_err(|error| format!("workspace root {} is unavailable: {error}", root.display()))?;
     let root_identity = root_identity(root, &descriptor)?;
     let honor_git_ignore = is_git_workspace(root)?;
@@ -35,7 +36,7 @@ pub(super) fn build_inventory(
         paths.extend(tracked);
         incomplete |= tracked_incomplete;
     }
-    let current_root = super::pin_root(root).map_err(|error| error.to_string())?;
+    let current_root = pin_root(root).map_err(|error| error.to_string())?;
     if root_identity != self::root_identity(root, &current_root)? {
         return Err("workspace root changed during discovery".to_owned());
     }
