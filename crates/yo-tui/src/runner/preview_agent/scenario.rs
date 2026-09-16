@@ -1,8 +1,8 @@
 use serde_json::json;
 use yo_core::{
     ActivityApproval, ActivityDocument, ActivityKind, ActivityNotice, ActivityPlan,
-    ActivityQuestion, ActivityReasoning, ActivitySummary, ApprovalChoice, MessageContent,
-    NoticeLevel, PlanStep, PlanStepStatus, QuestionChoice, SummaryKind, ToolOutput,
+    ActivityQuestion, ActivityReasoning, ActivitySummary, ApprovalChoice, NoticeLevel, PlanStep,
+    PlanStepStatus, QuestionChoice, SummaryKind, ToolOutput,
 };
 
 use super::media::{sample_batch_read, sample_image_data, sample_tool_image};
