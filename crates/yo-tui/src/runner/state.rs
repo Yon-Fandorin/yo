@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use yo_core::{
     ActivityRef, ActivityRequestRef, ImagePreparationRequest, InputSubmission, JournalDurability,
     SkillReferenceSearchRequest, SubmissionId, TurnRef, UserInput, WorkspaceReferenceSearchRequest,
+    interview::NewConversation,
 };
 
 #[cfg(test)]
@@ -71,7 +72,7 @@ pub(super) enum StateError {
 #[derive(Debug, Default)]
 pub(super) struct TuiState {
     pub(super) interview: Option<super::interview::InterviewController>,
-    pub(super) interview_conversation: Option<yo_core::interview::NewConversation>,
+    pub(super) interview_conversation: Option<NewConversation>,
     preview: Option<Box<preview::Preview>>,
     preview_mode: bool,
     chat: ChatProjection,
