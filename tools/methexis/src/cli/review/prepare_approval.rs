@@ -1,6 +1,6 @@
 use std::{
     env,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     io::{self, Write},
     path::Path,
     process::ExitCode,
@@ -12,7 +12,7 @@ use super::super::{
 };
 use crate::review::ReviewService;
 
-pub(super) fn run_prepare_approval(
+pub(in crate::cli) fn run_prepare_approval(
     args: &[OsString],
     stdout: &mut impl Write,
     stderr: &mut impl Write,
