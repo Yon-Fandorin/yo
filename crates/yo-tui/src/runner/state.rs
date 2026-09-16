@@ -32,13 +32,12 @@ mod commands;
 mod image;
 mod input;
 mod interview;
+#[cfg(test)]
+mod interview_tests;
 mod observation;
 mod presentation;
 mod preview;
 mod requests;
-#[cfg(test)]
-#[rustfmt::skip]
-mod interview_tests;
 
 pub(super) use presentation::{FrameError, MotionDemand, PreparedFrame};
 

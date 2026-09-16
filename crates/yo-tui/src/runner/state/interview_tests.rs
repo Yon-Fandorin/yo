@@ -7,13 +7,12 @@ use std::{
 };
 
 use yo_core::{
-    ActivityApproval, ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent,
-    interview,
+    ActivityApproval, ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent, SubmissionId,
+    TranscriptRecord, TurnRef, UserInput, interview,
     interview::{
         AnswerResponse, Capture, InterviewCatalog, InterviewQuestion, InterviewRepository,
         WorkingCopy,
     },
-    SubmissionId, TranscriptRecord, TurnRef, UserInput,
 };
 
 use super::{PendingRequest, StateEffect, TuiState};
