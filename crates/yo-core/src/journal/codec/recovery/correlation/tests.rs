@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     BackendBindingEvidence, BackendIdentity, ContinuationStrategy, JournalSequence, ModelReplay,
-    ModelReplayContract, ModelReplayItem, ModelReplayRole, ReplayExecutor, ReplayProfile, TurnId,
+    ModelReplayItem, ReplayProfile, TurnId,
 };
 
 // source range 검증은 숫자 공간을 순회하지 않고 실제 Journal 좌표만 조회해야 하므로

@@ -12,10 +12,11 @@ use crate::journal::codec::TransitionMode;
 #[cfg(test)]
 use crate::session_repository;
 use crate::{
-    BackendCapabilities, BackendIdentity, BackendOutcomeEvidence, BackendRequestEvidence,
-    BackendScriptStep, InputImageHistory, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+    AgentCommand, BackendCapabilities, BackendCommandEvidence, BackendIdentity,
+    BackendOutcomeEvidence, BackendRequestEvidence, BackendResumeTarget, BackendScriptStep,
+    Failure, InputImageHistory, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
     ModelReplayRole, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
-    TurnId, UserInput,
+    TurnId, TurnOutcome, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, SessionWriterRepository,
