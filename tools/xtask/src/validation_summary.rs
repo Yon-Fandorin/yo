@@ -9,9 +9,16 @@ mod parse;
 mod reuse;
 mod schemas;
 
-pub(crate) use command::argv_hash;
 pub(crate) use model::VerifiedSummary;
-pub(crate) use reuse::{current_reusable_context, current_toolchain_hash};
+pub(crate) use reuse::current_reusable_context;
+
+pub(crate) fn argv_hash(argv: &[String]) -> String {
+    command::argv_hash(argv)
+}
+
+pub(crate) fn current_toolchain_hash() -> Result<String, String> {
+    reuse::current_toolchain_hash()
+}
 
 pub(crate) fn verify(
     repository: &Path,

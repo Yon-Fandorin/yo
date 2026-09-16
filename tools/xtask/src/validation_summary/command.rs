@@ -46,7 +46,7 @@ pub(super) fn canonical_sha256(value: &str, label: &str) -> Result<(), String> {
     }
 }
 
-pub(crate) fn argv_hash(argv: &[String]) -> String {
+pub(super) fn argv_hash(argv: &[String]) -> String {
     let mut framed = Vec::with_capacity(
         ARGV_DOMAIN.len() + argv.iter().map(|value| value.len() + 24).sum::<usize>(),
     );

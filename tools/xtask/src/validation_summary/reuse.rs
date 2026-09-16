@@ -105,7 +105,7 @@ fn reusable_context_matches_current(context: &ReuseContext) -> Result<bool, Stri
         && context.toolchain_hash == current_toolchain_hash()?)
 }
 
-pub(crate) fn current_toolchain_hash() -> Result<String, String> {
+pub(super) fn current_toolchain_hash() -> Result<String, String> {
     let mut framed = Vec::from(TOOLCHAIN_DOMAIN);
     for tool in ["rustc", "cargo"] {
         let output = Command::new(tool)
