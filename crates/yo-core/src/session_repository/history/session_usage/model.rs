@@ -83,12 +83,12 @@ pub enum UsageValue {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionUsage {
-    pub(super) input_tokens: UsageValue,
-    pub(super) output_tokens: UsageValue,
-    pub(super) total_tokens: UsageValue,
-    pub(super) reasoning_tokens: UsageValue,
-    pub(super) cache_read_input_tokens: UsageValue,
-    pub(super) cache_write_input_tokens: UsageValue,
+    pub(in super::super) input_tokens: UsageValue,
+    pub(in super::super) output_tokens: UsageValue,
+    pub(in super::super) total_tokens: UsageValue,
+    pub(in super::super) reasoning_tokens: UsageValue,
+    pub(in super::super) cache_read_input_tokens: UsageValue,
+    pub(in super::super) cache_write_input_tokens: UsageValue,
 }
 
 impl SessionUsage {
@@ -132,8 +132,8 @@ pub enum UsageCoverage {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UsageAggregate {
-    pub(super) tokens: u64,
-    pub(super) coverage: UsageCoverage,
+    pub(in super::super) tokens: u64,
+    pub(in super::super) coverage: UsageCoverage,
 }
 
 impl UsageAggregate {
@@ -153,11 +153,11 @@ impl UsageAggregate {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionUsageAggregates {
-    pub(super) input_tokens: UsageAggregate,
-    pub(super) output_tokens: UsageAggregate,
-    pub(super) total_tokens: UsageAggregate,
-    pub(super) reasoning_tokens: UsageAggregate,
-    pub(super) cache_read_input_tokens: UsageAggregate,
+    pub(in super::super) input_tokens: UsageAggregate,
+    pub(in super::super) output_tokens: UsageAggregate,
+    pub(in super::super) total_tokens: UsageAggregate,
+    pub(in super::super) reasoning_tokens: UsageAggregate,
+    pub(in super::super) cache_read_input_tokens: UsageAggregate,
 }
 
 impl SessionUsageAggregates {
@@ -207,10 +207,10 @@ impl CacheReadShare {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CacheReadSummary {
-    pub(super) cache_read_tokens: u64,
-    pub(super) input_tokens: u64,
-    pub(super) eligible_receipts: usize,
-    pub(super) total_receipts: usize,
+    pub(in super::super) cache_read_tokens: u64,
+    pub(in super::super) input_tokens: u64,
+    pub(in super::super) eligible_receipts: usize,
+    pub(in super::super) total_receipts: usize,
 }
 
 impl CacheReadSummary {
@@ -254,9 +254,9 @@ impl CacheReadSummary {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionUsageReceipt {
-    pub(super) activity: ActivityRef,
-    pub(super) source: SessionUsageSource,
-    pub(super) usage: SessionUsage,
+    pub(in super::super) activity: ActivityRef,
+    pub(in super::super) source: SessionUsageSource,
+    pub(in super::super) usage: SessionUsage,
 }
 
 impl SessionUsageReceipt {
@@ -288,9 +288,9 @@ impl SessionUsageReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionUsageProjection {
-    pub(super) receipts: Vec<SessionUsageReceipt>,
-    pub(super) aggregates: SessionUsageAggregates,
-    pub(super) cache_read: CacheReadSummary,
+    pub(in super::super) receipts: Vec<SessionUsageReceipt>,
+    pub(in super::super) aggregates: SessionUsageAggregates,
+    pub(in super::super) cache_read: CacheReadSummary,
 }
 
 impl SessionUsageProjection {
@@ -321,9 +321,9 @@ impl SessionUsageProjection {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionUsageError {
-    pub(super) activity: ActivityRef,
-    pub(super) schema: String,
-    pub(super) detail: String,
+    pub(in super::super) activity: ActivityRef,
+    pub(in super::super) schema: String,
+    pub(in super::super) detail: String,
 }
 
 impl SessionUsageError {
@@ -342,7 +342,7 @@ impl SessionUsageError {
         &self.detail
     }
 
-    pub(super) fn overflow(
+    pub(in super::super) fn overflow(
         activity: ActivityRef,
         schema: &'static str,
         field: &'static str,

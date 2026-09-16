@@ -15,7 +15,7 @@ use crate::{
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WireModelReplayDelta {
+pub(in super::super) struct WireModelReplayDelta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     contract: Option<WireModelReplayContract>,
     items: Vec<WireModelReplayItem>,
@@ -23,7 +23,7 @@ pub(super) struct WireModelReplayDelta {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WireModelReplayContract {
+pub(in super::super) struct WireModelReplayContract {
     system_prompt: String,
     tools: Vec<WireModelReplayTool>,
 }
@@ -39,14 +39,14 @@ struct WireModelReplayTool {
 
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]
-pub(super) enum WireContextRetainedGroup {
+pub(in super::super) enum WireContextRetainedGroup {
     Local(WireLocalRetainedGroup),
     Imported(WireImportedRetainedGroup),
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WireLocalRetainedGroup {
+pub(in super::super) struct WireLocalRetainedGroup {
     first_sequence: u64,
     last_sequence: u64,
     items: Vec<WireModelReplayItem>,
@@ -54,7 +54,7 @@ pub(super) struct WireLocalRetainedGroup {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WireImportedRetainedGroup {
+pub(in super::super) struct WireImportedRetainedGroup {
     profile: String,
     fork_seed_sequence: u64,
     group_index: usize,
@@ -62,7 +62,7 @@ pub(super) struct WireImportedRetainedGroup {
 }
 
 impl WireContextRetainedGroup {
-    pub(super) fn encode(group: &ContextRetainedGroup, epoch: u64) -> Self {
+    pub(in super::super) fn encode(group: &ContextRetainedGroup, epoch: u64) -> Self {
         if let Some((seed, group_index)) = group.fork_import() {
             let mut private_epochs = group.private_epochs().iter();
             let items = group
@@ -99,7 +99,10 @@ impl WireContextRetainedGroup {
         }
     }
 
-    pub(super) fn decode(self, epoch: u64) -> Result<ContextRetainedGroup, JournalCodecError> {
+    pub(in super::super) fn decode(
+        self,
+        epoch: u64,
+    ) -> Result<ContextRetainedGroup, JournalCodecError> {
         match self {
             Self::Local(group) => ContextRetainedGroup::try_new(
                 correlation::sequence(group.first_sequence, "first_sequence")?,
@@ -140,18 +143,18 @@ impl WireContextRetainedGroup {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WireContextArtifactReceipt {
-    pub(super) profile: String,
-    pub(super) content_hash: String,
-    pub(super) byte_count: u64,
-    pub(super) media_kind: String,
-    pub(super) source_context_epoch: u64,
-    pub(super) source_journal_sequence: u64,
+pub(in super::super) struct WireContextArtifactReceipt {
+    pub(in super::super) profile: String,
+    pub(in super::super) content_hash: String,
+    pub(in super::super) byte_count: u64,
+    pub(in super::super) media_kind: String,
+    pub(in super::super) source_context_epoch: u64,
+    pub(in super::super) source_journal_sequence: u64,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum WireContextLoss {
+pub(in super::super) enum WireContextLoss {
     ImageInputSummarized(ContextImageLoss),
     VisiblePrefixSummarized {
         first_sequence: u64,
@@ -167,7 +170,7 @@ pub(super) enum WireContextLoss {
 
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum WireModelReplayItem {
+pub(in super::super) enum WireModelReplayItem {
     MultimodalUser {
         #[serde(deserialize_with = "deserialize_multimodal_parts")]
         parts: Vec<crate::ModelInputPart>,
@@ -268,7 +271,10 @@ where
     String::deserialize(deserializer).map(Some)
 }
 
-pub(super) fn encode_model_replay(replay: &ModelReplayDelta, epoch: u64) -> WireModelReplayDelta {
+pub(in super::super) fn encode_model_replay(
+    replay: &ModelReplayDelta,
+    epoch: u64,
+) -> WireModelReplayDelta {
     WireModelReplayDelta {
         contract: replay.contract().map(encode_model_replay_contract),
         items: replay
@@ -279,7 +285,7 @@ pub(super) fn encode_model_replay(replay: &ModelReplayDelta, epoch: u64) -> Wire
     }
 }
 
-pub(super) fn encode_model_replay_contract(
+pub(in super::super) fn encode_model_replay_contract(
     contract: &ModelReplayContract,
 ) -> WireModelReplayContract {
     WireModelReplayContract {
@@ -297,7 +303,10 @@ pub(super) fn encode_model_replay_contract(
     }
 }
 
-pub(super) fn encode_model_replay_item(item: &ModelReplayItem, epoch: u64) -> WireModelReplayItem {
+pub(in super::super) fn encode_model_replay_item(
+    item: &ModelReplayItem,
+    epoch: u64,
+) -> WireModelReplayItem {
     match item {
         ModelReplayItem::MultimodalUser { parts } => WireModelReplayItem::MultimodalUser {
             parts: parts.clone(),
@@ -336,7 +345,7 @@ pub(super) fn encode_model_replay_item(item: &ModelReplayItem, epoch: u64) -> Wi
     }
 }
 
-pub(super) fn decode_model_replay(
+pub(in super::super) fn decode_model_replay(
     wire: WireModelReplayDelta,
     epoch: u64,
 ) -> Result<ModelReplayDelta, JournalCodecError> {
@@ -347,7 +356,7 @@ pub(super) fn decode_model_replay(
     Ok(delta)
 }
 
-pub(super) fn decode_model_replay_contract(
+pub(in super::super) fn decode_model_replay_contract(
     contract: WireModelReplayContract,
 ) -> ModelReplayContract {
     ModelReplayContract::new(
@@ -367,7 +376,7 @@ pub(super) fn decode_model_replay_contract(
     )
 }
 
-pub(super) fn decode_model_replay_items(
+pub(in super::super) fn decode_model_replay_items(
     items: Vec<WireModelReplayItem>,
     epoch: u64,
 ) -> Result<Vec<ModelReplayItem>, JournalCodecError> {
@@ -425,7 +434,7 @@ pub(super) fn decode_model_replay_items(
         .collect()
 }
 
-pub(super) fn encode_context_loss(loss: &ContextLoss) -> WireContextLoss {
+pub(in super::super) fn encode_context_loss(loss: &ContextLoss) -> WireContextLoss {
     match loss {
         ContextLoss::ImageInputSummarized(loss) => {
             WireContextLoss::ImageInputSummarized(loss.clone())
@@ -450,7 +459,9 @@ pub(super) fn encode_context_loss(loss: &ContextLoss) -> WireContextLoss {
     }
 }
 
-pub(super) fn decode_context_loss(loss: WireContextLoss) -> Result<ContextLoss, JournalCodecError> {
+pub(in super::super) fn decode_context_loss(
+    loss: WireContextLoss,
+) -> Result<ContextLoss, JournalCodecError> {
     match loss {
         WireContextLoss::ImageInputSummarized(loss) => Ok(ContextLoss::ImageInputSummarized(loss)),
         WireContextLoss::VisiblePrefixSummarized {

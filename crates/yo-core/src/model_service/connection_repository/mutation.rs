@@ -6,6 +6,8 @@ use std::{
 use super::{
     ConnectionAccount, ConnectionCatalogSeed, ConnectionRepositoryError, ConnectionRevision,
     ConnectionSnapshot, MAX_CONNECTION_BYTES, ModelLastFailure, StoredModelBinding,
+    account_matches_binding, binding_matches_selection, decode_snapshot, encode_snapshot,
+    new_revision, validate_catalog_seeds, validate_state,
 };
 use crate::{
     AccountId, CompleteModelBinding, ModelCatalog, ModelSelection, ProviderId, StartupTarget,
@@ -113,7 +115,7 @@ impl ConnectionSnapshot {
         account: ConnectionAccount,
         mut binding: StoredModelBinding,
     ) -> Result<StoredSnapshotState, ConnectionRepositoryError> {
-        if !super::account_matches_binding(&account, &binding) {
+        if !account_matches_binding(&account, &binding) {
             return Err(ConnectionRepositoryError::CoordinateMismatch);
         }
         let mut accounts = self.accounts.clone();
@@ -130,7 +132,7 @@ impl ConnectionSnapshot {
         let selection = binding.selection();
         let binding_position = bindings
             .iter()
-            .position(|current| super::binding_matches_selection(current, &selection));
+            .position(|current| binding_matches_selection(current, &selection));
         let inserted = binding_position.is_none();
         match binding_position {
             Some(index) => {
@@ -141,7 +143,7 @@ impl ConnectionSnapshot {
             },
             None => bindings.push(binding),
         }
-        super::validate_state(&accounts, &bindings)
+        validate_state(&accounts, &bindings)
             .map_err(|_| ConnectionRepositoryError::InvalidMutation)?;
         let preference = self
             .preference
@@ -159,7 +161,7 @@ impl ConnectionSnapshot {
     ) -> Result<PreparedConnectionMutation, ConnectionRepositoryError> {
         if replacement_bindings
             .iter()
-            .any(|binding| !super::account_matches_binding(&account, binding))
+            .any(|binding| !account_matches_binding(&account, binding))
             || replacement_seed.as_ref().is_some_and(|seed| {
                 seed.provider() != account.provider_id() || seed.account() != account.account_id()
             })
@@ -203,9 +205,9 @@ impl ConnectionSnapshot {
         let mut catalog_seeds = self.catalog_seeds.clone();
         catalog_seeds.retain(|seed| seed.provider() != &provider || seed.account() != &account_id);
         catalog_seeds.extend(replacement_seed);
-        super::validate_state(&accounts, &bindings)
+        validate_state(&accounts, &bindings)
             .map_err(|_| ConnectionRepositoryError::InvalidMutation)?;
-        super::validate_catalog_seeds(&accounts, &catalog_seeds)?;
+        validate_catalog_seeds(&accounts, &catalog_seeds)?;
 
         let preference = match self.preference.as_ref() {
             Some(StartupTarget::Model(selection))
@@ -235,7 +237,7 @@ impl ConnectionSnapshot {
         let Some(index) = self
             .bindings
             .iter()
-            .position(|binding| super::binding_matches_selection(binding, selection))
+            .position(|binding| binding_matches_selection(binding, selection))
         else {
             return Ok(None);
         };
@@ -263,7 +265,7 @@ impl ConnectionSnapshot {
         let Some(index) = self
             .bindings
             .iter()
-            .position(|binding| super::binding_matches_selection(binding, selection))
+            .position(|binding| binding_matches_selection(binding, selection))
         else {
             return Err(ConnectionRepositoryError::ModelNotFound {
                 provider: selection.provider().to_string(),
@@ -307,7 +309,7 @@ impl ConnectionSnapshot {
         let mut bindings = self.bindings.clone();
         let Some(index) = bindings
             .iter()
-            .position(|binding| super::binding_matches_selection(binding, selection))
+            .position(|binding| binding_matches_selection(binding, selection))
         else {
             return Err(ConnectionRepositoryError::ModelNotFound {
                 provider: selection.provider().to_string(),
@@ -330,7 +332,7 @@ impl ConnectionSnapshot {
                     || account.account_id() != selection.account()
             });
         }
-        super::validate_state(&accounts, &bindings)
+        validate_state(&accounts, &bindings)
             .map_err(|_| ConnectionRepositoryError::InvalidMutation)?;
         let removed_target = StartupTarget::Model(selection.clone());
         let preference = if self.preference.as_ref() == Some(&removed_target) {
@@ -367,8 +369,8 @@ impl ConnectionSnapshot {
         {
             return Ok(None);
         }
-        let planned_revision = super::new_revision()?;
-        let planned_bytes = super::encode_snapshot(
+        let planned_revision = new_revision()?;
+        let planned_bytes = encode_snapshot(
             &planned_revision,
             preference.as_ref(),
             &accounts,
@@ -389,7 +391,7 @@ impl ConnectionSnapshot {
     }
 }
 
-pub(super) fn validate_catalog_seeds(
+pub(in super::super) fn validate_catalog_seeds(
     accounts: &[ConnectionAccount],
     seeds: &[ConnectionCatalogSeed],
 ) -> Result<(), ConnectionRepositoryError> {
@@ -409,9 +411,9 @@ pub(super) fn validate_catalog_seeds(
 /// One immutable exact public mutation prepared from a captured revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedConnectionMutation {
-    pub(super) expected_revision: ConnectionRevision,
-    pub(super) planned_revision: ConnectionRevision,
-    pub(super) planned_bytes: Vec<u8>,
+    pub(in super::super) expected_revision: ConnectionRevision,
+    pub(in super::super) planned_revision: ConnectionRevision,
+    pub(in super::super) planned_bytes: Vec<u8>,
     preference: Option<StartupTarget>,
     direct_connect: Option<DirectConnectIntent>,
     group_replacement: Option<GroupReplacementIntent>,
@@ -471,7 +473,7 @@ impl PreparedConnectionMutation {
         {
             return false;
         }
-        let Ok(decoded) = super::decode_snapshot(Path::new(""), &self.planned_bytes) else {
+        let Ok(decoded) = decode_snapshot(Path::new(""), &self.planned_bytes) else {
             return false;
         };
         let stored = decoded
@@ -523,7 +525,7 @@ impl PreparedConnectionMutation {
         {
             return false;
         }
-        let Ok(decoded) = super::decode_snapshot(Path::new(""), &self.planned_bytes) else {
+        let Ok(decoded) = decode_snapshot(Path::new(""), &self.planned_bytes) else {
             return false;
         };
         let stored = decoded
@@ -570,7 +572,7 @@ impl PreparedConnectionMutation {
         {
             return Err(ConnectionRepositoryError::InvalidContents(PathBuf::new()));
         }
-        let decoded = super::decode_snapshot(Path::new(""), &planned_bytes)?;
+        let decoded = decode_snapshot(Path::new(""), &planned_bytes)?;
         if decoded.revision != planned_revision {
             return Err(ConnectionRepositoryError::InvalidContents(PathBuf::new()));
         }

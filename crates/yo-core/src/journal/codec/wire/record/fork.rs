@@ -216,7 +216,7 @@ impl Write for HistoryByteCounter {
     }
 }
 
-pub(super) fn validate_child(
+pub(in super::super) fn validate_child(
     child: SessionId,
     seed: &InitialForkSeed,
 ) -> Result<(), JournalCodecError> {
@@ -236,7 +236,7 @@ pub(super) fn validate_child(
     .map(|_| ())
 }
 
-pub(super) fn prepare_seed(
+pub(in super::super) fn prepare_seed(
     child: SessionId,
     parent: SessionId,
     source: ForkSource,
@@ -272,7 +272,7 @@ pub(super) fn prepare_seed(
 }
 
 impl WireForkRecord {
-    pub(super) fn encode(
+    pub(in super::super) fn encode(
         sequence: JournalSequence,
         seed: &InitialForkSeed,
     ) -> Result<Self, JournalCodecError> {
@@ -291,7 +291,7 @@ impl WireForkRecord {
             history,
         })
     }
-    pub(super) fn decode(
+    pub(in super::super) fn decode(
         self,
         child: SessionId,
     ) -> Result<(Option<JournalSequence>, JournalRecord), JournalCodecError> {

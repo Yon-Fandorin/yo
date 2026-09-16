@@ -11,7 +11,7 @@ use crate::{
     journal::codec::{self, SequencedJournalRecord},
 };
 
-pub(super) fn required_journal_sequence(
+pub(in super::super) fn required_journal_sequence(
     entry: &SequencedJournalRecord,
 ) -> Result<JournalSequence, JournalCodecError> {
     entry.journal_sequence().ok_or_else(|| {
@@ -19,13 +19,17 @@ pub(super) fn required_journal_sequence(
     })
 }
 
-pub(super) fn non_null_accounting_field<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+pub(in super::super) fn non_null_accounting_field<
+    'de,
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+>(
     decoder: D,
 ) -> Result<Option<T>, D::Error> {
     T::deserialize(decoder).map(Some)
 }
 
-pub(super) fn deserialize_context_losses<'de, D: serde::Deserializer<'de>>(
+pub(in super::super) fn deserialize_context_losses<'de, D: serde::Deserializer<'de>>(
     decoder: D,
 ) -> Result<Vec<WireContextLoss>, D::Error> {
     struct LossVisitor;
@@ -57,7 +61,7 @@ pub(super) fn deserialize_context_losses<'de, D: serde::Deserializer<'de>>(
     decoder.deserialize_seq(LossVisitor)
 }
 
-pub(super) fn with_context_epoch<T>(
+pub(in super::super) fn with_context_epoch<T>(
     value: T,
     context_epoch: Option<u64>,
     apply: impl FnOnce(T, u64) -> T,

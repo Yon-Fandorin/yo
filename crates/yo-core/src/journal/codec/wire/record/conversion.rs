@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::{
     super::{
@@ -21,24 +22,22 @@ use super::{
     required_journal_sequence, with_context_epoch,
 };
 use crate::{
-    AgentEvent, JournalSequence, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
-    ModelReplayRole, ModelReplayTool, ProviderPrivateReplayEnvelope, ProviderPrivateReplayPayload,
-    SessionDescriptor, SessionId,
+    AgentEvent, JournalSequence, ModelReplayDelta, SessionDescriptor, SessionId,
     journal::codec::{
         BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved,
         BackendRequestAccepted, BackendResumableOutcome, CONTEXT_ARTIFACT_PROFILE,
         CONTEXT_CHECKPOINT_PROFILE, CONTEXT_POLICY_PROFILE, ContextArtifactReceipt,
-        ContextCheckpoint, ContextImageLoss, ContextLoss, ContextPolicyChanged,
-        ContextRetainedGroup, ContextStrategy, ContextSummaryUsage, ContinuationAnchor,
-        ForkHistoryCoordinate, ForkSeed, ForkSource, IMAGE_CONTEXT_CHECKPOINT_PROFILE,
-        InitialForkSeed, JournalRecord, MessageEnded, MessageReset, MessageSegment,
-        MessageTerminal, ModelReplayDeltaRecord, SequencedJournalRecord,
+        ContextCheckpoint, ContextPolicyChanged, ContextStrategy, ContextSummaryUsage,
+        ContinuationAnchor, ForkHistoryCoordinate, ForkSeed, ForkSource,
+        IMAGE_CONTEXT_CHECKPOINT_PROFILE, InitialForkSeed, JournalRecord, MessageEnded,
+        MessageReset, MessageSegment, MessageTerminal, ModelReplayDeltaRecord,
+        SequencedJournalRecord,
     },
 };
 
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum WireRecord {
+pub(in super::super) enum WireRecord {
     InitialForkSeed(Box<WireForkRecord>),
     SessionDescriptor {
         descriptor: WireSessionDescriptor,
@@ -751,7 +750,7 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
 }
 
 impl WireRecord {
-    pub(super) fn decode_in_session(
+    pub(in super::super) fn decode_in_session(
         self,
         child: Option<SessionId>,
     ) -> Result<(Option<JournalSequence>, JournalRecord), JournalCodecError> {
@@ -765,14 +764,14 @@ impl WireRecord {
         }
     }
 
-    pub(super) fn validate_fork_child(
+    pub(in super::super) fn validate_fork_child(
         child: SessionId,
         seed: &InitialForkSeed,
     ) -> Result<(), JournalCodecError> {
         super::validate_child(child, seed)
     }
 
-    pub(super) fn prepare_initial_fork_seed(
+    pub(in super::super) fn prepare_initial_fork_seed(
         child: SessionId,
         parent: SessionId,
         source: ForkSource,

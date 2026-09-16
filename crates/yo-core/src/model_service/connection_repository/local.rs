@@ -11,12 +11,12 @@ use super::{
     CONNECTION_TEMPORARY_ATTEMPTS, ConnectionAccount, ConnectionCatalogSeed, ConnectionCommit,
     ConnectionRepository, ConnectionRepositoryError, ConnectionRevision, ConnectionSnapshot,
     DIRECTORY_MODE, DecodedSnapshot, FILE_MODE, FILE_TYPE_MASK, MAX_CONNECTION_BYTES,
-    ModelLastFailure, OPERATION_LOCK_FILE, PENDING_OPERATION_FILE, PreparedConnectionMutation,
-    REGULAR_FILE_MODE, REPOSITORY_LOCK_FILE, StoredModelBinding,
+    OPERATION_LOCK_FILE, PENDING_OPERATION_FILE, PreparedConnectionMutation, REGULAR_FILE_MODE,
+    REPOSITORY_LOCK_FILE, StoredModelBinding,
 };
 use crate::StartupTarget;
 
-pub(super) fn encode_snapshot(
+pub(in super::super) fn encode_snapshot(
     revision: &ConnectionRevision,
     preference: Option<&StartupTarget>,
     accounts: &[ConnectionAccount],
@@ -26,18 +26,18 @@ pub(super) fn encode_snapshot(
     wire::encode(revision, preference, accounts, bindings, catalog_seeds)
 }
 
-pub(super) fn decode_snapshot(
+pub(in super::super) fn decode_snapshot(
     path: &Path,
     encoded: &[u8],
 ) -> Result<DecodedSnapshot, ConnectionRepositoryError> {
     wire::decode(path, encoded)
 }
 
-pub(super) fn new_revision() -> Result<ConnectionRevision, ConnectionRepositoryError> {
+pub(in super::super) fn new_revision() -> Result<ConnectionRevision, ConnectionRepositoryError> {
     wire::new_revision()
 }
 
-pub(super) fn parse_revision_token(revision: &str) -> Option<String> {
+pub(in super::super) fn parse_revision_token(revision: &str) -> Option<String> {
     wire::parse_revision_token(revision)
 }
 
@@ -194,7 +194,7 @@ fn connection_temporary_path(parent: &Path, random: [u8; 16]) -> PathBuf {
 }
 
 #[cfg(test)]
-pub(super) fn create_connection_temporary_for_test(
+pub(in super::super) fn create_connection_temporary_for_test(
     parent: &Path,
     attempt_limit: usize,
     next_candidate: impl FnMut() -> Result<[u8; 16], String>,
@@ -203,12 +203,16 @@ pub(super) fn create_connection_temporary_for_test(
 }
 
 #[cfg(test)]
-pub(super) fn connection_temporary_path_for_test(parent: &Path, random: [u8; 16]) -> PathBuf {
+pub(in super::super) fn connection_temporary_path_for_test(
+    parent: &Path,
+    random: [u8; 16],
+) -> PathBuf {
     connection_temporary_path(parent, random)
 }
 
 #[cfg(test)]
-pub(super) const CONNECTION_TEMPORARY_ATTEMPTS_FOR_TEST: usize = CONNECTION_TEMPORARY_ATTEMPTS;
+pub(in super::super) const CONNECTION_TEMPORARY_ATTEMPTS_FOR_TEST: usize =
+    CONNECTION_TEMPORARY_ATTEMPTS;
 
 impl ConnectionRepository for LocalConnectionRepository {
     type OperationGuard = LocalConnectionOperationGuard;
@@ -287,7 +291,7 @@ fn read_snapshot(path: &Path) -> Result<ConnectionSnapshot, ConnectionRepository
     if before != after {
         return Err(ConnectionRepositoryError::Changed(path.to_owned()));
     }
-    let decoded = super::decode_snapshot(path, &encoded)?;
+    let decoded = decode_snapshot(path, &encoded)?;
     Ok(ConnectionSnapshot {
         revision: decoded.revision,
         preference: decoded.preference,

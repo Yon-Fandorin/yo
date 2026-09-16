@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
     error::Error,
-    fmt::{self, Display, Formatter, Result as FmtResult},
+    fmt::{Display, Formatter, Result as FmtResult},
     io::Error as IoError,
     path::{Path, PathBuf},
 };
@@ -34,8 +34,8 @@ impl ConnectionRevision {
     }
 }
 
-impl fmt::Display for ConnectionRevision {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for ConnectionRevision {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::Absent => formatter.write_str("absent"),
             Self::Token(token) => formatter.write_str(token),
@@ -46,12 +46,12 @@ impl fmt::Display for ConnectionRevision {
 /// One bounded immutable public repository capture.
 #[derive(Clone, Debug)]
 pub struct ConnectionSnapshot {
-    pub(super) revision: ConnectionRevision,
-    pub(super) preference: Option<StartupTarget>,
-    pub(super) accounts: Vec<ConnectionAccount>,
-    pub(super) bindings: Vec<StoredModelBinding>,
-    pub(super) catalog_seeds: Vec<ConnectionCatalogSeed>,
-    pub(super) encoded: Vec<u8>,
+    pub(in super::super) revision: ConnectionRevision,
+    pub(in super::super) preference: Option<StartupTarget>,
+    pub(in super::super) accounts: Vec<ConnectionAccount>,
+    pub(in super::super) bindings: Vec<StoredModelBinding>,
+    pub(in super::super) catalog_seeds: Vec<ConnectionCatalogSeed>,
+    pub(in super::super) encoded: Vec<u8>,
 }
 
 impl ConnectionSnapshot {
@@ -83,8 +83,8 @@ impl ConnectionSnapshot {
     /// Returns only the exact Provider-and-Account persisted seed, without service resolution.
     pub fn catalog_seed(
         &self,
-        provider: &crate::ProviderId,
-        account: &crate::AccountId,
+        provider: &ProviderId,
+        account: &AccountId,
     ) -> Option<&ConnectionCatalogSeed> {
         self.catalog_seeds
             .iter()
@@ -119,12 +119,12 @@ impl ConnectionSnapshot {
 
 /// Decoded connection state shared by mutation planning and local publication.
 #[derive(Clone, Debug)]
-pub(super) struct DecodedSnapshot {
-    pub(super) revision: ConnectionRevision,
-    pub(super) preference: Option<crate::StartupTarget>,
-    pub(super) accounts: Vec<ConnectionAccount>,
-    pub(super) bindings: Vec<StoredModelBinding>,
-    pub(super) catalog_seeds: Vec<ConnectionCatalogSeed>,
+pub(in super::super) struct DecodedSnapshot {
+    pub(in super::super) revision: ConnectionRevision,
+    pub(in super::super) preference: Option<StartupTarget>,
+    pub(in super::super) accounts: Vec<ConnectionAccount>,
+    pub(in super::super) bindings: Vec<StoredModelBinding>,
+    pub(in super::super) catalog_seeds: Vec<ConnectionCatalogSeed>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,7 +163,7 @@ impl ConnectionCatalogSeed {
                 "OpenRouter discovery seed requires ProviderId openrouter",
             ));
         }
-        crate::ConnectionAccount::new(
+        ConnectionAccount::new(
             provider.clone(),
             account.clone(),
             provider_display_name.clone(),
@@ -214,7 +214,7 @@ impl ConnectionCatalogSeed {
                 )));
             },
         }
-        crate::ConnectionAccount::new(
+        ConnectionAccount::new(
             provider.clone(),
             account.clone(),
             provider_display_name.clone(),
@@ -292,7 +292,7 @@ impl ConnectionAccount {
         )
     }
 
-    pub(super) fn from_durable(
+    pub(in super::super) fn from_durable(
         provider_id: ProviderId,
         account_id: AccountId,
         provider_display_name: Option<String>,
@@ -357,7 +357,7 @@ impl StoredModelBinding {
         Self::from_durable(complete, model_display_name)
     }
 
-    pub(super) fn from_durable(
+    pub(in super::super) fn from_durable(
         complete: CompleteModelBinding,
         model_display_name: Option<String>,
     ) -> Result<Self, ModelServiceError> {
@@ -370,7 +370,7 @@ impl StoredModelBinding {
         })
     }
 
-    pub(super) fn from_durable_with_state(
+    pub(in super::super) fn from_durable_with_state(
         complete: CompleteModelBinding,
         model_display_name: Option<String>,
         enabled: bool,
@@ -402,12 +402,15 @@ impl StoredModelBinding {
         self.enabled
     }
 
-    pub(super) fn with_last_failure(mut self, last_failure: Option<ModelLastFailure>) -> Self {
+    pub(in super::super) fn with_last_failure(
+        mut self,
+        last_failure: Option<ModelLastFailure>,
+    ) -> Self {
         self.last_failure = last_failure;
         self
     }
 
-    pub(super) fn with_enabled(mut self, enabled: bool) -> Self {
+    pub(in super::super) fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
@@ -457,7 +460,7 @@ impl ModelRequestFailureKind {
         }
     }
 
-    pub(super) fn parse(value: &str) -> Option<Self> {
+    pub(in super::super) fn parse(value: &str) -> Option<Self> {
         match value {
             "authentication" => Some(Self::Authentication),
             "access_denied" => Some(Self::AccessDenied),
@@ -516,7 +519,7 @@ impl ModelLastFailure {
     }
 }
 
-pub(super) fn validate_state(
+pub(in super::super) fn validate_state(
     accounts: &[ConnectionAccount],
     bindings: &[StoredModelBinding],
 ) -> Result<(), ModelServiceError> {
@@ -570,7 +573,7 @@ pub(super) fn validate_state(
     Ok(())
 }
 
-pub(super) fn account_matches_binding(
+pub(in super::super) fn account_matches_binding(
     account: &ConnectionAccount,
     binding: &StoredModelBinding,
 ) -> bool {
@@ -578,7 +581,7 @@ pub(super) fn account_matches_binding(
     account.provider_id() == complete.provider_id() && account.account_id() == complete.account_id()
 }
 
-pub(super) fn binding_matches_selection(
+pub(in super::super) fn binding_matches_selection(
     binding: &StoredModelBinding,
     selection: &ModelSelection,
 ) -> bool {
@@ -650,7 +653,7 @@ pub enum ConnectionRepositoryError {
 }
 
 impl ConnectionRepositoryError {
-    pub(super) fn io(path: &Path, source: IoError) -> Self {
+    pub(in super::super) fn io(path: &Path, source: IoError) -> Self {
         Self::Io {
             path: path.to_owned(),
             source,
@@ -658,8 +661,8 @@ impl ConnectionRepositoryError {
     }
 }
 
-impl fmt::Display for ConnectionRepositoryError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for ConnectionRepositoryError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::InvalidPath(path) => {

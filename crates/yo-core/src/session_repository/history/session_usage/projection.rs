@@ -76,7 +76,7 @@ pub(super) fn project_session_usage(
     build_projection(receipts)
 }
 
-pub(super) fn build_projection(
+pub(in super::super) fn build_projection(
     receipts: Vec<SessionUsageReceipt>,
 ) -> Result<SessionUsageProjection, SessionUsageError> {
     let total_receipts = receipts.len();
