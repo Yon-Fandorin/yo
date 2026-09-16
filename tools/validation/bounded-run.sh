@@ -286,18 +286,89 @@ readonly lease_key
 trap cleanup EXIT
 
 started_at=$(date +%s)
+readonly signal_grace_seconds=2
+readonly signal_poll_seconds=0.01
 child_pid=""
+pending_signal_name=""
 received_signal_status=""
+received_signal_name=""
+send_signal_to_process_group() {
+    local signal_name=$1
+    if [[ -z ${child_pid} ]]; then
+        return 1
+    fi
+    kill -s "${signal_name}" -- "-${child_pid}" 2>/dev/null
+}
 forward_signal() {
     local signal_name=$1
+    local signal_status
     case ${signal_name} in
-        HUP) received_signal_status=129 ;;
-        INT) received_signal_status=130 ;;
-        TERM) received_signal_status=143 ;;
+        HUP)
+            signal_status=129
+            ;;
+        INT)
+            signal_status=130
+            ;;
+        TERM)
+            signal_status=143
+            ;;
+        *)
+            return
+            ;;
     esac
-    if [[ -n ${child_pid} ]]; then
-        kill -s "${signal_name}" -- "-${child_pid}" 2>/dev/null || true
+    if [[ -z ${received_signal_status} ]]; then
+        received_signal_status=${signal_status}
+        received_signal_name=${signal_name}
     fi
+    if [[ -z ${child_pid} ]]; then
+        if [[ -z ${pending_signal_name} ]]; then
+            pending_signal_name=${signal_name}
+        fi
+        return
+    fi
+    if ! send_signal_to_process_group "${signal_name}"; then
+        if [[ -z ${pending_signal_name} ]]; then
+            pending_signal_name=${signal_name}
+        fi
+    fi
+}
+deliver_pending_signal() {
+    if [[ -n ${pending_signal_name} ]] && send_signal_to_process_group "${pending_signal_name}"; then
+        pending_signal_name=""
+    fi
+}
+child_process_exists() {
+    kill -0 "${child_pid}" 2>/dev/null
+}
+process_group_exists() {
+    kill -0 -- "-${child_pid}" 2>/dev/null
+}
+wait_for_signal_grace() {
+    local grace_deadline
+    grace_deadline=$(( $(date +%s) + signal_grace_seconds ))
+    while :; do
+        deliver_pending_signal
+        if ! child_process_exists && ! process_group_exists; then
+            return
+        fi
+        if [[ $(date +%s) -ge ${grace_deadline} ]]; then
+            break
+        fi
+        sleep "${signal_poll_seconds}"
+    done
+    kill -KILL -- "-${child_pid}" 2>/dev/null || true
+    kill -KILL "${child_pid}" 2>/dev/null || true
+}
+wait_for_group_disappearance() {
+    local disappearance_deadline
+    disappearance_deadline=$(( $(date +%s) + signal_grace_seconds ))
+    while process_group_exists; do
+        kill -KILL -- "-${child_pid}" 2>/dev/null || true
+        if [[ $(date +%s) -ge ${disappearance_deadline} ]]; then
+            break
+        fi
+        sleep "${signal_poll_seconds}"
+    done
 }
 set -m
 trap 'forward_signal HUP' HUP
@@ -305,16 +376,30 @@ trap 'forward_signal INT' INT
 trap 'forward_signal TERM' TERM
 "$@" >"${log_path}" 2>&1 &
 child_pid=$!
+deliver_pending_signal
 set +e
 while :; do
     wait "${child_pid}"
     wait_status=$?
-    if kill -0 "${child_pid}" 2>/dev/null; then
+    if child_process_exists; then
+        if [[ -n ${received_signal_name} ]]; then
+            wait_for_signal_grace
+        fi
         continue
     fi
     command_status=${wait_status}
     break
 done
+if [[ -n ${received_signal_name} ]]; then
+    wait_for_signal_grace
+    wait "${child_pid}"
+    command_status=$?
+    while child_process_exists; do
+        wait "${child_pid}"
+        command_status=$?
+    done
+    wait_for_group_disappearance
+fi
 set -e
 set +m
 trap - HUP INT TERM

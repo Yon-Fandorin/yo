@@ -7,12 +7,24 @@ readonly checker="$(pwd)/tools/validation/bounded-run.sh"
 fixture=$(mktemp -d)
 interruption_wrapper_pid=""
 interruption_child_pid=""
+term_ignoring_wrapper_pid=""
+term_ignoring_child_pid=""
+term_ignoring_descendant_pid=""
 cleanup() {
     if [[ -n ${interruption_wrapper_pid} ]] && kill -0 "${interruption_wrapper_pid}" 2>/dev/null; then
         kill -KILL "${interruption_wrapper_pid}" 2>/dev/null || true
     fi
     if [[ -n ${interruption_child_pid} ]] && kill -0 "${interruption_child_pid}" 2>/dev/null; then
         kill -KILL "${interruption_child_pid}" 2>/dev/null || true
+    fi
+    if [[ -n ${term_ignoring_wrapper_pid} ]] && kill -0 "${term_ignoring_wrapper_pid}" 2>/dev/null; then
+        kill -KILL "${term_ignoring_wrapper_pid}" 2>/dev/null || true
+    fi
+    if [[ -n ${term_ignoring_child_pid} ]] && kill -0 "${term_ignoring_child_pid}" 2>/dev/null; then
+        kill -KILL "${term_ignoring_child_pid}" 2>/dev/null || true
+    fi
+    if [[ -n ${term_ignoring_descendant_pid} ]] && kill -0 "${term_ignoring_descendant_pid}" 2>/dev/null; then
+        kill -KILL "${term_ignoring_descendant_pid}" 2>/dev/null || true
     fi
     rm -rf "${fixture}"
 }
@@ -176,6 +188,15 @@ if [[ ! -s "${interruption_child_pid_file}" ]]; then
 fi
 interruption_child_pid=$(<"${interruption_child_pid_file}")
 kill -TERM "${interruption_wrapper_pid}"
+interruption_wait_deadline=$(( $(date +%s) + 10 ))
+while kill -0 "${interruption_wrapper_pid}" 2>/dev/null; do
+    if [[ $(date +%s) -ge ${interruption_wait_deadline} ]]; then
+        echo "interruption: wrapper did not exit before the deadline" >&2
+        kill -KILL "${interruption_wrapper_pid}" 2>/dev/null || true
+        exit 1
+    fi
+    sleep 0.05
+done
 wait "${interruption_wrapper_pid}"
 interrupted_status=$?
 set -e
@@ -215,6 +236,112 @@ if [[ -s "${fixture}/after-interruption.err" ||
     "${after_interruption_summary}" != *'"status":"passed"'* ||
     -d "${clean_repository}/.local-exclude/validation-leases/cargo-heavy" ]]; then
     echo "interruption: a subsequent lease must be acquired after cleanup" >&2
+    exit 1
+fi
+
+term_ignoring_child_script="${fixture}/term-ignoring-child.sh"
+term_ignoring_child_pid_file="${fixture}/term-ignoring-child.pid"
+term_ignoring_descendant_pid_file="${fixture}/term-ignoring-descendant.pid"
+term_ignoring_lease_marker="${fixture}/term-ignoring-lease-released-while-alive"
+cat >"${term_ignoring_child_script}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+trap ':' TERM
+trap ':' INT
+trap ':' HUP
+printf '%s\n' "$$" >"${TERM_IGNORING_CHILD_PID_FILE}"
+(
+    trap ':' TERM
+    trap ':' INT
+    trap ':' HUP
+    while :; do
+        if [[ ! -d ${TERM_IGNORING_LEASE_PATH} ]]; then
+            printf '%s\n' lease-released-while-alive >"${TERM_IGNORING_LEASE_MARKER}"
+            exit 99
+        fi
+    done
+) &
+term_ignoring_descendant_pid=$!
+printf '%s\n' "${term_ignoring_descendant_pid}" >"${TERM_IGNORING_DESCENDANT_PID_FILE}"
+while :; do
+    :
+done
+EOF
+chmod +x "${term_ignoring_child_script}"
+
+set +e
+(
+    cd "${clean_repository}"
+    TERM_IGNORING_CHILD_PID_FILE="${term_ignoring_child_pid_file}" \
+    TERM_IGNORING_DESCENDANT_PID_FILE="${term_ignoring_descendant_pid_file}" \
+    TERM_IGNORING_LEASE_PATH="${clean_repository}/.local-exclude/validation-leases/cargo-heavy" \
+    TERM_IGNORING_LEASE_MARKER="${term_ignoring_lease_marker}" \
+    PATH="${fixture}/bin:${PATH}" \
+    SYSTEM_MKTEMP="${system_mktemp}" \
+    YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+        exec bash "${checker}" --summary-out "${summary_root}/term-ignoring.json" \
+        --resource-class cargo-heavy term-ignoring -- "${term_ignoring_child_script}"
+) >"${fixture}/term-ignoring.out" 2>"${fixture}/term-ignoring.err" &
+term_ignoring_wrapper_pid=$!
+term_ignoring_ready_deadline=$(( $(date +%s) + 10 ))
+while [[ ! -s "${term_ignoring_child_pid_file}" ||
+    ! -s "${term_ignoring_descendant_pid_file}" ]]; do
+    if [[ $(date +%s) -ge ${term_ignoring_ready_deadline} ]]; then
+        echo "term-ignoring descendant: child did not become ready" >&2
+        exit 1
+    fi
+    sleep 0.01
+done
+term_ignoring_child_pid=$(<"${term_ignoring_child_pid_file}")
+term_ignoring_descendant_pid=$(<"${term_ignoring_descendant_pid_file}")
+kill -TERM "${term_ignoring_wrapper_pid}"
+term_ignoring_wait_deadline=$(( $(date +%s) + 10 ))
+while kill -0 "${term_ignoring_wrapper_pid}" 2>/dev/null; do
+    if [[ $(date +%s) -ge ${term_ignoring_wait_deadline} ]]; then
+        echo "term-ignoring descendant: wrapper did not exit before the deadline" >&2
+        kill -KILL "${term_ignoring_wrapper_pid}" 2>/dev/null || true
+        exit 1
+    fi
+    sleep 0.05
+done
+wait "${term_ignoring_wrapper_pid}"
+term_ignoring_status=$?
+set -e
+term_ignoring_wrapper_pid=""
+term_ignoring_disappearance_deadline=$(( $(date +%s) + 5 ))
+while kill -0 "${term_ignoring_child_pid}" 2>/dev/null ||
+    kill -0 "${term_ignoring_descendant_pid}" 2>/dev/null; do
+    if [[ $(date +%s) -ge ${term_ignoring_disappearance_deadline} ]]; then
+        echo "term-ignoring descendant: process group did not disappear before the deadline" >&2
+        exit 1
+    fi
+    sleep 0.05
+done
+if [[ ${term_ignoring_status} -ne 143 ||
+    -f "${term_ignoring_lease_marker}" ||
+    ! -f "${summary_root}/term-ignoring.json" ||
+    -d "${clean_repository}/.local-exclude/validation-leases/cargo-heavy" ]]; then
+    echo "term-ignoring descendant: process-group cleanup must precede lease release" >&2
+    exit 1
+fi
+if ! grep -q '"exit_code":143' "${summary_root}/term-ignoring.json" ||
+    ! cmp -s "${fixture}/term-ignoring.out" "${summary_root}/term-ignoring.json"; then
+    echo "term-ignoring descendant: published summary must preserve the signal status" >&2
+    exit 1
+fi
+
+(
+    cd "${clean_repository}"
+    PATH="${fixture}/bin:${PATH}" \
+    SYSTEM_MKTEMP="${system_mktemp}" \
+    YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+        bash "${checker}" --resource-class cargo-heavy after-term-ignoring -- true
+) >"${fixture}/after-term-ignoring.out" 2>"${fixture}/after-term-ignoring.err"
+after_term_ignoring_summary=$(<"${fixture}/after-term-ignoring.out")
+if [[ -s "${fixture}/after-term-ignoring.err" ||
+    "${after_term_ignoring_summary}" != *'"status":"passed"'* ||
+    -d "${clean_repository}/.local-exclude/validation-leases/cargo-heavy" ]]; then
+    echo "term-ignoring descendant: a subsequent lease must be acquired after cleanup" >&2
     exit 1
 fi
 
