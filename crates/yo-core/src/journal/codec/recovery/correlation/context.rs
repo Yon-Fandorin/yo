@@ -12,8 +12,7 @@ use super::{
     model::{ReferenceTarget, ReplayGroup},
 };
 use crate::{
-    ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem, ModelReplayRole,
-    ReplayProfile,
+    ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem, ReplayProfile,
     backend::{provider_private_schema, validate_provider_private_replay_sequence},
 };
 
@@ -41,26 +40,26 @@ fn artifact_matches(item: &ModelReplayItem, receipt: &ContextArtifactReceipt) ->
 }
 
 impl CorrelationRecovery {
-    pub(super) const fn context_epoch(&self) -> Option<u64> {
+    pub(in super::super) const fn context_epoch(&self) -> Option<u64> {
         self.context_epoch
     }
 
-    pub(super) const fn current_policy(&self) -> Option<&ContextPolicyChanged> {
+    pub(in super::super) const fn current_policy(&self) -> Option<&ContextPolicyChanged> {
         self.current_policy.as_ref()
     }
 
-    pub(super) fn replay_groups(&self) -> Vec<Vec<ModelReplayItem>> {
+    pub(in super::super) fn replay_groups(&self) -> Vec<Vec<ModelReplayItem>> {
         self.replay_groups
             .iter()
             .map(|group| group.items.clone())
             .collect()
     }
 
-    pub(super) const fn model_replay(&self) -> &ModelReplay {
+    pub(in super::super) const fn model_replay(&self) -> &ModelReplay {
         &self.model_replay
     }
 
-    pub(super) const fn replay_contract_rebind_required(&self) -> bool {
+    pub(in super::super) const fn replay_contract_rebind_required(&self) -> bool {
         self.replay_contract_rebind_required
     }
 

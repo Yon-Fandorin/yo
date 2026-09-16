@@ -4,7 +4,10 @@ use super::{
         ExchangeDirection, ExchangeKind, JournalCodecError, JournalRecord, OperationId,
     },
     CorrelationRecovery,
-    model::{IndexedExchange, ReferenceTarget, ReplacementSource, ReplayDeltaSource, ReplayGroup},
+    model::{
+        IndexedExchange, ReferenceTarget, RegisteredFork, ReplacementSource, ReplayDeltaSource,
+        ReplayGroup,
+    },
 };
 use crate::{
     AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplayItem,
@@ -14,7 +17,7 @@ use crate::{
 };
 
 impl CorrelationRecovery {
-    pub(super) fn observe(
+    pub(in super::super) fn observe(
         &mut self,
         sequence: JournalSequence,
         record: &JournalRecord,

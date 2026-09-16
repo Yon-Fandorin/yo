@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{
     super::super::{
         ContextCheckpoint, ForkExactReplay, ForkGroup, ForkItemCoordinate, ForkItemOrigin,
@@ -8,15 +10,15 @@ use super::{
 use crate::JournalSequence;
 
 impl CorrelationRecovery {
-    pub(super) const fn open_epoch(&self) -> Option<u64> {
+    pub(in super::super) const fn open_epoch(&self) -> Option<u64> {
         self.open_epoch
     }
 
-    pub(super) const fn latest_anchor(&self) -> Option<JournalSequence> {
+    pub(in super::super) const fn latest_anchor(&self) -> Option<JournalSequence> {
         self.latest_anchor
     }
 
-    pub(super) const fn latest_checkpoint(&self) -> Option<JournalSequence> {
+    pub(in super::super) const fn latest_checkpoint(&self) -> Option<JournalSequence> {
         if self.request_after_checkpoint || self.latest_anchor.is_some() {
             None
         } else {
@@ -24,7 +26,7 @@ impl CorrelationRecovery {
         }
     }
 
-    pub(super) fn initial_fork_seed(&self) -> Option<JournalSequence> {
+    pub(in super::super) fn initial_fork_seed(&self) -> Option<JournalSequence> {
         self.fork_seed
             .as_ref()
             .filter(|fork| {
@@ -37,7 +39,7 @@ impl CorrelationRecovery {
             .map(|fork| fork.sequence)
     }
 
-    pub(super) fn fork_replay(&self) -> Result<ForkExactReplay, JournalCodecError> {
+    pub(in super::super) fn fork_replay(&self) -> Result<ForkExactReplay, JournalCodecError> {
         if !self.active_turn_starts.is_empty() {
             return Err(JournalCodecError::new(
                 "fork replay requires an idle Session",
@@ -78,11 +80,11 @@ impl CorrelationRecovery {
         )
     }
 
-    pub(super) fn fork_boundary_is_idle(&self) -> bool {
+    pub(in super::super) fn fork_boundary_is_idle(&self) -> bool {
         self.active_turn_starts.is_empty() && self.model_replay.contract().is_some()
     }
 
-    pub(super) const fn open_binding_has_accepted_request(&self) -> bool {
+    pub(in super::super) const fn open_binding_has_accepted_request(&self) -> bool {
         self.open_epoch_has_accepted_request
     }
 

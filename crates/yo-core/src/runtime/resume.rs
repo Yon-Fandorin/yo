@@ -1,4 +1,6 @@
-use super::{AgentBackend, AgentRuntime, RuntimeError, replacement::valid_replacement_binding};
+use super::{
+    AgentBackend, AgentEngine, AgentRuntime, RuntimeError, replacement::valid_replacement_binding,
+};
 use crate::{
     BackendFailureKind, BackendResumeTarget, ContinuationStrategy, ModelReplay,
     journal::SemanticRecord,

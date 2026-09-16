@@ -2,7 +2,7 @@ use super::super::super::{
     BackendExchangeObserved, ContextImageLoss, ExchangeDirection, ExchangeKind, InitialForkSeed,
     OperationId, VersionedIdentity,
 };
-use crate::{ContinuationStrategy, JournalSequence, ModelReplayItem, ReplayProfile, TurnId};
+use crate::{JournalSequence, ModelReplayItem, ReplayProfile, TurnId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RegisteredFork {
