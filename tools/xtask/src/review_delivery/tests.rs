@@ -6,17 +6,18 @@ use std::{
 };
 
 use super::{
-    canonical_json, combine_failures,
+    admission::{
+        managed_model_reference, read_request, read_request_with_output_policy,
+        require_original_fresh,
+    },
+    artifact::{canonical_json, combine_failures, publish_claim},
     delegated::require_continuation_isolation,
-    managed_model_reference,
     model::{Artifact, CLAIM_SCHEMA, Claim, DeliveryRequest, ResultDocument, Route},
-    prepare_output_directory_at,
     process::{
         execute_continuation_once, execute_delegated_continuation_once, execute_delegated_once,
         execute_once, execute_once_with_timeout,
     },
-    publish_claim, read_request, read_request_with_output_policy, require_empty_directory,
-    require_integration_state, require_original_fresh,
+    workspace::{prepare_output_directory_at, require_empty_directory, require_integration_state},
 };
 use crate::{
     git, grok_outer_sandbox,

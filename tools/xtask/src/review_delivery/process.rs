@@ -8,7 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{DIAGNOSTIC_LIMIT, REVIEW_RESULT_LIMIT, combine_failures, model::ProcessOutcome};
+use super::{
+    DIAGNOSTIC_LIMIT, REVIEW_RESULT_LIMIT, artifact::combine_failures, model::ProcessOutcome,
+};
 use crate::{
     bounded_file, grok_outer_sandbox,
     review_egress::{AuthorizedDelivery, AuthorizedHostDelivery},

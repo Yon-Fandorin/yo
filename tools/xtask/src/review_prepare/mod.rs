@@ -807,7 +807,8 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
         )
     {
         Some(PACKET_AUTHORITY)
-    } else if path.starts_with("tools/xtask/src/review_delivery/")
+    } else if path == "tools/xtask/src/review_delivery.rs"
+        || path.starts_with("tools/xtask/src/review_delivery/")
         || path.starts_with("tools/xtask/src/review_egress/")
         || path.starts_with("tools/xtask/src/review_target_admission/")
         || path.starts_with("tools/xtask/src/review_continuation_preflight/")

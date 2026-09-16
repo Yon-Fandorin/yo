@@ -102,16 +102,25 @@ fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
             "CONTRIBUTING/review-packets.md".to_owned()
         ]
     );
-    assert_eq!(
-        authority_paths_for_changed_paths_v1alpha2(&[
-            "tools/xtask/src/lib.rs".to_owned(),
-            "tools/xtask/src/review_delivery/mod.rs".to_owned(),
-        ]),
-        vec![
-            "AGENTS.md".to_owned(),
-            "CONTRIBUTING/review-delivery.md".to_owned()
-        ]
-    );
+    for path in [
+        "tools/xtask/src/review_delivery.rs",
+        "tools/xtask/src/review_delivery/admission.rs",
+        "tools/xtask/src/review_delivery/artifact.rs",
+        "tools/xtask/src/review_delivery/original.rs",
+        "tools/xtask/src/review_delivery/continuation.rs",
+        "tools/xtask/src/review_delivery/workspace.rs",
+    ] {
+        assert_eq!(
+            authority_paths_for_changed_paths_v1alpha2(&[
+                "tools/xtask/src/lib.rs".to_owned(),
+                path.to_owned(),
+            ]),
+            vec![
+                "AGENTS.md".to_owned(),
+                "CONTRIBUTING/review-delivery.md".to_owned()
+            ]
+        );
+    }
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/lib.rs".to_owned(),

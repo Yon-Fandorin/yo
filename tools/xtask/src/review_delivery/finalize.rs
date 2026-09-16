@@ -3,9 +3,11 @@ use std::{fs, path::Path};
 use serde::Deserialize;
 
 use super::{
-    DIAGNOSTIC_LIMIT, REQUEST_LIMIT, REVIEW_RESULT_LIMIT, canonical_json,
+    DIAGNOSTIC_LIMIT, REQUEST_LIMIT, REVIEW_RESULT_LIMIT,
+    admission::{evaluate_host_admission, read_request},
+    artifact::{canonical_json, compact_path, require_exact_file_hash, require_sha256},
+    delegated,
     delegated_session::{observe_host_continuation, observe_host_session},
-    evaluate_host_admission,
     model::{
         DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2, DELEGATED_CLAIM_SCHEMA_V1_ALPHA3,
         DELEGATED_CONTINUATION_CLAIM_SCHEMA, DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2,
@@ -14,7 +16,7 @@ use super::{
         DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2, DELEGATED_REQUEST_SCHEMA_V1_ALPHA2,
         DelegatedContinuationRequest, DelegatedDeliveryReceipt, DelegatedRequest, DeliveryRequest,
     },
-    output_directory, read_request, require_exact_file_hash, shared_path,
+    workspace::{output_directory, shared_path},
 };
 use crate::{bounded_file, review_egress, review_protocol::digest};
 
@@ -65,8 +67,8 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
             request.schema
         ));
     }
-    super::compact_path(&request.delivery_request_path, "delivery_request_path")?;
-    super::require_sha256(&request.delivery_request_hash, "delivery_request_hash")?;
+    compact_path(&request.delivery_request_path, "delivery_request_path")?;
+    require_sha256(&request.delivery_request_hash, "delivery_request_hash")?;
     let delivery_request_path = shared_path(repository, &request.delivery_request_path)?;
     require_exact_file_hash(
         &delivery_request_path,
@@ -493,7 +495,7 @@ fn publish_recovery(
         },
         review_id: &delivery.review_id,
         packet_hash: &delivery.packet_hash,
-        target: super::delegated::target(delivery),
+        target: delegated::target(delivery),
         execution_profile: &delivery.execution_profile,
         execution_isolation,
         session_id,

@@ -1,10 +1,13 @@
 use std::path::Path;
 
 use super::{
-    DIAGNOSTIC_LIMIT, DeliveryPolicy, REQUEST_LIMIT, REVIEW_RESULT_LIMIT, artifact,
-    build_current_yo, canonical_json, combine_failures,
+    DIAGNOSTIC_LIMIT, DeliveryPolicy, REQUEST_LIMIT, REVIEW_RESULT_LIMIT,
+    admission::evaluate_host_admission,
+    artifact::{
+        artifact, canonical_json, combine_failures, publish_claim, publish_exact,
+        publish_provider_usage, require_exact_file_hash, sha256_file,
+    },
     delegated_session::{observe_host_continuation, observe_host_session},
-    evaluate_host_admission, exit_label, integration_worktree,
     model::{
         DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2, DELEGATED_CLAIM_SCHEMA_V1_ALPHA3,
         DELEGATED_CONTINUATION_CLAIM_SCHEMA, DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2,
@@ -20,10 +23,14 @@ use super::{
         DelegatedDeliveryOutcome, DelegatedDeliveryReceipt, DelegatedRequest,
         DelegatedResultDocument, DelegatedTarget,
     },
-    process::{execute_delegated_continuation_once, execute_delegated_once},
-    process_outcome, publish_claim, publish_exact, publish_provider_usage, require_empty_directory,
-    require_exact_file_hash, require_integration_state, sha256_file, shared_path,
+    process::{
+        execute_delegated_continuation_once, execute_delegated_once, exit_label, process_outcome,
+    },
     usage::{UsageBinding, UsageTarget},
+    workspace::{
+        build_current_yo, delivery_output_directory, integration_worktree, require_empty_directory,
+        require_integration_state, shared_path,
+    },
 };
 use crate::{
     review_continuation_preflight,
@@ -43,11 +50,8 @@ pub(super) fn run_original(
         REQUEST_LIMIT,
         "delegated Slice review egress request",
     )?;
-    let output_directory = super::delivery_output_directory(
-        repository,
-        &request.output_directory,
-        policy.prepare_output,
-    )?;
+    let output_directory =
+        delivery_output_directory(repository, &request.output_directory, policy.prepare_output)?;
 
     let initial = review_egress::authorize_host_delivery(repository, &egress_request_path)?;
     require_original_fresh(&initial)?;
@@ -332,11 +336,8 @@ pub(super) fn run_continuation(
         REQUEST_LIMIT,
         "delegated continuation preflight request",
     )?;
-    let output_directory = super::delivery_output_directory(
-        repository,
-        &request.output_directory,
-        policy.prepare_output,
-    )?;
+    let output_directory =
+        delivery_output_directory(repository, &request.output_directory, policy.prepare_output)?;
 
     let initial = review_continuation_preflight::evaluate_delegated(repository, &preflight_path)?;
     let initial_admission = evaluate_host_admission(
