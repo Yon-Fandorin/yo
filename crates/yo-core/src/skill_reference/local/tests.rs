@@ -4,9 +4,30 @@ use std::env;
 use std::process::Child;
 #[cfg(test)]
 use std::process::ExitStatus;
-use std::{fs, os::unix::fs::symlink, sync::mpsc};
+use std::{
+    fs,
+    os::unix::fs::symlink,
+    path::PathBuf,
+    sync::{atomic::AtomicBool, mpsc},
+    thread,
+    time::{Duration, Instant},
+};
 
-use super::*;
+use super::{
+    super::{
+        SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceProvider,
+        SkillReferenceProviderPoll, SkillReferenceScope, SkillReferenceSearchRequest,
+        SkillReferenceSearchStatus,
+    },
+    admission::LocalSkillInputAdmission,
+    catalog::{Catalog, MAX_ENTRIES},
+    provider::LocalSkillReferenceProvider,
+    roots::{LocalSkillRoot, MAX_ROOTS},
+};
+use crate::{
+    InputAdmissionHost, InputReference, ResolvedSkill, SubmissionRejectionKind, UserInput,
+    WorkspaceHostId,
+};
 
 struct Fixture(PathBuf);
 impl Fixture {
