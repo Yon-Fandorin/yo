@@ -13,7 +13,7 @@ pub(crate) struct BindingDetails {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ProfileDetails {
+pub(super) struct ProfileDetails {
     endpoint: String,
     protocol: String,
     connector: String,
@@ -146,7 +146,7 @@ impl ProfileDetails {
     }
 }
 
-pub(crate) struct ProfileGroup<'a> {
+pub(super) struct ProfileGroup<'a> {
     pub(crate) profile: &'a ProfileDetails,
     pub(crate) models: Vec<&'a str>,
 }

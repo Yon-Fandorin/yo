@@ -315,14 +315,14 @@ pub(crate) fn wrap(value: &str, width: usize) -> Result<Vec<String>, Presentatio
     Ok(lines)
 }
 
-pub(crate) fn safe_width(value: &str) -> Result<usize, PresentationError> {
+pub(super) fn safe_width(value: &str) -> Result<usize, PresentationError> {
     value.graphemes(true).try_fold(0_usize, |width, text| {
         let grapheme = Grapheme::try_from(text)?;
         Ok(width + usize::from(grapheme.width().get()))
     })
 }
 
-pub(crate) fn widest_grapheme(value: &str) -> Result<usize, PresentationError> {
+pub(super) fn widest_grapheme(value: &str) -> Result<usize, PresentationError> {
     value.graphemes(true).try_fold(0_usize, |width, text| {
         let grapheme = Grapheme::try_from(text)?;
         Ok(width.max(usize::from(grapheme.width().get())))
