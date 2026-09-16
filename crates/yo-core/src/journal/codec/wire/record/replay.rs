@@ -257,7 +257,7 @@ fn deserialize_multimodal_parts<'de, D: serde::Deserializer<'de>>(
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum WireModelReplayRole {
+pub(in super::super) enum WireModelReplayRole {
     System,
     Developer,
     User,
