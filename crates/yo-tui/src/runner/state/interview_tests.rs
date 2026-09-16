@@ -1,15 +1,30 @@
-use std::{env, fs, num, os::unix::fs::PermissionsExt, path::PathBuf, thread, time};
+use std::{
+    env, fs, num,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    thread,
+    time::{self, Duration},
+};
 
 use yo_core::{
+    ActivityApproval, ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent,
     interview,
     interview::{
         AnswerResponse, Capture, InterviewCatalog, InterviewQuestion, InterviewRepository,
         WorkingCopy,
     },
+    SubmissionId, TranscriptRecord, TurnRef, UserInput,
 };
 
-use super::*;
-use crate::{appearance, input};
+use super::{PendingRequest, StateEffect, TuiState};
+use crate::{
+    appearance,
+    input::{
+        self,
+        event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
+    },
+    surface::Size,
+};
 struct Host(InterviewCatalog);
 impl crate::InterviewHistoryHost for Host {
     fn resolve(
