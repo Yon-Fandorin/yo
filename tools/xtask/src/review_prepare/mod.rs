@@ -822,6 +822,7 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
         || path.starts_with("tools/xtask/src/slice_accept/")
         || path.starts_with("tools/xtask/src/slice_close/")
         || path.starts_with("tools/xtask/src/slice_status/")
+        || path == "tools/xtask/src/slice_status.rs"
         || path.starts_with("tools/xtask/src/impact/")
         || matches!(
             path,
