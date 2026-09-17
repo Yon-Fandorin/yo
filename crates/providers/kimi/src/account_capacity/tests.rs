@@ -2,7 +2,7 @@ mod parser;
 mod transport;
 
 use serde_json::json;
-use yo_core::{AccountId, NormalizedEndpoint, ProviderId, VersionedProfileId};
+use yo_core::{AccountId, ProviderId, VersionedProfileId};
 
 use crate::catalog::KimiCatalogSeed;
 

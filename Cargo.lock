@@ -2740,6 +2740,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "yo-core",
+ "yo-test-support",
 ]
 
 [[package]]
