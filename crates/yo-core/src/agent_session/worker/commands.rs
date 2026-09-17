@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    sync::{Mutex, atomic::Ordering, mpsc::Receiver},
+    sync::{atomic::Ordering, mpsc::Receiver},
 };
 
 use super::{
@@ -65,7 +65,7 @@ impl AgentWorker {
     }
 }
 
-pub(super) fn cancel_queued_turn_commands(
+pub(in crate::agent_session) fn cancel_queued_turn_commands(
     interrupted: TurnRef,
     commands: &Receiver<PendingCommand>,
     retained: &mut VecDeque<PendingCommand>,
@@ -81,7 +81,7 @@ pub(super) fn cancel_queued_turn_commands(
     canceled_submissions
 }
 
-pub(super) fn command_turn(command: &AgentCommand) -> Option<TurnRef> {
+fn command_turn(command: &AgentCommand) -> Option<TurnRef> {
     match command {
         AgentCommand::CreateSession { .. } => None,
         AgentCommand::CompactContext { .. } => None,

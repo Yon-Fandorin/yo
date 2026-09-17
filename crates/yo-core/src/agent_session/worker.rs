@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use super::{AgentControlOutcome, PendingCommand, SessionState};
+use super::{AgentControlOutcome, SessionState};
 use crate::{AgentBackend, AgentRuntime, SessionId, SubmissionOutcome, journal::SessionJournal};
 
 mod commands;
@@ -15,8 +15,10 @@ mod lifecycle;
 mod outcomes;
 mod signals;
 
-pub(super) use commands::{cancel_queued_turn_commands, command_turn};
-pub(super) use events::{apply_event, apply_events};
+pub(super) use commands::cancel_queued_turn_commands;
+#[cfg(test)]
+pub(super) use events::apply_event;
+pub(super) use events::apply_events;
 pub(super) use outcomes::{context_compaction_rejection, submission_rejection};
 pub(super) use signals::{ChangeLane, WorkerExit, WorkerSignal};
 

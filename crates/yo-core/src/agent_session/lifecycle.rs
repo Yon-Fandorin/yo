@@ -1,6 +1,7 @@
+use std::{sync::atomic::Ordering, thread::JoinHandle};
+#[cfg(test)]
 use std::{
-    sync::atomic::Ordering,
-    thread::{self, JoinHandle},
+    thread,
     time::{Duration, Instant},
 };
 

@@ -10,7 +10,7 @@ use std::{
 };
 
 use super::{
-    AgentSession, AgentSessionError, AgentWorker, ChangeLane, SessionState, WORKER_POLL_INTERVAL,
+    AgentSession, AgentSessionError, AgentWorker, ChangeLane, SessionState,
     WORKER_SHUTDOWN_TIMEOUT, WorkerExit, WorkerSharedState,
 };
 use crate::{

@@ -14,7 +14,7 @@ impl AgentWorker {
     }
 }
 
-pub(super) fn apply_events(
+pub(in crate::agent_session) fn apply_events(
     state: &mut SessionState,
     active_turn_id: &AtomicU64,
     events: &[AgentEvent],
@@ -24,7 +24,7 @@ pub(super) fn apply_events(
     }
 }
 
-pub(super) fn apply_event(
+pub(in crate::agent_session) fn apply_event(
     state: &mut SessionState,
     active_turn_id: &AtomicU64,
     event: &AgentEvent,

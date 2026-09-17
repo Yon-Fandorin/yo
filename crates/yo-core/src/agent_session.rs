@@ -1,7 +1,9 @@
+#[cfg(test)]
+use std::sync::Condvar;
 use std::{
     collections::{HashSet, VecDeque},
     sync::{
-        Arc, Condvar, Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU8, AtomicU64},
         mpsc::{Receiver, SyncSender},
     },
@@ -27,14 +29,16 @@ mod worker;
 use admission::SessionState;
 pub use contract::{AgentControlOutcome, AgentIntent, CommandAdmission, PendingCommand};
 pub use error::AgentSessionError;
-pub(super) use lifecycle::join_worker;
+pub(in crate::agent_session) use lifecycle::join_worker;
 pub use observation::AgentSessionPoll;
 pub use replacement::BackendReplacementOutcome;
-pub(super) use replacement::ReplacementRequest;
-pub(super) use startup::ResumeInitialization;
+pub(in crate::agent_session) use replacement::ReplacementRequest;
+pub(in crate::agent_session) use startup::ResumeInitialization;
 #[cfg(test)]
-pub(super) use worker::apply_event;
-pub(super) use worker::{AgentWorker, ChangeLane, WorkerExit, WorkerSharedState, WorkerSignal};
+pub(in crate::agent_session) use worker::apply_event;
+pub(in crate::agent_session) use worker::{
+    AgentWorker, ChangeLane, WorkerExit, WorkerSharedState, WorkerSignal,
+};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const WORKER_GRACEFUL_SHUTDOWN: Duration = Duration::from_millis(50);
@@ -51,7 +55,7 @@ const WORKER_STOPPING: u8 = 2;
 pub struct AgentSession {
     commands: SyncSender<PendingCommand>,
     urgent_commands: SyncSender<PendingCommand>,
-    replacements: SyncSender<replacement::ReplacementRequest>,
+    replacements: SyncSender<ReplacementRequest>,
     changes: Option<Mutex<ReadyReceiver<WorkerSignal>>>,
     finished: Receiver<()>,
     stop: BackendStopHandle,

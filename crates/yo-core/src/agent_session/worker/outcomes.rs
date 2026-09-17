@@ -36,7 +36,9 @@ impl AgentWorker {
     }
 }
 
-pub(super) fn submission_rejection(error: &RuntimeError) -> Option<SubmissionRejection> {
+pub(in crate::agent_session) fn submission_rejection(
+    error: &RuntimeError,
+) -> Option<SubmissionRejection> {
     let (kind, detail) = match error {
         RuntimeError::InputRejected(rejection) => return Some(rejection.clone()),
         RuntimeError::CommandRejected(rejection) => (
@@ -64,7 +66,9 @@ pub(super) fn submission_rejection(error: &RuntimeError) -> Option<SubmissionRej
     Some(SubmissionRejection::new(kind, detail))
 }
 
-pub(super) fn context_compaction_rejection(error: &AgentSessionError) -> Option<String> {
+pub(in crate::agent_session) fn context_compaction_rejection(
+    error: &AgentSessionError,
+) -> Option<String> {
     match error {
         AgentSessionError::Runtime(RuntimeError::CommandRejected(rejection)) => {
             Some(rejection.to_string())
