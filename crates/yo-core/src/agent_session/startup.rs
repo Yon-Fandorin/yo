@@ -1,7 +1,7 @@
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU8, AtomicU64},
         mpsc,
     },
@@ -16,7 +16,7 @@ use super::{
 use crate::{
     AgentBackend, BackendResumeTarget, SessionDescriptor, SessionId,
     journal::SessionJournal,
-    readiness::Readiness,
+    readiness::{Readiness, ReadyReceiver},
     session_repository::{SessionRepository, StoredSessionContinuation},
 };
 
@@ -206,15 +206,15 @@ impl AgentSession {
         let worker_state = Arc::clone(&state);
         let active_turn_id = Arc::new(AtomicU64::new(0));
         let worker_active_turn_id = Arc::clone(&active_turn_id);
-        let processed = Arc::new((Mutex::new(0), std::sync::Condvar::new()));
+        let processed = Arc::new((Mutex::new(0), Condvar::new()));
         let worker_processed = Arc::clone(&processed);
         let lifecycle = Arc::new(AtomicU8::new(super::WORKER_IDLE));
         let worker_lifecycle = Arc::clone(&lifecycle);
         let transcript = journal.transcript_reader();
         let request_trace = journal.request_trace_reader();
-        let submission_outcomes = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let submission_outcomes = Arc::new(Mutex::new(VecDeque::new()));
         let worker_submission_outcomes = Arc::clone(&submission_outcomes);
-        let control_outcomes = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let control_outcomes = Arc::new(Mutex::new(VecDeque::new()));
         let worker_control_outcomes = Arc::clone(&control_outcomes);
         let context_compaction_pending = Arc::new(AtomicBool::new(false));
         let worker_context_compaction_pending = Arc::clone(&context_compaction_pending);
@@ -332,7 +332,7 @@ impl AgentSession {
                     commands: command_tx,
                     urgent_commands: urgent_tx,
                     replacements: replacement_tx,
-                    changes: Some(Mutex::new(crate::readiness::ReadyReceiver::new(
+                    changes: Some(Mutex::new(ReadyReceiver::new(
                         change_rx,
                         Arc::clone(&readiness),
                     ))),

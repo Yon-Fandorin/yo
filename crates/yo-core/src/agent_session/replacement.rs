@@ -1,4 +1,7 @@
-use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::{
+    atomic::Ordering,
+    mpsc::{self, SyncSender, TrySendError},
+};
 
 use super::{AgentSession, AgentSessionError, WORKER_IDLE, WORKER_POLL_INTERVAL};
 use crate::{AgentBackend, BackendFailure};
@@ -45,16 +48,13 @@ impl AgentSession {
         mut backend: Box<dyn AgentBackend + Send>,
         mut is_cancelled: impl FnMut() -> bool,
     ) -> Result<BackendReplacementOutcome, AgentSessionError> {
-        if self
-            .context_compaction_pending
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
+        if self.context_compaction_pending.load(Ordering::Acquire) {
             let primary = AgentSessionError::WorkerUnavailable(
                 "binding replacement cannot overtake pending context compaction".to_owned(),
             );
             return Err(reject_replacement_after_cleanup(&mut *backend, primary));
         }
-        if self.lifecycle.load(std::sync::atomic::Ordering::Acquire) != WORKER_IDLE {
+        if self.lifecycle.load(Ordering::Acquire) != WORKER_IDLE {
             let primary = AgentSessionError::WorkerUnavailable(
                 "binding replacement requires an idle Session".to_owned(),
             );

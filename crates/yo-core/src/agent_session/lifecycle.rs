@@ -1,4 +1,7 @@
-use std::{sync::atomic::Ordering, thread::JoinHandle};
+use std::{
+    sync::{atomic::Ordering, mpsc::RecvTimeoutError},
+    thread::JoinHandle,
+};
 #[cfg(test)]
 use std::{
     thread,
@@ -19,8 +22,8 @@ impl AgentSession {
         };
         self.lifecycle.store(WORKER_STOPPING, Ordering::Release);
         let finished_gracefully = match self.finished.recv_timeout(WORKER_GRACEFUL_SHUTDOWN) {
-            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => true,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => false,
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => true,
+            Err(RecvTimeoutError::Timeout) => false,
         };
         if !finished_gracefully {
             self.stop.request_stop();
