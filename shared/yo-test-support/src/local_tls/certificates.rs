@@ -1,12 +1,10 @@
 use std::{
-    env, fs,
+    fs,
     path::PathBuf,
     process::{Command, Stdio},
 };
 
-use super::child::{
-    ChildGuard, TempDirectory, child_sensitive_values, create_private_file, set_private_permissions,
-};
+use super::child::{TempDirectory, create_private_file, set_private_permissions};
 
 // Apple은 새로 발급하는 TLS 서버 인증서의 유효기간을 825일로 제한하므로, fixture
 // 인증서는 그보다 짧게 유지하고 root가 server leaf보다 먼저 만료되지 않게 합니다.
@@ -15,18 +13,18 @@ const LOCAL_TLS_SERVER_VALIDITY_DAYS: &str = "397";
 #[cfg(test)]
 const FIXTURE_CERTIFICATE_MAX_VALIDITY_SECONDS: &str = "71280000";
 
-struct LocalTlsMaterial {
-    root: TempDirectory,
-    root_certificate: PathBuf,
-    root_key: PathBuf,
-    certificate: PathBuf,
-    key: PathBuf,
-    csr: PathBuf,
-    extensions: PathBuf,
+pub(super) struct LocalTlsMaterial {
+    pub(super) root: TempDirectory,
+    pub(super) root_certificate: PathBuf,
+    pub(super) root_key: PathBuf,
+    pub(super) certificate: PathBuf,
+    pub(super) key: PathBuf,
+    pub(super) csr: PathBuf,
+    pub(super) extensions: PathBuf,
 }
 
 impl LocalTlsMaterial {
-    fn generate() -> Self {
+    pub(super) fn generate() -> Self {
         let root = TempDirectory::new("yo-model-connector-cert");
         let root_certificate = root.path().join("root.pem");
         let root_key = root.path().join("root-key.pem");
@@ -156,55 +154,6 @@ impl LocalTlsMaterial {
 #[test]
 fn generates_current_server_auth_material_that_expires_within_apple_limit() {
     LocalTlsMaterial::generate().assert_server_auth_and_conservative_validity();
-}
-
-/// OS별 platform verifier의 SSL_CERT_FILE 해석에 의존하지 않고, child process의 test-only
-/// client에만 ephemeral root를 명시적으로 더해 HTTPS loopback listener를 띄웁니다.
-pub fn run_in_tls_child(test_name: &str) -> bool {
-    if env::var_os("YO_MODEL_CONNECTOR_TEST_CHILD").is_some() {
-        let marker = env::var_os("YO_MODEL_CONNECTOR_TEST_MARKER")
-            .expect("the local TLS child must provide its execution marker path");
-        fs::write(marker, b"1\n").expect("the local TLS child must publish its execution marker");
-        return false;
-    }
-    let material = LocalTlsMaterial::generate();
-    let marker = material.root.path().join("executed");
-    create_private_file(&marker);
-    let child = Command::new(env::current_exe().unwrap())
-        .arg("--exact")
-        .arg(test_name)
-        .arg("--nocapture")
-        .env("YO_MODEL_CONNECTOR_TEST_CHILD", "1")
-        .env("YO_MODEL_CONNECTOR_TEST_ROOT", &material.root_certificate)
-        .env("YO_MODEL_CONNECTOR_TEST_CERT", &material.certificate)
-        .env("YO_MODEL_CONNECTOR_TEST_KEY", &material.key)
-        .env("YO_MODEL_CONNECTOR_TEST_MARKER", &marker)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the local TLS characterization child must start");
-    let sensitive_values = child_sensitive_values(
-        &[
-            material.root.path().as_os_str(),
-            material.root_certificate.as_os_str(),
-            material.root_key.as_os_str(),
-            material.certificate.as_os_str(),
-            material.key.as_os_str(),
-            material.csr.as_os_str(),
-            material.extensions.as_os_str(),
-            marker.as_os_str(),
-        ],
-        "",
-        material.key.as_os_str(),
-    );
-    let mut child = ChildGuard::new(child, sensitive_values);
-    child.assert_success("local TLS characterization child failed");
-    assert_eq!(
-        fs::read_to_string(marker).unwrap(),
-        "1\n",
-        "the exact child characterization test did not execute"
-    );
-    true
 }
 
 fn openssl(args: &[&str]) {

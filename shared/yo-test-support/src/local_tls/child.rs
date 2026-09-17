@@ -18,8 +18,10 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+use super::certificates::LocalTlsMaterial;
 
 const CHILD_STDERR_LIMIT: usize = 4 * 1024;
 const TEMP_DIRECTORY_CREATE_ATTEMPTS: usize = 16;
@@ -103,6 +105,55 @@ pub(super) fn wait_for_local_tls_ready(
         thread::sleep(Duration::from_millis(1));
     };
     (child, port)
+}
+
+/// OS별 platform verifier의 SSL_CERT_FILE 해석에 의존하지 않고, child process의 test-only
+/// client에만 ephemeral root를 명시적으로 더해 HTTPS loopback listener를 띄웁니다.
+pub fn run_in_tls_child(test_name: &str) -> bool {
+    if env::var_os("YO_MODEL_CONNECTOR_TEST_CHILD").is_some() {
+        let marker = env::var_os("YO_MODEL_CONNECTOR_TEST_MARKER")
+            .expect("the local TLS child must provide its execution marker path");
+        fs::write(marker, b"1\n").expect("the local TLS child must publish its execution marker");
+        return false;
+    }
+    let material = LocalTlsMaterial::generate();
+    let marker = material.root.path().join("executed");
+    create_private_file(&marker);
+    let child = Command::new(env::current_exe().unwrap())
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .env("YO_MODEL_CONNECTOR_TEST_CHILD", "1")
+        .env("YO_MODEL_CONNECTOR_TEST_ROOT", &material.root_certificate)
+        .env("YO_MODEL_CONNECTOR_TEST_CERT", &material.certificate)
+        .env("YO_MODEL_CONNECTOR_TEST_KEY", &material.key)
+        .env("YO_MODEL_CONNECTOR_TEST_MARKER", &marker)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the local TLS characterization child must start");
+    let sensitive_values = child_sensitive_values(
+        &[
+            material.root.path().as_os_str(),
+            material.root_certificate.as_os_str(),
+            material.root_key.as_os_str(),
+            material.certificate.as_os_str(),
+            material.key.as_os_str(),
+            material.csr.as_os_str(),
+            material.extensions.as_os_str(),
+            marker.as_os_str(),
+        ],
+        "",
+        material.key.as_os_str(),
+    );
+    let mut child = ChildGuard::new(child, sensitive_values);
+    child.assert_success("local TLS characterization child failed");
+    assert_eq!(
+        fs::read_to_string(marker).unwrap(),
+        "1\n",
+        "the exact child characterization test did not execute"
+    );
+    true
 }
 
 pub(super) struct ChildGuard {

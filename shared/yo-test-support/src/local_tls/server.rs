@@ -1,6 +1,5 @@
 use std::{
     env,
-    ffi::OsStr,
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},

@@ -5,6 +5,6 @@ mod child;
 mod modes;
 mod server;
 
-pub use certificates::run_in_tls_child;
+pub use child::run_in_tls_child;
 pub use modes::LocalServerMode;
 pub use server::LocalTlsServer;
