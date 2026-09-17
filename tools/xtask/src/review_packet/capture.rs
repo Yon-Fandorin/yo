@@ -13,8 +13,8 @@ pub(super) use activation::parse_activation_request;
 pub(super) use context::capture_context_from_result;
 pub(super) use context::{capture_context, capture_context_request, capture_context_with_request};
 pub(super) use evidence::{
-    capture_authorities, capture_diff, capture_validation, captured, require_hash,
-    require_repository_path, same_capture, same_captures, same_named_captures,
+    capture_authorities, capture_diff, capture_validation, captured, require_hash, same_capture,
+    same_captures, same_named_captures,
 };
 #[cfg(test)]
 pub(super) use prospective::capture_prospective_context_from_result;

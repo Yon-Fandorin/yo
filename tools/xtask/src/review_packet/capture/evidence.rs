@@ -12,7 +12,7 @@ use crate::{
     validation_summary,
 };
 
-pub(super) fn capture_diff(
+pub(in crate::review_packet) fn capture_diff(
     repository: &Path,
     base: &str,
     candidate: &str,
@@ -32,7 +32,7 @@ pub(super) fn capture_diff(
     )
 }
 
-pub(super) fn capture_authorities(
+pub(in crate::review_packet) fn capture_authorities(
     repository: &Path,
     candidate: &str,
     paths: &[String],
@@ -71,7 +71,7 @@ pub(super) fn capture_authorities(
         .collect()
 }
 
-pub(super) fn capture_validation(
+pub(in crate::review_packet) fn capture_validation(
     repository: &Path,
     candidate_commit: &str,
     requests: &[EvidenceRequest],
@@ -119,7 +119,7 @@ pub(super) fn capture_validation(
     Ok(captured_inputs)
 }
 
-pub(super) fn captured(path: String, bytes: Vec<u8>) -> Result<Captured, String> {
+pub(in crate::review_packet) fn captured(path: String, bytes: Vec<u8>) -> Result<Captured, String> {
     if bytes.len() > MAX_INPUT_BYTES {
         return Err(format!(
             "review input `{path}` exceeds the {MAX_INPUT_BYTES}-byte limit"
@@ -134,11 +134,11 @@ pub(super) fn captured(path: String, bytes: Vec<u8>) -> Result<Captured, String>
     })
 }
 
-pub(super) fn same_capture(left: &Captured, right: &Captured) -> bool {
+pub(in crate::review_packet) fn same_capture(left: &Captured, right: &Captured) -> bool {
     left.path == right.path && left.hash == right.hash && left.bytes == right.bytes
 }
 
-pub(super) fn same_captures(actual: &[Captured], expected: &[Captured]) -> bool {
+pub(in crate::review_packet) fn same_captures(actual: &[Captured], expected: &[Captured]) -> bool {
     actual.len() == expected.len()
         && actual
             .iter()
@@ -146,7 +146,10 @@ pub(super) fn same_captures(actual: &[Captured], expected: &[Captured]) -> bool 
             .all(|(left, right)| same_capture(left, right))
 }
 
-pub(super) fn same_named_captures(actual: &[NamedCaptured], expected: &[NamedCaptured]) -> bool {
+pub(in crate::review_packet) fn same_named_captures(
+    actual: &[NamedCaptured],
+    expected: &[NamedCaptured],
+) -> bool {
     actual.len() == expected.len()
         && actual.iter().zip(expected).all(|(left, right)| {
             left.name == right.name && same_capture(&left.artifact, &right.artifact)
@@ -166,7 +169,11 @@ pub(super) fn require_repository_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn require_hash(expected: &str, bytes: &[u8], label: &str) -> Result<(), String> {
+pub(in crate::review_packet) fn require_hash(
+    expected: &str,
+    bytes: &[u8],
+    label: &str,
+) -> Result<(), String> {
     let actual = digest(bytes);
     if actual == expected {
         Ok(())

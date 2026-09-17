@@ -5,7 +5,7 @@ use super::{
 };
 use crate::review_protocol::Captured;
 
-pub(super) fn capture_prospective_context_with_request(
+pub(in crate::review_packet) fn capture_prospective_context_with_request(
     repository: &Path,
     candidate_commit: &str,
     activation_request_path: &Path,
@@ -47,7 +47,7 @@ fn resolve_prospective_context(
 }
 
 #[cfg(test)]
-pub(super) fn capture_prospective_context_from_result(
+pub(in crate::review_packet) fn capture_prospective_context_from_result(
     repository: &Path,
     candidate_commit: &str,
     activation_request_path: &Path,

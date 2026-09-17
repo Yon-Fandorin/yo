@@ -13,7 +13,7 @@ use super::{
 };
 use crate::bounded_file;
 
-pub(super) fn capture_context(
+pub(in crate::review_packet) fn capture_context(
     repository: &Path,
     request_path: &Path,
 ) -> Result<ContextCapture, String> {
@@ -21,7 +21,7 @@ pub(super) fn capture_context(
     capture_context_with_request(repository, request_path, request)
 }
 
-pub(super) fn capture_context_request(
+pub(in crate::review_packet) fn capture_context_request(
     repository: &Path,
     request_path: &Path,
 ) -> Result<crate::review_protocol::Captured, String> {
@@ -46,7 +46,7 @@ pub(super) fn capture_context_request(
     evidence::captured(request_path.to_string_lossy().into_owned(), request_bytes)
 }
 
-pub(super) fn capture_context_with_request(
+pub(in crate::review_packet) fn capture_context_with_request(
     repository: &Path,
     request_path: &Path,
     request: crate::review_protocol::Captured,
@@ -126,7 +126,7 @@ pub(super) fn capture_context_artifacts(
 }
 
 #[cfg(test)]
-pub(super) fn capture_context_from_result(
+pub(in crate::review_packet) fn capture_context_from_result(
     repository: &Path,
     request: crate::review_protocol::Captured,
     result: ContextResult,

@@ -1,6 +1,8 @@
 use super::ActivationRequest;
 
-pub(super) fn parse_activation_request(bytes: &[u8]) -> Result<ActivationRequest, String> {
+pub(in crate::review_packet) fn parse_activation_request(
+    bytes: &[u8],
+) -> Result<ActivationRequest, String> {
     let request = serde_json::from_slice(bytes)
         .map_err(|error| format!("invalid activation request: {error}"))?;
     validate_activation_request(&request)?;
