@@ -12,7 +12,7 @@ use crate::{
     journal::codec::HistoricalForkKind,
     session_repository::{
         StoredDiscoveryValidation, StoredSessionReader, StoredSessionSnapshot,
-        history::validate_discovery, journal::recover_entries,
+        journal::recover_entries, validate_discovery,
     },
 };
 

@@ -4,8 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     InheritedHistorySource, RepositoryEntry, RepositoryError, StoredDiscoveryValidation,
-    StoredSession, StoredSessionUnavailableReason, history::validate_discovery,
-    journal::recover_entries,
+    StoredSession, StoredSessionUnavailableReason, journal::recover_entries, validate_discovery,
 };
 use crate::{
     HostWorkspacePath, SessionId, WorkspaceHostId,

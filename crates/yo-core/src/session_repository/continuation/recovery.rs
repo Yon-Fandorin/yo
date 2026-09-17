@@ -12,9 +12,10 @@ use crate::{
         },
     },
     session_repository::{
-        SessionWriterRepository, StoredSessionReader, StoredSessionSnapshot,
-        history::{InheritedSessionHistory, normalize_recovered, project_inherited},
+        InheritedSessionHistory, SessionWriterRepository, StoredSessionReader,
+        StoredSessionSnapshot,
         journal::{recover_entries, recover_repository},
+        normalize_recovered, project_inherited,
     },
 };
 
