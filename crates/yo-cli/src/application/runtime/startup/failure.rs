@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use super::model::{StartupFrontend, StartupOutcome};
 use crate::{
     application::{live_selection as live, output::write_session_command_output},
@@ -27,7 +29,7 @@ pub(in crate::application::runtime) fn handle_launch_failure(
     glyph_profile: yo_tui::GlyphProfile,
     storage: Option<&storage::LocalReadStorage>,
     stage: live::ResumeFailureStage,
-    detail: impl std::fmt::Display,
+    detail: impl Display,
 ) -> Result<StartupOutcome, AppError> {
     match live::classify_launch_failure(selection, stage, detail) {
         live::ResumeFailureDisposition::Abort(reason) => Err(AppError::many([reason])),

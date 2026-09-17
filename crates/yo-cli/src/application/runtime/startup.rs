@@ -14,12 +14,14 @@ pub(super) use prepare::{prepare_agent, prepare_fork_agent, prepare_new_agent};
 #[cfg(test)]
 pub(super) use skills::{PreparedLocalSkills, prepare_local_skills};
 
+use crate::{application::codex_diagnostics::CodexWarningCollector, state::config::Config};
+
 impl<'a> StartupSnapshots<'a> {
     pub(super) fn new(
-        config: &'a crate::state::config::Config,
+        config: &'a Config,
         credentials: &'a mut Option<yo_core::CredentialSnapshot>,
         stored_preference: Option<&'a yo_core::StartupTarget>,
-        codex_warnings: &'a crate::application::codex_diagnostics::CodexWarningCollector,
+        codex_warnings: &'a CodexWarningCollector,
     ) -> Self {
         Self {
             config,
