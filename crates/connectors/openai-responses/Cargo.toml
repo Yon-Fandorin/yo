@@ -13,6 +13,7 @@ yo-core = { path = "../../yo-core" }
 
 [dev-dependencies]
 yo-connector-transport = { path = "../transport", features = ["test-support"] }
+yo-test-support = { path = "../../../shared/yo-test-support" }
 
 [lints]
 workspace = true

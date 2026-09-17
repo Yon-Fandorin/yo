@@ -2669,6 +2669,7 @@ dependencies = [
  "serde_json",
  "yo-connector-transport",
  "yo-core",
+ "yo-test-support",
 ]
 
 [[package]]
