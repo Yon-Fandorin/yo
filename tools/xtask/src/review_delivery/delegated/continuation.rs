@@ -107,7 +107,7 @@ pub(in crate::review_delivery) fn run_continuation(
     require_empty_directory(&output_directory)?;
 
     let claim = claims::continuation_claim(
-        &authorized,
+        authorized,
         require_state_readiness,
         execution_isolation,
         &verified.preflight_request_id,

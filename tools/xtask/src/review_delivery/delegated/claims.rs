@@ -51,6 +51,8 @@ pub(super) fn original_claim<'a>(
     }
 }
 
+// 고정된 delegated wire envelope의 필드 순서와 소유 경계를 보존하려고 인자를 합치지 않습니다.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn continuation_claim<'a>(
     delivery: &'a AuthorizedHostDelivery,
     require_state_readiness: bool,
@@ -99,6 +101,8 @@ pub(super) fn continuation_claim<'a>(
     }
 }
 
+// 고정된 delegated wire envelope의 필드 순서와 소유 경계를 보존하려고 인자를 합치지 않습니다.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn original_outcome(
     request_id: &str,
     completed: bool,
@@ -124,6 +128,8 @@ pub(super) fn original_outcome(
     }
 }
 
+// 고정된 delegated wire envelope의 필드 순서와 소유 경계를 보존하려고 인자를 합치지 않습니다.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn continuation_outcome(
     request_id: &str,
     preflight_request_id: &str,
@@ -176,6 +182,8 @@ pub(super) fn receipt<'a>(
     }
 }
 
+// 고정된 delegated wire envelope의 필드 순서와 소유 경계를 보존하려고 인자를 합치지 않습니다.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn original_result(
     bind_usage: bool,
     require_state_readiness: bool,
@@ -213,6 +221,8 @@ pub(super) fn original_result(
     }
 }
 
+// 고정된 delegated wire envelope의 필드 순서와 소유 경계를 보존하려고 인자를 합치지 않습니다.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn continuation_result(
     bind_usage: bool,
     require_state_readiness: bool,
