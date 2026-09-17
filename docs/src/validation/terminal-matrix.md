@@ -52,6 +52,22 @@ request occurred. Physical IME and Command-V were repeated on the accepted candi
 in the [current direct input verification](#current-mac-direct-input-verification).
 A live-provider send remains unverified.
 
+On 2026-09-17, follow-up candidate
+`6a7d3156ffd4553d55b6d5fa7c6daaa54342e01a` passed the default and `yo-tui`
+profiles on the same pinned macOS arm64 host. The first candidate exposed two
+macOS-only compile regressions from the preceding structure refactor: device
+and inode fields were constrained to one Rust type, and two Linux-only Grok
+sandbox imports were unconditional. Commits `6f72ae18` and `6a7d3156` separate
+the file-identity types and gate those imports to Linux. The exact final tree
+passed 728 Core tests, 529 CLI unit tests plus five and two integration tests,
+the macOS Unix compile matrix, 945 TUI unit tests, four rendering tests, six
+frame tests, two zero-size reentry tests, and Core and TUI all-target Clippy.
+The TUI run directly included the regressions for preserving a committed answer
+or preview while Ctrl+U/Ctrl+C opens an interview command, explicitly committing
+an empty value with Enter, and rendering a recovered prompt once. No model
+request or normal Yo state was used; each remote checkout, bundle, runner and
+summary was removed after its run.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`

@@ -49,6 +49,20 @@ Fullscreen을 한 번 준비한 뒤 같은 입력 시나리오도 통과했다. 
 [현재 직접 입력 검증](#현재-mac-직접-입력-검증)에서 반복했다. 실제 Provider
 send는 아직 검증하지 않았다.
 
+2026-09-17에 후속 후보 `6a7d3156ffd4553d55b6d5fa7c6daaa54342e01a`가
+같은 고정 macOS arm64 host에서 기본 profile과 `yo-tui` profile을 통과했다.
+첫 후보는 앞선 구조 리팩터링의 macOS 전용 compile 회귀 두 건을 드러냈다.
+장치 번호와 inode 필드가 하나의 Rust type으로 제한되었고, Linux 전용 Grok
+sandbox import 두 개가 조건 없이 활성화되어 있었다. 커밋 `6f72ae18`과
+`6a7d3156`은 파일 identity type을 분리하고 해당 import를 Linux로 제한한다.
+정확한 최종 tree는 Core test 728개, CLI unit test 529개와 통합 test 5개·2개,
+macOS Unix compile matrix, TUI unit test 945개, rendering test 4개, frame test
+6개, 크기 0 재진입 test 2개, Core·TUI all-target Clippy를 통과했다. TUI 실행은
+Ctrl+U/Ctrl+C로 interview 명령 입력을 시작할 때 확정 답안이나 preview를
+보존하는 회귀, Enter로 빈 값을 명시적으로 확정하는 동작, 복구 prompt를 한 번만
+표시하는 동작을 직접 포함했다. Model 요청이나 일반 Yo state는 사용하지 않았고,
+각 실행 뒤 원격 checkout·bundle·runner·summary를 제거했다.
+
 ## 저장된 Mac의 큰 본문 페이지 검증
 
 2026-09-13에 clean 후보 `af16336de8836475af39022d08bf612d13955110`이
