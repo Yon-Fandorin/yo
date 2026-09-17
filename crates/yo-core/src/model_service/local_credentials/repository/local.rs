@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    super::super::{LocalCredentialStoreError, storage, wire},
+    super::{LocalCredentialStoreError, storage, wire},
     model::CredentialSnapshot,
     mutation::{
         CredentialCommit, CredentialMutationAction, CredentialRepository,

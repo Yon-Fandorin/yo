@@ -1,5 +1,7 @@
 use super::*;
-use crate::{ModelInputPart, ResolvedSkill, SkillReference, SkillReferenceScope, UserInput};
+use crate::{
+    InputReference, ModelInputPart, ResolvedSkill, SkillReference, SkillReferenceScope, UserInput,
+};
 
 fn snapshot() -> InputImageSnapshot {
     serde_json::from_str(r#"{"profile":"yo.input-image-rgba8-triangle/v1","mime_type":"image/png","width":1,"height":1,"byte_length":70,"sha256":"sha256:4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5","data_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="}"#).unwrap()

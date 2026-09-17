@@ -24,7 +24,7 @@ pub(super) fn validate_candidate(
 }
 
 #[derive(Clone)]
-pub(super) struct StoredCredentialSnapshot {
+pub(in crate::model_service::local_credentials) struct StoredCredentialSnapshot {
     revision: CredentialRevision,
     entries: Vec<CredentialEntry>,
     credentials: CredentialStore,
@@ -140,7 +140,7 @@ impl StoredCredentialSnapshot {
 }
 
 #[derive(Clone)]
-pub(super) struct CredentialEntry {
+pub(in crate::model_service::local_credentials) struct CredentialEntry {
     pub(in crate::model_service::local_credentials) provider: ProviderId,
     pub(in crate::model_service::local_credentials) account: AccountId,
     pub(in crate::model_service::local_credentials) credential: ApiCredential,
