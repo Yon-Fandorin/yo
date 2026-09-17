@@ -2,9 +2,9 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use super::super::{
+use super::{
+    super::request::{compact_path, require_sha256},
     REQUEST_SCHEMA,
-    request::{compact_path, require_sha256},
 };
 use crate::review_egress::AuthorizedHostDelivery;
 
@@ -64,6 +64,7 @@ mod tests {
     use std::path::Path;
 
     use super::{REQUEST_SCHEMA, parse_request};
+    use crate::review_continuation_preflight::REQUEST_SCHEMA as MANAGED_REQUEST_SCHEMA;
 
     // delegated continuation preflight는 managed schema나 Provider 좌표를 받아들이지 않고
     // exact egress bytes와 Session repository만 가리키는 closed alpha shape를 유지합니다.
@@ -80,6 +81,21 @@ mod tests {
             &serde_json::to_vec(&value).unwrap(),
         )
         .unwrap();
+
+        let managed = serde_json::json!({
+            "schema": MANAGED_REQUEST_SCHEMA,
+            "egress_request_path": ".local-exclude/egress.json",
+            "egress_request_hash": format!("sha256:{}", "a".repeat(64)),
+            "session_repository_path": "/tmp/sessions"
+        });
+        assert!(
+            parse_request(
+                Path::new("request.json"),
+                &serde_json::to_vec(&managed).unwrap()
+            )
+            .unwrap_err()
+            .contains("unsupported delegated continuation preflight schema")
+        );
 
         let mut fabricated = value;
         fabricated["provider"] = "codex".into();
