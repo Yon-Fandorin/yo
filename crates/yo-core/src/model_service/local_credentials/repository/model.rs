@@ -8,11 +8,10 @@ use super::{
 };
 use crate::model_service::{AccountId, ApiCredential, CredentialStore, ProviderId};
 
-/// Private opaque compare-and-swap receipt for one complete credential snapshot.
+/// 하나의 전체 credential snapshot을 비교 교환하는 private opaque receipt입니다.
 ///
-/// Its diagnostic projections deliberately hide the underlying token. The token may only be
-/// persisted by the credential snapshot and the permission-restricted connection operation
-/// journal.
+/// 진단 projection에서는 내부 token을 의도적으로 숨깁니다. token은 credential snapshot과
+/// 권한이 제한된 connection-operation journal에만 저장할 수 있습니다.
 #[derive(Clone, Eq, PartialEq)]
 pub struct CredentialRevision(CredentialRevisionKind);
 
@@ -75,8 +74,8 @@ impl Debug for CredentialRevision {
     }
 }
 
-/// One immutable credential snapshot. Secret values remain accessible only through exact
-/// Provider-and-Account resolution and retain `ApiCredential` redaction behavior.
+/// 정확한 Provider-and-Account 해석으로만 secret 값에 접근할 수 있는 불변 credential
+/// snapshot입니다. `ApiCredential`의 redaction 동작을 유지합니다.
 #[derive(Clone)]
 pub struct CredentialSnapshot {
     revision: CredentialRevision,
@@ -107,10 +106,10 @@ impl CredentialSnapshot {
         self.credentials.resolve(provider, account)
     }
 
-    /// Resolves the optional account-observation session for one exact Provider and Account.
+    /// 정확한 Provider-and-Account에 대한 optional account-observation session을 해석합니다.
     ///
-    /// Model dispatch must continue to use [`Self::resolve`]; this secret is reserved for the
-    /// account-capacity boundary that owns its fixed remote origin.
+    /// Model dispatch는 계속 [`Self::resolve`]를 사용해야 합니다. 이 secret은 고정된
+    /// remote origin을 소유한 account-capacity 경계를 위해 예약되어 있습니다.
     #[must_use]
     pub fn resolve_account_session(
         &self,
@@ -130,10 +129,10 @@ impl CredentialSnapshot {
         &self.credentials
     }
 
-    /// Prepares an exact account-session mutation against this observed credential revision.
+    /// 현재 관찰한 credential revision을 기준으로 정확한 account-session mutation을 준비합니다.
     ///
-    /// Keeping preparation on the snapshot lets a caller bind later secret capture and remote
-    /// work to the state it actually inspected instead of silently replanning at commit time.
+    /// snapshot에서 준비하면 호출자가 실제로 확인한 상태에 이후 secret capture와 remote 작업을
+    /// 결합할 수 있어 commit 시점에 조용히 다시 계획하지 않습니다.
     pub fn prepare_set_account_session(
         &self,
         provider: &ProviderId,

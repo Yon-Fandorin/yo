@@ -11,7 +11,7 @@ use super::{
 };
 use crate::model_service::{AccountId, ApiCredential, ProviderId};
 
-/// Local bounded `credentials.yaml` repository with private exact-revision CAS.
+/// 크기가 제한된 `credentials.yaml`을 private exact-revision CAS로 관리하는 local repository입니다.
 #[derive(Clone, Debug)]
 pub struct LocalCredentialRepository {
     path: PathBuf,
@@ -28,13 +28,13 @@ impl LocalCredentialRepository {
         &self.path
     }
 
-    /// Captures without creating the file or its parent directory.
+    /// file 또는 parent directory를 만들지 않고 capture합니다.
     pub fn capture(&self) -> Result<CredentialSnapshot, LocalCredentialStoreError> {
         storage::read_snapshot(&self.path).map(StoredCredentialSnapshot::public)
     }
 
-    /// Re-reads under the credential lock and prepares an exact add or replace without retaining
-    /// the candidate secret.
+    /// credential lock 아래에서 다시 읽어 candidate secret을 보관하지 않은 채 정확한 add 또는
+    /// replace를 준비합니다.
     pub fn prepare_set(
         &self,
         provider: &ProviderId,
@@ -44,8 +44,8 @@ impl LocalCredentialRepository {
             .ok_or(LocalCredentialStoreError::InvalidMutation)
     }
 
-    /// Re-reads under the credential lock and prepares an exact removal, or returns `None` when
-    /// the exact pair is already absent.
+    /// credential lock 아래에서 다시 읽어 정확한 removal을 준비합니다. 정확한 pair가 이미
+    /// 없으면 `None`을 반환합니다.
     pub fn prepare_remove(
         &self,
         provider: &ProviderId,
@@ -54,8 +54,8 @@ impl LocalCredentialRepository {
         self.prepare(provider, account, false)
     }
 
-    /// Prepares an add or replacement of the optional account-session field for an existing
-    /// Provider-and-Account API credential.
+    /// 기존 Provider-and-Account API credential의 optional account-session field에 대한 add 또는
+    /// replacement를 준비합니다.
     pub fn prepare_set_account_session(
         &self,
         provider: &ProviderId,
@@ -94,8 +94,8 @@ impl LocalCredentialRepository {
         Ok(Some(mutation))
     }
 
-    /// Commits the exact prepared pair action. Add and replace require the still in-memory
-    /// candidate; remove rejects one so a caller cannot accidentally persist an unrelated secret.
+    /// 정확히 준비된 pair action을 commit합니다. Add와 replace에는 아직 메모리에 있는 candidate가
+    /// 필요하고, remove에는 관련 없는 secret을 실수로 저장하지 않도록 candidate를 거부합니다.
     pub fn commit(
         &self,
         mutation: &PreparedCredentialMutation,
@@ -146,8 +146,8 @@ impl LocalCredentialRepository {
         Ok(CredentialCommit::Committed)
     }
 
-    /// Commits one prepared account-session add or replacement without changing the model API
-    /// credential in the same account record.
+    /// 같은 account record의 model API credential을 바꾸지 않고 준비된 account-session add 또는
+    /// replacement 하나를 commit합니다.
     pub fn commit_account_session(
         &self,
         mutation: &PreparedAccountSessionMutation,

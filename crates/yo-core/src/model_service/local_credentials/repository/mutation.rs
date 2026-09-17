@@ -6,7 +6,7 @@ use super::{
 };
 use crate::model_service::{AccountId, ApiCredential, ProviderId};
 
-/// Closed exact-pair action bound into a prepared credential mutation.
+/// 정확한 Provider-and-Account 쌍에 결합된 준비 mutation action입니다.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialMutationAction {
     Add,
@@ -14,7 +14,7 @@ pub enum CredentialMutationAction {
     Remove,
 }
 
-/// One prepared mutation. It contains coordinates and private revisions but never secret bytes.
+/// 좌표와 private revision을 담지만 secret byte는 보관하지 않는 준비 mutation입니다.
 #[derive(Clone, Eq, PartialEq)]
 pub struct PreparedCredentialMutation {
     expected_revision: CredentialRevision,
@@ -24,9 +24,9 @@ pub struct PreparedCredentialMutation {
     action: CredentialMutationAction,
 }
 
-/// One prepared mutation of the optional account-session field for an existing exact account.
+/// 기존 정확한 account의 optional account-session field를 위한 준비 mutation입니다.
 ///
-/// The candidate secret remains in the caller until commit and is never retained here.
+/// candidate secret은 commit 시점까지 호출자에게 남아 있으며 이 타입에는 보관되지 않습니다.
 #[derive(Clone, Eq, PartialEq)]
 pub struct PreparedAccountSessionMutation {
     expected_revision: CredentialRevision,
@@ -169,7 +169,7 @@ pub enum CredentialCommit {
     AlreadyCommitted,
 }
 
-/// Storage-neutral exact-pair credential mutation boundary.
+/// 저장소 구현과 무관한 정확한 Provider-and-Account credential mutation 경계입니다.
 pub trait CredentialRepository {
     fn capture(&self) -> Result<CredentialSnapshot, LocalCredentialStoreError>;
 
