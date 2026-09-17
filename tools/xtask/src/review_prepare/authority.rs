@@ -125,6 +125,9 @@ fn shared_workflow_owners(path: &str) -> Option<&'static [&'static str]> {
             Some(&[PACKET_AUTHORITY, DELIVERY_AUTHORITY, INTEGRATION_AUTHORITY])
         },
         "tools/xtask/src/review_result.rs" => Some(&[PACKET_AUTHORITY, INTEGRATION_AUTHORITY]),
+        _ if path.starts_with("tools/xtask/src/review_result/") => {
+            Some(&[PACKET_AUTHORITY, INTEGRATION_AUTHORITY])
+        },
         _ => None,
     }
 }

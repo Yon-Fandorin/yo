@@ -131,6 +131,25 @@ fn changed_authority_policy_v1alpha2_routes_shared_protocol_owners() {
             "CONTRIBUTING/review-packets.md".to_owned(),
         ]
     );
+    // 구조화 결과의 child도 packet과 gate가 함께 소비하므로 root facade와 같은
+    // 두 workflow authority만 읽고, 전체 xtask 모호성으로 넓히지 않습니다.
+    for path in [
+        "tools/xtask/src/review_result/model.rs",
+        "tools/xtask/src/review_result/parse.rs",
+        "tools/xtask/src/review_result/correction.rs",
+        "tools/xtask/src/review_result/bounds.rs",
+        "tools/xtask/src/review_result/tests.rs",
+    ] {
+        assert_eq!(
+            authority_paths_for_changed_paths_v1alpha2(&[path.to_owned()]),
+            vec![
+                "AGENTS.md".to_owned(),
+                "CONTRIBUTING/review-and-integration.md".to_owned(),
+                "CONTRIBUTING/review-packets.md".to_owned(),
+            ],
+            "structured review 결과 child는 packet 및 integration owner를 유지해야 합니다"
+        );
+    }
 }
 
 // 소유자를 식별할 companion 없이 공용 facade나 shared workflow 기반만 바뀌면 모든
