@@ -514,6 +514,8 @@ fn reports_bounded_sanitized_stderr_for_an_early_child_exit() {
 // Command::arg는 shell을 통하지 않으므로 공백·quote·backslash가 있는 지원 Unix 경로도
 // 정확한 argv입니다. 그런 경로에서도 stderr 원인은 보존하고 모든 민감한 literal은 지웁니다.
 #[cfg(unix)]
+// Unix 전용 경로 인자에서도 준비 상태 실패 원인은 남기고 경로·민감 문자열은 진단에서 제거하는지
+// 고정합니다.
 #[test]
 fn reports_sanitized_stderr_from_direct_arguments_with_shell_metacharacters() {
     let parent = TempDirectory::new("yo-model-connector-special-parent");
