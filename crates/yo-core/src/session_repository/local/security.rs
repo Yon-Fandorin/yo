@@ -218,11 +218,11 @@ pub(super) fn marker_path_matches(
     )))
 }
 
-pub(super) fn file_identity_matches<T: PartialEq>(
-    opened_device: T,
-    opened_inode: T,
-    current_device: T,
-    current_inode: T,
+pub(super) fn file_identity_matches<Device: PartialEq, Inode: PartialEq>(
+    opened_device: Device,
+    opened_inode: Inode,
+    current_device: Device,
+    current_inode: Inode,
 ) -> bool {
     opened_device == current_device && opened_inode == current_inode
 }
@@ -252,5 +252,18 @@ pub(super) fn known_cutoff(
             repository_sequence,
         },
         None => DurableCutoff::KnownEmpty,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::file_identity_matches;
+
+    // macOS exposes device and inode numbers with different integer types.
+    #[test]
+    fn file_identity_compares_device_and_inode_types_independently() {
+        assert!(file_identity_matches(7_i32, 11_u64, 7_i32, 11_u64));
+        assert!(!file_identity_matches(7_i32, 11_u64, 8_i32, 11_u64));
+        assert!(!file_identity_matches(7_i32, 11_u64, 7_i32, 12_u64));
     }
 }
