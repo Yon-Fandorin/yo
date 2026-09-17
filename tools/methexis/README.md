@@ -222,9 +222,20 @@ src/author/
 
 src/review/
   mod.rs         ReviewService and shared wire-contract types
-  operations.rs  Projection, packet, and approval orchestration
+  operations.rs  ReviewService operation-dispatch facade
+  operations/
+    request.rs   bounded request decoding, schema, and Markdown normalization
+    foundation.rs foundation loading and exact KnowledgeUnit resolution
+    projection.rs Projection generation orchestration
+    packet.rs    review-packet publication orchestration
+    approval.rs  approval-record orchestration
   prepare.rs     approval-request preparation from a packet manifest
-  records.rs     deterministic record encoding and validation
+  records.rs     deterministic record facade and exports
+  records/
+    projection.rs Projection rendering and lineage parsing
+    packet.rs    deterministic review-packet rendering
+    approval.rs  Projection/canonical approval encoding and parsing
+    io.rs        bounded record reads and text validation
   storage.rs     atomic publication, CAS, and path safety
   validation.rs  repository-wide proposal state and diagnostics
 
