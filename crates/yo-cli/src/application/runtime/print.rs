@@ -11,12 +11,11 @@ use super::{
         },
         output::write_command_output,
     },
-    PreparedAgent, StartupFrontend, StartupOutcome, StartupSnapshots,
+    LaunchFailureSelection, PreparedAgent, StartupFrontend, StartupOutcome, StartupSnapshots,
     session::termination_requested,
     shutdown_live_session, startup,
 };
 use crate::{
-    application::live_selection as live,
     command,
     execution::process,
     interaction::diagnostic::AppError,
@@ -54,7 +53,7 @@ pub(in crate::application) fn run_print_session(
                 termination,
                 &cwd,
                 &startup,
-                live::LiveSelection::New,
+                LaunchFailureSelection::New,
                 None,
                 &mut StartupSnapshots {
                     config: &config,

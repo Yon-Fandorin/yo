@@ -13,8 +13,8 @@ use super::{
         codex_diagnostics::{CodexWarningCollector, publish_pending_codex_diagnostics},
         output::write_session_command_output,
     },
-    LiveSession, SessionStep, StartupFrontend, StartupOutcome, StartupSnapshots, frontend,
-    shutdown_live_session, startup,
+    LaunchFailureSelection, LiveSession, SessionStep, StartupFrontend, StartupOutcome,
+    StartupSnapshots, frontend, shutdown_live_session, startup,
 };
 use crate::{
     application::live_selection as live,
@@ -31,14 +31,17 @@ pub(in crate::application) fn run_live_session(
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let (launch_failure_selection, read_only_storage) =
         match live::prepare(domain_selection(options.selection), &cwd)? {
-            live::LivePreparation::New => (live::LiveSelection::New, None),
+            live::LivePreparation::New => (LaunchFailureSelection::New, None),
             live::LivePreparation::Resume {
                 session_id,
                 failure_selection,
                 storage,
             } => {
                 options.selection = command::LiveSelection::Resume(session_id);
-                (failure_selection, Some(storage))
+                (
+                    to_launch_failure_selection(failure_selection),
+                    Some(storage),
+                )
             },
             live::LivePreparation::ReadOnly {
                 session_id,
@@ -163,7 +166,7 @@ fn run_generation(
     live: &mut Option<LiveSession>,
     cwd: &path::Path,
     options: command::LiveOptions,
-    launch_failure_selection: live::LiveSelection,
+    launch_failure_selection: LaunchFailureSelection,
     read_only_storage: Option<&storage::LocalReadStorage>,
     snapshots: &mut StartupSnapshots<'_>,
 ) -> Result<SessionStep, AppError> {
@@ -226,6 +229,14 @@ fn run_generation(
             resume_session(termination, live, target, options, snapshots)
         },
         other => Ok(other),
+    }
+}
+
+fn to_launch_failure_selection(selection: live::LiveSelection) -> LaunchFailureSelection {
+    match selection {
+        live::LiveSelection::New => LaunchFailureSelection::New,
+        live::LiveSelection::Resume(session_id) => LaunchFailureSelection::Resume(session_id),
+        live::LiveSelection::Continue => LaunchFailureSelection::Continue,
     }
 }
 
@@ -509,7 +520,7 @@ fn resume_session(
         termination,
         &current.workspace,
         &options,
-        live::LiveSelection::Continue,
+        LaunchFailureSelection::Continue,
         None,
         &mut resumed_snapshots,
         StartupFrontend::Terminal,

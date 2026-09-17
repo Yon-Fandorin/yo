@@ -33,52 +33,21 @@ pub(crate) enum LivePreparation {
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ResumeFailureStage {
-    WritableStorage,
-    Revalidation,
-    RecordedWorkspace,
-    WorkspaceReferences,
-    SkillReferences,
-    BackendSpawn,
-    NativeResume,
-}
+pub(super) use super::runtime::{ResumeFailureDisposition, ResumeFailureStage};
 
-impl ResumeFailureStage {
-    const fn context(self) -> &'static str {
-        match self {
-            Self::WritableStorage => "opening writable local Yo storage failed",
-            Self::Revalidation => "revalidation failed",
-            Self::RecordedWorkspace => "the recorded workspace is unavailable",
-            Self::WorkspaceReferences => "starting workspace reference discovery failed",
-            Self::SkillReferences => "starting skill discovery failed",
-            Self::BackendSpawn => "starting the selected agent backend failed",
-            Self::NativeResume => "resuming the selected agent backend failed",
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum ResumeFailureDisposition {
-    Abort(String),
-    ReadOnly {
-        session_id: SessionId,
-        reason: String,
-    },
-}
-
-pub(crate) fn classify_launch_failure(
+pub(super) fn classify_launch_failure(
     selection: LiveSelection,
     stage: ResumeFailureStage,
     detail: impl fmt::Display,
 ) -> ResumeFailureDisposition {
-    let reason = format!("{}: {detail}", stage.context());
-    match selection {
+    let selection = match selection {
+        LiveSelection::New => super::runtime::LaunchFailureSelection::New,
         LiveSelection::Resume(session_id) => {
-            ResumeFailureDisposition::ReadOnly { session_id, reason }
+            super::runtime::LaunchFailureSelection::Resume(session_id)
         },
-        LiveSelection::New | LiveSelection::Continue => ResumeFailureDisposition::Abort(reason),
-    }
+        LiveSelection::Continue => super::runtime::LaunchFailureSelection::Continue,
+    };
+    super::runtime::classify_launch_failure(selection, stage, detail)
 }
 
 pub(crate) fn prepare(selection: LiveSelection, cwd: &Path) -> Result<LivePreparation, AppError> {
