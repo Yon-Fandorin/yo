@@ -18,10 +18,12 @@ use model::{
 };
 
 use super::{
-    approval_result, changed_paths, evaluate,
+    evaluate::{
+        approval_result, evaluate, required_lenses, review_results, validate_request_bounds,
+        validation_results,
+    },
     model::{Approval, Request, ReviewEvidence, Risk, ValidationEvidence},
-    require_clean, required_lenses, review_results, trusted_line, validate_request_bounds,
-    validation_results,
+    revalidate::{changed_paths, require_clean, trusted_line},
 };
 use crate::{
     bounded_file, git,
