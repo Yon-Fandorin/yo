@@ -136,7 +136,7 @@ pub enum StoredDiscoveryMismatchKind {
     },
 }
 
-pub(super) fn validate_discovery(
+pub(in crate::session_repository) fn validate_discovery(
     entries: &[RepositoryEntry],
     descriptor: &SessionDescriptor,
     recovered: &RecoveredJournal,

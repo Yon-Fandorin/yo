@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-pub(super) fn normalize_recovered(
+pub(in crate::session_repository) fn normalize_recovered(
     recovered: &RecoveredJournal,
 ) -> Result<Vec<crate::TranscriptRecord>, String> {
     normalize(recovered)

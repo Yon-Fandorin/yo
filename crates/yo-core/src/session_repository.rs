@@ -13,7 +13,9 @@ pub use history::{
     SessionUsageProvider, SessionUsageReceipt, SessionUsageSource, UsageAggregate, UsageCoverage,
     UsageValue,
 };
-pub(crate) use history::{normalize_recovered, project_inherited, validate_discovery};
+pub(in crate::session_repository) use history::{
+    normalize_recovered, project_inherited, validate_discovery,
+};
 pub(crate) mod journal;
 mod local;
 mod record;

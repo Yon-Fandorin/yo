@@ -1,7 +1,7 @@
 use super::{
     super::{
         StoredDiscoveryMismatch, StoredDiscoveryMismatchKind, StoredDiscoveryValidation,
-        StoredSessionReadError, discovery_coordinates_mismatch, read_stored_session,
+        StoredSessionReadError, discovery::discovery_coordinates_mismatch, read_stored_session,
     },
     support::{MemoryReader, activity, finished, record_with_discovery, session, started},
 };

@@ -8,17 +8,15 @@ mod read;
 mod request_trace;
 mod session_usage;
 
-// history의 private 테스트는 discovery 원인 분류 함수를 직접 검증합니다.
-use discovery::discovery_coordinates_mismatch;
 // 내부 복구 소비자는 이 facade를 통해서만 history 조립 연산에 접근합니다.
-pub(super) use discovery::validate_discovery;
+pub(in crate::session_repository) use discovery::validate_discovery;
 pub use discovery::{
     StoredDiscoveryMismatch, StoredDiscoveryMismatchKind, StoredDiscoveryValidation,
 };
-pub(super) use inherited::project_inherited;
+pub(in crate::session_repository) use inherited::project_inherited;
 pub use inherited::{InheritedHistorySection, InheritedHistorySource, InheritedSessionHistory};
 pub use model::{StoredSessionContinuity, StoredSessionHistory, StoredSessionRecovery};
-pub(super) use read::normalize_recovered;
+pub(in crate::session_repository) use read::normalize_recovered;
 pub use read::{StoredSessionReadError, read_stored_session};
 pub use request_trace::{
     StoredBindingCacheState, StoredBindingCloseReason, StoredBindingTransition,

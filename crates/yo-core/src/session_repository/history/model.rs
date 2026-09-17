@@ -8,10 +8,7 @@ use super::{
     request_trace::StoredRequestTraceEntry,
     session_usage::{SessionUsageError, SessionUsageProjection},
 };
-use crate::{
-    JournalSequence, SessionDescriptor, TranscriptRecord,
-    interview::{self, InterviewCatalog},
-};
+use crate::{JournalSequence, SessionDescriptor, TranscriptRecord, interview::InterviewCatalog};
 
 /// 저장된 Session 한 시점의 검증된 semantic projection입니다.
 #[derive(Clone, Debug, Eq, PartialEq)]

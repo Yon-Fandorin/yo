@@ -78,7 +78,7 @@ impl InheritedSessionHistory {
     }
 }
 
-pub(super) fn project_inherited(
+pub(in crate::session_repository) fn project_inherited(
     recovered: &RecoveredJournal,
 ) -> Result<Option<Arc<InheritedSessionHistory>>, String> {
     let Some(seed) = recovered
