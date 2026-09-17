@@ -1,4 +1,4 @@
-//! Session-owned host presentation; provider actions remain on the original connection.
+//! 세션이 소유한 호스트 표시 계층이며 공급자 동작은 기존 연결에 유지한다.
 use std::{
     collections::BTreeMap,
     env, fs,
