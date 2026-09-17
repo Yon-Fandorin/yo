@@ -1,10 +1,10 @@
-#[cfg(test)]
-mod tests;
-
 mod lock;
 mod request;
 mod result;
 mod worktree;
+
+#[cfg(test)]
+mod tests;
 
 use std::path::Path;
 
