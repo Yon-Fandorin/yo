@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use super::{
     super::{AccountId, ApiCredential, ProviderId},
     LocalCredentialStoreError,
-    repository::{CredentialEntry, CredentialRevision},
+    repository::{CredentialEntry, CredentialRevision, parse_managed_revision_token},
     storage::MAX_CREDENTIAL_FILE_BYTES,
 };
 
@@ -80,44 +80,12 @@ pub(super) fn encode(
     Ok(encoded)
 }
 
-pub(super) fn new_revision() -> Result<CredentialRevision, LocalCredentialStoreError> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes)
-        .map_err(|error| LocalCredentialStoreError::Randomness(error.to_string()))?;
-    let mut token = String::with_capacity(37);
-    token.push_str("crev-");
-    for byte in bytes {
-        use fmt::Write as _;
-        write!(token, "{byte:02x}").expect("formatting into a String cannot fail");
-    }
-    Ok(CredentialRevision::managed(token))
-}
-
 fn parse_revision(
     path: &Path,
     revision: &str,
 ) -> Result<CredentialRevision, LocalCredentialStoreError> {
     parse_managed_revision_token(revision)
-        .map(CredentialRevision::managed)
         .ok_or_else(|| LocalCredentialStoreError::InvalidContents(path.to_owned()))
-}
-
-pub(super) fn parse_managed_revision_token(revision: &str) -> Option<String> {
-    let valid = revision.len() == 37
-        && revision.starts_with("crev-")
-        && revision[5..]
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
-    valid.then(|| revision.to_owned())
-}
-
-pub(super) fn parse_derived_revision_token(revision: &str) -> Option<String> {
-    let valid = revision.len() == 120
-        && revision.starts_with("derived-")
-        && revision[8..]
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
-    valid.then(|| revision.to_owned())
 }
 
 #[derive(Deserialize)]
