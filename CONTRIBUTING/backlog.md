@@ -2,7 +2,7 @@
 
 기준 스냅샷: 2026-09-16 (KST)
 
-이 백로그의 원래 발견 기준은 당시 develop의 d21a457e6780 커밋이다. 아래의 기준·통합 상태는 이 스냅샷에서 확인한 사실을 보존한 역사적 기록이며, 이후 develop에 추가된 커밋의 현재 상태를 나타내지 않는다. 이 문서는 코드 커밋과 독립된 후속 판단 기록으로 관리한다. 이 문서를 갱신한 시점의 통합 develop에는 원래 기준 이후의 구조 리팩터링이 반영되어 있지만, 아래 다섯 보류 항목의 행동 변경은 반영되어 있지 않다. main 3c7648e22528은 empty bootstrap root라 이 코드 경로가 존재하지 않는다. 이 문서는 코드 구조 리팩터링 범위를 넘어 전체 런타임 구조 개선으로 번질 수 있는 발견을 후속 판단 대상으로 남기는 기록이다. 현재 사이클에서 다섯 항목은 보류하며, 각 항목의 계약·검증 범위를 정한 뒤 별도 구현 작업으로 재개한다.
+이 백로그의 원래 발견 기준은 당시 develop의 d21a457e6780 커밋이다. 아래의 기준·통합 상태는 이 스냅샷에서 확인한 사실을 보존한 역사적 기록이며, 이후 develop에 추가된 커밋의 현재 상태를 나타내지 않는다. 이 문서는 코드 커밋과 독립된 후속 판단 기록으로 관리한다. 이 문서를 갱신하기 전에는 다섯 보류 항목이었으며, 이번 갱신에서 TLS fixture 구조 정리의 완료를 별도 기록으로 보존한다. 이 문서를 갱신한 시점의 통합 develop에는 원래 기준 이후의 구조 리팩터링이 반영되어 있지만, 현재 남은 네 보류 항목의 행동 변경은 반영되어 있지 않다. main 3c7648e22528은 empty bootstrap root라 이 코드 경로가 존재하지 않는다. 이 문서는 코드 구조 리팩터링 범위를 넘어 전체 런타임 구조 개선으로 번질 수 있는 발견을 후속 판단 대상으로 남기는 기록이다. 현재 사이클에서 네 항목은 보류하며, 각 항목의 계약·검증 범위를 정한 뒤 별도 구현 작업으로 재개한다.
 
 ## 보류 항목
 
@@ -78,23 +78,21 @@
 
 **main 통합 상태:** 82e3df13은 fix/session-file-nofollow-open 브랜치에만 있다. 원래 발견 기준 develop에는 후보 hardening과 위의 root·pending·FIFO 보강이 없었다. 이 문서 갱신 시점의 구조 리팩터링도 해당 hardening을 포함하지 않는다. main 3c7648e22528은 empty bootstrap root라 session repository 코드가 존재하지 않는다.
 
-### 5. 중복 TLS fixture의 소유권 경계
+## 해결된 구조 정리 기록
 
-**판정:** 기능 회귀보다 테스트 지원 코드의 중복·drift를 줄이기 위한 구조 정리 후보.
+### 중복 TLS fixture의 소유권 경계 (W18 C28)
 
-**심각도:** 낮음~중간. production runtime에는 직접 영향이 없지만 동일한 TLS child fixture가 두 곳에서 진화해 테스트 의미와 유지보수 비용이 갈라질 수 있다.
+**처리 상태:** 해결됨. shared fixture가 OpenAI Responses의 connector-specific mode와 closed marker lifecycle을 포함한 전체 superset을 소유하고, OpenAI Responses transport lifecycle 테스트는 이를 직접 import한다.
 
-**근거:** shared/yo-test-support/src/local_tls.rs는 1222줄이고 local_tls_server.py도 둔다. docs/src/architecture/code-map.md는 yo-test-support가 dev-only bounded local TLS fixture와 child diagnostics를 소유한다고 기록하며, Kimi와 OpenRouter provider 테스트는 이 shared module을 import한다. 그런데 crates/connectors/openai-responses/src/tests/transport_lifecycle.rs는 별도 mod local_tls를 선언하고 crates/connectors/openai-responses/src/tests/transport_lifecycle/local_tls.rs 1274줄과 같은 이름의 local_tls_server.py 183줄을 함께 유지한다. 두 Rust fixture는 거의 동일한 기반을 가지지만 OpenAI Responses 사본에는 Status, EventThenStall, ErrorBodyThenStall, HeartbeatsThenStall, TlsHandshakeStall 같은 connector-specific mode와 closed marker 대기가 추가되어 있다. shared fixture 추출은 443ebd82에서 providers 경로에 대해 이미 이뤄졌고, OpenAI Responses 사본은 남았다.
+**역사적 발견:** 원래 기준에서는 shared/yo-test-support와 OpenAI Responses가 같은 TLS child mechanics를 각각 유지했다. OpenAI Responses 사본에는 Status, EventThenStall, ErrorBodyThenStall, HeartbeatsThenStall, TlsHandshakeStall mode와 closed marker 대기가 추가되어 있었고, 두 Rust fixture와 두 Python helper가 drift할 수 있었다. docs/src/architecture/code-map.md:48의 ownership 계약은 공통 process·TLS·bounded lifecycle mechanics를 shared support에 두도록 했다.
 
-**계약:** docs/src/architecture/code-map.md:48의 yo-test-support ownership에 따라 공통 fixture의 process·TLS·bounded lifecycle mechanics는 shared support가 소유하고, wire grammar와 connector-specific failure mode는 해당 connector 경계가 소유해야 한다. 두 번째 독립 TLS 구현이 같은 공통 동작을 복제한 채 drift하는 상태는 이 소유권을 불명확하게 만든다.
+**결과:** W18 C28 stages 1–4에서 shared fixture에 13개 mode, certificate validity checks, bounded child diagnostics, marker lifecycle을 모으고, OpenAI Responses의 local Rust fixture·Python helper·module declaration을 제거했다. OpenAI Responses에는 dev-only `yo-test-support` dependency와 직접 import만 남겼다. 원래 lifecycle 테스트는 유지됐다.
 
-**테스트 공백:** duplicate fixture나 Python helper의 재복제를 막는 test/CI 검사가 없다. shared와 OpenAI Responses fixture가 공통 lifecycle semantics를 유지하는지, connector-only mode를 shared로 옮길 때 기존 transport lifecycle 테스트가 모두 유지되는지를 확인할 parity 테스트도 없다.
+**보존된 테스트 공백:** 원래 기록에는 duplicate fixture·Python helper 재복제를 막는 CI detector와 shared/OpenAI parity test가 없다는 공백이 남아 있었다. 단일 shared owner로 drift 경로는 제거했지만 별도 duplicate-detector CI 검사는 추가하지 않았다.
 
-**시도 상태:** 443ebd82에서 shared/yo-test-support를 만들고 provider imports를 옮겼지만 OpenAI Responses의 local module과 script는 유지됐다. 중복 제거 또는 공통 helper와 connector wrapper로 나누는 후속 패치는 없다.
+**검증:** yo-test-support 12개, OpenAI Responses 46개, Kimi 19개, OpenRouter 22개, QwenCloud 15개 runtime tests가 통과했다. 현재는 shared fixture가 단일 소유 경계다.
 
-**다음 결정:** OpenAI Responses의 추가 mode를 shared fixture로 승격해 local Rust/Python 사본을 제거할지, shared mechanics 위에 작은 connector-specific wrapper만 남길지 결정한다. wire grammar와 stall mode의 소유자를 먼저 정하고, 그 결정에 맞춰 dev-dependency·module import·기존 lifecycle 테스트를 한 번에 정리한다.
-
-**main 통합 상태:** 중복 fixture와 provider shared extraction은 원래 발견 기준 develop d21a457e6780의 코드 경계에서 확인된다. main 3c7648e22528은 empty bootstrap root라 해당 코드가 존재하지 않으며, 원래 발견 기준 develop에도 OpenAI Responses 사본 제거는 없었다. 이 문서 갱신 시점의 구조 리팩터링도 사본 제거를 포함하지 않는다.
+**통합 상태:** W18 C28 stages 1–4는 `refactor/w18-shared-local-tls`에서 구현·검증됐다. main 3c7648e22528은 empty bootstrap root라는 원래 기록은 유지하며, 이 branch의 통합은 별도 절차로 진행한다.
 
 ## 완료된 범위 이탈 기록
 
@@ -108,6 +106,6 @@
 
 ## 재개 순서
 
-재개할 때는 먼저 AgentSession ae6b9113과 session NOFOLLOW 82e3df13을 이후 변경까지 반영한 현재 통합 develop에 맞춰 재기반화하고 집중 동시성·저장소 테스트를 추가한다. 그 다음 credential b44cc324의 상대 YO_CONFIG 정책을 정한 후 end-to-end 회귀를 추가한다. command TOCTOU는 보장 범위를 먼저 결정해야 하며, TLS fixture는 소유권 결정을 기준으로 별도 테스트 지원 정리를 진행한다.
+재개할 때는 먼저 AgentSession ae6b9113과 session NOFOLLOW 82e3df13을 이후 변경까지 반영한 현재 통합 develop에 맞춰 재기반화하고 집중 동시성·저장소 테스트를 추가한다. 그 다음 credential b44cc324의 상대 YO_CONFIG 정책을 정한 후 end-to-end 회귀를 추가한다. command TOCTOU는 보장 범위를 먼저 결정해야 한다.
 
-이 문서 작성에서는 Cargo, Rust source, production configuration을 변경하지 않았다. 후속 구현은 각 항목의 다음 결정이 확정된 뒤 별도 커밋으로 수행한다.
+이번 갱신과 함께 W18 C28의 테스트 fixture Cargo·Rust source 변경은 별도 커밋으로 수행했고 production configuration은 변경하지 않았다. 남은 보류 항목의 후속 구현은 각 항목의 다음 결정이 확정된 뒤 별도 커밋으로 수행한다.

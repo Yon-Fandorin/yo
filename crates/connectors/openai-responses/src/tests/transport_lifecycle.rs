@@ -10,10 +10,8 @@ use yo_core::{
     ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
     ModelConnectorTerminal, ModelId, NormalizedEndpoint, ProviderId, RequestToolExposure,
 };
+use yo_test_support::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
 
-mod local_tls;
-
-use self::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
 use crate::OpenAiResponsesConnector;
 
 fn event(value: Value) -> String {
