@@ -81,7 +81,10 @@ pub(super) fn approval_decisions(
     Ok((decisions, false))
 }
 
-pub(super) fn approval_choice(value: &Value, command: bool) -> Option<ApprovalChoice> {
+pub(in crate::runtime::events) fn approval_choice(
+    value: &Value,
+    command: bool,
+) -> Option<ApprovalChoice> {
     if !command && !value.is_string() {
         return None;
     }

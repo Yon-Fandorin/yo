@@ -17,7 +17,7 @@ use super::{
 };
 use crate::protocol;
 
-pub(super) fn wire_key(value: &Value) -> Result<String, BackendFailure> {
+pub(in crate::runtime::events) fn wire_key(value: &Value) -> Result<String, BackendFailure> {
     serde_json::to_string(value)
         .map_err(|error| protocol::protocol_failure(format!("invalid Codex request id: {error}")))
 }
