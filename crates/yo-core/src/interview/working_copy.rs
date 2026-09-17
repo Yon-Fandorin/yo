@@ -154,11 +154,6 @@ impl WorkingCopy {
         for (q, a) in capture.questions.iter().zip(&self.answers) {
             text.push_str(&q.prompt);
             text.push('\n');
-            text.push_str(&q.question);
-            text.push('\n');
-            for o in &q.options {
-                text.push_str(&format!("{}. {} — {}\n", o.id, o.label, o.description));
-            }
             if let Some(id) = &a.option_id {
                 let option = q
                     .options

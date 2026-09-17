@@ -382,6 +382,50 @@ fn reopen_retains_original_and_preview_limits_use_utf8_bytes() {
     assert!(copy.encode().is_err());
 }
 
+// 캡처된 원문 prompt가 질문과 선택지를 이미 포함하므로 복구 preview는 원문과
+// 편집 답안을 각각 한 번만 보여 준다.
+#[test]
+fn preview_does_not_duplicate_the_captured_question() {
+    let question = InterviewQuestion {
+        id: "q1".into(),
+        prompt: "제목\n\n어떤 답인가요?\n1. 선택 — 설명".into(),
+        question: "어떤 답인가요?".into(),
+        options: vec![InterviewOption {
+            id: "1".into(),
+            label: "선택".into(),
+            description: "설명".into(),
+        }],
+        allow_free_text: true,
+        allow_notes: true,
+        is_secret: false,
+    };
+    let capture = Capture::batch(request(1), vec![question]).unwrap();
+    let mut catalog = InterviewCatalog::default();
+    event(
+        &mut catalog,
+        AgentEvent::ActivityStarted {
+            activity: request(1).activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: request(1).request_id(),
+            },
+        },
+    );
+    event(
+        &mut catalog,
+        AgentEvent::ActivityUpdated {
+            activity: request(1).activity(),
+            update: ActivityUpdate::TextSnapshot(capture.to_snapshot().unwrap()),
+        },
+    );
+    let mut copy = WorkingCopy::new(&catalog.interviews()[0]).unwrap();
+    copy.answers[0].option_id = Some("1".into());
+
+    assert_eq!(
+        copy.preview(&catalog).unwrap(),
+        "Interview questions and editable answers\n\n제목\n\n어떤 답인가요?\n1. 선택 — 설명\nAnswer: 선택\n\n"
+    );
+}
+
 // 동시에 같은 generation을 쓰는 두 저장소 중 한 게시만 성공하며 파일은 완전한 정본이다.
 #[test]
 fn simultaneous_writers_publish_one_generation() {

@@ -442,6 +442,48 @@ fn local_numeric_answer_retains_notes() {
     );
 }
 
+// 복구 화면은 질문과 선택지를 포함한 원문 prompt를 구조화 필드에서 다시
+// 덧붙이지 않고 한 번만 보여 준다.
+#[test]
+fn recovered_document_does_not_duplicate_captured_prompt() {
+    let fixture = Fixture::new(false);
+    let original = &fixture.catalog.interviews()[0];
+    let mut question = original.questions[0].clone();
+    question.prompt = "제목\n\n질문\n1. 선택 — 설명".into();
+    question.options = vec![interview::InterviewOption {
+        id: "1".into(),
+        label: "선택".into(),
+        description: "설명".into(),
+    }];
+    let capture = Capture::batch(original.interview, vec![question]).unwrap();
+    let mut catalog = InterviewCatalog::default();
+    for event in [
+        AgentEvent::ActivityStarted {
+            activity: original.interview.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: original.interview.request_id(),
+            },
+        },
+        AgentEvent::ActivityUpdated {
+            activity: original.interview.activity(),
+            update: yo_core::ActivityUpdate::TextSnapshot(capture.to_snapshot().unwrap()),
+        },
+    ] {
+        catalog.observe_committed(&TranscriptRecord::EventCommitted(event));
+    }
+    let copy = WorkingCopy::new(&catalog.interviews()[0]).unwrap();
+    let repo = InterviewRepository::open(&fixture.root).unwrap();
+    repo.save(&copy, None, &catalog).unwrap();
+    let mut controller =
+        super::super::interview::InterviewController::new(repo, Box::new(Host(catalog)));
+
+    let document = controller
+        .command(&format!("recover {}", copy.copy_id), false)
+        .unwrap()
+        .document;
+    assert_eq!(document.matches("1. 선택 — 설명").count(), 1);
+}
+
 struct UnconfirmedHost(InterviewCatalog);
 impl crate::InterviewHistoryHost for UnconfirmedHost {
     fn resolve(
@@ -1054,4 +1096,162 @@ fn typed_interview_command_prefix_does_not_overwrite_answer() {
         ""
     );
     assert!(state.interview_conversation.is_none());
+}
+
+// 복구된 답안을 Ctrl+U로 비운 뒤 명령을 입력해도 빈 편집 전환이 저장된 답안을
+// 지우지 않으며, 명시적인 send는 그 답안을 새 대화에 그대로 전달한다.
+#[test]
+fn clearing_answer_to_enter_send_preserves_committed_answer() {
+    let fixture = Fixture::new(false);
+    let mut state = fixture.state();
+    command(
+        &mut state,
+        &format!("/interview recover {}", fixture.copy.copy_id),
+    );
+    command(&mut state, "기존 답안");
+
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('u'), KeyModifiers::CONTROL),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(state.editor.text().is_empty());
+    for character in "/interview send".chars() {
+        assert_eq!(
+            state
+                .handle(
+                    key(KeyCode::Character(character), KeyModifiers::NONE),
+                    Duration::ZERO,
+                )
+                .unwrap(),
+            StateEffect::Redraw
+        );
+    }
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Exit
+    );
+    assert!(
+        state
+            .interview_conversation
+            .as_ref()
+            .unwrap()
+            .preview
+            .contains("Answer: 기존 답안")
+    );
+}
+
+// 편집 가능한 preview를 Ctrl+C로 비운 뒤 send 명령을 입력해도 마지막으로 확인한
+// preview가 유지되며 빈 문자열로 대체되지 않는다.
+#[test]
+fn clearing_preview_to_enter_send_preserves_committed_preview() {
+    let fixture = Fixture::new(false);
+    let mut state = fixture.state();
+    command(
+        &mut state,
+        &format!("/interview recover {}", fixture.copy.copy_id),
+    );
+    command(&mut state, "기존 답안");
+    command(&mut state, "/interview preview");
+    let preview = state.editor.text().to_owned();
+
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('c'), KeyModifiers::CONTROL),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(state.editor.text().is_empty());
+    for character in "/interview send".chars() {
+        state
+            .handle(
+                key(KeyCode::Character(character), KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Exit
+    );
+    assert_eq!(
+        state.interview_conversation.as_ref().unwrap().preview,
+        preview
+    );
+}
+
+// 빈 편집 버퍼는 slash 명령 입력 동안 기존 값을 보존하지만, 사용자가 Enter를
+// 명시적으로 누르면 빈 답안을 작업 사본에 확정한다.
+#[test]
+fn empty_answer_is_committed_only_by_explicit_enter() {
+    let fixture = Fixture::new(false);
+    let mut state = fixture.state();
+    command(
+        &mut state,
+        &format!("/interview recover {}", fixture.copy.copy_id),
+    );
+    command(&mut state, "기존 답안");
+    state
+        .handle(
+            key(KeyCode::Character('u'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(
+        InterviewRepository::open(&fixture.root)
+            .unwrap()
+            .load(&fixture.copy.copy_id)
+            .unwrap()
+            .unwrap()
+            .answers[0]
+            .text,
+        ""
+    );
+}
+
+// 빈 preview도 Enter로 명시적으로 확정할 수 있으며 이후 send는 이전 preview를
+// 되살리지 않고 확정된 빈 preview를 사용한다.
+#[test]
+fn empty_preview_is_committed_only_by_explicit_enter() {
+    let fixture = Fixture::new(false);
+    let mut state = fixture.state();
+    command(
+        &mut state,
+        &format!("/interview recover {}", fixture.copy.copy_id),
+    );
+    command(&mut state, "기존 답안");
+    command(&mut state, "/interview preview");
+    state
+        .handle(
+            key(KeyCode::Character('c'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(command(&mut state, "/interview send"), StateEffect::Exit);
+    assert_eq!(state.interview_conversation.as_ref().unwrap().preview, "");
 }

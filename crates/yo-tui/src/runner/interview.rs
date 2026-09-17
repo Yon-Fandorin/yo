@@ -256,6 +256,12 @@ impl InterviewController {
     ) {
         let literal = self.editing && text.starts_with("//");
         let text = if literal { &text[1..] } else { text };
+        // Clearing the editor is also how users make room for an interview
+        // command. Keep the last committed answer or preview during that
+        // transition; explicit interview commands own deliberate resets.
+        if self.editing && text.is_empty() {
+            return;
+        }
         if (!literal && text.starts_with('/'))
             || self.pending.as_ref().is_some_and(|pending| {
                 self.copy
@@ -741,17 +747,13 @@ impl InterviewController {
         let q = &capture.questions[index];
         let a = &copy.answers[index];
         let mut text = format!(
-            "Interview copy {} · {}\n\nQuestion {} of {}\n{}\n{}\n",
+            "Interview copy {} · {}\n\nQuestion {} of {}\n{}\n",
             copy.copy_id,
             self.status,
             index + 1,
             capture.questions.len(),
             q.prompt,
-            q.question
         );
-        for o in &q.options {
-            text.push_str(&format!("{}. {} — {}\n", o.id, o.label, o.description));
-        }
         text.push_str(&format!("\nAnswer: {}\nNotes: {}\n\nEdit locally; /interview preview then /interview send starts a new conversation.",a.option_id.as_deref().unwrap_or(&a.text),a.notes));
         Ok(text)
     }

@@ -495,6 +495,20 @@ impl TuiState {
                 _ => {},
             }
         }
+        if self.is_editing_interview()
+            && self.editor.text().is_empty()
+            && matches!(&input, InputEvent::Key(key)
+                if key.code == KeyCode::Enter
+                    && key.modifiers == KeyModifiers::NONE
+                    && key.action == KeyAction::Press)
+        {
+            let result = self
+                .interview
+                .as_mut()
+                .expect("editing interview controller")
+                .local_enter("");
+            return self.apply_interview_command(result, "");
+        }
         let previous_text = self.editor.text().to_owned();
         let previous_cursor = self.editor.cursor_byte_index();
         let effect = self.editor.handle(input, self.active_turn.is_some(), now);

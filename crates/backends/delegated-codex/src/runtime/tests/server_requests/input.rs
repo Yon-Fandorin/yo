@@ -47,6 +47,13 @@ fn answers_codex_questions_sequentially_with_exact_wire_ids() {
         else {
             panic!("question prompt")
         };
+        let Capture::Batch { questions, .. } = Capture::from_snapshot(&prompt).unwrap() else {
+            panic!("complete interview capture")
+        };
+        assert!(questions[0].prompt.starts_with("Scope\n\nWhich area?"));
+        assert!(questions[0].prompt.contains("2. Runtime — Events"));
+        assert_eq!(questions[0].question, "Which area?");
+        assert_eq!(questions[0].options[1].label, "Runtime");
         let question = display_question(&prompt).unwrap();
         assert_eq!(question.choices[1].label, "Runtime");
         assert_eq!(question.choices[1].description, "Events");
@@ -54,7 +61,6 @@ fn answers_codex_questions_sequentially_with_exact_wire_ids() {
             "This answer is recorded locally. All answers are sent after the final question."
         ));
         assert!(question.plain_text.contains("Question 1 of 2"));
-        assert!(prompt.contains("2. Runtime"));
         runtime
             .execute_command(AgentCommand::RespondToActivity {
                 request: first,
@@ -196,6 +202,10 @@ fn other_choice_matches_codex_semantics_and_preserves_free_text() {
             panic!("question prompt")
         };
         let expected_count = count + usize::from(other && count > 0);
+        let Capture::Batch { questions, .. } = Capture::from_snapshot(&prompt).unwrap() else {
+            panic!("complete interview capture")
+        };
+        assert_eq!(questions[0].options.len(), expected_count);
         if expected_count <= 64 {
             let profile = display_question(&prompt).unwrap();
             assert_eq!(profile.choices.len(), expected_count);
@@ -208,7 +218,7 @@ fn other_choice_matches_codex_semantics_and_preserves_free_text() {
             );
         } else {
             assert!(display_question(&prompt).is_none());
-            assert!(prompt.contains("65. None of the above"));
+            assert_eq!(questions[0].options[64].label, "None of the above");
         }
         let answer = if count == 0 {
             "Custom answer".to_owned()
