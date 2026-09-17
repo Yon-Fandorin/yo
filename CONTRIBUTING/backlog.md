@@ -92,7 +92,7 @@
 
 **검증:** yo-test-support 12개, OpenAI Responses 46개, Kimi 19개, OpenRouter 22개, QwenCloud 15개 runtime tests가 통과했다. 현재는 shared fixture가 단일 소유 경계다.
 
-**통합 상태:** W18 C28 stages 1–4는 `refactor/w18-shared-local-tls`에서 구현·검증됐다. main 3c7648e22528은 empty bootstrap root라는 원래 기록은 유지하며, 이 branch의 통합은 별도 절차로 진행한다.
+**통합 상태:** W18 C28 stages 1–4는 `refactor/w18-shared-local-tls`에서 구현·검증됐고, 커밋 `176384b0`으로 현재 develop과 후속 develop 체인에 통합됐다. main 3c7648e22528은 empty bootstrap root라는 원래 기록은 유지한다.
 
 ## 완료된 범위 이탈 기록
 
@@ -108,4 +108,4 @@
 
 재개할 때는 먼저 AgentSession ae6b9113과 session NOFOLLOW 82e3df13을 이후 변경까지 반영한 현재 통합 develop에 맞춰 재기반화하고 집중 동시성·저장소 테스트를 추가한다. 그 다음 credential b44cc324의 상대 YO_CONFIG 정책을 정한 후 end-to-end 회귀를 추가한다. command TOCTOU는 보장 범위를 먼저 결정해야 한다.
 
-이번 갱신과 함께 W18 C28의 테스트 fixture Cargo·Rust source 변경은 별도 커밋으로 수행했고 production configuration은 변경하지 않았다. 남은 보류 항목의 후속 구현은 각 항목의 다음 결정이 확정된 뒤 별도 커밋으로 수행한다.
+W18 C28은 테스트 fixture Cargo·Rust source의 구조만 정리했으며 production configuration과 런타임 행동은 변경하지 않은 채 커밋 `176384b0` 및 후속 develop 체인에 통합됐다. 남은 보류 항목의 후속 구현은 각 항목의 다음 결정이 확정된 뒤 별도 커밋으로 수행한다.
