@@ -6,12 +6,7 @@ use super::{
     },
     presentation::show_resume_picker,
 };
-use crate::{
-    application::live_selection as selection,
-    command,
-    interaction::diagnostic::AppError,
-    state::{config, storage},
-};
+use crate::{application::live_selection as selection, command, interaction::diagnostic::AppError};
 
 pub(super) fn resume_session(
     termination: &mut impl yo_tui::TerminationSource,
