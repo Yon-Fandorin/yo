@@ -12,28 +12,25 @@ use yo_core::{
 
 use super::{
     super::session::termination_requested,
-    failure::{
-        LaunchFailureSelection, ResumeFailureStage, handle_launch_failure,
-        require_exact_print_resume_binding,
-    },
+    failure::{handle_launch_failure, require_exact_print_resume_binding},
     model::{
         Launch, LaunchRequest, PreparedAgent, StartupFrontend, StartupOutcome, StartupSnapshots,
     },
     skills::{PreparedLocalSkills, prepare_local_skills},
 };
 use crate::{
-    application::{agent, output::write_cli_diagnostics},
+    application::{agent, live_selection as live, output::write_cli_diagnostics},
     command,
     execution::{image, model},
     interaction::diagnostic::{AppError, CliDiagnostic},
     state::storage,
 };
 
-pub(crate) fn prepare_agent(
+pub(in crate::application::runtime) fn prepare_agent(
     termination: &mut impl yo_tui::TerminationSource,
     cwd: &Path,
     options: &command::LiveOptions,
-    launch_failure_selection: LaunchFailureSelection,
+    launch_failure_selection: live::LiveSelection,
     read_only_storage: Option<&storage::LocalReadStorage>,
     snapshots: &mut StartupSnapshots<'_>,
     frontend: StartupFrontend,
@@ -49,7 +46,7 @@ pub(crate) fn prepare_agent(
     )
 }
 
-pub(crate) fn prepare_new_agent(
+pub(in crate::application::runtime) fn prepare_new_agent(
     termination: &mut impl yo_tui::TerminationSource,
     cwd: &Path,
     options: &command::LiveOptions,
@@ -60,14 +57,14 @@ pub(crate) fn prepare_new_agent(
         termination,
         cwd,
         options,
-        (LaunchFailureSelection::New, None),
+        (live::LiveSelection::New, None),
         snapshots,
         StartupFrontend::Terminal,
         LaunchRequest::Options(host_target),
     )
 }
 
-pub(crate) fn prepare_fork_agent(
+pub(in crate::application::runtime) fn prepare_fork_agent(
     termination: &mut impl yo_tui::TerminationSource,
     cwd: &Path,
     options: &command::LiveOptions,
@@ -84,7 +81,7 @@ pub(crate) fn prepare_fork_agent(
         termination,
         cwd,
         options,
-        (LaunchFailureSelection::New, None),
+        (live::LiveSelection::New, None),
         snapshots,
         StartupFrontend::Terminal,
         LaunchRequest::Fork(Box::new(parent)),
@@ -95,7 +92,7 @@ fn prepare_agent_with_target(
     termination: &mut impl yo_tui::TerminationSource,
     cwd: &Path,
     options: &command::LiveOptions,
-    failure_context: (LaunchFailureSelection, Option<&storage::LocalReadStorage>),
+    failure_context: (live::LiveSelection, Option<&storage::LocalReadStorage>),
     snapshots: &mut StartupSnapshots<'_>,
     frontend: StartupFrontend,
     request: LaunchRequest<'_>,
@@ -114,7 +111,7 @@ fn prepare_agent_with_target(
                 launch_failure_selection,
                 options.glyph_profile,
                 read_only_storage,
-                ResumeFailureStage::WritableStorage,
+                live::ResumeFailureStage::WritableStorage,
                 error,
             );
         },
@@ -151,7 +148,7 @@ fn prepare_agent_with_target(
                                 launch_failure_selection,
                                 options.glyph_profile,
                                 read_only_storage,
-                                ResumeFailureStage::Revalidation,
+                                live::ResumeFailureStage::Revalidation,
                                 error,
                             );
                         },
@@ -162,7 +159,7 @@ fn prepare_agent_with_target(
                             launch_failure_selection,
                             options.glyph_profile,
                             read_only_storage,
-                            ResumeFailureStage::Revalidation,
+                            live::ResumeFailureStage::Revalidation,
                             "the Session belongs to another workspace host",
                         );
                     }
@@ -188,7 +185,7 @@ fn prepare_agent_with_target(
                 launch_failure_selection,
                 options.glyph_profile,
                 read_only_storage,
-                ResumeFailureStage::RecordedWorkspace,
+                live::ResumeFailureStage::RecordedWorkspace,
                 session_cwd.display(),
             );
         }
@@ -212,7 +209,7 @@ fn prepare_agent_with_target(
                         launch_failure_selection,
                         options.glyph_profile,
                         read_only_storage,
-                        ResumeFailureStage::WorkspaceReferences,
+                        live::ResumeFailureStage::WorkspaceReferences,
                         error,
                     );
                 }
@@ -250,7 +247,7 @@ fn prepare_agent_with_target(
                 launch_failure_selection,
                 options.glyph_profile,
                 read_only_storage,
-                ResumeFailureStage::BackendSpawn,
+                live::ResumeFailureStage::BackendSpawn,
                 error,
             );
         },
@@ -313,7 +310,7 @@ fn prepare_agent_with_target(
                     launch_failure_selection,
                     options.glyph_profile,
                     read_only_storage,
-                    ResumeFailureStage::SkillReferences,
+                    live::ResumeFailureStage::SkillReferences,
                     error,
                 );
             },
@@ -356,7 +353,7 @@ fn prepare_agent_with_target(
                         launch_failure_selection,
                         options.glyph_profile,
                         read_only_storage,
-                        ResumeFailureStage::SkillReferences,
+                        live::ResumeFailureStage::SkillReferences,
                         error,
                     );
                 },
@@ -379,7 +376,7 @@ fn prepare_agent_with_target(
                             launch_failure_selection,
                             options.glyph_profile,
                             read_only_storage,
-                            ResumeFailureStage::BackendSpawn,
+                            live::ResumeFailureStage::BackendSpawn,
                             error,
                         );
                     },
@@ -401,7 +398,7 @@ fn prepare_agent_with_target(
                         launch_failure_selection,
                         options.glyph_profile,
                         read_only_storage,
-                        ResumeFailureStage::BackendSpawn,
+                        live::ResumeFailureStage::BackendSpawn,
                         error,
                     );
                 },
@@ -426,7 +423,7 @@ fn prepare_agent_with_target(
                             launch_failure_selection,
                             options.glyph_profile,
                             read_only_storage,
-                            ResumeFailureStage::BackendSpawn,
+                            live::ResumeFailureStage::BackendSpawn,
                             error,
                         );
                     },
@@ -465,7 +462,7 @@ fn prepare_agent_with_target(
                         launch_failure_selection,
                         options.glyph_profile,
                         read_only_storage,
-                        ResumeFailureStage::BackendSpawn,
+                        live::ResumeFailureStage::BackendSpawn,
                         error,
                     );
                 },
@@ -530,7 +527,7 @@ fn prepare_agent_with_target(
                         launch_failure_selection,
                         options.glyph_profile,
                         read_only_storage,
-                        ResumeFailureStage::NativeResume,
+                        live::ResumeFailureStage::NativeResume,
                         error,
                     );
                 },
@@ -588,7 +585,7 @@ fn prepare_agent_with_target(
     })))
 }
 
-pub(crate) fn require_supported_fork_binding(
+pub(in crate::application::runtime) fn require_supported_fork_binding(
     binding: &yo_core::BackendBindingEvidence,
 ) -> Result<(), AppError> {
     if binding.backend_kind() != "yo-managed-model"
@@ -607,7 +604,7 @@ pub(crate) fn require_supported_fork_binding(
     Ok(())
 }
 
-pub(crate) fn require_exact_fork_selection(
+pub(in crate::application::runtime) fn require_exact_fork_selection(
     selection: &model::StartupBackend,
 ) -> Result<(), AppError> {
     if selection.delegated_host().is_some() || selection.replaces_binding() {
@@ -618,7 +615,7 @@ pub(crate) fn require_exact_fork_selection(
     Ok(())
 }
 
-pub(crate) fn fork_descriptor(
+pub(in crate::application::runtime) fn fork_descriptor(
     cwd: &Path,
     host: WorkspaceHostId,
     parent: &yo_core::SessionDescriptor,

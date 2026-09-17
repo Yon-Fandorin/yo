@@ -33,21 +33,55 @@ pub(crate) enum LivePreparation {
     },
 }
 
-pub(super) use super::runtime::{ResumeFailureDisposition, ResumeFailureStage};
+/// Resume startup에서 실패한 위치를 기록하는 도메인 분류입니다.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResumeFailureStage {
+    WritableStorage,
+    Revalidation,
+    RecordedWorkspace,
+    WorkspaceReferences,
+    SkillReferences,
+    BackendSpawn,
+    NativeResume,
+}
 
-pub(super) fn classify_launch_failure(
+impl ResumeFailureStage {
+    const fn context(self) -> &'static str {
+        match self {
+            Self::WritableStorage => "opening writable local Yo storage failed",
+            Self::Revalidation => "revalidation failed",
+            Self::RecordedWorkspace => "the recorded workspace is unavailable",
+            Self::WorkspaceReferences => "starting workspace reference discovery failed",
+            Self::SkillReferences => "starting skill discovery failed",
+            Self::BackendSpawn => "starting the selected agent backend failed",
+            Self::NativeResume => "resuming the selected agent backend failed",
+        }
+    }
+}
+
+/// Resume 실패를 중단하거나 읽기 전용 결과로 전환한 정책입니다.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum ResumeFailureDisposition {
+    Abort(String),
+    ReadOnly {
+        session_id: SessionId,
+        reason: String,
+    },
+}
+
+/// 선택한 live 실행 종류와 실패 위치를 기존 fallback 정책으로 변환합니다.
+pub(crate) fn classify_launch_failure(
     selection: LiveSelection,
     stage: ResumeFailureStage,
     detail: impl fmt::Display,
 ) -> ResumeFailureDisposition {
-    let selection = match selection {
-        LiveSelection::New => super::runtime::LaunchFailureSelection::New,
+    let reason = format!("{}: {detail}", stage.context());
+    match selection {
         LiveSelection::Resume(session_id) => {
-            super::runtime::LaunchFailureSelection::Resume(session_id)
+            ResumeFailureDisposition::ReadOnly { session_id, reason }
         },
-        LiveSelection::Continue => super::runtime::LaunchFailureSelection::Continue,
-    };
-    super::runtime::classify_launch_failure(selection, stage, detail)
+        LiveSelection::New | LiveSelection::Continue => ResumeFailureDisposition::Abort(reason),
+    }
 }
 
 pub(crate) fn prepare(selection: LiveSelection, cwd: &Path) -> Result<LivePreparation, AppError> {

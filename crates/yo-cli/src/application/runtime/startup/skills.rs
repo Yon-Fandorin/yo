@@ -8,14 +8,14 @@ use yo_core::{
 use super::model::StartupFrontend;
 use crate::state::config;
 
-pub(crate) struct PreparedLocalSkills {
-    pub(crate) admission: Box<dyn InputAdmissionHost>,
-    pub(crate) references: Option<Box<dyn SkillReferenceProvider>>,
+pub(in crate::application::runtime) struct PreparedLocalSkills {
+    pub(in crate::application::runtime) admission: Box<dyn InputAdmissionHost>,
+    pub(in crate::application::runtime) references: Option<Box<dyn SkillReferenceProvider>>,
 }
 
 // 명시한 skill root는 선택한 Session workspace를 기준으로 해석합니다.
 // Skill instruction은 backend의 tool이나 sandbox capability를 바꾸지 않습니다.
-pub(crate) fn prepare_local_skills(
+pub(in crate::application::runtime) fn prepare_local_skills(
     config: &config::Config,
     workspace: &Path,
     host: WorkspaceHostId,

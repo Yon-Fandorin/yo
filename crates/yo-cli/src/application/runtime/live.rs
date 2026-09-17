@@ -13,8 +13,8 @@ use super::{
         codex_diagnostics::{CodexWarningCollector, publish_pending_codex_diagnostics},
         output::write_session_command_output,
     },
-    LaunchFailureSelection, LiveSession, SessionStep, StartupFrontend, StartupOutcome,
-    StartupSnapshots, frontend, shutdown_live_session, startup,
+    LiveSession, SessionStep, StartupFrontend, StartupOutcome, StartupSnapshots, frontend,
+    shutdown_live_session, startup,
 };
 use crate::{
     application::live_selection as live,
@@ -31,17 +31,14 @@ pub(in crate::application) fn run_live_session(
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let (launch_failure_selection, read_only_storage) =
         match live::prepare(domain_selection(options.selection), &cwd)? {
-            live::LivePreparation::New => (LaunchFailureSelection::New, None),
+            live::LivePreparation::New => (live::LiveSelection::New, None),
             live::LivePreparation::Resume {
                 session_id,
                 failure_selection,
                 storage,
             } => {
                 options.selection = command::LiveSelection::Resume(session_id);
-                (
-                    to_launch_failure_selection(failure_selection),
-                    Some(storage),
-                )
+                (failure_selection, Some(storage))
             },
             live::LivePreparation::ReadOnly {
                 session_id,
@@ -87,12 +84,12 @@ pub(in crate::application) fn run_live_session(
                     options.clone(),
                     launch_failure_selection,
                     read_only_storage.as_ref(),
-                    &mut StartupSnapshots {
-                        config: &config,
-                        credentials: &mut credentials,
-                        stored_preference: stored_preference.as_ref(),
-                        codex_warnings: &codex_warnings,
-                    },
+                    &mut StartupSnapshots::new(
+                        &config,
+                        &mut credentials,
+                        stored_preference.as_ref(),
+                        &codex_warnings,
+                    ),
                 )
             },
             shutdown_live_session,
@@ -166,7 +163,7 @@ fn run_generation(
     live: &mut Option<LiveSession>,
     cwd: &path::Path,
     options: command::LiveOptions,
-    launch_failure_selection: LaunchFailureSelection,
+    launch_failure_selection: live::LiveSelection,
     read_only_storage: Option<&storage::LocalReadStorage>,
     snapshots: &mut StartupSnapshots<'_>,
 ) -> Result<SessionStep, AppError> {
@@ -232,14 +229,6 @@ fn run_generation(
     }
 }
 
-fn to_launch_failure_selection(selection: live::LiveSelection) -> LaunchFailureSelection {
-    match selection {
-        live::LiveSelection::New => LaunchFailureSelection::New,
-        live::LiveSelection::Resume(session_id) => LaunchFailureSelection::Resume(session_id),
-        live::LiveSelection::Continue => LaunchFailureSelection::Continue,
-    }
-}
-
 fn start_new_session(
     termination: &mut impl yo_tui::TerminationSource,
     live: &mut Option<LiveSession>,
@@ -276,12 +265,12 @@ fn start_new_session(
         .active_host_execution
         .filter(|profile| profile.is_read_only_review())
         .map(|_| command::SandboxMode::ReadOnly);
-    let mut selected_snapshots = StartupSnapshots {
-        config: snapshots.config,
-        credentials: snapshots.credentials,
-        stored_preference: Some(&current.startup_target),
-        codex_warnings: snapshots.codex_warnings,
-    };
+    let mut selected_snapshots = StartupSnapshots::new(
+        snapshots.config,
+        snapshots.credentials,
+        Some(&current.startup_target),
+        snapshots.codex_warnings,
+    );
     let prepared = startup::prepare_new_agent(
         termination,
         &current.workspace,
@@ -375,12 +364,12 @@ fn fork_session(
         },
     };
     let options = saved_execution_options(options, command::LiveSelection::New);
-    let mut selected_snapshots = StartupSnapshots {
-        config: snapshots.config,
-        credentials: snapshots.credentials,
-        stored_preference: None,
-        codex_warnings: snapshots.codex_warnings,
-    };
+    let mut selected_snapshots = StartupSnapshots::new(
+        snapshots.config,
+        snapshots.credentials,
+        None,
+        snapshots.codex_warnings,
+    );
     let prepared = startup::prepare_fork_agent(
         termination,
         &current.workspace,
@@ -508,19 +497,19 @@ fn resume_session(
     }
     // Resume is selected solely by its stored binding; current-session overrides cannot leak.
     let options = saved_execution_options(options, command::LiveSelection::Resume(target));
-    let mut resumed_snapshots = StartupSnapshots {
-        config: snapshots.config,
-        credentials: snapshots.credentials,
-        stored_preference: None,
-        codex_warnings: snapshots.codex_warnings,
-    };
+    let mut resumed_snapshots = StartupSnapshots::new(
+        snapshots.config,
+        snapshots.credentials,
+        None,
+        snapshots.codex_warnings,
+    );
     // Continue's failure disposition aborts instead of writing archival stdout and closing
     // the terminal flow. The current live Session stays open and receives the exact error.
     let prepared = startup::prepare_agent(
         termination,
         &current.workspace,
         &options,
-        LaunchFailureSelection::Continue,
+        live::LiveSelection::Continue,
         None,
         &mut resumed_snapshots,
         StartupFrontend::Terminal,

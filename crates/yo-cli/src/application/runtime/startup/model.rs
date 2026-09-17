@@ -13,40 +13,43 @@ use crate::{
 
 /// 시작 결과를 소비할 프론트엔드 종류입니다.
 #[derive(Clone, Copy)]
-pub(crate) enum StartupFrontend {
+pub(in crate::application::runtime) enum StartupFrontend {
     Terminal,
     Print,
 }
 
 /// 하나의 live generation에서 공유하는 설정과 자격 증명 snapshot입니다.
-pub(crate) struct StartupSnapshots<'a> {
-    pub(crate) config: &'a config::Config,
-    pub(crate) credentials: &'a mut Option<yo_core::CredentialSnapshot>,
-    pub(crate) stored_preference: Option<&'a yo_core::StartupTarget>,
-    pub(crate) codex_warnings: &'a CodexWarningCollector,
+pub(in crate::application::runtime) struct StartupSnapshots<'a> {
+    pub(in crate::application::runtime) config: &'a config::Config,
+    pub(in crate::application::runtime) credentials: &'a mut Option<yo_core::CredentialSnapshot>,
+    pub(in crate::application::runtime) stored_preference: Option<&'a yo_core::StartupTarget>,
+    pub(in crate::application::runtime) codex_warnings: &'a CodexWarningCollector,
 }
 
 /// 프론트엔드가 소비할 backend와 Session 자원 묶음입니다.
-pub(crate) struct PreparedAgent {
-    pub(crate) is_resume: bool,
-    pub(crate) session_id: yo_core::SessionId,
-    pub(crate) inherited_history: Option<InheritedSessionHistory>,
-    pub(crate) agent: agent::TuiAgentConnection,
-    pub(crate) workspace: PathBuf,
-    pub(crate) workspace_references: Option<yo_core::LocalWorkspaceReferenceProvider>,
-    pub(crate) skill_references: Option<Box<dyn SkillReferenceProvider>>,
-    pub(crate) image_preparation: Box<dyn ImagePreparationHost>,
-    pub(crate) selection: execution_model::StartupBackend,
-    pub(crate) local_tool_registry: Option<local_tools::LocalToolRegistryRevision>,
-    pub(crate) execution_manifest_digest: Option<String>,
-    pub(crate) active_host: Option<yo_core::HostId>,
-    pub(crate) active_host_execution: Option<execution_model::DelegatedExecutionProfile>,
-    pub(crate) active_host_model: Option<execution_model::ActiveHostModel>,
-    pub(crate) host_catalogs: Vec<execution_model::HostCatalogObservation>,
+pub(in crate::application::runtime) struct PreparedAgent {
+    pub(in crate::application::runtime) is_resume: bool,
+    pub(in crate::application::runtime) session_id: yo_core::SessionId,
+    pub(in crate::application::runtime) inherited_history: Option<InheritedSessionHistory>,
+    pub(in crate::application::runtime) agent: agent::TuiAgentConnection,
+    pub(in crate::application::runtime) workspace: PathBuf,
+    pub(in crate::application::runtime) workspace_references:
+        Option<yo_core::LocalWorkspaceReferenceProvider>,
+    pub(in crate::application::runtime) skill_references: Option<Box<dyn SkillReferenceProvider>>,
+    pub(in crate::application::runtime) image_preparation: Box<dyn ImagePreparationHost>,
+    pub(in crate::application::runtime) selection: execution_model::StartupBackend,
+    pub(in crate::application::runtime) local_tool_registry:
+        Option<local_tools::LocalToolRegistryRevision>,
+    pub(in crate::application::runtime) execution_manifest_digest: Option<String>,
+    pub(in crate::application::runtime) active_host: Option<yo_core::HostId>,
+    pub(in crate::application::runtime) active_host_execution:
+        Option<execution_model::DelegatedExecutionProfile>,
+    pub(in crate::application::runtime) active_host_model: Option<execution_model::ActiveHostModel>,
+    pub(in crate::application::runtime) host_catalogs: Vec<execution_model::HostCatalogObservation>,
 }
 
 /// Startup이 준비한 Session의 최종 상태입니다.
-pub(crate) enum StartupOutcome {
+pub(in crate::application::runtime) enum StartupOutcome {
     Ready(Box<PreparedAgent>),
     Complete,
 }

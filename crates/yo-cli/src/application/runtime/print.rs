@@ -11,11 +11,12 @@ use super::{
         },
         output::write_command_output,
     },
-    LaunchFailureSelection, PreparedAgent, StartupFrontend, StartupOutcome, StartupSnapshots,
+    PreparedAgent, StartupFrontend, StartupOutcome, StartupSnapshots,
     session::termination_requested,
     shutdown_live_session, startup,
 };
 use crate::{
+    application::live_selection as live,
     command,
     execution::process,
     interaction::diagnostic::AppError,
@@ -53,14 +54,14 @@ pub(in crate::application) fn run_print_session(
                 termination,
                 &cwd,
                 &startup,
-                LaunchFailureSelection::New,
+                live::LiveSelection::New,
                 None,
-                &mut StartupSnapshots {
-                    config: &config,
-                    credentials: &mut credentials,
-                    stored_preference: stored_preference.as_ref(),
-                    codex_warnings: &codex_warnings,
-                },
+                &mut StartupSnapshots::new(
+                    &config,
+                    &mut credentials,
+                    stored_preference.as_ref(),
+                    &codex_warnings,
+                ),
                 StartupFrontend::Print,
             )?;
             let StartupOutcome::Ready(prepared) = outcome else {
