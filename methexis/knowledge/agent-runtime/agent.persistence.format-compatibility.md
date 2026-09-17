@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:f4ca4b7609b98d56467507322bfdbb2127cdeac104429b84c44e4d75a10d43cb
+    revision: sha256:8da60416212c5f52fe5c9be856534dcadbe06311e760372020cbf2393ee06885
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -159,6 +159,29 @@ references, zero or multiple selected skills, and absent or invalid instructions
 MUST fail closed. Activity user-input responses retain v1 only: v2 at that
 command position MUST be rejected by both live admission and persistence codecs.
 This extension does not authorize typed skill execution in question responses.
+
+### Redacted secret Activity-response extension
+
+This reviewed pre-release semantic v1 additively extends the closed
+`respond_to_activity.response` discriminator with
+`type: secret_input_submitted`. That response object contains exactly the
+`type` field and no value, text, hash, length, option, notes or nullable
+placeholder. It is a semantic receipt for the exact enclosing
+ActivityRequestRef after successful backend command acceptance; that return MAY
+only stage an intermediate answer, and only the final aggregate write and seal
+mean batch submission. It is not a replayable answer. Live command dispatch
+MUST reject this receipt variant regardless of its origin; only the Session
+runtime may create it after that successful backend command return.
+
+The process-local live response `secret_input` is outside the persistence
+grammar. Its value MUST be replaced by `secret_input_submitted` after the backend
+command returns successfully and before engine commit or Journal encoding. The
+codec MUST reject any attempt to encode the live form. Existing command and
+response variants retain their exact bytes. A preceding reader rejects the new
+closed response discriminator; there is no downgrade to ordinary UserInput,
+empty text, a redaction marker, Session reset or automatic migration. The
+physical `yo.session-record/v1` and semantic
+`yo.semantic-journal-commit/v1` envelopes remain unchanged.
 
 The execution host MUST validate the whole input under the explicit-reference
 contracts before attaching one immutable instruction snapshot from the same

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-004
-    revision: sha256:fa1cbcb15569dc696cd4015b0f5c8c50f1b08d43d709c31dd4fe27a731cf878d
+    revision: sha256:ee4f351128f49d0f86e9f4e43bf9e51d5519de90115069bc2acf840a2bdf96e0
 relations:
   depends_on:
     - agent.runtime.command-event-boundary
@@ -87,8 +87,61 @@ Both paths preserve the original history and distinguish submission from Turn
 completion.
 Reopening a submitted copy MUST remain a deliberate user action.
 
-Secret input, storage and recovery remain deferred. A secret question or
-secret-marked answer MUST NOT enter this working-copy or new-request path.
 Missing, unsupported, oversized or incomplete legacy capture MUST remain
 explicitly unavailable for complete interview recovery; the TUI MUST NOT infer
 unseen questions from presentation or optional backend Request Audit.
+
+## Live secret interview answers
+
+A secret answer MAY be admitted only for a current, exactly correlated Activity
+question whose typed backend-neutral presentation explicitly marks it secret.
+The answer's content MUST NOT be inspected to infer secrecy. This first profile
+admits only free-text secret questions with no choices and no notes. Unsupported,
+malformed or oversized secret presentation MUST fail closed before answer input
+is enabled and MUST NOT fall back to the ordinary plain-text editor. A frontend
+MUST wait for the request presentation before accepting question input, even
+when it has already observed the enclosing UserInputRequest Activity start.
+
+The TUI MUST collect a secret through a request-bound editor that does not use
+ordinary prompt history, kill/yank state, command or skill expansion, workspace
+references, attachments, notes, working-copy edits or preview text. It MUST
+render only a fixed public state such as `Not entered`, `Entered` or
+`Re-entry required`; rendering, cursor geometry and receipts MUST NOT reveal the
+answer or its length. Committed Unicode text and bracketed paste are literal
+answer bytes. Embedded newlines, slash-prefixed text, `@` and `$` text MUST NOT
+submit or activate another input path. Only an explicit submit key press for the
+currently presented request may submit. Leaving an unsubmitted secret question,
+cancelling the request, completing or interrupting its Turn, or replacing its
+request MUST discard the value. Returning to a secret question requires fresh
+entry. An individual secret is limited to 64 KiB of UTF-8 and all live secrets
+retained for one batch are limited to 256 KiB; the first excess byte rejects the
+input without truncation.
+
+The live response MUST carry the exact answer only to the backend that owns the
+same outstanding ActivityRequestRef. Before backend dispatch, existing bounded
+backpressure MAY retain that same request-bound intent. Once transport write is
+attempted, a failure or disconnect has an unknown delivery outcome: Yo MUST
+discard the value, MUST NOT automatically retry it and MUST reject another
+response attempt for that request. A successful backend command, including one that only stages an intermediate
+answer, permits only a payload-free semantic receipt to cross the command-commit
+and Journal boundary; only the final aggregate response write and final seal
+establish batch submission.
+For any batch containing secret questions, including an all-secret batch,
+earlier secret answers MAY remain process-local until the one final batch
+response is written; they MUST be discarded on final success,
+failure, cancellation or Turn termination.
+
+Restart and interview recovery restore public questions, public answers and
+submission evidence only. Each secret answer is restored as `Re-entry required`,
+without a value, hash or length, and can be entered again only for a new genuine
+live secret request. A working copy containing a secret question MUST reject the
+existing `send as a new conversation` action because that path is ordinary
+persisted StartTurn input and has no original outstanding Activity. It MUST NOT
+send an empty answer, a mask or a redaction label as a substitute.
+
+Yo MUST NOT directly copy the entered secret value into its input display,
+scrollback, Journal, interview working copy, preview, export, logs or
+diagnostics. Delivery to the requesting backend is intentional. Backend or
+provider retention, later model or tool output, the system clipboard, swap,
+process memory and crash dumps are outside this guarantee. Secret interview
+input is not credential storage and does not add OS keychain behavior.

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.observability-001
-    revision: sha256:90ca057adc03671aceb513c55fd9389d8bbf3776f4add64abb69acdaaa1bcbec
+    revision: sha256:2f83ce90f51023daa32e5e91ea93f1d82aec2ae5ffed96a6ada0e708fb0aa9c2
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -304,3 +304,65 @@ for that exact initial StartTurn. Only that latter path uses accepted model
 request identity. Both markers record submission, not Turn completion or
 successful execution; absent/volatile acceptance MUST remain unconfirmed and
 MUST NOT cause automatic retransmission.
+
+## Secret interview capture and redacted storage profiles
+
+The nonsecret v1 profiles above retain their exact bytes and meanings. A batch
+containing at least one secret question MUST instead use
+`yo.interview-capture/v2`; its working copy MUST use
+`yo.interview-working-copy/v2`. A v2 batch and later-question capture retains the
+v1 field order and bounds. Public questions retain the v1 question shape. A
+secret question has the same shape but MUST set `is_secret: true`,
+`allow_free_text: true`, `allow_notes: false` and `options: []`. A batch with no
+secret question is noncanonical under v2. A secret question MUST have a valid
+typed secret presentation before its request Activity is admitted; failure MUST
+NOT degrade to an ordinary text presentation.
+
+The v2 `accepted_answers` variant retains the v1 fields and correlations, but
+each ordered answer is exactly one of two closed shapes. A public answer is the
+unchanged v1 object `{question_id, option_id, text, notes}`. A secret answer is
+exactly `{question_id, secret: submitted}` in that writer order. It contains no
+value, hash, byte count, option, text or notes. Its corresponding
+`answer_responses` entry MUST identify the latest successful committed
+payload-free secret-input receipt for the exact secret question request and its
+completed UserInputResponse Activity. Recovery validates that correlation
+instead of comparing the unavailable answer bytes. Intermediate receipts remain
+partial observations; only the successful final aggregate response write and
+the existing final seal make the ordered batch submitted. A transport attempt
+that fails or becomes disconnected MUST NOT create that seal or authorize a
+retry, even if delivery may have occurred.
+
+The v2 working-copy object retains the v1 top-level field order, publication
+rules and 256-KiB whole-record bound. Its ordered public answers retain the v1
+shape. Each secret row is exactly `{question_id, secret: reentry_required}` and
+has no other fields. Encoding MUST be unable to accept a secret value, including
+when no capture catalog is available. The marker is public editable-state
+metadata, not an answer and not evidence of non-delivery. A v2 copy permits null
+submission or the existing `activity_response` submission evidence; it MUST
+reject `new_conversation`. Preview and export render only a fixed re-entry
+notice for the secret row. The ordinary StartTurn new-conversation dispatcher
+MUST reject every v2 copy and MUST NOT synthesize empty, masked or explanatory
+answer text.
+
+A live secret value is a non-serializable response payload with redacted debug
+presentation. After the exact backend command returns successfully, whether it only stages an
+intermediate answer or performs the final aggregate response write, the Session
+runtime MUST replace the live command value with the payload-free secret-input
+receipt before engine commit, Journal append, snapshot creation or any frontend
+event. The persistence codec
+MUST reject the live form. The backend adapter MAY retain each earlier secret value only in process memory,
+bound to its originating ActivityRequestRef and current secret-containing batch,
+including an all-secret batch, after that individual request completes and until
+the final aggregate response attempt. A newly dispatched live secret response
+still requires its exact request to be outstanding. Navigation back to a secret
+question removes its previous retained value and requires a new live receipt. Final write success, failure, cancellation and
+Turn termination discard all retained secret values. A Yo diagnostic MUST use
+static public wording after secret dispatch and MUST NOT include backend stderr
+or a backend failure string that could echo the value.
+
+Yo MUST NOT directly copy the entered secret value into its Journal, Request
+Audit, message or Activity text, Live Projection, capture/catalog, working copy,
+preview, transcript, chat, export, log or diagnostic. This restriction does not
+claim control over intentional backend delivery, backend/provider retention,
+later model/tool output, clipboard ownership, swap, process memory or crash
+dumps.
