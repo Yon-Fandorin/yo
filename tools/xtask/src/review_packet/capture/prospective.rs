@@ -3,7 +3,7 @@ use std::{ffi::OsString, path::Path, process::ExitCode};
 use super::{
     super::model::ContextResult, ContextCapture, ProspectiveCapture, activation, context, evidence,
 };
-use crate::review_protocol::Captured;
+use crate::review_protocol::{Captured, resolve_input_path};
 
 pub(in crate::review_packet) fn capture_prospective_context_with_request(
     repository: &Path,
@@ -123,8 +123,7 @@ fn capture_prospective_context(
         || checkpoint.hash != activation.checkpoint_hash
         || checkpoint.authority_basis_commit != result.trusted_commit
         || result_request.hash != activation_request.hash
-        || crate::review_protocol::resolve_input_path(repository, &result_request.path)
-            != activation_request_path
+        || resolve_input_path(repository, &result_request.path) != activation_request_path
         || result.predecessor_active_record_hash != activation.replace_active_hash
         || result.proposed_active_record_hash.as_deref()
             != Some(proposed_active_record.hash.as_str())

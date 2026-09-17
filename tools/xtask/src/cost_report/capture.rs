@@ -1,7 +1,7 @@
 use std::{fs, path, path::Path};
 
 use super::model::{Owners, Request};
-use crate::review_protocol;
+use crate::{bounded_file, review_protocol};
 
 pub(super) const SOURCE_LIMIT: usize = 4 * 1024 * 1024;
 
@@ -19,8 +19,7 @@ pub(super) fn revalidate_sources(request: &Request, workspace: &Path) -> Result<
     for (_, sources) in owner_sources(&request.owners) {
         for source in sources {
             let path = canonical_input(workspace, Path::new(&source.path))?;
-            let bytes =
-                crate::bounded_file::read_regular(&path, SOURCE_LIMIT, "Slice cost source")?;
+            let bytes = bounded_file::read_regular(&path, SOURCE_LIMIT, "Slice cost source")?;
             if review_protocol::digest(&bytes) != source.hash {
                 return Err(format!(
                     "Slice cost source changed before publication: {}",

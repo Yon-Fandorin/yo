@@ -11,7 +11,7 @@ use super::{
     },
     ContextCapture, evidence,
 };
-use crate::bounded_file;
+use crate::{bounded_file, review_protocol::Captured};
 
 pub(in crate::review_packet) fn capture_context(
     repository: &Path,
@@ -24,7 +24,7 @@ pub(in crate::review_packet) fn capture_context(
 pub(in crate::review_packet) fn capture_context_request(
     repository: &Path,
     request_path: &Path,
-) -> Result<crate::review_protocol::Captured, String> {
+) -> Result<Captured, String> {
     let relative = request_path.strip_prefix(repository).map_err(|_| {
         "Methexis ContextBuild request must be inside the candidate worktree".to_owned()
     })?;
@@ -49,7 +49,7 @@ pub(in crate::review_packet) fn capture_context_request(
 pub(in crate::review_packet) fn capture_context_with_request(
     repository: &Path,
     request_path: &Path,
-    request: crate::review_protocol::Captured,
+    request: Captured,
 ) -> Result<ContextCapture, String> {
     let result = resolve_context(request_path)?;
     if result.schema != "methexis.context-result/v1alpha1"
@@ -68,7 +68,7 @@ pub(in crate::review_packet) fn capture_context_with_request(
 
 pub(super) fn capture_context_artifacts(
     repository: &Path,
-    request: crate::review_protocol::Captured,
+    request: Captured,
     result: ContextResult,
 ) -> Result<ContextCapture, String> {
     evidence::require_repository_path(&result.context.path).map_err(|_| {
@@ -128,7 +128,7 @@ pub(super) fn capture_context_artifacts(
 #[cfg(test)]
 pub(in crate::review_packet) fn capture_context_from_result(
     repository: &Path,
-    request: crate::review_protocol::Captured,
+    request: Captured,
     result: ContextResult,
 ) -> Result<ContextCapture, String> {
     capture_context_artifacts(repository, request, result)

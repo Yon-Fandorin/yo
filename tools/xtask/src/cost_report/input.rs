@@ -1,4 +1,8 @@
-use std::{fs, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use super::{
     capture, measurements,
@@ -18,9 +22,9 @@ struct SchemaEnvelope {
 pub(super) struct LoadedRequest {
     pub(super) request: Request,
     pub(super) request_bytes: Vec<u8>,
-    pub(super) workspace: std::path::PathBuf,
-    pub(super) request_path: std::path::PathBuf,
-    pub(super) output: std::path::PathBuf,
+    pub(super) workspace: PathBuf,
+    pub(super) request_path: PathBuf,
+    pub(super) output: PathBuf,
     pub(super) sources: Vec<CapturedSource>,
 }
 
@@ -52,8 +56,8 @@ pub(super) fn load(
         ));
     }
 
-    let mut paths = std::collections::BTreeSet::new();
-    let mut identities = std::collections::BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    let mut identities = BTreeSet::new();
     let mut sources = Vec::new();
     for (owner, owner_sources) in capture::owner_sources(&request.owners) {
         for source in owner_sources {
@@ -141,7 +145,7 @@ fn validate_request(request: &Request) -> Result<(), String> {
     measurements::validate_owners(&request.owners)
 }
 
-fn canonical_output(workspace: &Path, output: &Path) -> Result<std::path::PathBuf, String> {
+fn canonical_output(workspace: &Path, output: &Path) -> Result<PathBuf, String> {
     let resolved = review_protocol::resolve_input_path(workspace, &output.to_string_lossy());
     let parent = resolved
         .parent()
