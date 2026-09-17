@@ -14,17 +14,17 @@ pub(super) use account::{
     decode_optional_account_identity,
 };
 pub(super) use bounds::{
-    protocol_failure, safe_user_agent, string_at, MAX_USER_AGENT_DISPLAY_BYTES,
-};
-pub(super) use initialize::{
-    decode_initialize, image_wire_version_supported, version_compatibility_warning,
-    InitializeResult,
+    MAX_USER_AGENT_DISPLAY_BYTES, protocol_failure, safe_user_agent, string_at,
 };
 pub use initialize::{CodexCompatibilityWarning, CodexWarning};
-pub(super) use message::{
-    classify, initialized_notification, request, server_error, server_response, Incoming,
+pub(super) use initialize::{
+    InitializeResult, decode_initialize, image_wire_version_supported,
+    version_compatibility_warning,
 };
-pub(super) use models::{decode_model_list, ModelImageModality, ModelListModel, ModelListPage};
+pub(super) use message::{
+    Incoming, classify, initialized_notification, request, server_error, server_response,
+};
+pub(super) use models::{ModelImageModality, ModelListModel, ModelListPage, decode_model_list};
 #[cfg(test)]
 use yo_core::BackendFailureKind;
 

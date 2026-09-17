@@ -3,7 +3,7 @@
 //! JSON-RPC shape은 이 모듈에서만 구성하고, 런타임 이벤트 상태는 호출자에게
 //! 남겨 둡니다.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use yo_core::BackendFailure;
 
 use super::bounds::protocol_failure;
