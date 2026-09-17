@@ -166,5 +166,16 @@ fn domain_selection(selection: command::LiveSelection) -> selection::LiveSelecti
     }
 }
 
+pub(super) fn saved_execution_options(
+    mut options: command::LiveOptions,
+    selection: command::LiveSelection,
+) -> command::LiveOptions {
+    options.selection = selection;
+    options.model = None;
+    options.no_tools = false;
+    options.sandbox = None;
+    options
+}
+
 #[cfg(test)]
 mod tests;

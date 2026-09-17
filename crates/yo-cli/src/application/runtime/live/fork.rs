@@ -7,7 +7,7 @@ use super::{
         session::{LiveSession, SessionStep, shutdown_live_session},
         startup::{self, StartupOutcome, StartupSnapshots},
     },
-    resume::saved_execution_options,
+    saved_execution_options,
 };
 use crate::{command, interaction::diagnostic::AppError, state::storage};
 

@@ -1,4 +1,4 @@
-use super::{command, presentation, resume};
+use super::{command, presentation, saved_execution_options};
 
 // 저장소가 아직 없는 머신에서 명시적 resume를 요청하면 내부 상태 오류 대신 요청한
 // Session ID가 없다는 기존 진단을 반환하고, 출력할 history를 만들지 않습니다.
@@ -39,7 +39,7 @@ fn saved_session_options_preserve_presentation_without_overriding_saved_executio
         command::LiveSelection::Resume(target),
         command::LiveSelection::New,
     ] {
-        let selected = resume::saved_execution_options(options.clone(), selection);
+        let selected = saved_execution_options(options.clone(), selection);
         assert_eq!(selected.selection, selection);
         assert!(selected.model.is_none());
         assert!(!selected.no_tools);

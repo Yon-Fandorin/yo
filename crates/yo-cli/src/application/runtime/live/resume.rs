@@ -5,6 +5,7 @@ use super::{
         startup::{self, StartupFrontend, StartupOutcome, StartupSnapshots},
     },
     presentation::show_resume_picker,
+    saved_execution_options,
 };
 use crate::{application::live_selection as selection, command, interaction::diagnostic::AppError};
 
@@ -91,15 +92,4 @@ pub(super) fn resume_session(
             .report_resume_cleanup_failure(error.to_string());
     }
     Ok(SessionStep::Continue)
-}
-
-pub(super) fn saved_execution_options(
-    mut options: command::LiveOptions,
-    selection: command::LiveSelection,
-) -> command::LiveOptions {
-    options.selection = selection;
-    options.model = None;
-    options.no_tools = false;
-    options.sandbox = None;
-    options
 }
