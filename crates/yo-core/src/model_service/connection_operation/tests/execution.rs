@@ -5,10 +5,9 @@ use super::{
     support::{CANDIDATE_SECRET, Fixture, account, candidate, provider},
 };
 use crate::model_service::{
-    AccountId, ApiCredential, ConnectionCredentialAction, ConnectionOperationError,
-    ConnectionOperationExecutionError, ConnectionOperationExecutionOutcome,
-    ConnectionOperationPhase, ConnectionOperationRepositoryKind,
-    LocalConnectionOperationRepositories, ProviderId, StartupTarget,
+    ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationExecutionError,
+    ConnectionOperationExecutionOutcome, ConnectionOperationPhase,
+    ConnectionOperationRepositoryKind, LocalConnectionOperationRepositories, StartupTarget,
 };
 
 mod commit;

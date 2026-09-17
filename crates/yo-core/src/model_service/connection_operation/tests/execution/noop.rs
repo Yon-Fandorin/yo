@@ -1,4 +1,5 @@
-use super::{commit::seed_credential, *};
+use super::*;
+use crate::model_service::ApiCredential;
 
 // 저널이 없으면 세 저장소를 만들거나 변경하지 않고 NoPendingOperation을 반환하며, 같은
 // session이 operation lock을 계속 보유해 호출자가 새 계획을 안전하게 이어갈 수 있습니다.
@@ -132,4 +133,15 @@ fn connect_repository_ahead_cut_points_catch_up_and_clear() {
         ));
         assert!(fixture.journal.capture().unwrap().is_none());
     }
+}
+
+fn seed_credential(fixture: &Fixture, value: &str) {
+    let mutation = fixture
+        .credentials
+        .prepare_set(&provider(), &account())
+        .unwrap();
+    fixture
+        .credentials
+        .commit(&mutation, Some(&ApiCredential::new(value).unwrap()))
+        .unwrap();
 }

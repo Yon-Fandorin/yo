@@ -253,19 +253,3 @@ pub(super) fn assert_journal_cut(fixture: &Fixture, step: RecoveryStep) {
         expected
     );
 }
-
-pub(super) fn seed_other_credential(fixture: &Fixture) {
-    let provider = ProviderId::new("openrouter").unwrap();
-    let account = AccountId::new("other").unwrap();
-    let mutation = fixture
-        .credentials
-        .prepare_set(&provider, &account)
-        .unwrap();
-    fixture
-        .credentials
-        .commit(
-            &mutation,
-            Some(&ApiCredential::new("other-secret").unwrap()),
-        )
-        .unwrap();
-}

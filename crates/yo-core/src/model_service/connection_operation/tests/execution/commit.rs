@@ -1,4 +1,5 @@
-use super::{observations::seed_other_credential, *};
+use super::*;
+use crate::model_service::{AccountId, ApiCredential, ProviderId};
 
 // disconnect remove에서 public만 planned인 두 합법 phase는 공개 상태를 먼저 인정한 뒤 exact
 // remove를 None candidate로 적용하며, credential까지 planned인 나머지 phase도 따라잡습니다.
@@ -292,13 +293,18 @@ fn acquired_directory_identity_rejects_swap_and_symlink_retarget_before_mutation
     }
 }
 
-pub(super) fn seed_credential(fixture: &Fixture, value: &str) {
+fn seed_other_credential(fixture: &Fixture) {
+    let provider = ProviderId::new("openrouter").unwrap();
+    let account = AccountId::new("other").unwrap();
     let mutation = fixture
         .credentials
-        .prepare_set(&provider(), &account())
+        .prepare_set(&provider, &account)
         .unwrap();
     fixture
         .credentials
-        .commit(&mutation, Some(&ApiCredential::new(value).unwrap()))
+        .commit(
+            &mutation,
+            Some(&ApiCredential::new("other-secret").unwrap()),
+        )
         .unwrap();
 }
