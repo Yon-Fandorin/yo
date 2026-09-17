@@ -1,24 +1,16 @@
 use std::{
     ffi::OsStr,
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, Error, ErrorKind, Seek, SeekFrom, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    path::{Component, Path, PathBuf},
-};
-
-use rustix::{
-    fs::{Mode, OFlags, open, openat},
-    io::Errno,
+    io::{BufRead, BufReader, ErrorKind, Seek, SeekFrom, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
 };
 
 use super::{
     super::{DurableRecordKind, RepositoryEntry, RepositoryError, RepositorySequence},
-    WireEntry,
+    wire::WireEntry,
 };
 use crate::SessionId;
-
-const DIRECTORY_MODE: u32 = 0o700;
-const FILE_MODE: u32 = 0o600;
 
 const LEGACY_WRITER_LOCK: &str = ".writer.lock";
 const APPEND_COORDINATOR_LOCK: &str = ".append.lock";
@@ -31,7 +23,7 @@ pub(super) struct LegacyWriterCompatibilityGuard {
 impl LegacyWriterCompatibilityGuard {
     pub(super) fn acquire(root: &Path) -> Result<Self, RepositoryError> {
         let path = root.join(LEGACY_WRITER_LOCK);
-        let file = open_lock_file(&path)?;
+        let file = super::security::open_lock_file(&path)?;
         match file.try_lock_shared() {
             Ok(()) => {},
             Err(fs::TryLockError::WouldBlock) => {
@@ -56,7 +48,7 @@ pub(super) struct SessionWriterLease {
 impl SessionWriterLease {
     pub(super) fn acquire(root: &Path, session_id: SessionId) -> Result<Self, RepositoryError> {
         let path = session_writer_lock_path(root, session_id);
-        let file = open_lock_file(&path)?;
+        let file = super::security::open_lock_file(&path)?;
         match file.try_lock() {
             Ok(()) => {},
             Err(fs::TryLockError::WouldBlock) => {
@@ -83,7 +75,7 @@ struct PendingAppendGuard {
 impl RootAppendGuard {
     pub(super) fn acquire(root: &Path) -> Result<Self, RepositoryError> {
         let path = root.join(APPEND_COORDINATOR_LOCK);
-        let file = open_lock_file(&path)?;
+        let file = super::security::open_lock_file(&path)?;
         file.lock()?;
         Ok(Self { file })
     }
@@ -123,102 +115,18 @@ fn session_writer_lock_path(root: &Path, session_id: SessionId) -> PathBuf {
     root.join(format!("{session_id}.writer.lock"))
 }
 
-fn open_lock_file(path: &Path) -> Result<File, RepositoryError> {
-    reject_symlink(path)?;
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .mode(FILE_MODE)
-        .open(path)?;
-    require_user_only_file(&file)?;
-    Ok(file)
-}
-
 fn exclusive_lock_is_active(path: &Path) -> Result<bool, RepositoryError> {
-    let Some(file) = open_readonly_regular(path)? else {
+    let Some(file) = super::security::open_readonly_regular(path)? else {
         return Ok(false);
     };
     exclusive_file_lock_is_active(&file)
 }
 
-pub(super) fn pin_reader_root(root: &Path) -> Result<File, RepositoryError> {
-    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    let mut directory = open("/", flags, Mode::empty()).map_err(Error::from)?;
-    for component in root.components() {
-        match component {
-            Component::RootDir | Component::CurDir => {},
-            Component::Normal(name) => {
-                directory = openat(&directory, name, flags, Mode::empty()).map_err(Error::from)?;
-            },
-            Component::ParentDir => {
-                directory = openat(&directory, "..", flags, Mode::empty()).map_err(Error::from)?;
-            },
-            _ => {
-                return Err(RepositoryError::Unavailable {
-                    message: "Session reader root must be a canonical absolute path".into(),
-                });
-            },
-        }
-    }
-    let file = File::from(directory);
-    require_user_only_file(&file)?;
-    Ok(file)
-}
-
-pub(super) fn open_readonly_regular_at(
-    root: &File,
-    name: &Path,
-) -> Result<Option<File>, RepositoryError> {
-    let opened = match openat(
-        root,
-        name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-        Mode::empty(),
-    ) {
-        Ok(file) => file,
-        Err(Errno::NOENT) => return Ok(None),
-        Err(error) => return Err(Error::from(error).into()),
-    };
-    let file = File::from(opened);
-    if !file.metadata()?.is_file() {
-        return Err(RepositoryError::Unavailable {
-            message: "Session repository entry is not a regular file".into(),
-        });
-    }
-    require_user_only_file(&file)?;
-    Ok(Some(file))
-}
-
 pub(super) fn tree_lock_is_active(root: &File, name: &Path) -> Result<bool, RepositoryError> {
-    match open_readonly_regular_at(root, name)? {
+    match super::security::open_readonly_regular_at(root, name)? {
         Some(file) => exclusive_file_lock_is_active(&file),
         None => Ok(false),
     }
-}
-
-/// Opens only an existing regular user-owned-permission file, without following links or waiting on
-/// FIFOs.
-pub(super) fn open_readonly_regular(path: &Path) -> Result<Option<File>, RepositoryError> {
-    let file = match OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    if !file.metadata()?.is_file() {
-        return Err(RepositoryError::Unavailable {
-            message: format!(
-                "Session repository entry is not a regular file: {}",
-                path.display()
-            ),
-        });
-    }
-    require_user_only_file(&file)?;
-    Ok(Some(file))
 }
 
 fn exclusive_file_lock_is_active(file: &File) -> Result<bool, RepositoryError> {
@@ -239,37 +147,17 @@ pub(super) struct ScanResult {
     durable_bytes: u64,
 }
 
-pub(super) fn prepare_root(root: &Path) -> Result<PathBuf, RepositoryError> {
-    if let Ok(metadata) = fs::symlink_metadata(root)
-        && metadata.file_type().is_symlink()
-    {
-        return Err(RepositoryError::Unavailable {
-            message: "Session repository root must not be a symbolic link".to_owned(),
-        });
-    }
-    fs::create_dir_all(root)?;
-    let metadata = fs::symlink_metadata(root)?;
-    if !metadata.is_dir() {
-        return Err(RepositoryError::Unavailable {
-            message: "Session repository root is not a directory".to_owned(),
-        });
-    }
-    fs::set_permissions(root, fs::Permissions::from_mode(DIRECTORY_MODE))?;
-    File::open(root)?.sync_all()?;
-    Ok(fs::canonicalize(root)?)
-}
-
 pub(super) fn append_line(root: &Path, path: &Path, encoded: &[u8]) -> Result<(), RepositoryError> {
-    reject_symlink(path)?;
+    super::security::reject_symlink(path)?;
     let existed = path.try_exists()?;
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .mode(FILE_MODE)
+        .mode(super::security::FILE_MODE)
         .open(path)?;
-    require_user_only_file(&file)?;
+    super::security::require_user_only_file(&file)?;
     let durable_bytes = file.metadata()?.len();
-    let pending = pending_path(path);
+    let pending = super::security::pending_path(path);
     let pending_guard = begin_pending_append(root, &pending, durable_bytes)?;
     let append = file
         .write_all(encoded)
@@ -309,8 +197,8 @@ pub(super) fn scan_entries(
     after: u64,
     limit: usize,
 ) -> Result<ScanResult, RepositoryError> {
-    reject_symlink(path)?;
-    reject_pending_append(path)?;
+    super::security::reject_symlink(path)?;
+    super::security::reject_pending_append(path)?;
     let file = match OpenOptions::new().read(true).write(repair_tail).open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -323,7 +211,7 @@ pub(super) fn scan_entries(
         },
         Err(error) => return Err(error.into()),
     };
-    require_user_only_file(&file)?;
+    super::security::require_user_only_file(&file)?;
 
     let mut reader = BufReader::new(file);
     let scan = scan_complete_entries(&mut reader, expected_session, after, limit)?;
@@ -391,16 +279,12 @@ pub(super) fn scan_complete_entries<R: BufRead>(
     })
 }
 
-fn pending_path(path: &Path) -> PathBuf {
-    path.with_extension("jsonl.pending")
-}
-
 fn begin_pending_append(
     root: &Path,
     pending: &Path,
     durable_bytes: u64,
 ) -> Result<PendingAppendGuard, RepositoryError> {
-    reject_symlink(pending)?;
+    super::security::reject_symlink(pending)?;
     if pending.try_exists()? {
         return Err(RepositoryError::Quarantined {
             message: format!(
@@ -410,14 +294,14 @@ fn begin_pending_append(
         });
     }
     let preparing = pending.with_extension("pending.preparing");
-    reject_symlink(&preparing)?;
+    super::security::reject_symlink(&preparing)?;
     if preparing.try_exists()? {
         fs::remove_file(&preparing)?;
     }
     let mut marker = OpenOptions::new()
         .create_new(true)
         .write(true)
-        .mode(FILE_MODE)
+        .mode(super::security::FILE_MODE)
         .open(&preparing)
         .map_err(|error| RepositoryError::Unavailable {
             message: format!(
@@ -446,41 +330,4 @@ fn clear_pending_append(root: &Path, pending: &Path) -> Result<(), RepositoryErr
     // but it cannot expose a failed append as committed.
     let _ = File::open(root).and_then(|directory| directory.sync_all());
     Ok(())
-}
-
-fn reject_pending_append(path: &Path) -> Result<(), RepositoryError> {
-    let pending = pending_path(path);
-    reject_symlink(&pending)?;
-    if pending.try_exists()? {
-        Err(RepositoryError::Quarantined {
-            message: format!(
-                "Session log is quarantined by an unfinished append at {}",
-                pending.display()
-            ),
-        })
-    } else {
-        Ok(())
-    }
-}
-
-pub(super) fn reject_symlink(path: &Path) -> Result<(), RepositoryError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(RepositoryError::Unavailable {
-            message: format!("symbolic links are not allowed at {}", path.display()),
-        }),
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
-    }
-}
-
-pub(super) fn require_user_only_file(file: &File) -> Result<(), RepositoryError> {
-    let mode = file.metadata()?.permissions().mode() & 0o777;
-    if mode & 0o077 == 0 {
-        Ok(())
-    } else {
-        Err(RepositoryError::Unavailable {
-            message: format!("Session repository file permissions {mode:o} are not user-only"),
-        })
-    }
 }

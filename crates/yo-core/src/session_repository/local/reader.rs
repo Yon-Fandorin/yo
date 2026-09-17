@@ -1,12 +1,15 @@
 #[cfg(test)]
 use std::env;
 #[cfg(test)]
+use std::fs;
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(test)]
 use std::process;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io::{BufReader, Cursor, Error, ErrorKind, Read, Seek, SeekFrom},
-    os::unix::fs::{MetadataExt, PermissionsExt},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use rustix::{
@@ -20,8 +23,7 @@ use super::{
         SessionTreeLimits, StoredSessionSummary,
     },
     file::{
-        legacy_writer_is_active, open_readonly_regular, open_readonly_regular_at,
-        pending_append_is_active, reject_symlink, require_user_only_file, scan_complete_entries,
+        legacy_writer_is_active, pending_append_is_active, scan_complete_entries,
         session_writer_is_active, tree_lock_is_active,
     },
     wire::WireEntry,
@@ -90,7 +92,7 @@ fn read_bounded_entries(
     budget: &mut TreeReadBudget,
     require_stable_file: bool,
 ) -> Result<Option<(Vec<RepositoryEntry>, StoredSessionSummary)>, RepositoryError> {
-    let Some(mut file) = open_readonly_regular_at(root, path)? else {
+    let Some(mut file) = super::security::open_readonly_regular_at(root, path)? else {
         return Ok(None);
     };
     let initial_metadata = file.metadata()?;
@@ -141,14 +143,12 @@ fn read_bounded_entries(
         // Match MetadataExt::dev's conversion of Apple's signed dev_t.
         #[cfg(target_vendor = "apple")]
         let current_device = current_device as u64;
-        if initial_metadata.dev() != current_device
-            || initial_metadata.ino() != current.st_ino
-            || initial_metadata.len() != final_metadata.len()
-            || initial_metadata.mtime() != final_metadata.mtime()
-            || initial_metadata.mtime_nsec() != final_metadata.mtime_nsec()
-            || initial_metadata.ctime() != final_metadata.ctime()
-            || initial_metadata.ctime_nsec() != final_metadata.ctime_nsec()
-        {
+        if !super::security::stable_file_metadata_matches(
+            &initial_metadata,
+            &final_metadata,
+            current_device,
+            current.st_ino,
+        ) {
             return Err(RepositoryError::Unavailable {
                 message: "historical fork file changed during its pinned capture".to_owned(),
             });
@@ -170,22 +170,6 @@ fn read_bounded_entries(
     Ok(Some((scan.entries, summary)))
 }
 
-pub(super) fn open_existing_root(root: &Path) -> Result<PathBuf, RepositoryError> {
-    reject_symlink(root)?;
-    let metadata = fs::symlink_metadata(root)?;
-    if !metadata.is_dir() {
-        return Err(RepositoryError::Unavailable {
-            message: "Session repository root is not a directory".to_owned(),
-        });
-    }
-    if metadata.permissions().mode() & 0o077 != 0 {
-        return Err(RepositoryError::Unavailable {
-            message: "Session repository directory permissions are not user-only".to_owned(),
-        });
-    }
-    Ok(fs::canonicalize(root)?)
-}
-
 pub(super) fn read_tail_discovery(
     root: &Path,
     path: &Path,
@@ -198,13 +182,13 @@ pub(super) fn read_tail_discovery(
     )>,
     RepositoryError,
 > {
-    reject_symlink(path)?;
+    super::security::reject_symlink(path)?;
     let mut file = match OpenOptions::new().read(true).open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    require_user_only_file(&file)?;
+    super::security::require_user_only_file(&file)?;
     let physical_len = file.metadata()?.len();
     let cutoff = guarded_cutoff(root, path, expected_session)?.unwrap_or(physical_len);
     if cutoff > physical_len {
@@ -227,13 +211,13 @@ pub(super) fn read_snapshot_entries(
     after: u64,
     limit: usize,
 ) -> Result<Option<Vec<RepositoryEntry>>, RepositoryError> {
-    reject_symlink(path)?;
+    super::security::reject_symlink(path)?;
     let file = match OpenOptions::new().read(true).open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    require_user_only_file(&file)?;
+    super::security::require_user_only_file(&file)?;
     let physical_len = file.metadata()?.len();
     let cutoff = guarded_cutoff(root, path, expected_session)?.unwrap_or(physical_len);
     if cutoff > physical_len {
@@ -253,8 +237,8 @@ fn guarded_tree_cutoff(
     session_id: SessionId,
 ) -> Result<Option<u64>, RepositoryError> {
     guarded_cutoff_with(
-        &pending_path(path),
-        |pending| open_readonly_regular_at(root, pending),
+        &super::security::pending_path(path),
+        |pending| super::security::open_readonly_regular_at(root, pending),
         || tree_lock_is_active(root, Path::new(&format!("{session_id}.writer.lock"))),
         || tree_lock_is_active(root, Path::new(".writer.lock")),
         |marker, pending| {
@@ -264,9 +248,12 @@ fn guarded_tree_cutoff(
                 Err(error) => return Err(Error::from(error).into()),
             };
             let opened = fstat(marker).map_err(Error::from)?;
-            Ok(Some(
-                opened.st_dev == current.st_dev && opened.st_ino == current.st_ino,
-            ))
+            Ok(Some(super::security::file_identity_matches(
+                opened.st_dev,
+                opened.st_ino,
+                current.st_dev,
+                current.st_ino,
+            )))
         },
     )
 }
@@ -277,11 +264,11 @@ fn guarded_cutoff(
     session_id: SessionId,
 ) -> Result<Option<u64>, RepositoryError> {
     guarded_cutoff_with(
-        &pending_path(path),
-        open_readonly_regular,
+        &super::security::pending_path(path),
+        super::security::open_readonly_regular,
         || session_writer_is_active(root, session_id),
         || legacy_writer_is_active(root),
-        marker_path_matches,
+        super::security::marker_path_matches,
     )
 }
 
@@ -298,17 +285,7 @@ fn guarded_cutoff_with(
         };
         let mut value = String::new();
         (&marker).take(65).read_to_string(&mut value)?;
-        if value.len() > 64 {
-            return Err(RepositoryError::Quarantined {
-                message: "Session append marker exceeds its bounded cutoff encoding".into(),
-            });
-        }
-        let cutoff = value
-            .trim()
-            .parse::<u64>()
-            .map_err(|_| RepositoryError::Quarantined {
-                message: "active Session append marker has an invalid durable cutoff".into(),
-            })?;
+        let cutoff = super::security::parse_pending_cutoff(&value)?;
         if (pending_append_is_active(&marker)? && session_active()?) || legacy_active()? {
             return Ok(Some(cutoff));
         }
@@ -328,27 +305,6 @@ fn guarded_cutoff_with(
     Err(RepositoryError::Unavailable {
         message: "Session append marker changed repeatedly while it was being observed".into(),
     })
-}
-
-fn marker_path_matches(marker: &File, pending: &Path) -> Result<Option<bool>, RepositoryError> {
-    let opened = marker.metadata()?;
-    let current = match fs::symlink_metadata(pending) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            return Err(RepositoryError::Unavailable {
-                message: format!("symbolic links are not allowed at {}", pending.display()),
-            });
-        },
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    Ok(Some(
-        opened.dev() == current.dev() && opened.ino() == current.ino(),
-    ))
-}
-
-fn pending_path(path: &Path) -> PathBuf {
-    path.with_extension("jsonl.pending")
 }
 
 fn last_complete_line(file: &mut File, cutoff: u64) -> Result<Option<Vec<u8>>, RepositoryError> {
@@ -419,13 +375,22 @@ mod tests {
             .expect("the first marker permissions are restricted");
         let opened = File::open(&pending).expect("the reader opens the first marker");
 
-        assert_eq!(marker_path_matches(&opened, &pending).unwrap(), Some(true));
+        assert_eq!(
+            super::super::security::marker_path_matches(&opened, &pending).unwrap(),
+            Some(true)
+        );
         fs::remove_file(&pending).expect("the first marker is removed");
-        assert_eq!(marker_path_matches(&opened, &pending).unwrap(), None);
+        assert_eq!(
+            super::super::security::marker_path_matches(&opened, &pending).unwrap(),
+            None
+        );
         fs::write(&pending, b"1\n").expect("the replacement marker is written");
         fs::set_permissions(&pending, fs::Permissions::from_mode(0o600))
             .expect("the replacement marker permissions are restricted");
-        assert_eq!(marker_path_matches(&opened, &pending).unwrap(), Some(false));
+        assert_eq!(
+            super::super::security::marker_path_matches(&opened, &pending).unwrap(),
+            Some(false)
+        );
 
         drop(opened);
         fs::remove_dir_all(root).expect("the test root is removed");
