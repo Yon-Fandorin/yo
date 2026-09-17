@@ -6,7 +6,7 @@ use yo_core::{
     session_repository::{StoredSession, StoredSessionUnavailableReason},
 };
 
-use super::{model::ReviewTarget, validate_target};
+use super::{model::ReviewTarget, request::validate_target};
 use crate::test_support;
 
 // 관리형 좌표와 위임형 host는 서로 다른 identity 공간을 사용하며 `host`를 Provider로
@@ -119,7 +119,7 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
         "connection_repository_path": "/tmp/connections.yaml"
     });
     let parsed: super::model::Request = serde_json::from_value(valid.clone()).unwrap();
-    super::validate_request(&parsed).unwrap();
+    super::request::validate(&parsed).unwrap();
     assert_eq!(
         super::model::result_schema(&parsed.schema),
         super::model::RESULT_SCHEMA
@@ -129,7 +129,7 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     stable["schema"] = "yo.external-review-target-admission-request/v1".into();
     let stable: super::model::Request = serde_json::from_value(stable).unwrap();
     assert!(
-        super::validate_request(&stable)
+        super::request::validate(&stable)
             .unwrap_err()
             .contains("v1alpha2")
     );
@@ -137,7 +137,7 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     let mut alpha2 = valid.clone();
     alpha2["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA2.into();
     let alpha2: super::model::Request = serde_json::from_value(alpha2).unwrap();
-    super::validate_request(&alpha2).unwrap();
+    super::request::validate(&alpha2).unwrap();
     assert_eq!(
         super::model::result_schema(&alpha2.schema),
         super::model::RESULT_SCHEMA_V1_ALPHA2
@@ -146,7 +146,7 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     let mut alpha3 = valid.clone();
     alpha3["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA3.into();
     let alpha3: super::model::Request = serde_json::from_value(alpha3).unwrap();
-    super::validate_request(&alpha3).unwrap();
+    super::request::validate(&alpha3).unwrap();
     assert_eq!(
         super::model::result_schema(&alpha3.schema),
         super::model::RESULT_SCHEMA_V1_ALPHA3
@@ -155,7 +155,7 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     let mut alpha4 = valid.clone();
     alpha4["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA4.into();
     let alpha4: super::model::Request = serde_json::from_value(alpha4).unwrap();
-    super::validate_request(&alpha4).unwrap();
+    super::request::validate(&alpha4).unwrap();
     assert_eq!(
         super::model::result_schema(&alpha4.schema),
         super::model::RESULT_SCHEMA_V1_ALPHA4
@@ -164,7 +164,7 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     let mut alpha5 = valid.clone();
     alpha5["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA5.into();
     let alpha5: super::model::Request = serde_json::from_value(alpha5).unwrap();
-    super::validate_request(&alpha5).unwrap();
+    super::request::validate(&alpha5).unwrap();
     assert_eq!(
         super::model::result_schema(&alpha5.schema),
         super::model::RESULT_SCHEMA_V1_ALPHA5
@@ -173,7 +173,7 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     let mut alpha6 = valid.clone();
     alpha6["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA6.into();
     let alpha6: super::model::Request = serde_json::from_value(alpha6).unwrap();
-    super::validate_request(&alpha6).unwrap();
+    super::request::validate(&alpha6).unwrap();
     assert_eq!(
         super::model::result_schema(&alpha6.schema),
         super::model::RESULT_SCHEMA_V1_ALPHA6
@@ -190,12 +190,12 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
 fn delegated_state_readiness_is_request_free_and_self_cleaning() {
     let temporary = test_support::unique_path("delegated-state-readiness");
     fs::create_dir_all(&temporary).unwrap();
-    super::probe_host_state_writable(&temporary).unwrap();
+    super::delegated::probe_host_state_writable(&temporary).unwrap();
     assert_eq!(fs::read_dir(&temporary).unwrap().count(), 0);
 
     let missing = temporary.join("missing");
     assert!(
-        super::probe_host_state_writable(&missing)
+        super::delegated::probe_host_state_writable(&missing)
             .unwrap_err()
             .contains("cannot inspect")
     );
@@ -225,7 +225,7 @@ fn grok_profile_readiness_uses_exact_request_free_argv() {
 if IFS= read -r unexpected; then exit 8; fi
 exit 0"#,
     );
-    super::probe_grok_read_only_startup(&script).unwrap();
+    super::delegated::probe_grok_read_only_startup(&script).unwrap();
     fs::remove_file(script).unwrap();
 }
 
@@ -238,7 +238,7 @@ fn grok_profile_readiness_reports_sandbox_startup_failure() {
         "grok-profile-unavailable",
         "echo 'cannot mask /run/containerd/containerd.sock'\necho 'could not apply the read-only sandbox profile' >&2\nexit 1",
     );
-    let error = super::probe_grok_read_only_startup(&script).unwrap_err();
+    let error = super::delegated::probe_grok_read_only_startup(&script).unwrap_err();
     assert!(error.contains("exited without success"));
     assert!(error.contains("cannot mask /run/containerd/containerd.sock"));
     assert!(error.contains("could not apply the read-only sandbox profile"));
@@ -271,7 +271,7 @@ fn only_typed_unavailability_failures_block_before_claim() {
         ModelRequestFailureKind::ModelUnavailable,
         ModelRequestFailureKind::LocalConfiguration,
     ] {
-        assert!(super::blocking_failure(kind));
+        assert!(super::managed::blocking_failure(kind));
     }
     for kind in [
         ModelRequestFailureKind::RateLimited,
@@ -282,7 +282,7 @@ fn only_typed_unavailability_failures_block_before_claim() {
         ModelRequestFailureKind::Protocol,
         ModelRequestFailureKind::ResponseLimit,
     ] {
-        assert!(!super::blocking_failure(kind));
+        assert!(!super::managed::blocking_failure(kind));
     }
 }
 
@@ -297,17 +297,17 @@ fn managed_failure_freshness_preserves_recent_and_frozen_blocking() {
     let now = Timestamp::from_second(1_800_000_000).unwrap();
     let recent = failure_at(
         ModelRequestFailureKind::AccessDenied,
-        now.as_second() - super::BLOCKING_FAILURE_FRESHNESS_SECONDS + 1,
+        now.as_second() - super::managed::BLOCKING_FAILURE_FRESHNESS_SECONDS + 1,
     );
-    let recent = super::observed_failure_availability(&recent, true, now);
+    let recent = super::managed::observed_failure_availability(&recent, true, now);
     assert_eq!(recent.state, "unavailable");
     assert_eq!(recent.failure_freshness, Some("recent"));
 
     let old = failure_at(
         ModelRequestFailureKind::AccessDenied,
-        now.as_second() - super::BLOCKING_FAILURE_FRESHNESS_SECONDS,
+        now.as_second() - super::managed::BLOCKING_FAILURE_FRESHNESS_SECONDS,
     );
-    let frozen = super::observed_failure_availability(&old, false, now);
+    let frozen = super::managed::observed_failure_availability(&old, false, now);
     assert_eq!(frozen.state, "unavailable");
     assert_eq!(frozen.failure_freshness, None);
 }
@@ -319,9 +319,9 @@ fn stale_blocking_failure_allows_exactly_one_original_revalidation() {
     let now = Timestamp::from_second(1_800_000_000).unwrap();
     let failure = failure_at(
         ModelRequestFailureKind::Authentication,
-        now.as_second() - super::BLOCKING_FAILURE_FRESHNESS_SECONDS,
+        now.as_second() - super::managed::BLOCKING_FAILURE_FRESHNESS_SECONDS,
     );
-    let availability = super::observed_failure_availability(&failure, true, now);
+    let availability = super::managed::observed_failure_availability(&failure, true, now);
     assert_eq!(availability.state, "unknown");
     assert_eq!(availability.failure_freshness, Some("stale"));
     assert!(availability.detail.contains("exactly once"));
@@ -337,15 +337,15 @@ fn future_and_nonblocking_failures_do_not_expand_retry_authority() {
         ModelRequestFailureKind::ModelUnavailable,
         now.as_second() + 1,
     );
-    let future = super::observed_failure_availability(&future, true, now);
+    let future = super::managed::observed_failure_availability(&future, true, now);
     assert_eq!(future.state, "unavailable");
     assert_eq!(future.failure_freshness, Some("recent"));
 
     let transient = failure_at(
         ModelRequestFailureKind::RateLimited,
-        now.as_second() - 10 * super::BLOCKING_FAILURE_FRESHNESS_SECONDS,
+        now.as_second() - 10 * super::managed::BLOCKING_FAILURE_FRESHNESS_SECONDS,
     );
-    let transient = super::observed_failure_availability(&transient, true, now);
+    let transient = super::managed::observed_failure_availability(&transient, true, now);
     assert_eq!(transient.state, "unknown");
     assert_eq!(transient.failure_freshness, Some("stale"));
 }
