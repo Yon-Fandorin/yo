@@ -227,7 +227,7 @@ fn abandon_and_preserve_execution_interruptions_converge_without_credential_muta
     }
 }
 
-pub(super) fn recover_until(
+fn recover_until(
     fixture: &Fixture,
     step: RecoveryStep,
 ) -> Result<ConnectionOperationExecutionOutcome, ConnectionOperationExecutionError> {
@@ -237,7 +237,7 @@ pub(super) fn recover_until(
         .recover_pending_operation_until(step)
 }
 
-pub(super) fn assert_journal_cut(fixture: &Fixture, step: RecoveryStep) {
+fn assert_journal_cut(fixture: &Fixture, step: RecoveryStep) {
     let expected = match step {
         RecoveryStep::JournalAdvanced(phase) => Some(phase),
         RecoveryStep::PublicCommitted => Some(ConnectionOperationPhase::CredentialCommitted),
