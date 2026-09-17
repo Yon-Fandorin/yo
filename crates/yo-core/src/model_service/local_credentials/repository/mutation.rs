@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
 use super::{
     super::super::LocalCredentialStoreError,
     model::{CredentialRevision, CredentialSnapshot},
@@ -135,8 +137,8 @@ impl PreparedAccountSessionMutation {
     }
 }
 
-impl std::fmt::Debug for PreparedCredentialMutation {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for PreparedCredentialMutation {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         formatter
             .debug_struct("PreparedCredentialMutation")
             .field("expected_revision", &self.expected_revision)
@@ -148,8 +150,8 @@ impl std::fmt::Debug for PreparedCredentialMutation {
     }
 }
 
-impl std::fmt::Debug for PreparedAccountSessionMutation {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for PreparedAccountSessionMutation {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         formatter
             .debug_struct("PreparedAccountSessionMutation")
             .field("expected_revision", &self.expected_revision)
