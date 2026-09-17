@@ -1,10 +1,12 @@
 //! Grok configuration and bounded-review admission checks.
 
-use std::{env, ffi::OsStr, io::ErrorKind, process};
+use std::{env, ffi::OsStr};
 #[cfg(target_os = "linux")]
 use std::{
     fs::{self, OpenOptions},
+    io::ErrorKind,
     path::Path,
+    process,
     sync::atomic::{AtomicU64, Ordering},
 };
 
