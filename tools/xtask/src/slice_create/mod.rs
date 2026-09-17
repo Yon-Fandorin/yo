@@ -13,7 +13,7 @@ use lock::acquire_bootstrap_lock;
 use result::Effect;
 use result::{Effects, NextAction, ResultRecord, encode_failure};
 
-use crate::{slice_contract, slice_worktree};
+use crate::{bounded_file, slice_contract, slice_worktree};
 
 pub(crate) fn run(repository: &Path, source_path: &Path) -> Result<(), String> {
     let bytes = match request::read_contract(source_path) {
