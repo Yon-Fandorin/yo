@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-use super::{InputReference, UserInputError};
+use super::UserInputError;
 use crate::InputImageSnapshot;
 
 /// One immutable attachment bound to its visible marker and original source-byte charge.
@@ -157,44 +157,6 @@ impl InputImage {
     /// Optional source facts; never part of model projection.
     pub const fn display(&self) -> Option<&InputImageDisplay> {
         self.display.as_ref()
-    }
-
-    pub(super) fn validate_occurrences(
-        text: &str,
-        references: &[InputReference],
-        images: &[Self],
-    ) -> Result<(), UserInputError> {
-        if images.len() > Self::MAX_OCCURRENCES {
-            return Err(UserInputError::ImageBudgetExceeded);
-        }
-        let mut previous_end = 0;
-        let mut source_bytes = 0_u64;
-        let mut png_bytes = 0_usize;
-        for (index, image) in images.iter().enumerate() {
-            let span = image.span();
-            if span.start >= span.end
-                || span.start < previous_end
-                || text.get(span.clone()) != Some(Self::PROJECTION)
-                || references.iter().any(|reference| {
-                    reference.span().start < span.end && span.start < reference.span().end
-                })
-            {
-                return Err(UserInputError::InvalidImage { index });
-            }
-            source_bytes = source_bytes
-                .checked_add(image.source_byte_length)
-                .ok_or(UserInputError::ImageBudgetExceeded)?;
-            png_bytes = png_bytes
-                .checked_add(image.snapshot.png().len())
-                .ok_or(UserInputError::ImageBudgetExceeded)?;
-            if source_bytes > Self::MAX_INPUT_SOURCE_BYTES
-                || png_bytes > InputImageSnapshot::MAX_BYTES
-            {
-                return Err(UserInputError::ImageBudgetExceeded);
-            }
-            previous_end = span.end;
-        }
-        Ok(())
     }
 }
 
