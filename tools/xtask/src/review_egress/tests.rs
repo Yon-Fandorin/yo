@@ -1,15 +1,32 @@
 use std::{cell::Cell, fs, path::PathBuf, str};
 
 use super::{
-    PriorReview, ReviewClassification, authorize, canonical_authorization_path,
-    capture_prior_delivery, classify_review_kind, evaluate_with,
+    delegated::{
+        authorize as authorize_delegated,
+        parse_delivery_receipt as parse_delegated_delivery_receipt,
+        validate_authorization as validate_delegated_authorization,
+    },
     model::{
-        AUTHORIZATION_SCHEMA, Artifact, Authorization, AuthorizedRoute, ManifestHeader,
+        AUTHORIZATION_SCHEMA, Artifact, Authorization, AuthorizedDelegatedTarget,
+        AuthorizedDelegatedTargetV1Alpha2, AuthorizedDelegatedTargetV1Alpha3, AuthorizedRoute,
+        DELEGATED_AUTHORIZATION_SCHEMA, DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2,
+        DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3, DELEGATED_DELIVERY_RECEIPT_SCHEMA,
+        DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2, DELEGATED_EXECUTION_PROFILE,
+        DELEGATED_REQUEST_SCHEMA, DELEGATED_REVIEW_CHAIN_PROFILE, DelegatedAuthorization,
+        DelegatedAuthorizationDocument, DelegatedAuthorizationV1Alpha2,
+        DelegatedAuthorizationV1Alpha3, DelegatedDeliveryLimits, DelegatedRequest, ManifestHeader,
         ManifestInputs, PacketRecord, REQUEST_SCHEMA, Request, ReviewKind, Route, Session,
     },
-    validate_authorization, validate_request,
+    original::{
+        authorize, canonical_authorization_path, capture_prior_delivery, evaluate_with,
+        validate_authorization, validate_request,
+    },
+    validation::{PriorReview, ReviewClassification, classify_review_kind},
 };
-use crate::{review_packet::VerifiedReview, review_protocol::digest, test_support::TestRepository};
+use crate::{
+    grok_outer_sandbox, review_egress, review_packet::VerifiedReview, review_protocol::digest,
+    test_support::TestRepository,
+};
 
 fn hash(byte: u8) -> String {
     format!("sha256:{}", format!("{byte:02x}").repeat(32))
@@ -498,4 +515,256 @@ fn finding_resolution_binds_the_original_delivery_receipt() {
             .unwrap_err()
             .contains("differs from the original delivery Session")
     );
+}
+
+fn target(host: &str) -> AuthorizedDelegatedTarget {
+    AuthorizedDelegatedTarget {
+        host: host.to_owned(),
+        execution_profile: DELEGATED_EXECUTION_PROFILE.to_owned(),
+        max_packet_bytes: 4_000_000,
+        max_managed_payload_tokens: 500_000,
+        allow_original_fresh: true,
+        allow_finding_resolution_resume: true,
+    }
+}
+
+// 지원 host가 두 개뿐인 현재 계약은 승인 후보 수도 exact 2로 닫아 임의 이름이
+// standing authority의 후보 공간을 넓히지 못하게 합니다.
+#[test]
+fn authorization_is_bounded_to_the_two_supported_hosts() {
+    let mut authorization = DelegatedAuthorization {
+        schema: DELEGATED_AUTHORIZATION_SCHEMA.to_owned(),
+        authority: "human/yon".to_owned(),
+        status: "active".to_owned(),
+        targets: vec![target("codex"), target("grok")],
+    };
+    validate_delegated_authorization(&DelegatedAuthorizationDocument::Alpha1(authorization))
+        .unwrap();
+    authorization = DelegatedAuthorization {
+        schema: DELEGATED_AUTHORIZATION_SCHEMA.to_owned(),
+        authority: "human/yon".to_owned(),
+        status: "active".to_owned(),
+        targets: vec![target("codex"), target("grok")],
+    };
+    authorization.targets.push(target("codex"));
+    assert!(
+        validate_delegated_authorization(&DelegatedAuthorizationDocument::Alpha1(authorization))
+            .unwrap_err()
+            .contains("1..=2")
+    );
+}
+
+// 새 승인은 `허용` boolean 대신 original 1회와 resolution 1회의 합계를 exact하게
+// 기록해 사람이 말한 총 요청 수와 실행기의 round 제한이 어긋나지 않게 합니다.
+#[test]
+fn alpha2_authorization_requires_consistent_round_limits() {
+    let target = AuthorizedDelegatedTargetV1Alpha2 {
+        host: "codex".to_owned(),
+        execution_profile: DELEGATED_EXECUTION_PROFILE.to_owned(),
+        max_packet_bytes: 4_000_000,
+        max_managed_payload_tokens: 500_000,
+        max_original_fresh_requests: 1,
+        max_finding_resolution_resume_requests: 1,
+        max_total_requests: 2,
+    };
+    validate_delegated_authorization(&DelegatedAuthorizationDocument::Alpha2(
+        DelegatedAuthorizationV1Alpha2 {
+            schema: DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2.to_owned(),
+            authority: "human/yon".to_owned(),
+            status: "active".to_owned(),
+            targets: vec![target],
+        },
+    ))
+    .unwrap();
+
+    let inconsistent = AuthorizedDelegatedTargetV1Alpha2 {
+        host: "codex".to_owned(),
+        execution_profile: DELEGATED_EXECUTION_PROFILE.to_owned(),
+        max_packet_bytes: 4_000_000,
+        max_managed_payload_tokens: 500_000,
+        max_original_fresh_requests: 1,
+        max_finding_resolution_resume_requests: 1,
+        max_total_requests: 1,
+    };
+    assert!(
+        validate_delegated_authorization(&DelegatedAuthorizationDocument::Alpha2(
+            DelegatedAuthorizationV1Alpha2 {
+                schema: DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2.to_owned(),
+                authority: "human/yon".to_owned(),
+                status: "active".to_owned(),
+                targets: vec![inconsistent],
+            },
+        ))
+        .unwrap_err()
+        .contains("sum equals")
+    );
+}
+
+// v1alpha3은 recursive review chain이 계산한 resolution request index를 사람의
+// explicit 총량과 비교해 두 번째 후속은 허용하고 그 다음 요청은 fail closed합니다.
+#[test]
+fn alpha3_authorization_bounds_recursive_resolution_requests() {
+    let authorization_text = serde_json::json!({
+        "schema": DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3,
+        "authority": "human/yon",
+        "status": "active",
+        "review_chain_profile": DELEGATED_REVIEW_CHAIN_PROFILE,
+        "targets": [{
+            "host": "codex",
+            "execution_profile": DELEGATED_EXECUTION_PROFILE,
+            "max_packet_bytes": 4_000_000,
+            "max_managed_payload_tokens": 500_000,
+            "max_original_fresh_requests": 1,
+            "max_finding_resolution_resume_requests": 2,
+            "max_total_requests": 3
+        }]
+    });
+    let authorization: DelegatedAuthorizationDocument =
+        serde_json::from_value(authorization_text).unwrap();
+    assert!(matches!(
+        authorization,
+        DelegatedAuthorizationDocument::Alpha3(_)
+    ));
+    validate_delegated_authorization(&authorization).unwrap();
+
+    let typed_authorization =
+        DelegatedAuthorizationDocument::Alpha3(DelegatedAuthorizationV1Alpha3 {
+            schema: DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3.to_owned(),
+            authority: "human/yon".to_owned(),
+            status: "active".to_owned(),
+            review_chain_profile: DELEGATED_REVIEW_CHAIN_PROFILE.to_owned(),
+            targets: vec![AuthorizedDelegatedTargetV1Alpha3 {
+                host: "codex".to_owned(),
+                execution_profile: DELEGATED_EXECUTION_PROFILE.to_owned(),
+                max_packet_bytes: 4_000_000,
+                max_managed_payload_tokens: 500_000,
+                max_original_fresh_requests: 1,
+                max_finding_resolution_resume_requests: 2,
+                max_total_requests: 3,
+            }],
+        });
+    validate_delegated_authorization(&typed_authorization).unwrap();
+    let request = DelegatedRequest {
+        schema: DELEGATED_REQUEST_SCHEMA.to_owned(),
+        manifest_path: "manifest.json".to_owned(),
+        manifest_hash: format!("sha256:{}", "1".repeat(64)),
+        authorization_hash: format!("sha256:{}", "2".repeat(64)),
+        target: review_egress::model::DelegatedTarget::DelegatedHost {
+            host: "codex".to_owned(),
+        },
+        execution_profile: DELEGATED_EXECUTION_PROFILE.to_owned(),
+        session: Session::Resume {
+            id: "session".to_owned(),
+        },
+        prior_delivery: None,
+    };
+
+    authorize_delegated(
+        &request,
+        &authorization,
+        ReviewKind::FindingResolution,
+        2,
+        1,
+        1,
+    )
+    .unwrap();
+    assert!(
+        authorize_delegated(
+            &request,
+            &authorization,
+            ReviewKind::FindingResolution,
+            3,
+            1,
+            1,
+        )
+        .unwrap_err()
+        .contains("does not authorize")
+    );
+}
+
+// delegated receipt는 host identity와 profile만 허용하고 managed Provider 필드를
+// 끼워 넣어 두 identity 공간을 합치는 artifact를 거부합니다.
+#[test]
+fn delegated_receipt_rejects_fabricated_provider_fields() {
+    let receipt = serde_json::json!({
+        "schema": DELEGATED_DELIVERY_RECEIPT_SCHEMA,
+        "review_id": format!("sha256:{}", "1".repeat(64)),
+        "packet_hash": format!("sha256:{}", "2".repeat(64)),
+        "target": {"kind": "delegated_host", "host": "codex"},
+        "execution_profile": DELEGATED_EXECUTION_PROFILE,
+        "session_id": "session-a",
+        "host_request_id": "request-a",
+        "host_request_count": 1
+    });
+    parse_delegated_delivery_receipt(&serde_json::to_vec(&receipt).unwrap(), "receipt").unwrap();
+
+    let mut fabricated = receipt;
+    fabricated["provider_request_id"] = "provider-request-a".into();
+    assert!(
+        parse_delegated_delivery_receipt(&serde_json::to_vec(&fabricated).unwrap(), "receipt")
+            .unwrap_err()
+            .contains("unknown field")
+    );
+}
+
+// v1alpha2 receipt는 Grok 요청에 실제로 선택된 native 또는 Yo outer isolation을
+// 반드시 기록하고, 기존 v1alpha1이나 Codex receipt로 그 의미를 위조하지 못합니다.
+#[test]
+fn delegated_receipt_v1alpha2_binds_exact_grok_isolation() {
+    let receipt = serde_json::json!({
+        "schema": DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2,
+        "review_id": format!("sha256:{}", "1".repeat(64)),
+        "packet_hash": format!("sha256:{}", "2".repeat(64)),
+        "target": {"kind": "delegated_host", "host": "grok"},
+        "execution_profile": DELEGATED_EXECUTION_PROFILE,
+        "execution_isolation": grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE,
+        "session_id": "session-a",
+        "host_request_id": "request-a",
+        "host_request_count": 1
+    });
+    parse_delegated_delivery_receipt(&serde_json::to_vec(&receipt).unwrap(), "receipt").unwrap();
+
+    let mut missing = receipt.clone();
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove("execution_isolation");
+    assert!(
+        parse_delegated_delivery_receipt(&serde_json::to_vec(&missing).unwrap(), "receipt")
+            .unwrap_err()
+            .contains("requires an exact Grok execution isolation")
+    );
+
+    let mut legacy = receipt.clone();
+    legacy["schema"] = DELEGATED_DELIVERY_RECEIPT_SCHEMA.into();
+    assert!(
+        parse_delegated_delivery_receipt(&serde_json::to_vec(&legacy).unwrap(), "receipt")
+            .unwrap_err()
+            .contains("must not name execution isolation")
+    );
+
+    let mut codex = receipt;
+    codex["target"]["host"] = "codex".into();
+    assert!(
+        parse_delegated_delivery_receipt(&serde_json::to_vec(&codex).unwrap(), "receipt")
+            .unwrap_err()
+            .contains("requires an exact Grok execution isolation")
+    );
+}
+
+// host-owned read tools를 managed no-tools 증거로 오인하지 않도록 delegated limit
+// artifact에는 tool_execution 필드 자체가 존재하지 않습니다.
+#[test]
+fn delegated_limits_do_not_publish_a_managed_tool_claim() {
+    let value = serde_json::to_value(DelegatedDeliveryLimits {
+        host_requests: 1,
+        additional_host_requests: 0,
+        retries: 0,
+        steer: 0,
+        fallback: 0,
+        target_switch: false,
+    })
+    .unwrap();
+    assert!(value.get("tool_execution").is_none());
+    assert_eq!(value["host_requests"], 1);
 }
