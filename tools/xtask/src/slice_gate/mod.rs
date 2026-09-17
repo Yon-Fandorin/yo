@@ -8,7 +8,10 @@ mod output;
 mod prepare;
 mod revalidate;
 
-pub(crate) use output::{ReadyGate, ReadyValidation};
+pub(crate) use output::ReadyGate;
+// 기존 호출자가 쓰는 타입 경로는 유지하되 내부 사용 강제는 하지 않는다.
+#[allow(unused_imports)]
+pub(crate) use output::ReadyValidation;
 pub(crate) use prepare::run as prepare_request;
 
 #[cfg(test)]

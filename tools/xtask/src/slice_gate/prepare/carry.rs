@@ -81,15 +81,18 @@ fn verify_with(
 
     let approval_path = format!("methexis/approvals/{}.yaml", request.knowledge_id);
     let transition_paths =
-        super::super::changed_paths(repository, &review.candidate_commit, candidate)?;
+        super::super::revalidate::changed_paths(repository, &review.candidate_commit, candidate)?;
     if transition_paths != [approval_path.clone()] {
         return Err(format!(
             "canonical approval review carry requires exactly `{approval_path}` after the reviewed candidate"
         ));
     }
 
-    let semantic_paths =
-        super::super::changed_paths(repository, &review.base_commit, &review.candidate_commit)?;
+    let semantic_paths = super::super::revalidate::changed_paths(
+        repository,
+        &review.base_commit,
+        &review.candidate_commit,
+    )?;
     if semantic_paths.iter().any(|path| path == &approval_path) {
         return Err(
             "the semantic review candidate must not already change the carried approval path"

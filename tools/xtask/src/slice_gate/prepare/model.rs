@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::super::{ResultDocument, Risk};
+use super::super::model::{ResultDocument, Risk};
 
 pub(super) const REQUEST_SCHEMA: &str = "yo.slice-gate-prepare-request/v1";
 pub(super) const REQUEST_SCHEMA_V1_ALPHA1: &str = "yo.slice-gate-prepare-request/v1alpha1";
