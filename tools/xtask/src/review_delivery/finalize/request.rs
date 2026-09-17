@@ -180,7 +180,7 @@ pub(super) fn require_claim_schema(
 #[cfg(test)]
 mod tests {
     use super::{
-        super::super::super::model::{DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2},
+        super::super::model::{DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2},
         REQUEST_SCHEMA, Request, require_claim_schema,
     };
 

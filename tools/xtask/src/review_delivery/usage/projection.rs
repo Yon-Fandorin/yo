@@ -12,8 +12,8 @@ use yo_core::{
 use super::{
     PROVIDER_USAGE_SCHEMA, aggregate, binding,
     model::{
-        AggregatedUsage, ExternalRequest, ProviderUsageDocument, RawReceipt, SerializedTarget,
-        UsageBinding, UsageFields, UsageReceipt, UsageSource, UsageTarget, UsageValue,
+        ExternalRequest, ProviderUsageDocument, RawReceipt, SerializedTarget, UsageBinding,
+        UsageFields, UsageReceipt, UsageSource, UsageTarget, UsageValue,
     },
 };
 use crate::review_protocol::digest;

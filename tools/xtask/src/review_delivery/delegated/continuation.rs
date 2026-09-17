@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::{
-    super::super::{
+    super::{
         DIAGNOSTIC_LIMIT, DeliveryPolicy, REQUEST_LIMIT, REVIEW_RESULT_LIMIT,
         admission::evaluate_host_admission,
         artifact::{
@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{review_continuation_preflight, review_egress::AuthorizedHostDelivery};
 
-pub(super) fn require_continuation_isolation(
+pub(in crate::review_delivery) fn require_continuation_isolation(
     authorized: &AuthorizedHostDelivery,
     selected: Option<&str>,
 ) -> Result<(), String> {
@@ -38,7 +38,7 @@ pub(super) fn require_continuation_isolation(
     ))
 }
 
-pub(super) fn run_continuation(
+pub(in crate::review_delivery) fn run_continuation(
     repository: &Path,
     request: DelegatedContinuationRequest,
     policy: DeliveryPolicy,

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::{
-    super::super::{
+    super::{
         DIAGNOSTIC_LIMIT, DeliveryPolicy, REQUEST_LIMIT, REVIEW_RESULT_LIMIT,
         admission::evaluate_host_admission,
         artifact::{
@@ -21,7 +21,7 @@ use super::{
 };
 use crate::review_egress::{self, AuthorizedHostDelivery};
 
-pub(super) fn run_original(
+pub(in crate::review_delivery) fn run_original(
     repository: &Path,
     request: DelegatedRequest,
     policy: DeliveryPolicy,

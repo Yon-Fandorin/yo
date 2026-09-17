@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use super::{
-    super::super::{
+    super::{
         REQUEST_LIMIT,
         admission::evaluate_host_admission,
         artifact::{canonical_json, require_exact_file_hash},

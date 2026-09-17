@@ -254,7 +254,7 @@ pub(super) fn continuation_result(
     }
 }
 
-pub(super) fn target(delivery: &AuthorizedHostDelivery) -> DelegatedTarget<'_> {
+pub(in crate::review_delivery) fn target(delivery: &AuthorizedHostDelivery) -> DelegatedTarget<'_> {
     DelegatedTarget {
         kind: "delegated_host",
         host: &delivery.host,

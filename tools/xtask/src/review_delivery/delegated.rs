@@ -2,6 +2,8 @@ mod claims;
 mod continuation;
 mod original;
 
-pub(super) use claims::target;
-pub(super) use continuation::{require_continuation_isolation, run_continuation};
-pub(super) use original::run_original;
+pub(in crate::review_delivery) use claims::target;
+#[allow(unused_imports)]
+pub(in crate::review_delivery) use continuation::require_continuation_isolation;
+pub(in crate::review_delivery) use continuation::run_continuation;
+pub(in crate::review_delivery) use original::run_original;
