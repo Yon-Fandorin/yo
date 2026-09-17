@@ -238,6 +238,7 @@ mod tests {
 
     use super::project_receipt;
 
+    // Grok usage 영수증을 provider projection한 뒤 진단 필드가 유지되는지 확인합니다.
     #[test]
     fn grok_diagnostics_survive_provider_usage_projection() {
         let session_id = "018f0a00-0000-7000-8000-000000000001".parse().unwrap();
