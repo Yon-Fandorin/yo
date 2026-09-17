@@ -447,8 +447,8 @@ fn provider_wait_never_blocks_the_frontend_connection() {
     app.shutdown().unwrap();
 }
 
-// A replacement rejected while the worker owns an in-flight provider call still explicitly
-// shuts down the consumed candidate exactly once before returning the idle-session error.
+// worker가 진행 중인 provider 호출을 소유한 동안 거절된 replacement도 소비한 후보를
+// 정확히 한 번 명시적으로 shutdown한 뒤 idle-session 오류를 반환한다.
 #[test]
 fn busy_replacement_rejection_shuts_down_the_candidate() {
     let (entered_tx, entered_rx) = mpsc::channel();
@@ -483,8 +483,8 @@ fn busy_replacement_rejection_shuts_down_the_candidate() {
     app.shutdown().unwrap();
 }
 
-// Candidate cleanup failure is retained beside the primary non-idle rejection instead of being
-// lost when the candidate never reaches the replacement worker lane.
+// 후보가 replacement worker lane에 도달하지 못해도 후보 정리 오류를 primary non-idle
+// 거절과 함께 보존하며 유실하지 않는다.
 #[test]
 fn busy_replacement_rejection_reports_candidate_cleanup_failure() {
     let (entered_tx, entered_rx) = mpsc::channel();

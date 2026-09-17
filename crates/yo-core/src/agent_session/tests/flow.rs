@@ -424,8 +424,8 @@ fn keeps_the_session_healthy_after_manual_compaction_is_rejected() {
     }
 }
 
-// Engine-level validation is an expected control rejection too. Invalid guidance must not
-// close the worker before the frontend can correct it and continue in the same Session.
+// Engine-level validation도 예상된 control 거절이다. 잘못된 guidance가 frontend가
+// 수정해 같은 Session을 계속하기 전에 worker를 닫아서는 안 된다.
 #[test]
 fn keeps_the_session_healthy_after_invalid_compaction_guidance() {
     let first = turn(1);
@@ -480,8 +480,8 @@ fn keeps_the_session_healthy_after_invalid_compaction_guidance() {
     app.shutdown().unwrap();
 }
 
-// A prompt reserves its Turn before TurnStarted reaches the TUI. A compact command admitted in
-// that window resolves as a notice instead of turning the expected scheduling race into failure.
+// prompt는 TurnStarted가 TUI에 도달하기 전에 Turn을 예약한다. 그 사이 admitted된
+// compact command는 예상된 scheduling 경합을 failure로 바꾸지 않고 notice로 해소한다.
 #[test]
 fn keeps_the_session_healthy_when_compaction_races_a_queued_turn() {
     let first = turn(1);

@@ -31,7 +31,7 @@ For the completed real-host basic/structured editing experiment, see the
 |---|---|---|
 | Session, Turn, Activity, engine, or runtime semantics | `cargo test -p yo-core` | `crates/yo-core/src/tests` and the owning module tests |
 | Typed input spans, submission identity, or fixed-v1 structured-reference rejection | `cargo test -p yo-core input::tests` and `cargo test -p yo-core journal::codec` | `crates/yo-core/src/input/tests.rs` and Journal wire-compatibility tests |
-| Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
+| Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/{admission.rs,startup.rs,fork.rs,replacement.rs,lifecycle.rs,observation.rs,worker}` and `crates/yo-core/src/agent_session/tests` |
 | Backend lifecycle, evidence, or bounded child-process transport extraction | `cargo test --locked -p yo-backend` followed by `cargo test --locked -p yo-core backend::evidence` and `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, the `yo-core` specialization, and Journal wire/recovery compatibility tests |
 | Codex protocol translation or provider-ID correlation | `cargo test --locked -p yo-backend-delegated-codex` | `crates/backends/delegated-codex/src/runtime/tests.rs` |
 | Grok ACP translation, permissions, authentication, or Session correlation | `cargo test --locked -p yo-backend-delegated-grok` | `crates/backends/delegated-grok/src/runtime/tests.rs`, `observation/tests.rs`, and `protocol.rs` |

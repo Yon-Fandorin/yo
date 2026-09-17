@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use crate::{BackendFailure, RuntimeError, SessionIdGenerationError, SubmissionId};
 
-/// Failure while starting, using, or stopping an [`super::AgentSession`].
+/// [`super::AgentSession`]을 시작하거나 사용하거나 멈출 때의 오류입니다.
 #[derive(Clone, Debug)]
 pub enum AgentSessionError {
     Runtime(RuntimeError),

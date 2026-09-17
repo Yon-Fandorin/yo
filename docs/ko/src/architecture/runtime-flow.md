@@ -388,12 +388,12 @@ yo-tui
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/lib.rs), [`yo-cli/src/application.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application.rs), [`yo-cli/src/application/runtime/startup.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application/runtime/startup.rs), [`yo-cli/src/application/runtime/live.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application/runtime/live.rs), [`yo-cli/src/state/connection/startup.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/connection/startup.rs) | `main.rs`가 Unix 진입점을 선택하고 `lib.rs`는 공개 `run` facade를 제공하며 `application.rs`가 command를 해석하고 dispatch한다. `runtime/startup.rs`가 표시 옵션·작업 디렉터리·command-local 설정을 확보하고 새 Session의 저장 preference를 상태 생성 없이 읽는다. 종료 coordinator를 설치하고 Host identity와 Session storage를 열며 workspace를 canonicalize한 뒤 시각이 일치하는 UUIDv7 `SessionDescriptor`를 만든다. live generation loop와 cleanup은 `runtime/live.rs`가 유지한다. Resume은 저장 preference를 읽지 않는다. |
 | 2 | [`yo-cli/src/execution/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | process host가 invocation·저장·operator 계층을 resolve한 다음 선택한 delegated stdio transport를 시작하거나 startup snapshot과 주입된 tool로 managed binding을 조립한다. 모든 경로는 worker가 backend를 소유할 때까지 model 작업을 미룬다. |
-| 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
-| 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 descriptor-only Journal envelope를 먼저 시도한 뒤 `AgentRuntime`을 통해 `CreateSession`을 보낸다. storage pressure가 있으면 descriptor와 이후 activity를 복구 가능한 volatile prefix로 함께 유지한다. |
+| 3 | [`yo-core/agent_session/startup.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/startup.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
+| 4 | [`yo-core/agent_session/worker/lifecycle.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker/lifecycle.rs) | `AgentWorker::initialize`가 descriptor-only Journal envelope를 먼저 시도한 뒤 `AgentRuntime`을 통해 `CreateSession`을 보낸다. storage pressure가 있으면 descriptor와 이후 activity를 복구 가능한 volatile prefix로 함께 유지한다. |
 | 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex는 `initialize`, `account/read`, `thread/start`, Grok은 ACP 초기화·cached-token 인증·`session/new`를 수행한다. managed backend는 provider 요청 없이 local exact-replay state를 연결한다. 각 경로는 semantic engine이 `SessionCreated`를 만들게 한다. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode`가 첫 터미널 소유 세대의 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
 
-handshake 중에 종료 요청이 오면 `AgentSession::start_inner`가 취소
+handshake 중에 종료 요청이 오면 [`agent_session/startup.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/startup.rs)의 `AgentSession::start_inner`가 취소
 callback을 관찰하고 backend 중지를 요청한 뒤 worker 정리를 기다린다.
 그리고 TUI에 Session을 넘기지 않은 채 반환한다. 이 경우 터미널 mode
 코드가 아니라 여기서 조사를 시작한다.
@@ -848,7 +848,7 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
    가진 내부가 드러나지 않는 pending command를 TUI loop가 다시 시도하도록 반환한다.
    첫 dispatch가 그 ID를 Session에 예약하므로 재사용은 다른 backend command가
    실행되기 전에 거절된다.
-4. [`AgentWorker`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs)만
+4. [`AgentWorker`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker/lifecycle.rs)만
    runtime을 실행하고 polling할 수 있다. runtime과 backend 수락이 성공한 뒤
    정확한 ID의 `SubmissionOutcome::Accepted`를 공개한다. core command 거절과
    비종료 backend `CommandRejected`는 Session을 종료하지 않고

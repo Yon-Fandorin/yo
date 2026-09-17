@@ -3,58 +3,58 @@ use crate::{
     SubmissionIdGenerationError, SubmissionRejection, TurnRef, UserInput,
 };
 
-/// A frontend intent directed at an agent Session.
+/// agent Session으로 향하는 frontend intent입니다.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentIntent {
-    /// Starts a Turn or steers the active Turn.
+    /// Turn을 시작하거나 활성 Turn을 steer합니다.
     Submit(InputSubmission),
-    /// Steers exactly the Turn observed by the frontend.
+    /// frontend가 관찰한 정확한 Turn을 steer합니다.
     Steer {
-        /// The Turn that owned the prompt when the submission was created.
+        /// submission이 만들어질 때 prompt를 소유한 Turn입니다.
         turn: TurnRef,
-        /// The immutable correlated submission.
+        /// 변경할 수 없는 연결 submission입니다.
         submission: InputSubmission,
     },
-    /// Requests interruption of the active Turn.
+    /// 활성 Turn의 interrupt를 요청합니다.
     Interrupt,
-    /// Compacts an idle Session with optional user guidance.
+    /// 선택적인 사용자 guidance와 함께 idle Session을 compaction합니다.
     CompactContext { guidance: Option<String> },
-    /// Answers one correlated approval request.
+    /// 연결된 approval request 하나에 답합니다.
     RespondToApproval {
-        /// The outstanding request being answered.
+        /// 답변할 outstanding request입니다.
         request: ActivityRequestRef,
-        /// The user's approval decision.
+        /// 사용자의 approval 결정입니다.
         decision: ApprovalDecision,
     },
-    /// Answers one correlated agent-requested input.
+    /// 연결된 agent-requested input 하나에 답합니다.
     RespondToUserInput {
-        /// The outstanding request being answered.
+        /// 답변할 outstanding request입니다.
         request: ActivityRequestRef,
-        /// The user's response text.
+        /// 사용자의 response text입니다.
         input: String,
     },
-    /// Revisits the previous question without submitting the current draft.
+    /// 현재 draft를 제출하지 않고 이전 question으로 돌아갑니다.
     PreviousQuestion {
-        /// Exact outstanding user-input request whose host supports moving back.
+        /// 뒤로 가기를 지원하는 정확한 outstanding user-input request입니다.
         request: ActivityRequestRef,
-        /// Optional one-based selection associated with the draft.
+        /// draft에 연결된 선택지의 one-based 번호입니다.
         choice: Option<u32>,
-        /// Unsubmitted answer or notes to retain while moving back.
+        /// 뒤로 가는 동안 보존할 미제출 answer 또는 notes입니다.
         draft: String,
     },
-    /// Answers a correlated question with a choice and optional notes.
+    /// 연결된 question에 choice와 선택적인 notes로 답합니다.
     RespondToQuestion {
-        /// The outstanding request being answered.
+        /// 답변할 outstanding request입니다.
         request: ActivityRequestRef,
-        /// One-based ordinal within the question's choices.
+        /// question choices 안의 one-based ordinal입니다.
         choice: u32,
-        /// Additional text, kept separate from the selected option.
+        /// 선택한 option과 분리해 보존하는 추가 text입니다.
         notes: String,
     },
 }
 
 impl AgentIntent {
-    /// Captures one plain-text immutable submission with a fresh correlation identity.
+    /// 새 correlation identity로 plain-text immutable submission 하나를 만듭니다.
     pub fn submit(text: impl Into<String>) -> Result<Self, SubmissionIdGenerationError> {
         Ok(Self::Submit(InputSubmission::new(
             SubmissionId::new()?,
@@ -63,26 +63,26 @@ impl AgentIntent {
     }
 }
 
-/// Immediate result of placing an intent on an agent Session.
+/// agent Session에 intent를 배치한 즉시 결과입니다.
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandAdmission {
-    /// The Session retained the command for delivery.
+    /// Session이 전달할 command를 보존했습니다.
     Queued,
-    /// The Session is busy; the frontend retains and retries this operation.
+    /// Session이 바쁘므로 frontend가 이 작업을 보존하고 다시 시도합니다.
     Backpressured(PendingCommand),
-    /// The correlated submission was rejected before any part reached the worker.
+    /// 연결된 submission이 worker에 도달하기 전에 거절되었습니다.
     Rejected {
-        /// The immutable submission identity owned by this result.
+        /// 이 결과가 소유하는 immutable submission identity입니다.
         id: SubmissionId,
-        /// The frontend-neutral reason admission did not occur.
+        /// admission이 일어나지 않은 frontend 중립 이유입니다.
         rejection: SubmissionRejection,
     },
 }
 
-/// Result of an admitted Session control that did not mutate durable semantics.
+/// durable 의미를 바꾸지 않은 admitted Session control 결과입니다.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentControlOutcome {
-    /// Manual context compaction was unavailable at the current Session boundary.
+    /// 현재 Session 경계에서 manual context compaction을 사용할 수 없습니다.
     ContextCompactionRejected { detail: String },
 }
 
@@ -95,7 +95,7 @@ impl AgentControlOutcome {
     }
 }
 
-/// An opaque, single-use operation retained across nonblocking backpressure.
+/// 비차단 backpressure 동안 보존하는 opaque single-use 작업입니다.
 #[derive(Debug, Eq, PartialEq)]
 pub struct PendingCommand {
     command: AgentCommand,

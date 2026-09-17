@@ -369,7 +369,7 @@ impl AgentSession {
         }
     }
 
-    /// Queues one frontend intent without waiting for provider acceptance.
+    /// provider acceptance를 기다리지 않고 frontend intent 하나를 queue합니다.
     pub fn dispatch(&mut self, action: AgentIntent) -> Result<CommandAdmission, AgentSessionError> {
         if self.context_compaction_pending.load(Ordering::Acquire) {
             return self
@@ -426,7 +426,7 @@ impl AgentSession {
         CommandAdmission::Queued
     }
 
-    /// Retries an operation retained by an earlier dispatch attempt.
+    /// 앞선 dispatch 시도가 보존한 작업을 다시 시도합니다.
     pub fn retry(
         &mut self,
         pending: PendingCommand,
