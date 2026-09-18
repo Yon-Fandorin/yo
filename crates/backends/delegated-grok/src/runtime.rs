@@ -2,6 +2,7 @@ use crate::admission;
 
 mod command;
 mod events;
+mod input;
 mod lifecycle;
 mod state;
 

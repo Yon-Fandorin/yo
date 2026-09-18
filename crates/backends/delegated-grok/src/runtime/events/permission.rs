@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use yo_core::{
     ActivityApproval, ActivityKind, ActivityRequestRef, ActivityUpdate, ApprovalChoice,
-    BackendEvent, BackendFailure, BackendFailureKind,
+    BackendEvent, BackendFailure,
 };
 
 use super::super::state::{
@@ -26,14 +26,7 @@ impl<P: JsonPeer> Backend<P> {
         method: &str,
         params: Value,
     ) -> Result<Option<BackendEvent>, BackendFailure> {
-        if method != "session/request_permission" {
-            self.client
-                .reject(wire_id, -32601, "client request is unsupported by yo")?;
-            return Err(BackendFailure::new(
-                BackendFailureKind::Unsupported,
-                format!("unsupported Grok ACP client request `{method}`"),
-            ));
-        }
+        debug_assert_eq!(method, "session/request_permission");
         if self.read_only_review {
             self.client.reject(
                 wire_id,
@@ -195,7 +188,7 @@ impl<P: JsonPeer> Backend<P> {
         };
         let active_call = known.is_some();
         let wire_key = wire_key(&wire_id)?;
-        if self.wire_approvals.contains_key(&wire_key) {
+        if self.wire_approvals.contains_key(&wire_key) || self.wire_inputs.contains_key(&wire_key) {
             return Err(protocol::protocol_failure(
                 "duplicate Grok ACP permission request id",
             ));

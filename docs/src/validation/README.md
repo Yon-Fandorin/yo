@@ -34,7 +34,7 @@ For the completed real-host basic/structured editing experiment, see the
 | Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/{admission.rs,startup.rs,fork.rs,replacement.rs,lifecycle.rs,observation.rs,worker}` and `crates/yo-core/src/agent_session/tests` |
 | Backend lifecycle, evidence, or bounded child-process transport extraction | `cargo test --locked -p yo-backend` followed by `cargo test --locked -p yo-core backend::evidence` and `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, the `yo-core` specialization, and Journal wire/recovery compatibility tests |
 | Codex protocol translation or provider-ID correlation | `cargo test --locked -p yo-backend-delegated-codex` | `crates/backends/delegated-codex/src/runtime/tests.rs` |
-| Grok ACP translation, permissions, authentication, or Session correlation | `cargo test --locked -p yo-backend-delegated-grok` | `crates/backends/delegated-grok/src/runtime/tests.rs`, `observation/tests.rs`, and `protocol.rs` |
+| Grok ACP translation, permissions, user questions, authentication, or Session correlation | `cargo test --locked -p yo-backend-delegated-grok` | `crates/backends/delegated-grok/src/runtime/tests.rs`, `observation/tests.rs`, and `protocol.rs` |
 | Decoded input, editing, paste, bindings, or exit gestures | `cargo test -p yo-tui input::` | Tests beside `yo-tui/src/input` |
 | Prompt wrapping, cursor visibility, or viewport behavior | `cargo test -p yo-tui prompt::` | Tests beside `yo-tui/src/prompt` |
 | `@` trigger, stale result, selection replacement, local ranking, or Git-ignore discovery | `cargo test -p yo-tui workspace_reference` and `cargo test -p yo-core workspace_reference` | `yo-tui/src/prompt/workspace_reference.rs` and `yo-core/src/workspace_reference` |
@@ -1887,6 +1887,14 @@ the pinned request_user_input overlay's options_len_for_question/option_label_fo
 Selecting it returns that label through the same request ID. Absent/false flags do not
 add it, malformed flags are rejected, and free-text input remains available independently.
 The interview preview demonstrates it in its first question.
+
+Delegated Grok `_x.ai/ask_user_question` batches use the same nonsecret profile.
+They retain single-select descriptions and previews, free text as `Other`, notes,
+ordered final answers, and previous-question navigation. The adapter returns one
+accepted response only after the final answer. It cancels and rejects multi-select,
+malformed, oversized, read-only-review, interrupted, and prematurely completed paths
+without widening the standard ACP capability advertisement. Deterministic Grok
+adapter tests cover these wire outcomes; no inference Turn is required.
 
 Hosts opt into choice-plus-notes with ActivityQuestion.allow_notes (default false for
 older profiles). Codex and the offline interview opt in. Tab on a presented choice

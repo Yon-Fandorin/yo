@@ -34,7 +34,7 @@ command, host, credential, platform을 기록한다.
 | Agent-session admission, concurrency, 시작, 종료 | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/{admission.rs,startup.rs,fork.rs,replacement.rs,lifecycle.rs,observation.rs,worker}` 및 `crates/yo-core/src/agent_session/tests` |
 | backend lifecycle, evidence 또는 bounded child-process transport 추출 | `cargo test --locked -p yo-backend` 뒤 `cargo test --locked -p yo-core backend::evidence`와 `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, `yo-core` specialization, Journal wire·recovery 호환성 test |
 | Codex protocol 변환이나 provider ID 연결 | `cargo test --locked -p yo-backend-delegated-codex` | `crates/backends/delegated-codex/src/runtime/tests.rs` |
-| Grok ACP 변환, permission, 인증, Session 연결 | `cargo test --locked -p yo-backend-delegated-grok` | `crates/backends/delegated-grok/src/runtime/tests.rs`, `observation/tests.rs`, `protocol.rs` |
+| Grok ACP 변환, permission, 사용자 질문, 인증, Session 연결 | `cargo test --locked -p yo-backend-delegated-grok` | `crates/backends/delegated-grok/src/runtime/tests.rs`, `observation/tests.rs`, `protocol.rs` |
 | 해석된 input, 편집, paste, binding, 종료 gesture | `cargo test -p yo-tui input::` | `yo-tui/src/input` 곁의 test |
 | prompt 줄 바꿈, cursor 표시, viewport | `cargo test -p yo-tui prompt::` | `yo-tui/src/prompt` 곁의 test |
 | `@` trigger, stale 결과, 선택 치환, local 순위, Git ignore 탐색 | `cargo test -p yo-tui workspace_reference`와 `cargo test -p yo-core workspace_reference` | `yo-tui/src/prompt/workspace_reference.rs`와 `yo-core/src/workspace_reference` |
@@ -1658,6 +1658,13 @@ options_len_for_question/option_label_for_index처럼 isOther는 비어 있지 �
 “None of the above”를 추가한다. 선택하면 같은 요청 ID로 그 이름을 답한다. 생략·false면
 추가하지 않고 잘못된 타입은 거부하며 자유 입력은 이 플래그와 독립적으로 유지한다.
 인터뷰 프리뷰의 첫 질문에서 확인할 수 있다.
+
+위임형 Grok `_x.ai/ask_user_question` 일괄 요청도 같은 비밀이 아닌 profile을 사용한다.
+단일 선택 설명·미리보기, `Other` 직접 입력, 메모, 순서 있는 최종 답변과 이전 질문 이동을
+보존한다. adapter는 마지막 답변 뒤에 accepted 응답 하나만 반환한다. 다중 선택, 잘못되거나
+너무 큰 요청, 읽기 전용 리뷰, 중단, 질문이 해결되기 전 완료는 표준 ACP capability 광고를
+넓히지 않고 취소하거나 거부한다. 결정론적 Grok adapter test가 이 wire 결과를 검증하며
+추론 Turn은 필요하지 않다.
 
 호스트는 ActivityQuestion.allow_notes로 선택 항목과 메모의 동시 제출을 활성화한다.
 이전 프로필의 기본값은 false이며 Codex와 오프라인 인터뷰는 활성화한다. 표시된 선택지에서

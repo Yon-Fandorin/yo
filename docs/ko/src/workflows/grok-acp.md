@@ -46,9 +46,26 @@ adapter가 사용하는 wire surface는 fail-closed로 유지한다.
   재개한다.
 - 모든 response, Session update, permission request, terminal prompt 결과를
   활성 request와 Session에 연결한다.
-- text, thought, tool, permission, 취소, stop-reason message를 provider 중립
-  backend event로 변환한다.
+- text, thought, tool, permission, 비공개 사용자 질문, 취소, stop-reason message를
+  provider 중립 backend event로 변환한다.
 - message, queue, request wait, 보존 stderr, process shutdown을 제한한다.
+
+비공개 `_x.ai/ask_user_question` method는 xAI의
+[요청·응답 타입](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs)을
+따른다. 표준 ACP client capability는 계속 비워 둔다. Yo는 활성 Session과 Turn을
+검증한 뒤 최대 64개 질문을 공통 인터뷰 profile로 순서대로 제시한다. 단일 선택 이름·설명,
+선택지 미리보기, `Other` 직접 입력, 메모, 이전 질문 이동을 보존한다. 마지막 질문 뒤에
+순서가 유지된 `accepted` 응답 하나를 보내며 선택한 미리보기와 메모는 별도 annotation으로
+유지한다. 요청의 `toolCallId`는 Session 수명 동안 처음 시작한 Turn에 결합해, 중복되거나
+늦게 재사용된 ID가 이후 Turn의 질문이 되지 않게 한다. `default`와 `plan` 요청 모두 이
+accepted 경로를 사용할 수 있지만 Grok의 plan 전용 “Chat about this”와 “Skip interview”
+동작은 노출하지 않는다.
+
+공통 인터뷰 응답은 선택 하나만 전달하므로 `multiSelect: true`는 취소하고 미지원으로
+보고한다. 잘못되거나 너무 큰 요청은 표시 전에 실패하며, 미해결 질문이 있으면 prompt 완료를
+허용하지 않는다. 중단과 읽기 전용 리뷰 경로는 typed cancelled 결과를 반환한다. 이
+extension에는 비밀 표시가 없으므로 항상 공개 질문 편집기를 사용하며 비밀 입력 저장·복원에
+참여하지 않는다.
 
 실행 파일 version만으로 compatibility를 추정하지 않는다. 후보의 ACP 동작을
 확인하고 허용한 형태를 malformed, mismatched, unsupported message와 구분하는
@@ -102,6 +119,10 @@ request 전에 중단한다.
 ```bash
 cargo test -p yo-backend-delegated-grok
 ```
+
+fixture는 순서 있는 일괄 답변, 직접 입력, 메모·미리보기, 이전 질문 이동, 중단, 읽기 전용
+리뷰, 잘못되거나 너무 큰 요청, 다중 선택 거부, 미해결 질문이 있는 완료를 검증한다. Grok
+추론 Turn을 소비하지 않고 정확한 JSON-RPC 요청·응답을 실행한다.
 
 CLI가 설치되어 있고 `grok login`이 완료된 환경에서는 inference Turn을
 소비하지 않고 실제 initialize, cached-token 인증, cleanup 경계를 확인한다.

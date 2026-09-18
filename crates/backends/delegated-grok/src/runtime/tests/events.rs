@@ -3,4 +3,5 @@
 mod completion;
 mod messages;
 mod permissions;
+mod questions;
 mod tools;

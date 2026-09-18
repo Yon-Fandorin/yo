@@ -36,6 +36,11 @@ impl<P: JsonPeer> Backend<P> {
                 "Grok ACP completed a prompt with an unresolved permission request",
             ));
         }
+        if !self.inputs.is_empty() {
+            return Err(protocol::protocol_failure(
+                "Grok ACP completed a prompt with an unresolved user question request",
+            ));
+        }
         let stop_reason = protocol::string_at(result, &["stopReason"])?;
         if prompt.interrupt_requested && stop_reason != "cancelled" {
             return Err(protocol::protocol_failure(format!(
@@ -77,8 +82,10 @@ impl<P: JsonPeer> Backend<P> {
                     )
             }))
             .chain(self.approvals.drain().map(|(_, binding)| binding.activity))
+            .chain(self.inputs.drain().map(|(_, binding)| binding.activity))
             .collect::<Vec<_>>();
         self.wire_approvals.clear();
+        self.wire_inputs.clear();
         activities.sort_unstable();
         activities.dedup();
         self.pending_events

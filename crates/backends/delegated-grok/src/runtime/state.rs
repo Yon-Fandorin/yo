@@ -6,7 +6,8 @@ use std::{
 use serde_json::Value;
 use yo_core::{
     ActivityApproval, ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef,
-    ActivityUpdate, BackendEvent, BackendFailure, RequestId, SessionId, TurnRef,
+    ActivityUpdate, BackendEvent, BackendFailure, QuestionChoice, RequestId, SessionId, TurnRef,
+    interview::{Answer, AnswerResponse, Capture},
 };
 
 use crate::{client::AcpClient, protocol, transport::JsonPeer};
@@ -64,6 +65,39 @@ pub(super) struct ApprovalBinding {
     pub(super) pending_display: Option<Value>,
 }
 
+#[derive(Clone)]
+pub(super) struct InputQuestion {
+    pub(super) id: String,
+    pub(super) text: String,
+    pub(super) choices: Vec<QuestionChoice>,
+    pub(super) previews: Vec<Option<String>>,
+}
+
+#[derive(Clone)]
+pub(super) struct InputAnswer {
+    pub(super) label: String,
+    pub(super) preview: Option<String>,
+    pub(super) notes: Option<String>,
+}
+
+#[derive(Clone)]
+pub(super) struct InputQuestions {
+    pub(super) questions: Vec<InputQuestion>,
+    pub(super) current: usize,
+    pub(super) answers: Vec<Option<InputAnswer>>,
+    pub(super) drafts: Vec<(Option<u32>, String)>,
+    pub(super) captured_answers: Vec<Option<(Answer, AnswerResponse)>>,
+    pub(super) capture: Option<Capture>,
+}
+
+#[derive(Clone)]
+pub(super) struct InputBinding {
+    pub(super) wire_id: Value,
+    pub(super) tool_call_id: String,
+    pub(super) activity: ActivityRef,
+    pub(super) questions: InputQuestions,
+}
+
 pub(super) struct PromptBinding {
     pub(super) request_id: u64,
     pub(super) turn: TurnRef,
@@ -84,6 +118,9 @@ pub(super) struct Backend<P> {
     pub(super) seen_tool_ids: HashSet<String>,
     pub(super) approvals: HashMap<ActivityRequestRef, ApprovalBinding>,
     pub(super) wire_approvals: HashMap<String, ActivityRequestRef>,
+    pub(super) inputs: HashMap<ActivityRequestRef, InputBinding>,
+    pub(super) wire_inputs: HashMap<String, ActivityRequestRef>,
+    pub(super) input_tool_turns: HashMap<String, TurnRef>,
     pub(super) pending_events: VecDeque<BackendEvent>,
     pub(super) next_activity_id: u64,
     pub(super) next_request_id: u64,
@@ -112,6 +149,9 @@ impl<P: JsonPeer> Backend<P> {
             seen_tool_ids: HashSet::new(),
             approvals: HashMap::new(),
             wire_approvals: HashMap::new(),
+            inputs: HashMap::new(),
+            wire_inputs: HashMap::new(),
+            input_tool_turns: HashMap::new(),
             pending_events: VecDeque::new(),
             next_activity_id: 1,
             next_request_id: 1,
@@ -147,6 +187,7 @@ impl<P: JsonPeer> Backend<P> {
                     .sum::<usize>(),
             )
             .and_then(|count| count.checked_add(self.approvals.len()))
+            .and_then(|count| count.checked_add(self.inputs.len()))
             .ok_or_else(|| protocol::protocol_failure("Grok active activity count overflowed"))?;
         if active >= Self::MAX_ACTIVE_ACTIVITIES {
             return Err(protocol::protocol_failure(format!(

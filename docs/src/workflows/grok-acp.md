@@ -50,9 +50,29 @@ Keep the adapter fail-closed around the wire surface it consumes:
   advertises load support;
 - correlate every response, Session update, permission request, and terminal
   prompt result to the active request and Session;
-- map text, thought, tool, permission, cancellation, and stop-reason messages
-  into provider-neutral backend events; and
+- map text, thought, tool, permission, private user-question, cancellation, and
+  stop-reason messages into provider-neutral backend events; and
 - bound messages, queues, request waits, retained stderr, and process shutdown.
+
+The private `_x.ai/ask_user_question` method follows xAI's
+[request and response types](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs).
+It does not change the empty standard ACP client capabilities. Yo validates the
+active Session and Turn, then presents up to 64 questions sequentially through
+the common interview profile. Single-select labels, descriptions, option previews,
+free text as `Other`, notes, and previous-question navigation are retained. The
+adapter sends one ordered `accepted` response after the final question; selected
+preview and notes remain separate annotations. The request's `toolCallId` remains
+bound to its originating Turn for the Session lifetime, so duplicate or delayed
+reuse cannot become a question in a later Turn. Both `default` and `plan` requests
+can take this accepted path, but Yo does not expose Grok's plan-only “Chat about
+this” or “Skip interview” actions.
+
+`multiSelect: true` is cancelled and reported as unsupported because the common
+interview response carries one choice. Malformed or oversized requests fail before
+publication, and prompt completion cannot bypass an unresolved question. Interrupt
+and read-only review paths return the typed cancelled outcome. The extension has no
+secret marker, so its inputs always use the public question editor; it does not
+participate in secret input storage or recovery.
 
 Do not infer compatibility from the executable version alone. Inspect the
 candidate's ACP behavior and retain deterministic fixtures that distinguish
@@ -109,6 +129,11 @@ Run deterministic adapter tests first:
 ```bash
 cargo test -p yo-backend-delegated-grok
 ```
+
+The fixtures cover ordered batch answers, free text, notes and previews, backward
+navigation, interruption, read-only review, malformed and oversized requests,
+multi-select refusal, and completion with an unresolved question. They exercise the
+exact JSON-RPC request and response without consuming a Grok inference turn.
 
 With an installed CLI and an existing `grok login`, verify the real initialize,
 cached-token authentication, and cleanup boundary without consuming an

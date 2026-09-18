@@ -1,6 +1,7 @@
 mod completion;
 mod message;
 mod permission;
+mod question;
 mod tool;
 mod usage;
 
@@ -99,7 +100,20 @@ impl<P: JsonPeer> Backend<P> {
         method: &str,
         params: Value,
     ) -> Result<Option<BackendEvent>, BackendFailure> {
-        permission::map_server_request(self, wire_id, method, params)
+        match method {
+            "session/request_permission" => {
+                permission::map_server_request(self, wire_id, method, params)
+            },
+            "_x.ai/ask_user_question" => question::map_server_request(self, wire_id, params),
+            _ => {
+                self.client
+                    .reject(wire_id, -32601, "client request is unsupported by yo")?;
+                Err(BackendFailure::new(
+                    yo_core::BackendFailureKind::Unsupported,
+                    format!("unsupported Grok ACP client request `{method}`"),
+                ))
+            },
+        }
     }
 
     fn validate_session(&self, params: &Value) -> Result<(), BackendFailure> {

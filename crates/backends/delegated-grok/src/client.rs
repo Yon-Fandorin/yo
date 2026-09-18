@@ -170,8 +170,10 @@ impl<P: JsonPeer> AcpClient<P> {
                     return Ok(id);
                 },
                 Incoming::ServerRequest { method, params, .. }
-                    if method == "session/request_permission"
-                        && session_matches(params, session_id) =>
+                    if matches!(
+                        method.as_str(),
+                        "session/request_permission" | "_x.ai/ask_user_question"
+                    ) && session_matches(params, session_id) =>
                 {
                     self.queue(message)?;
                     return Ok(id);

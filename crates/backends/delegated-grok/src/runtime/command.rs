@@ -100,6 +100,17 @@ impl<P: JsonPeer> Backend<P> {
                     outcome: ActivityOutcome::Interrupted,
                 });
         }
+        let inputs = self.inputs.drain().collect::<Vec<_>>();
+        self.wire_inputs.clear();
+        for (_, input) in inputs {
+            self.client
+                .respond(input.wire_id, json!({ "outcome": "cancelled" }))?;
+            self.pending_events
+                .push_back(yo_core::BackendEvent::ActivityFinished {
+                    activity: input.activity,
+                    outcome: ActivityOutcome::Interrupted,
+                });
+        }
         Ok(BackendCommandEvidence::None)
     }
 
@@ -108,8 +119,11 @@ impl<P: JsonPeer> Backend<P> {
         request: ActivityRequestRef,
         response: ActivityResponse,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
+        if self.inputs.contains_key(&request) {
+            return self.respond_to_question(request, response);
+        }
         let approval = self.approvals.get(&request).cloned().ok_or_else(|| {
-            protocol::protocol_failure("approval response has no matching Grok request")
+            protocol::protocol_failure("activity response has no matching Grok request")
         })?;
         let option_id = match response {
             ActivityResponse::Approval(ApprovalDecision::Approved) => approval.allow_option,

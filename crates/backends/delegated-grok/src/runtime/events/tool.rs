@@ -20,6 +20,15 @@ impl<P: JsonPeer> Backend<P> {
     ) -> Result<Option<BackendEvent>, BackendFailure> {
         let turn = self.active_turn()?;
         let tool_id = identifier_at(update, "toolCallId")?.to_owned();
+        if self
+            .input_tool_turns
+            .get(&tool_id)
+            .is_some_and(|question_turn| *question_turn != turn)
+        {
+            return Err(protocol::protocol_failure(format!(
+                "Grok ACP tool call `{tool_id}` belongs to an earlier user-question Turn"
+            )));
+        }
         if self.seen_tool_ids.contains(&tool_id) {
             return Err(protocol::protocol_failure(format!(
                 "duplicate Grok ACP tool call `{tool_id}`"

@@ -209,6 +209,24 @@ fn permission_request(id: &str, title: Option<&str>) -> Value {
     })
 }
 
+fn question_request(id: &str, questions: Value) -> Value {
+    question_request_for_tool(id, "question-tool-a", questions)
+}
+
+fn question_request_for_tool(id: &str, tool_call_id: &str, questions: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "_x.ai/ask_user_question",
+        "params": {
+            "sessionId": "grok-session-a",
+            "toolCallId": tool_call_id,
+            "questions": questions,
+            "mode": "default"
+        }
+    })
+}
+
 fn expect_activity_started(
     backend: &mut Backend<FakePeer>,
     expected: ActivityKind,
