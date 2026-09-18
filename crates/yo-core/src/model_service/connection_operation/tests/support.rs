@@ -44,7 +44,8 @@ impl Fixture {
         });
         Self {
             connections: LocalConnectionRepository::new(root.join("state/connections.yaml")),
-            credentials: LocalCredentialRepository::new(root.join("state/credentials.yaml")),
+            credentials: LocalCredentialRepository::new(root.join("state/credentials.yaml"))
+                .expect("fixture credential path must be non-empty and absolute"),
             journal: LocalConnectionOperationJournal::new(
                 root.join("state/connection-operation.yaml"),
             ),

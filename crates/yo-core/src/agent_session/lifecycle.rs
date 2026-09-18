@@ -10,7 +10,7 @@ use std::{
 
 use super::{
     AgentSession, AgentSessionError, WORKER_GRACEFUL_SHUTDOWN, WORKER_SHUTDOWN_TIMEOUT,
-    WORKER_STOPPING, WorkerExit,
+    WORKER_STOPPING, WorkerExit, WorkerTerminal,
 };
 use crate::AgentEvent;
 
@@ -35,7 +35,7 @@ impl AgentSession {
         }
 
         if !finished_gracefully && self.finished.recv_timeout(WORKER_SHUTDOWN_TIMEOUT).is_err() {
-            if let Some(failure) = self.take_failure() {
+            if let Some(failure) = self.take_terminal_failure() {
                 failures.push(failure);
             }
             failures.push(AgentSessionError::WorkerShutdownTimedOut);
@@ -43,7 +43,7 @@ impl AgentSession {
         }
         match join_worker(worker) {
             Ok(exit) => {
-                if let Some(failure) = self.take_failure() {
+                if let Some(failure) = self.take_terminal_failure() {
                     failures.push(failure);
                 }
                 if let Some(failure) = exit.failure {
@@ -56,7 +56,7 @@ impl AgentSession {
                 }
             },
             Err(error) => {
-                if let Some(failure) = self.take_failure() {
+                if let Some(failure) = self.take_terminal_failure() {
                     failures.push(failure);
                 }
                 failures.push(error);
@@ -65,8 +65,19 @@ impl AgentSession {
         }
     }
 
-    fn take_failure(&self) -> Option<AgentSessionError> {
-        self.failure.lock().ok()?.take()
+    fn take_terminal_failure(&self) -> Option<AgentSessionError> {
+        let mut terminal = self
+            .terminal
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if matches!(terminal.as_ref(), Some(WorkerTerminal::Failure(_))) {
+            match terminal.take() {
+                Some(WorkerTerminal::Failure(error)) => Some(error),
+                Some(WorkerTerminal::Closed) | None => None,
+            }
+        } else {
+            None
+        }
     }
 
     #[cfg(test)]

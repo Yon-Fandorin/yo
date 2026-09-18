@@ -108,7 +108,8 @@ pub(super) fn read_qwencloud_capacity(account: &str) -> Result<AccountCapacityRe
     let credentials = operation
         .capture_credentials()
         .map_err(|error| AppError::single("reading stored account credentials", error))?;
-    let credential_repository = LocalCredentialRepository::new(config.credential_path());
+    let credential_repository = LocalCredentialRepository::new(config.credential_path())
+        .map_err(|error| AppError::single("opening the credential repository", error))?;
     let (snapshot, provider_data) = refresh_qwencloud_capacity_with(
         &mut operation,
         &credential_repository,
@@ -275,6 +276,7 @@ pub(super) fn read_kimi_capacity(account: &str) -> Result<AccountCapacitySnapsho
         ))
     })?;
     let credentials = LocalCredentialRepository::new(config.credential_path())
+        .map_err(|error| AppError::single("opening the credential repository", error))?
         .capture()
         .map_err(|error| AppError::single("reading stored model credentials", error))?;
     let credential = credentials.resolve(&provider, &account).ok_or_else(|| {

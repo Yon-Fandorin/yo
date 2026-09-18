@@ -27,9 +27,17 @@ const REGULAR_FILE_MODE: u32 = libc::S_IFREG as u32;
 #[cfg(not(target_vendor = "apple"))]
 const REGULAR_FILE_MODE: u32 = libc::S_IFREG;
 
+pub(super) fn validate_path(path: &Path) -> Result<(), LocalCredentialStoreError> {
+    if path.as_os_str().is_empty() || !path.is_absolute() {
+        return Err(LocalCredentialStoreError::InvalidPath(path.to_owned()));
+    }
+    Ok(())
+}
+
 pub(super) fn read_snapshot(
     path: &Path,
 ) -> Result<StoredCredentialSnapshot, LocalCredentialStoreError> {
+    validate_path(path)?;
     let mut file = match fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -65,6 +73,7 @@ pub(super) fn read_snapshot(
 pub(super) fn lock_repository(
     path: &Path,
 ) -> Result<(PathBuf, fs::File), LocalCredentialStoreError> {
+    validate_path(path)?;
     let parent = prepare_parent(path)?;
     let lock_path = parent.join(REPOSITORY_LOCK_FILE);
     reject_symlink(&lock_path)?;
@@ -88,6 +97,7 @@ pub(super) fn publish(
     expected_absent: bool,
     encoded: &[u8],
 ) -> Result<(), LocalCredentialStoreError> {
+    validate_path(path)?;
     if encoded.len() as u64 > MAX_CREDENTIAL_FILE_BYTES {
         return Err(LocalCredentialStoreError::PreparedTooLarge);
     }

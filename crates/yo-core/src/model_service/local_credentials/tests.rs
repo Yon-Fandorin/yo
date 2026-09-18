@@ -39,7 +39,8 @@ impl Drop for TestDirectory {
 
 fn repository(name: &str) -> (TestDirectory, LocalCredentialRepository) {
     let directory = TestDirectory::new(name);
-    let repository = LocalCredentialRepository::new(directory.0.join("nested/credentials.yaml"));
+    let repository = LocalCredentialRepository::new(directory.0.join("nested/credentials.yaml"))
+        .expect("fixture credential path must be non-empty and absolute");
     (directory, repository)
 }
 
@@ -52,6 +53,47 @@ fn pair(provider: &str, account: &str) -> (ProviderId, AccountId) {
 
 fn secret(value: &str) -> ApiCredential {
     ApiCredential::new(value).unwrap()
+}
+
+// repository와 backward-compatible reader가 빈 경로나 상대 경로를 현재 작업 디렉터리로
+// 해석하지 않고 filesystem 접근 전에 같은 typed path error로 거부하는 경계
+#[test]
+fn rejects_empty_and_relative_credential_paths_before_filesystem_access() {
+    for value in ["", ".", "relative/credentials.yaml"] {
+        let path = PathBuf::from(value);
+        let error = LocalCredentialRepository::new(path.clone()).unwrap_err();
+        assert!(matches!(
+            error,
+            LocalCredentialStoreError::InvalidPath(ref rejected) if rejected == &path
+        ));
+
+        let error = LocalCredentialStore::open(&path).unwrap_err();
+        assert!(matches!(
+            error,
+            LocalCredentialStoreError::InvalidPath(ref rejected) if rejected == &path
+        ));
+    }
+}
+
+// absolute missing path는 constructor와 reader에서 허용하지만 capture/open 모두 파일이나
+// 부모 디렉터리를 만들지 않고 canonical absent snapshot을 반환하는 경계
+#[test]
+fn accepts_absolute_missing_path_without_creating_state() {
+    let (_directory, repository) = repository("absolute-missing");
+    assert!(repository.path().is_absolute());
+    assert!(!repository.path().exists());
+    assert!(!repository.path().parent().unwrap().exists());
+
+    let captured = repository.capture().unwrap();
+    assert!(captured.revision().is_absent());
+    assert!(captured.is_empty());
+    assert!(!repository.path().exists());
+    assert!(!repository.path().parent().unwrap().exists());
+
+    let opened = LocalCredentialStore::open(repository.path()).unwrap();
+    assert!(opened.is_empty());
+    assert!(!repository.path().exists());
+    assert!(!repository.path().parent().unwrap().exists());
 }
 
 // 파일이 없는 capture는 부모를 만들지 않은 absent snapshot이어야 하며, set 준비 뒤에도

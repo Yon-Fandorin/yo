@@ -208,6 +208,24 @@ fn relative_config_filename_uses_the_current_state_directory() {
     );
 }
 
+// 상대 YO_CONFIG를 cwd에 고정한 production 경로는 config load부터 credential capture까지
+// 같은 절대 state directory를 사용하고 누락된 credential 파일을 만들지 않는 경계
+#[test]
+fn relative_config_path_reaches_the_absolute_credential_repository() {
+    let directory = TestDirectory::new("relative-production-path");
+    let config_path = directory.path().join("config.yaml");
+    fs::write(&config_path, "{}\n").unwrap();
+    let resolved =
+        path::resolve_from_directory(PathBuf::from("config.yaml"), directory.path()).unwrap();
+
+    let config = load_from(&resolved).unwrap();
+    assert_eq!(config.state_directory(), directory.path());
+    assert!(config.credential_path().is_absolute());
+    let credentials = yo_core::LocalCredentialRepository::new(config.credential_path()).unwrap();
+    assert!(credentials.capture().unwrap().is_empty());
+    assert!(!credentials.path().exists());
+}
+
 // 읽기 전용 명령은 설정 파일이 없어도 기본값을 사용하며 경로나 파일을 만들지 않습니다.
 #[test]
 fn missing_configuration_uses_defaults_without_creating_a_file() {

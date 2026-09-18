@@ -130,7 +130,8 @@ mod tests {
             .unwrap();
         repository.commit(&mutation).unwrap();
         let credentials =
-            yo_core::LocalCredentialRepository::new(directory.0.join("credentials.yaml"));
+            yo_core::LocalCredentialRepository::new(directory.0.join("credentials.yaml"))
+                .expect("fixture credential path must be non-empty and absolute");
         let mutation =
             yo_core::CredentialRepository::prepare_set(&credentials, &provider, &account_id)
                 .unwrap();

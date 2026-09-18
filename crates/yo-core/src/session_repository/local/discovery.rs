@@ -31,6 +31,7 @@ use crate::{HostWorkspacePath, SessionId, WorkspaceHostId};
 
 #[derive(Debug)]
 pub struct LocalSessionReader {
+    #[cfg(test)]
     root: PathBuf,
     tree_root: File,
 }
@@ -48,7 +49,11 @@ impl LocalSessionReader {
                 message: "Session repository root changed while the reader was opening".into(),
             });
         }
-        Ok(Self { root, tree_root })
+        Ok(Self {
+            #[cfg(test)]
+            root,
+            tree_root,
+        })
     }
 
     #[cfg(test)]
@@ -57,7 +62,7 @@ impl LocalSessionReader {
     }
 
     fn session_path(&self, session_id: SessionId) -> PathBuf {
-        self.root.join(format!("{session_id}.jsonl"))
+        PathBuf::from(format!("{session_id}.jsonl"))
     }
 }
 
@@ -187,9 +192,10 @@ impl StoredSessionReader for LocalSessionReader {
 
     fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError> {
         let mut sessions = Vec::new();
-        for entry in fs::read_dir(&self.root)? {
-            let entry = entry?;
-            let path = entry.path();
+        let directory = Dir::read_from(&self.tree_root).map_err(Error::from)?;
+        for entry in directory {
+            let entry = entry.map_err(Error::from)?;
+            let path = PathBuf::from(OsStr::from_bytes(entry.file_name().to_bytes()));
             if path
                 .extension()
                 .is_none_or(|extension| extension != "jsonl")
@@ -202,7 +208,7 @@ impl StoredSessionReader for LocalSessionReader {
             let Ok(session_id) = SessionId::from_str(stem) else {
                 continue;
             };
-            match read_tail_discovery(&self.root, &path, session_id) {
+            match read_tail_discovery(&self.tree_root, &path, session_id) {
                 Ok(Some((sequence, version, discovery))) => {
                     sessions.push(StoredSession::Available(StoredSessionSummary::new(
                         sequence, version, discovery,
@@ -275,7 +281,7 @@ impl StoredSessionReader for LocalSessionReader {
         session_id: SessionId,
     ) -> Result<StoredSessionSnapshot, RepositoryError> {
         read_snapshot_entries(
-            &self.root,
+            &self.tree_root,
             &self.session_path(session_id),
             session_id,
             0,
@@ -315,7 +321,7 @@ impl StoredSessionReader for LocalSessionReader {
         limit: usize,
     ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
         read_snapshot_entries(
-            &self.root,
+            &self.tree_root,
             &self.session_path(session_id),
             session_id,
             sequence.map_or(0, RepositorySequence::get),

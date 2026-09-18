@@ -1,9 +1,9 @@
 //! 로컬 저장소 루트, 컷오프, 경로, 메타데이터 검증.
 
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{Error, ErrorKind},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Component, Path, PathBuf},
 };
 
@@ -16,7 +16,7 @@ use super::super::{DurableCutoff, RepositoryError, RepositorySequence};
 use crate::JournalSequence;
 
 pub(super) const DIRECTORY_MODE: u32 = 0o700;
-pub(super) const FILE_MODE: u32 = 0o600;
+pub(super) const FILE_MODE: Mode = Mode::from_raw_mode(0o600);
 
 pub(super) fn validate_repository_root(root: &Path) -> Result<(), RepositoryError> {
     if root.as_os_str().is_empty() || !root.is_absolute() {
@@ -28,13 +28,30 @@ pub(super) fn validate_repository_root(root: &Path) -> Result<(), RepositoryErro
 }
 
 pub(super) fn open_lock_file(path: &Path) -> Result<File, RepositoryError> {
-    reject_symlink(path)?;
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .mode(FILE_MODE)
-        .open(path)?;
+    let parent = path.parent().ok_or_else(|| RepositoryError::Unavailable {
+        message: format!(
+            "Session repository lock path has no parent: {}",
+            path.display()
+        ),
+    })?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| RepositoryError::Unavailable {
+            message: format!(
+                "Session repository lock path has no name: {}",
+                path.display()
+            ),
+        })?;
+    let directory = pin_reader_root(parent)?;
+    let opened = openat(
+        &directory,
+        name,
+        OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        FILE_MODE,
+    )
+    .map_err(Error::from)?;
+    let file = File::from(opened);
+    require_regular_file(&file)?;
     require_user_only_file(&file)?;
     Ok(file)
 }
@@ -78,34 +95,47 @@ pub(super) fn open_readonly_regular_at(
         Err(error) => return Err(Error::from(error).into()),
     };
     let file = File::from(opened);
-    if !file.metadata()?.is_file() {
-        return Err(RepositoryError::Unavailable {
-            message: "Session repository entry is not a regular file".into(),
-        });
-    }
+    require_regular_file(&file)?;
     require_user_only_file(&file)?;
     Ok(Some(file))
 }
 
-/// 링크를 따르거나 FIFO를 기다리지 않고 사용자 전용 권한의 기존 일반 파일만 엽니다.
-pub(super) fn open_readonly_regular(path: &Path) -> Result<Option<File>, RepositoryError> {
-    let file = match OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    if !file.metadata()?.is_file() {
-        return Err(RepositoryError::Unavailable {
+pub(super) fn open_regular_file(
+    path: &Path,
+    writable: bool,
+) -> Result<Option<File>, RepositoryError> {
+    let parent = path.parent().ok_or_else(|| RepositoryError::Unavailable {
+        message: format!(
+            "Session repository file path has no parent: {}",
+            path.display()
+        ),
+    })?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| RepositoryError::Unavailable {
             message: format!(
-                "Session repository entry is not a regular file: {}",
+                "Session repository file path has no name: {}",
                 path.display()
             ),
-        });
-    }
+        })?;
+    let directory = pin_reader_root(parent)?;
+    let access = if writable {
+        OFlags::RDWR
+    } else {
+        OFlags::RDONLY
+    };
+    let opened = match openat(
+        &directory,
+        name,
+        access | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(file) => file,
+        Err(Errno::NOENT) => return Ok(None),
+        Err(error) => return Err(Error::from(error).into()),
+    };
+    let file = File::from(opened);
+    require_regular_file(&file)?;
     require_user_only_file(&file)?;
     Ok(Some(file))
 }
@@ -162,6 +192,16 @@ pub(super) fn require_user_only_file(file: &File) -> Result<(), RepositoryError>
     }
 }
 
+fn require_regular_file(file: &File) -> Result<(), RepositoryError> {
+    if file.metadata()?.is_file() {
+        Ok(())
+    } else {
+        Err(RepositoryError::Unavailable {
+            message: "Session repository entry is not a regular file".into(),
+        })
+    }
+}
+
 pub(super) fn pending_path(path: &Path) -> PathBuf {
     path.with_extension("jsonl.pending")
 }
@@ -195,6 +235,7 @@ pub(super) fn parse_pending_cutoff(value: &str) -> Result<u64, RepositoryError> 
         })
 }
 
+#[cfg(test)]
 pub(super) fn marker_path_matches(
     marker: &File,
     pending: &Path,

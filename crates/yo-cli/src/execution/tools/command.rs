@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::{
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
@@ -29,6 +31,35 @@ mod pipe;
 mod process;
 
 pub(crate) use manifest::{PreparedCommand, PreparedCommandTools};
+
+#[derive(Default)]
+struct LaunchTestHooks {
+    #[cfg(test)]
+    verified: Option<SyncSender<()>>,
+    #[cfg(test)]
+    resume: Option<Receiver<()>>,
+}
+
+#[derive(Default)]
+struct CommandTestHooks {
+    waiter: WaiterTestHooks,
+    launch: LaunchTestHooks,
+}
+
+impl LaunchTestHooks {
+    #[cfg(test)]
+    fn pause_after_verification(&mut self) {
+        if let Some(verified) = self.verified.take() {
+            let _ = verified.send(());
+        }
+        if let Some(resume) = self.resume.take() {
+            let _ = resume.recv();
+        }
+    }
+
+    #[cfg(not(test))]
+    fn pause_after_verification(&mut self) {}
+}
 
 enum CommandPlan {
     Shell(String),
@@ -70,7 +101,27 @@ impl CommandExecution {
             maximum_output_bytes,
             CommandExecutionLimits::for_agent(absolute_execution_timeout),
             WaiterTestHooks::default(),
+            LaunchTestHooks::default(),
             maximum_retained_output_bytes,
+        )
+    }
+
+    #[cfg(test)]
+    fn spawn_prepared_with_launch_hooks(
+        workspace: PathBuf,
+        command: PreparedCommand,
+        arguments: Vec<u8>,
+        limits: CommandExecutionLimits,
+        launch_hooks: LaunchTestHooks,
+    ) -> Result<Self, ToolExecutionError> {
+        Self::spawn_plan(
+            workspace,
+            CommandPlan::Prepared(Box::new(command), arguments),
+            1024 * 1024,
+            limits,
+            WaiterTestHooks::default(),
+            launch_hooks,
+            None,
         )
     }
 
@@ -127,6 +178,7 @@ impl CommandExecution {
             maximum_output_bytes,
             limits,
             waiter_hooks,
+            LaunchTestHooks::default(),
             maximum_retained_output_bytes,
         )
     }
@@ -137,6 +189,7 @@ impl CommandExecution {
         maximum_output_bytes: usize,
         limits: CommandExecutionLimits,
         waiter_hooks: WaiterTestHooks,
+        launch_hooks: LaunchTestHooks,
         maximum_retained_output_bytes: Option<usize>,
     ) -> Result<Self, ToolExecutionError> {
         if !limits.is_valid() {
@@ -160,7 +213,10 @@ impl CommandExecution {
                 limits,
                 &cancelled,
                 &worker_process_group,
-                waiter_hooks,
+                CommandTestHooks {
+                    waiter: waiter_hooks,
+                    launch: launch_hooks,
+                },
             )
         });
         Ok(Self {
@@ -230,7 +286,7 @@ fn run_command(
     limits: CommandExecutionLimits,
     cancelled: &AtomicBool,
     shared_process_group: &Mutex<Option<Pid>>,
-    waiter_hooks: WaiterTestHooks,
+    hooks: CommandTestHooks,
 ) -> ToolExecutionResult {
     let CommandOutput {
         maximum_output_bytes,
@@ -238,6 +294,12 @@ fn run_command(
         progress,
     } = output;
     let attempt_started = Instant::now();
+    // artifact 검증이 path 기반 단일 spawn 전 마지막 blocking setup이 되도록 waiter를 먼저
+    // 준비한다.
+    let Ok(mut waiter) = ChildWaiter::spawn(hooks.waiter) else {
+        return failed("run_command waiter is unavailable");
+    };
+    let mut launch_hooks = hooks.launch;
     let (mut launch, stdin_bytes) = match command {
         CommandPlan::Shell(command) => (shell_command(workspace, command), Vec::new()),
         CommandPlan::Prepared(command, arguments) => {
@@ -262,6 +324,7 @@ fn run_command(
                     };
                 },
             };
+            launch_hooks.pause_after_verification();
             let mut launch = Command::new(&verified.executable);
             launch
                 .args(&verified.args)
@@ -276,9 +339,6 @@ fn run_command(
             bytes.push(b'\n');
             (launch, bytes)
         },
-    };
-    let Ok(mut waiter) = ChildWaiter::spawn(waiter_hooks) else {
-        return failed("run_command waiter is unavailable");
     };
     if let Some(reason) = expired_reason(
         cancelled,

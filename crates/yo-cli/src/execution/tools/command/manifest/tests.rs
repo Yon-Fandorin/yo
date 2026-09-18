@@ -2,6 +2,7 @@ use std::{
     env, fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::PathBuf,
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -12,7 +13,10 @@ use yo_core::{
     ToolExecution, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionResult, ToolId,
 };
 
-use super::{super::CommandExecution, PreparedCommandTools, encoding};
+use super::{
+    super::{CommandExecution, LaunchTestHooks, limits::CommandExecutionLimits},
+    PreparedCommandTools, encoding,
+};
 use crate::state::config;
 
 struct Fixture(PathBuf);
@@ -79,6 +83,15 @@ fn wait(execution: &mut CommandExecution) -> ToolExecutionResult {
 }
 
 fn start(fixture: &Fixture, prepared: &PreparedCommandTools, text: &str) -> CommandExecution {
+    start_with_launch_hooks(fixture, prepared, text, LaunchTestHooks::default())
+}
+
+fn start_with_launch_hooks(
+    fixture: &Fixture,
+    prepared: &PreparedCommandTools,
+    text: &str,
+    launch_hooks: LaunchTestHooks,
+) -> CommandExecution {
     let call = prepared
         .registry()
         .validate_call(
@@ -88,15 +101,14 @@ fn start(fixture: &Fixture, prepared: &PreparedCommandTools, text: &str) -> Comm
             101 * 1024 * 1024,
         )
         .unwrap();
-    CommandExecution::spawn_prepared(
+    CommandExecution::spawn_prepared_with_launch_hooks(
         fixture.0.clone(),
         prepared
             .command(&ToolId::new("configured").unwrap())
             .unwrap(),
         call.normalized_arguments().to_owned(),
-        1024 * 1024,
-        Some(Duration::from_secs(5)),
-        None,
+        CommandExecutionLimits::for_agent(Some(Duration::from_secs(5))),
+        launch_hooks,
     )
     .unwrap()
 }
@@ -460,4 +472,70 @@ fn final_artifact_verification_prevents_spawn_and_blocked_stdin_is_cancellable()
     execution.cancel();
     let result = wait(&mut execution);
     assert_eq!(result.outcome(), ToolExecutionOutcome::Interrupted);
+}
+
+// 최종 검증 뒤 외부 publisher가 경로를 바꾸는 경우는 계약상 원자 실행 보장 밖이다.
+// 이 barrier는 그 경계를 결정적으로 드러내 path semantics를 atomicity로 오인하지 않게 한다.
+#[test]
+fn replacement_after_final_verification_retains_documented_path_semantics() {
+    let fixture = Fixture::new();
+    fs::write(fixture.0.join("script.sh"), b"printf original\n").unwrap();
+    let config = fixture.config("/bin/sh", Some("script.sh"), &[]);
+    let prepared = fixture.prepare(&config);
+    let (verified_tx, verified_rx) = mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+    let mut execution = start_with_launch_hooks(
+        &fixture,
+        &prepared,
+        "value",
+        LaunchTestHooks {
+            verified: Some(verified_tx),
+            resume: Some(resume_rx),
+        },
+    );
+    verified_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker did not reach the post-verification boundary");
+    fs::write(fixture.0.join("script.sh"), b"printf replacement\n").unwrap();
+    resume_tx.send(()).unwrap();
+
+    let result = wait(&mut execution);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
+    assert!(
+        result.output().contains("replacement"),
+        "{}",
+        result.output()
+    );
+    assert!(!result.output().contains("original"), "{}", result.output());
+}
+
+// 경계 밖 publisher race를 유지하더라도 검증 직후 들어온 취소는 단일 spawn 전에 끝나야 한다.
+#[test]
+fn cancellation_after_final_verification_still_prevents_spawn() {
+    let fixture = Fixture::new();
+    fs::write(fixture.0.join("script.sh"), b"touch executed\n").unwrap();
+    let config = fixture.config("/bin/sh", Some("script.sh"), &[]);
+    let prepared = fixture.prepare(&config);
+    let (verified_tx, verified_rx) = mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+    let mut execution = start_with_launch_hooks(
+        &fixture,
+        &prepared,
+        "value",
+        LaunchTestHooks {
+            verified: Some(verified_tx),
+            resume: Some(resume_rx),
+        },
+    );
+    verified_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker did not reach the post-verification boundary");
+    execution.cancel();
+    resume_tx.send(()).unwrap();
+
+    let result = wait(&mut execution);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Interrupted);
+    assert!(!fixture.0.join("executed").exists());
 }

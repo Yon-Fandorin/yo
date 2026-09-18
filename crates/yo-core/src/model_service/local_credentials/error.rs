@@ -37,7 +37,11 @@ impl fmt::Display for LocalCredentialStoreError {
         match self {
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::InvalidPath(path) => {
-                write!(formatter, "{} has no parent directory", path.display())
+                write!(
+                    formatter,
+                    "{} must be a non-empty absolute path",
+                    path.display()
+                )
             },
             Self::UnsupportedFileType(path) => {
                 write!(

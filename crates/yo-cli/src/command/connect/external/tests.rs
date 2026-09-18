@@ -86,7 +86,8 @@ fn grouped_import_publishes_multiple_models_without_selecting_a_default() {
     assert_eq!(snapshot.models().len(), 2);
     assert!(snapshot.preference().is_none());
     let credential = yo_core::CredentialRepository::capture(
-        &yo_core::LocalCredentialRepository::new(root.join("credentials.yaml")),
+        &yo_core::LocalCredentialRepository::new(root.join("credentials.yaml"))
+            .expect("fixture credential path must be non-empty and absolute"),
     )
     .unwrap();
     assert_eq!(
@@ -508,7 +509,8 @@ fn cancelled_rotation_discloses_exact_credential_replacement() {
     let config_path = root.join("config.yaml");
     fs::write(&config_path, "session: {}\n").unwrap();
     seed_stored_definition(&root, explicit_definition());
-    let credentials = yo_core::LocalCredentialRepository::new(root.join("credentials.yaml"));
+    let credentials = yo_core::LocalCredentialRepository::new(root.join("credentials.yaml"))
+        .expect("fixture credential path must be non-empty and absolute");
     let provider = ProviderId::new("vendor").unwrap();
     let account = AccountId::new("team").unwrap();
     let mutation =

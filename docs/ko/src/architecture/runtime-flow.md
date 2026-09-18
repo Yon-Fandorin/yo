@@ -179,6 +179,10 @@ wrapper에 digest를 보존한다. startup·resume·fork·model replacement는 �
 요청 승인 뒤 실행 경로는 artifact를 다시 검증하고 정규화된 JSON과 개행 하나를 child의
 stdin에 쓴다. 고정 argv는 리터럴을 유지한다. nonblocking stdin은 기존 출력·취소·deadline·
 유한 cleanup 수명주기에 참여하며 입력을 일부만 전달한 실행은 성공으로 처리하지 않는다.
+Child waiter는 이 최종 검증 전에 초기화되므로 검증과 command 구성 사이에 host setup 작업이
+남지 않는다. Cancellation과 absolute deadline은 단일 spawn 직전에 다시 확인한다. 실행은
+설정된 path semantics를 유지한다. 최종 검증 뒤 executable이나 script를 교체하는 조율되지
+않은 publisher는 atomic identity 보장 밖이며 운영체제가 spawn 때 여는 대상을 바꿀 수 있다.
 
 File host는 execution attempt 전에 semantic-admission 경로에서 구체적인 item·number·path·
 content bound를 검증하고 path를 열기 전에 방어적으로 다시 parse한다. `read_files`는 유지한
@@ -1044,7 +1048,9 @@ identity/status/updated 시각도 들어가지 않으면 공유 table header를 
 선택 설정 파일은 읽기만 하고 만들지 않는다. Linux는
 `${XDG_CONFIG_HOME:-$HOME/.config}/yo/config.yaml`, macOS는
 `$HOME/Library/Application Support/yo/config.yaml`을 사용하며, `YO_CONFIG`로
-명시적인 경로를 고를 수 있다. 현재 pre-version schema는 다음과 같다.
+명시적인 경로를 고를 수 있다. 상대 `YO_CONFIG`는 현재 작업 디렉터리 기준 의미를 유지하되
+sibling state 경로를 만들기 전에 절대 경로로 한 번 고정한다. 현재 pre-version schema는
+다음과 같다.
 
 ```yaml
 session:

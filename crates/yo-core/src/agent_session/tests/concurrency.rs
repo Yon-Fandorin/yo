@@ -7,6 +7,7 @@ use std::{
         atomic::{AtomicBool, AtomicU8, AtomicU64},
         mpsc,
     },
+    task::{Context, Poll, Waker},
     thread,
     time::{Duration, Instant},
 };
@@ -15,7 +16,7 @@ use super::{
     super::{
         AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, AgentWorker, ChangeLane,
         CommandAdmission, PendingCommand, SessionState, WORKER_IDLE, WorkerSharedState,
-        WorkerSignal, apply_event,
+        WorkerSignal, WorkerTerminal, apply_event,
     },
     support::{next_poll, session, start_app, turn},
 };
@@ -98,11 +99,7 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
     drop(normal_tx);
     drop(urgent_tx);
     let (changes_tx, _changes_rx) = mpsc::sync_channel(1);
-    let mut changes = ChangeLane::new(
-        changes_tx,
-        Arc::new(Mutex::new(None)),
-        Arc::new(Readiness::new()),
-    );
+    let mut changes = ChangeLane::new(changes_tx, Arc::new(Readiness::new()));
     let processed = (Mutex::new(0), Condvar::new());
     let lifecycle = AtomicU8::new(WORKER_IDLE);
 
@@ -189,11 +186,7 @@ fn queued_interrupt_after_rejected_start_does_not_kill_the_session() {
         .unwrap();
     drop(normal_tx);
     let (changes_tx, _changes_rx) = mpsc::sync_channel(1);
-    let mut changes = ChangeLane::new(
-        changes_tx,
-        Arc::new(Mutex::new(None)),
-        Arc::new(Readiness::new()),
-    );
+    let mut changes = ChangeLane::new(changes_tx, Arc::new(Readiness::new()));
     let exit = worker.run(
         normal_rx,
         urgent_rx,
@@ -218,6 +211,13 @@ struct BlockingBackend {
     entered: mpsc::Sender<()>,
     release: mpsc::Receiver<()>,
     stop: mpsc::Sender<()>,
+}
+
+struct BlockingFailureBackend {
+    entered: mpsc::Sender<()>,
+    release: mpsc::Receiver<()>,
+    failure: BackendFailure,
+    block_next_poll: bool,
 }
 
 struct StartupBlockingBackend {
@@ -414,6 +414,44 @@ impl BackendAdapter for BlockingBackend {
 
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
         Ok(BackendPoll::Pending)
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        Ok(())
+    }
+}
+
+impl BackendAdapter for BlockingFailureBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
+    fn stop_handle(&self) -> BackendStopHandle {
+        BackendStopHandle::no_op()
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::none()
+    }
+
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        if matches!(command, AgentCommand::StartTurn { .. }) {
+            self.block_next_poll = true;
+        }
+        Ok(BackendCommandEvidence::None)
+    }
+
+    fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
+        if !self.block_next_poll {
+            return Ok(BackendPoll::Pending);
+        }
+        self.block_next_poll = false;
+        self.entered.send(()).unwrap();
+        self.release.recv().unwrap();
+        Err(self.failure.clone())
     }
 
     fn shutdown(&mut self) -> Result<(), BackendFailure> {
@@ -776,16 +814,257 @@ fn shutdown_retains_a_cleanup_failure_that_races_with_receiver_drop() {
     ));
 }
 
+// 초기 Changed를 frontend가 소비하지 않아도 terminal failure가 change lane 뒤에서
+// worker를 멈추게 하지 않고 다음 poll에서 정확히 한 번 관찰되는 경계
+#[test]
+fn unpolled_changed_does_not_block_worker_failure_delivery() {
+    let failure = BackendFailure::new(BackendFailureKind::Turn, "provider turn failed");
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::Fail(failure.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = AgentSession::start_for_test(backend, session()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !app.worker.as_ref().unwrap().is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "worker did not finish after failure"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    assert_eq!(app.poll().unwrap(), AgentSessionPoll::Changed);
+    assert!(matches!(
+        app.poll(),
+        Err(AgentSessionError::Runtime(RuntimeError::Backend {
+            failure: ref observed,
+            ..
+        })) if observed == &failure
+    ));
+    assert_eq!(app.poll().unwrap(), AgentSessionPoll::Closed);
+    app.shutdown().unwrap();
+}
+
+// frontend가 terminal failure를 poll하지 않고 바로 shutdown해도 primary 오류를
+// terminal payload에서 회수하는 경계
+#[test]
+fn shutdown_retains_an_unpolled_worker_failure() {
+    let failure = BackendFailure::new(BackendFailureKind::Turn, "provider turn failed");
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::Fail(failure.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = AgentSession::start_for_test(backend, session()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !app.worker.as_ref().unwrap().is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "worker did not finish after failure"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let error = app.shutdown().unwrap_err();
+    assert!(matches!(
+        error,
+        AgentSessionError::Runtime(RuntimeError::Backend {
+            failure: ref observed,
+            ..
+        }) if observed == &failure
+    ));
+}
+
+// 빈 change lane 관찰과 backend failure 해제가 겹쳐도 Changed가 terminal보다
+// 먼저 같은 observation 경계를 통과하는 순서
+#[test]
+fn changed_precedes_terminal_when_empty_poll_races_with_failure() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let failure = BackendFailure::new(BackendFailureKind::Turn, "provider turn failed");
+    let backend = BlockingFailureBackend {
+        entered: entered_tx,
+        release: release_rx,
+        failure: failure.clone(),
+        block_next_poll: false,
+    };
+    let mut app = AgentSession::start_for_test(backend, session()).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match app.poll().unwrap() {
+            AgentSessionPoll::Changed => break,
+            AgentSessionPoll::Pending => {
+                assert!(
+                    Instant::now() < deadline,
+                    "worker did not publish its initial change"
+                );
+                thread::sleep(Duration::from_millis(1));
+            },
+            AgentSessionPoll::Closed => panic!("worker closed before its initial change"),
+        }
+    }
+    app.dispatch(AgentIntent::submit("run".to_owned()).unwrap())
+        .unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(app.poll().unwrap(), AgentSessionPoll::Changed);
+
+    let pending = app.poll_with_test_hook(|| release_tx.send(()).unwrap());
+    assert_eq!(pending.unwrap(), AgentSessionPoll::Pending);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !app.worker.as_ref().unwrap().is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "worker did not finish after the deterministic failure"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    assert_eq!(app.poll().unwrap(), AgentSessionPoll::Changed);
+    assert!(matches!(
+        app.poll(),
+        Err(AgentSessionError::Runtime(RuntimeError::Backend {
+            failure: ref observed,
+            ..
+        })) if observed == &failure
+    ));
+    assert_eq!(app.poll().unwrap(), AgentSessionPoll::Closed);
+    app.shutdown().unwrap();
+}
+
+// terminal 관찰 중 worker failure publication이 겹쳐도 mutex 역순 대기 없이
+// 관찰과 worker 종료가 모두 진행되는 경계
+#[test]
+fn terminal_failure_observation_and_publication_do_not_deadlock() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let failure = BackendFailure::new(BackendFailureKind::Turn, "provider turn failed");
+    let backend = BlockingFailureBackend {
+        entered: entered_tx,
+        release: release_rx,
+        failure: failure.clone(),
+        block_next_poll: false,
+    };
+    let mut app = AgentSession::start_for_test(backend, session()).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match app.poll().unwrap() {
+            AgentSessionPoll::Changed => break,
+            AgentSessionPoll::Pending => {
+                assert!(
+                    Instant::now() < deadline,
+                    "worker did not publish its initial change"
+                );
+                thread::sleep(Duration::from_millis(1));
+            },
+            AgentSessionPoll::Closed => panic!("worker closed before its initial change"),
+        }
+    }
+    app.dispatch(AgentIntent::submit("run".to_owned()).unwrap())
+        .unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(app.poll().unwrap(), AgentSessionPoll::Changed);
+
+    let seeded = AgentSessionError::Runtime(RuntimeError::Backend {
+        failure: failure.clone(),
+        terminal_events: Vec::new(),
+    });
+    *app.terminal.lock().unwrap() = Some(WorkerTerminal::Failure(seeded));
+
+    let (observed_tx, observed_rx) = mpsc::channel();
+    let frontend = thread::spawn(move || {
+        let observed = app.poll_with_test_hook(|| release_tx.send(()).unwrap());
+        let worker_failure = loop {
+            match app.poll() {
+                Err(error) => break Some(error),
+                Ok(AgentSessionPoll::Pending | AgentSessionPoll::Changed) => {
+                    thread::yield_now();
+                },
+                Ok(AgentSessionPoll::Closed) => break None,
+            }
+        };
+        let shutdown = app.shutdown();
+        observed_tx
+            .send((observed, worker_failure, shutdown))
+            .unwrap();
+    });
+
+    let (observed, worker_failure, shutdown) = observed_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("terminal observation and worker failure publication deadlocked");
+    frontend.join().unwrap();
+    assert!(matches!(
+        observed,
+        Err(AgentSessionError::Runtime(RuntimeError::Backend {
+            failure: ref observed,
+            ..
+        })) if observed == &failure
+    ));
+    assert!(matches!(
+        worker_failure,
+        Some(AgentSessionError::Runtime(RuntimeError::Backend {
+            failure: ref observed,
+            ..
+        })) if observed == &failure
+    ));
+    shutdown.unwrap();
+}
+
+// terminal payload만 남은 뒤에도 frontend가 실제 poll할 때까지 readiness가
+// 반복 probe에서 Ready로 유지되는 경계
+#[test]
+fn terminal_ledger_stays_ready_until_polled() {
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::Close,
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = AgentSession::start_for_test(backend, session()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match app.poll().unwrap() {
+            AgentSessionPoll::Changed => break,
+            AgentSessionPoll::Pending => {
+                assert!(
+                    Instant::now() < deadline,
+                    "worker did not publish its initial change"
+                );
+                thread::sleep(Duration::from_millis(1));
+            },
+            AgentSessionPoll::Closed => panic!("worker closed before its initial change"),
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !app.worker.as_ref().unwrap().is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "worker did not publish terminal state"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    assert_eq!(app.poll_ready(&mut context), Poll::Ready(()));
+    assert_eq!(app.poll_ready(&mut context), Poll::Ready(()));
+    assert_eq!(app.poll().unwrap(), AgentSessionPoll::Closed);
+    app.shutdown().unwrap();
+}
+
 // Journal 변경 알림을 frontend가 아직 읽지 않았을 때 후속 commit은 payload나 알림을
 // 무한히 쌓지 않고 같은 level-triggered 신호 하나로 합쳐야 한다.
 #[test]
 fn coalesces_journal_changes_while_one_notification_is_unread() {
     let (sender, receiver) = mpsc::sync_channel(1);
-    let mut lane = ChangeLane::new(
-        sender,
-        Arc::new(Mutex::new(None)),
-        Arc::new(Readiness::new()),
-    );
+    let mut lane = ChangeLane::new(sender, Arc::new(Readiness::new()));
 
     assert!(lane.changed());
     assert!(lane.changed());

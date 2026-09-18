@@ -740,6 +740,7 @@ impl Fixture {
 
     fn credentials(&self) -> LocalCredentialRepository {
         LocalCredentialRepository::new(self.root.join("credentials.yaml"))
+            .expect("fixture credential path must be non-empty and absolute")
     }
 
     fn seed_stored(&self, models: &[&str], preference: Option<&str>) {

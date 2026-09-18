@@ -7,8 +7,8 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(test)]
 use std::process;
 use std::{
-    fs::{File, OpenOptions},
-    io::{BufReader, Cursor, Error, ErrorKind, Read, Seek, SeekFrom},
+    fs::File,
+    io::{BufReader, Cursor, Error, Read, Seek, SeekFrom},
     path::Path,
 };
 
@@ -22,10 +22,7 @@ use super::{
         RepositoryEntry, RepositoryError, RepositorySequence, SessionRecordVersion,
         SessionTreeLimits, StoredSessionSummary,
     },
-    file::{
-        legacy_writer_is_active, pending_append_is_active, scan_complete_entries,
-        session_writer_is_active, tree_lock_is_active,
-    },
+    file::{pending_append_is_active, scan_complete_entries, tree_lock_is_active},
     wire::WireEntry,
 };
 use crate::SessionId;
@@ -171,7 +168,7 @@ fn read_bounded_entries(
 }
 
 pub(super) fn read_tail_discovery(
-    root: &Path,
+    root: &File,
     path: &Path,
     expected_session: SessionId,
 ) -> Result<
@@ -182,15 +179,11 @@ pub(super) fn read_tail_discovery(
     )>,
     RepositoryError,
 > {
-    super::security::reject_symlink(path)?;
-    let mut file = match OpenOptions::new().read(true).open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
+    let Some(mut file) = super::security::open_readonly_regular_at(root, path)? else {
+        return Ok(None);
     };
-    super::security::require_user_only_file(&file)?;
     let physical_len = file.metadata()?.len();
-    let cutoff = guarded_cutoff(root, path, expected_session)?.unwrap_or(physical_len);
+    let cutoff = guarded_tree_cutoff(root, path, expected_session)?.unwrap_or(physical_len);
     if cutoff > physical_len {
         return Err(RepositoryError::Quarantined {
             message: "Session append marker points beyond the physical log".to_owned(),
@@ -205,21 +198,17 @@ pub(super) fn read_tail_discovery(
 }
 
 pub(super) fn read_snapshot_entries(
-    root: &Path,
+    root: &File,
     path: &Path,
     expected_session: SessionId,
     after: u64,
     limit: usize,
 ) -> Result<Option<Vec<RepositoryEntry>>, RepositoryError> {
-    super::security::reject_symlink(path)?;
-    let file = match OpenOptions::new().read(true).open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
+    let Some(file) = super::security::open_readonly_regular_at(root, path)? else {
+        return Ok(None);
     };
-    super::security::require_user_only_file(&file)?;
     let physical_len = file.metadata()?.len();
-    let cutoff = guarded_cutoff(root, path, expected_session)?.unwrap_or(physical_len);
+    let cutoff = guarded_tree_cutoff(root, path, expected_session)?.unwrap_or(physical_len);
     if cutoff > physical_len {
         return Err(RepositoryError::Quarantined {
             message: "Session append marker points beyond the physical log".to_owned(),
@@ -255,20 +244,6 @@ fn guarded_tree_cutoff(
                 current.st_ino,
             )))
         },
-    )
-}
-
-fn guarded_cutoff(
-    root: &Path,
-    path: &Path,
-    session_id: SessionId,
-) -> Result<Option<u64>, RepositoryError> {
-    guarded_cutoff_with(
-        &super::security::pending_path(path),
-        super::security::open_readonly_regular,
-        || session_writer_is_active(root, session_id),
-        || legacy_writer_is_active(root),
-        super::security::marker_path_matches,
     )
 }
 

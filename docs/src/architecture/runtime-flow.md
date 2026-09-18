@@ -197,7 +197,12 @@ Delegated hosts skip artifact preparation and report that they manage their own 
 After request approval, execution revalidates artifacts and writes normalized JSON plus
 one newline to the child stdin. Fixed argv stays literal. Nonblocking stdin participates
 in the existing output, cancellation, deadline and finite cleanup lifecycle; partial
-input delivery never becomes a successful result.
+input delivery never becomes a successful result. The child waiter is initialized before
+that final verification so no host setup operation sits between verification and command
+construction. Cancellation and the absolute deadline are checked once more before the
+single spawn. Execution retains the configured path semantics: an uncoordinated publisher
+that replaces an executable or script after final verification remains outside the
+atomic-identity guarantee and may change what the operating system opens at spawn.
 
 The file host validates concrete item, numeric, path, and content bounds in the
 semantic-admission path before an execution attempt and repeats defensive
@@ -1152,7 +1157,9 @@ the invoking terminal's width and never contains ANSI styling.
 The optional configuration file is read but never created. Linux uses
 `${XDG_CONFIG_HOME:-$HOME/.config}/yo/config.yaml`; macOS uses
 `$HOME/Library/Application Support/yo/config.yaml`. `YO_CONFIG` selects an
-explicit path. The current pre-version schema is:
+explicit path. A relative `YO_CONFIG` keeps its current-working-directory meaning but is
+resolved once to an absolute path before any sibling state path is derived. The current
+pre-version schema is:
 
 ```yaml
 session:

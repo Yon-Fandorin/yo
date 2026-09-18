@@ -111,6 +111,16 @@ fn disk_tree_keeps_opened_root_when_its_path_is_replaced() {
         assert_eq!(tree.nodes()[0].session_id(), fixture_session(1));
         assert!(!tree.truncated());
     }
+    let discovered = reader.discover().unwrap();
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].session_id(), fixture_session(1));
+    assert_eq!(
+        reader
+            .read_after(fixture_session(1), None, 8)
+            .unwrap()
+            .len(),
+        1
+    );
     fs::remove_file(&original.0).unwrap();
 }
 

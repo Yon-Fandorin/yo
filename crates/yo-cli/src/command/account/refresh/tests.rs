@@ -62,7 +62,8 @@ impl AccountCredentialFixture {
             "yo-account-session-{}-{name}-{nonce}",
             process::id()
         ));
-        let credentials = LocalCredentialRepository::new(root.join("credentials.yaml"));
+        let credentials = LocalCredentialRepository::new(root.join("credentials.yaml"))
+            .expect("fixture credential path must be non-empty and absolute");
         let provider = ProviderId::new("qwencloud").unwrap();
         let account = AccountId::new("default").unwrap();
         Self {

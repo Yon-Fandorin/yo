@@ -77,9 +77,16 @@ impl LocalConnectionOperationRepositories {
             validate_path_components(repository, observed_parent)?;
         }
         let directory = parent.to_owned();
+        let credentials =
+            LocalCredentialRepository::new(credential_path.clone()).map_err(|_| {
+                ConnectionOperationExecutionError::InvalidRepositoryLayout {
+                    repository: ConnectionOperationRepositoryKind::Credential,
+                    path: credential_path,
+                }
+            })?;
         Ok(Self {
             connections: LocalConnectionRepository::new(connection_path),
-            credentials: LocalCredentialRepository::new(credential_path),
+            credentials,
             journal: LocalConnectionOperationJournal::new(journal_path),
             directory,
         })

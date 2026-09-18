@@ -18,9 +18,11 @@ pub struct LocalCredentialRepository {
 }
 
 impl LocalCredentialRepository {
-    #[must_use]
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+    /// 비어 있지 않은 절대 경로로 local credential repository를 엽니다.
+    pub fn new(path: impl Into<PathBuf>) -> Result<Self, LocalCredentialStoreError> {
+        let path = path.into();
+        storage::validate_path(&path)?;
+        Ok(Self { path })
     }
 
     #[must_use]

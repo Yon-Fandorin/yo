@@ -37,7 +37,7 @@ pub(in crate::agent_session) use startup::ResumeInitialization;
 #[cfg(test)]
 pub(in crate::agent_session) use worker::apply_event;
 pub(in crate::agent_session) use worker::{
-    AgentWorker, ChangeLane, WorkerExit, WorkerSharedState, WorkerSignal,
+    AgentWorker, ChangeLane, WorkerExit, WorkerSharedState, WorkerSignal, WorkerTerminal,
 };
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -57,9 +57,9 @@ pub struct AgentSession {
     urgent_commands: SyncSender<PendingCommand>,
     replacements: SyncSender<ReplacementRequest>,
     changes: Option<Mutex<ReadyReceiver<WorkerSignal>>>,
+    terminal: Arc<Mutex<Option<WorkerTerminal>>>,
     finished: Receiver<()>,
     stop: BackendStopHandle,
-    failure: Arc<Mutex<Option<AgentSessionError>>>,
     lifecycle: Arc<AtomicU8>,
     session_id: SessionId,
     state: Arc<Mutex<SessionState>>,

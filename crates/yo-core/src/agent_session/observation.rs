@@ -3,7 +3,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use super::{AgentControlOutcome, AgentSession, AgentSessionError, WORKER_IDLE, WorkerSignal};
+use super::{
+    AgentControlOutcome, AgentSession, AgentSessionError, WORKER_IDLE, WorkerSignal, WorkerTerminal,
+};
 use crate::{
     InputAdmissionConfigurationError, InputAdmissionHost, SubmissionOutcome, TranscriptReader,
 };
@@ -52,24 +54,49 @@ impl AgentSession {
     /// `Changed` 결과에는 semantic data가 없습니다. frontend는
     /// [`Self::transcript_reader`]로 commit된 suffix를 읽습니다.
     pub fn poll(&mut self) -> Result<AgentSessionPoll, AgentSessionError> {
+        self.poll_with_observation(|| {})
+    }
+
+    #[cfg(test)]
+    pub(super) fn poll_with_test_hook(
+        &mut self,
+        before_receive: impl FnOnce(),
+    ) -> Result<AgentSessionPoll, AgentSessionError> {
+        self.poll_with_observation(before_receive)
+    }
+
+    fn poll_with_observation(
+        &mut self,
+        before_receive: impl FnOnce(),
+    ) -> Result<AgentSessionPoll, AgentSessionError> {
         let Some(changes) = self.changes.as_mut() else {
             return Ok(AgentSessionPoll::Closed);
         };
+        let mut terminal = self
+            .terminal
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        before_receive();
         match changes
             .get_mut()
             .unwrap_or_else(|error| error.into_inner())
             .try_recv()
         {
             Ok(WorkerSignal::Changed) => Ok(AgentSessionPoll::Changed),
-            Ok(WorkerSignal::Failure(error)) => {
-                if let Ok(mut failure) = self.failure.lock() {
-                    failure.take();
-                }
-                Err(error)
-            },
-            Ok(WorkerSignal::Closed) => Ok(AgentSessionPoll::Closed),
-            Err(TryRecvError::Empty) => Ok(AgentSessionPoll::Pending),
-            Err(TryRecvError::Disconnected) => Ok(AgentSessionPoll::Closed),
+            Err(TryRecvError::Empty) => Self::poll_terminal(&mut terminal, false),
+            Err(TryRecvError::Disconnected) => Self::poll_terminal(&mut terminal, true),
+        }
+    }
+
+    fn poll_terminal(
+        terminal: &mut Option<WorkerTerminal>,
+        disconnected: bool,
+    ) -> Result<AgentSessionPoll, AgentSessionError> {
+        match terminal.take() {
+            Some(WorkerTerminal::Failure(error)) => Err(error),
+            Some(WorkerTerminal::Closed) => Ok(AgentSessionPoll::Closed),
+            None if disconnected => Ok(AgentSessionPoll::Closed),
+            None => Ok(AgentSessionPoll::Pending),
         }
     }
 
@@ -79,6 +106,13 @@ impl AgentSession {
         let Some(changes) = self.changes.as_ref() else {
             return Poll::Ready(());
         };
+        let terminal = self
+            .terminal
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if terminal.is_some() {
+            return Poll::Ready(());
+        }
         changes
             .lock()
             .unwrap_or_else(|error| error.into_inner())

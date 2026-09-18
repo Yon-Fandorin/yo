@@ -200,8 +200,8 @@ impl AgentSession {
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let (finished_tx, finished_rx) = mpsc::sync_channel(1);
         let (backend_tx, backend_rx) = mpsc::sync_channel(1);
-        let failure = Arc::new(Mutex::new(None));
-        let worker_failure = Arc::clone(&failure);
+        let terminal = Arc::new(Mutex::new(None));
+        let worker_terminal = Arc::clone(&terminal);
         let state = Arc::new(Mutex::new(SessionState::default()));
         let worker_state = Arc::clone(&state);
         let active_turn_id = Arc::new(AtomicU64::new(0));
@@ -248,8 +248,11 @@ impl AgentSession {
                         if startup_tx.send(Ok(())).is_err() {
                             WorkerExit::from_cleanup(worker.runtime.shutdown())
                         } else {
-                            let mut lane =
-                                ChangeLane::new(change_tx, worker_failure, worker_readiness);
+                            let mut lane = ChangeLane::with_terminal(
+                                change_tx,
+                                worker_terminal,
+                                worker_readiness,
+                            );
                             if !lane.changed() {
                                 WorkerExit::from_cleanup(worker.runtime.shutdown())
                             } else {
@@ -336,9 +339,9 @@ impl AgentSession {
                         change_rx,
                         Arc::clone(&readiness),
                     ))),
+                    terminal,
                     finished: finished_rx,
                     stop,
-                    failure,
                     lifecycle,
                     session_id,
                     state,

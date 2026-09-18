@@ -1,9 +1,16 @@
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::{
+    env, fs,
+    os::unix::fs::{PermissionsExt, symlink},
+    process::{Child, Command, ExitStatus},
+    thread,
+    time::{Duration, Instant},
+};
 
 use super::{
     super::{
         AppendError, DurableCutoff, DurableRecord, LocalSessionReader, LocalSessionRepository,
-        SessionRepository, StoragePressureCause, StoredSessionReader,
+        SessionRepository, StoragePressureCause, StoredSession, StoredSessionReader,
+        StoredSessionUnavailableReason,
     },
     support::{TestDirectory, discovered, log_path, session},
 };
@@ -89,13 +96,16 @@ fn quarantines_a_complete_line_when_an_append_marker_remains() {
             discovered(session_id, DurableRecord::snapshot("unsafe")),
         )
         .expect_err("a successor writer must not adopt the abandoned Session marker");
-    assert!(matches!(
-        append_error,
-        AppendError::StoragePressure {
-            source: Some(RepositoryError::Quarantined { .. }),
-            ..
-        }
-    ));
+    assert!(
+        matches!(
+            &append_error,
+            AppendError::StoragePressure {
+                source: Some(RepositoryError::Quarantined { .. }),
+                ..
+            }
+        ),
+        "unexpected append error: {append_error:?}"
+    );
 }
 
 // `..`가 포함된 입력 경로도 open 시점에 절대 경로로 고정해 이후 현재 디렉터리 변화가
@@ -219,4 +229,199 @@ fn restricts_repository_permissions_to_the_current_user() {
 
     assert_eq!(directory_mode, 0o700);
     assert_eq!(file_mode, 0o600);
+}
+
+// reader가 세션 로그 경로의 symlink를 따라가지 않고 대상 파일을 읽거나 변경하지 않는 경계
+#[test]
+fn reader_rejects_a_symbolic_link_at_a_session_log_path() {
+    let directory = TestDirectory::new("reader-symlink");
+    let session_id = session(18);
+    let path = log_path(directory.path(), session_id);
+    {
+        let mut repository =
+            LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+        repository
+            .append(
+                session_id,
+                discovered(session_id, DurableRecord::snapshot("record")),
+            )
+            .expect("the session log is written");
+    }
+
+    let target = directory.path().join("target");
+    fs::copy(&path, &target).expect("the external target is copied");
+    let target_contents = fs::read(&target).expect("the external target is readable");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o600))
+        .expect("target permissions are restricted");
+    fs::remove_file(&path).expect("the session log is removed");
+    symlink(&target, &path).expect("the session log symlink is created");
+
+    let reader = LocalSessionReader::open(directory.path()).expect("reader opens");
+    let error = reader
+        .read_after(session_id, None, 8)
+        .expect_err("the reader must reject a session log symlink");
+
+    assert!(matches!(error, RepositoryError::Unavailable { .. }));
+    assert_eq!(
+        fs::read(&target).expect("target remains readable"),
+        target_contents
+    );
+}
+
+// pending marker의 symlink는 discovery와 snapshot read 모두에서 외부 대상을 따라가지 않고
+// 해당 Session만 unreadable 상태로 남기는 경계
+#[test]
+fn reader_rejects_a_symbolic_link_at_a_pending_marker_path() {
+    let directory = TestDirectory::new("pending-symlink");
+    let session_id = session(20);
+    let path = log_path(directory.path(), session_id);
+    {
+        let mut repository =
+            LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+        repository
+            .append(
+                session_id,
+                discovered(session_id, DurableRecord::snapshot("record")),
+            )
+            .expect("the session log is written");
+    }
+    let target = directory.path().join("pending-target");
+    fs::write(&target, b"0\n").expect("the external marker target is written");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o600))
+        .expect("target permissions are restricted");
+    let pending = path.with_extension("jsonl.pending");
+    symlink(&target, &pending).expect("the pending marker symlink is created");
+
+    let reader = LocalSessionReader::open(directory.path()).expect("reader opens");
+    let sessions = reader.discover().expect("discovery remains available");
+    assert!(matches!(
+        sessions.as_slice(),
+        [StoredSession::Unavailable {
+            session_id: observed,
+            reason: StoredSessionUnavailableReason::Unreadable { .. },
+        }] if *observed == session_id
+    ));
+    assert!(matches!(
+        reader.read_after(session_id, None, 8),
+        Err(RepositoryError::Unavailable { .. })
+    ));
+    assert_eq!(fs::read(&target).unwrap(), b"0\n");
+}
+
+// append가 root를 고정한 직후 pathname이 교체되어도 log, pending marker, directory sync가
+// 모두 같은 열린 tree에 머물고 replacement tree에는 아무 entry도 만들지 않는 경계
+#[test]
+fn append_keeps_log_and_marker_in_the_pinned_root_after_path_replacement() {
+    let directory = TestDirectory::new("append-pinned-root");
+    let root = directory.path().to_owned();
+    let moved = root.with_extension("moved");
+    let mut repository =
+        LocalSessionRepository::open(&root, 32_768).expect("repository opens before replacement");
+    let hook_root = root.clone();
+    let hook_moved = moved.clone();
+    super::super::local::install_append_root_pinned_hook(move || {
+        fs::rename(&hook_root, &hook_moved).expect("the opened repository root is moved");
+        fs::create_dir(&hook_root).expect("a replacement repository root is created");
+        fs::set_permissions(&hook_root, fs::Permissions::from_mode(0o700))
+            .expect("replacement root permissions are restricted");
+    });
+    repository
+        .append(
+            session(23),
+            discovered(session(23), DurableRecord::snapshot("record")),
+        )
+        .expect("append stays on the pinned repository root");
+    drop(repository);
+
+    assert!(fs::metadata(log_path(&moved, session(23))).unwrap().len() > 0);
+    assert!(
+        !log_path(&moved, session(23))
+            .with_extension("jsonl.pending")
+            .exists()
+    );
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+
+    fs::remove_dir(&root).expect("the replacement repository root is removed");
+    fs::rename(&moved, &root).expect("the fixture repository root is restored");
+}
+
+fn wait_bounded(mut child: Child) -> ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            outcome => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("Session repository test child did not finish: {outcome:?}");
+            },
+        }
+    }
+}
+
+// 작성자가 없는 session log와 pending marker FIFO를 discovery와 snapshot reader가
+// 기다리지 않고 제한 시간 안에 unavailable로 거부하는 경계
+#[test]
+fn reader_rejects_session_and_pending_fifos_without_blocking() {
+    const CHILD_ROOT: &str = "YO_SESSION_REPOSITORY_FIFO_TEST_ROOT";
+    if let Some(root) = env::var_os(CHILD_ROOT) {
+        let reader = LocalSessionReader::open(root).expect("reader opens the child fixture");
+        let sessions = reader.discover().expect("FIFO discovery remains bounded");
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().all(|session| matches!(
+            session,
+            StoredSession::Unavailable {
+                reason: StoredSessionUnavailableReason::Unreadable { .. },
+                ..
+            }
+        )));
+        assert!(matches!(
+            reader.read_after(session(21), None, 8),
+            Err(RepositoryError::Unavailable { .. })
+        ));
+        assert!(matches!(
+            reader.read_after(session(22), None, 8),
+            Err(RepositoryError::Unavailable { .. })
+        ));
+        return;
+    }
+
+    let directory = TestDirectory::new("reader-fifos");
+    let pending_session = session(21);
+    {
+        let mut repository =
+            LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+        repository
+            .append(
+                pending_session,
+                discovered(pending_session, DurableRecord::snapshot("record")),
+            )
+            .expect("the session log is written");
+    }
+    assert!(
+        Command::new("mkfifo")
+            .args(["-m", "600"])
+            .arg(log_path(directory.path(), pending_session).with_extension("jsonl.pending"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("mkfifo")
+            .args(["-m", "600"])
+            .arg(log_path(directory.path(), session(22)))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let child = Command::new(env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "session_repository::tests::safety::reader_rejects_session_and_pending_fifos_without_blocking",
+        ])
+        .env(CHILD_ROOT, directory.path())
+        .spawn()
+        .unwrap();
+    assert!(wait_bounded(child).success());
 }

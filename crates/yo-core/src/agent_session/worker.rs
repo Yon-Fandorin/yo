@@ -20,7 +20,7 @@ pub(super) use commands::cancel_queued_turn_commands;
 pub(super) use events::apply_event;
 pub(super) use events::apply_events;
 pub(super) use outcomes::{context_compaction_rejection, submission_rejection};
-pub(super) use signals::{ChangeLane, WorkerExit, WorkerSignal};
+pub(super) use signals::{ChangeLane, WorkerExit, WorkerSignal, WorkerTerminal};
 
 pub(super) use super::ReplacementRequest;
 

@@ -269,6 +269,7 @@ fn runtime_registry(
 
 pub(super) fn open_credentials(path: &Path) -> Result<CredentialSnapshot, AppError> {
     LocalCredentialRepository::new(path.to_owned())
+        .map_err(|error| AppError::single("opening the credential repository", error))?
         .capture()
         .map_err(|error| AppError::single("reading model credentials", error))
 }
@@ -430,6 +431,7 @@ mod tests {
             "yo-native-wrong-backend-{}-missing.yaml",
             process::id()
         )))
+        .expect("fixture credential path must be non-empty and absolute")
         .capture()
         .unwrap();
         let error = match start_native(
@@ -485,6 +487,7 @@ mod tests {
         repository.commit(&mutation).unwrap();
         config.replace_model_catalog(repository.capture().unwrap().model_catalog().unwrap());
         let credentials = LocalCredentialRepository::new(root.join("credentials.yaml"))
+            .expect("fixture credential path must be non-empty and absolute")
             .capture()
             .unwrap();
         let selection = StartupBackend::Native {
