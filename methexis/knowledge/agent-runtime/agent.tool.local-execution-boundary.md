@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.tool-001
-    revision: sha256:710808ea7a3dcd933eb94280348e5a83a7fe4f5a717e52753e3c7ca5882a40db
+    revision: sha256:2bb4aa5512975fa560062e022e672c1d9702aa00029b1b8ee8d8083c8d30445c
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -485,6 +485,48 @@ explicit content, metadata, target-entry, and scratch-entry external-publisher
 boundary is the same on supported Unix targets and is not a hostile-same-UID
 security boundary. A future platform-specific descriptor-anchored publication
 revision may close it.
+
+
+## Backend-owned secret interaction tool
+
+The native secret interaction is model-visible but is not a local execution
+tool. For a newly created Session admitted under `local-tools/v1`, Yo MUST append
+exactly one interaction definition after every frozen local or configured tool
+in both request exposure and the ModelReplayContract. Its exact wire name is
+`request_secret_input`; its exact description is `Ask the user for one secret value that Yo sends only to the current provider and model. Use only when the task cannot continue without it.` Its schema version is `yo.tool-schema/v1` and
+its exact structural parameter schema is
+`{"type":"object","properties":{"title":{"type":"string","description":"Short public title for the secret request."},"question":{"type":"string","description":"Public question shown before secret entry."},"purpose":{"type":"string","description":"Public reason the current provider and model need the secret."}},"required":["title","question","purpose"],"additionalProperties":false}`.
+
+The interaction has no ToolId, ToolEffect, ToolApprovalRequirement, execution
+host, command manifest entry or local execution result. The backend owns its
+separate admission and response path. `title` MUST contain 1–80 UTF-8 bytes and
+no control character. `question` and `purpose` MUST each contain 1–4096 UTF-8
+bytes, no NUL and no control character other than tab, LF or CR. The first
+invalid or excess byte rejects the call before a request opens. Its arguments
+are public Activity and current-Turn model input and MUST NOT contain the answer field,
+a default, choices, notes or an answer placeholder.
+
+`request_secret_input` is reserved: configured command tools MUST reject its
+wire name and the corresponding reserved identity before backend publication.
+The interaction is absent from `no-tools/v1`, summary requests and every exact
+known historical replay projection that does not contain it. Resume and fork
+MUST reconstruct a known recorded projection exactly and MUST NOT add the
+interaction to an older fixed or configured registry. Because the replay
+contract has no independent interaction-revision field, absence alone MUST NOT
+be treated as proof that a new projection lost the definition; an exact known
+historical projection remains valid, and any other unrecognized projection is
+unknown. When a recorded projection contains the interaction, it MUST contain
+one exact final definition; a reordered, duplicated, altered or non-final
+definition makes that projection unknown. Configured-command
+execution-definition manifests continue to cover only local execution tools, so
+the appended interaction does not change or enter their digest.
+
+A response may use the interaction only as the sole function call in that model
+round. Another function call in the same response, a second interaction in the
+Turn, or any function call after secret dispatch is a protocol failure with no
+local effect. The correlated value returned to the model follows the managed
+loop's connector-only terminal-continuation contract and is expressly excluded
+from the ordinary rule that local tool outputs become semantic replay.
 
 ## User-configured command tools
 

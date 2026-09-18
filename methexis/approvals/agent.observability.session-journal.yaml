@@ -1,7 +1,7 @@
 schema: methexis.approval/v1alpha2
 knowledge_id: agent.observability.session-journal
-revision: sha256:d4901253fdb43defa015690d05ad809813ceb6ae777ed2ffb7b25c4d841f56da
+revision: sha256:7736fe0d8444e8447a93e249a1de6ed99968b5efc9661e9047a8a17490445a20
 reviewer: agent-runtime
-reviewed_at: 2026-09-17T23:00:01Z
+reviewed_at: 2026-09-18T04:32:52Z
 review_basis: canonical
-request_hash: sha256:58b790b4e1239841b8928571788da0312c737e1f7378304b64ebe9c862816717
+request_hash: sha256:9b608b856eb2085f1e20506a5f9a21782c0b803d69a76083d1ca1c5dc96ec176

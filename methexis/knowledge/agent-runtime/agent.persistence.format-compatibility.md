@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:8da60416212c5f52fe5c9be856534dcadbe06311e760372020cbf2393ee06885
+    revision: sha256:976ca7ceaabda0a031bf2134046c5efff214d51084c50bfa822883cbb963ac19
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -182,6 +182,36 @@ closed response discriminator; there is no downgrade to ordinary UserInput,
 empty text, a redaction marker, Session reset or automatic migration. The
 physical `yo.session-record/v1` and semantic
 `yo.semantic-journal-commit/v1` envelopes remain unchanged.
+
+
+### Native secret connector-input exclusion
+
+The native managed backend's typed secret function-call output and its one
+comparison copy are process-local Connector input state outside every Session
+persistence grammar. They MUST NOT encode as
+`ModelReplayItem::FunctionCallOutput`, a tool-result Activity payload, a replay
+delta, context checkpoint, snapshot, Request Audit detail or backend identity.
+Persistence and replay constructors MUST reject any attempt to coerce either into
+those existing shapes. The public function-call arguments, typed secret request
+presentation and payload-free `secret_input_submitted` receipt retain their
+existing encodings. A terminal assistant answer may retain its existing visible
+encoding only after its complete bounded bytes pass the backend's exact non-empty
+secret-sequence exclusion; no partial assistant segment may be persisted first.
+
+For this native interaction, successful backend command acceptance prepares but
+does not start transport. The runtime MUST durably commit the correlated
+payload-free receipt before a later poll may start the prepared request. That
+receipt is a conservative Session-wide continuation barrier even when recovery
+cannot prove transport began. It permits only the already prepared terminal
+request and its terminal public observations. From it onward, completed or failed
+Turn termination MUST omit `model_replay_delta`, `backend_resumable_outcome` and
+`continuation_anchor`; no older Anchor, binding close/open replacement, context
+policy change or checkpoint may authorize later work in that Session. A completed
+visible Turn without those records is intentional non-resumability, not missing
+evidence to reconstruct or retry. An explicit new Session remains a separate
+operation and inherits neither the secret value nor prepared request. No new
+physical record, semantic record discriminator, envelope version or downgrade
+encoding is introduced.
 
 The execution host MUST validate the whole input under the explicit-reference
 contracts before attaching one immutable instruction snapshot from the same

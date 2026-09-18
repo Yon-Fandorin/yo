@@ -1,7 +1,7 @@
 schema: methexis.approval/v1alpha2
 knowledge_id: agent.runtime.active-turn-input
-revision: sha256:16480c7f440384cdf7029db927d0f6e3fade6d9bb29d5492dfc245567b4013d9
+revision: sha256:d8ddb642ec3094b71044068a3ee13c2954a9e8bd0c439903ff14b4fc9d42f66f
 reviewer: agent-runtime
-reviewed_at: 2026-09-17T16:16:02Z
+reviewed_at: 2026-09-18T04:32:51Z
 review_basis: canonical
-request_hash: sha256:df280108bc815969efb7bd32acd2adfd05a25d63da710cd54a7061da8499ebc8
+request_hash: sha256:d1c98897a39d95a35f547492646e094ebb67cc227f54aff9de9217fe38658e91

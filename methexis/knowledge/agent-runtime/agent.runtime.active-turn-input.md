@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-004
-    revision: sha256:ee4f351128f49d0f86e9f4e43bf9e51d5519de90115069bc2acf840a2bdf96e0
+    revision: sha256:4e8cd9c154492372c9b7074659230efdf9ead67276a7d5d17cf2d76f44fa0297
 relations:
   depends_on:
     - agent.runtime.command-event-boundary
@@ -145,3 +145,31 @@ diagnostics. Delivery to the requesting backend is intentional. Backend or
 provider retention, later model or tool output, the system clipboard, swap,
 process memory and crash dumps are outside this guarantee. Secret interview
 input is not credential storage and does not add OS keychain behavior.
+
+## Native selected-destination disclosure
+
+When a Yo-managed model uses the separately contracted native secret-request
+interaction, the typed secret presentation MUST show the exact Provider and
+Model from the current effective binding before entry is enabled. It MUST also
+state that explicit submission sends the value to that Provider and Model and
+that they may retain it. A fixed host-owned notice, separate from the
+model-supplied question, MUST state before entry that submission permits at most
+one final assistant answer and then makes the current Session unavailable for any
+later Turn, model replacement or resume, including when transport never starts or
+no answer arrives. It MUST also state that any final answer is withheld until the
+complete response passes an exact byte-for-byte secret-echo check. Account
+identity, credentials, endpoint query data and other connection internals MUST
+NOT be added to that disclosure. The displayed title, question and purpose are
+public model-supplied request material; they MUST remain separate from the hidden
+answer.
+
+Each request requires a fresh explicit submit key press after that disclosure.
+Ordinary prompt submission, approval, a previous secret receipt and a model
+function call alone are not consent. For this native path, Yo MUST withhold the
+complete bounded terminal answer from display and storage until a non-empty secret
+is absent as one exact contiguous UTF-8 byte sequence; a match yields only a static
+redacted failure. This check claims no protection from transformed, encoded,
+partial or semantically derived output, which remains outside the Yo-local
+guarantee. A backend that cannot provide the typed request, exact destination,
+Session-wide terminal barrier, exact-echo exclusion, non-persistent delivery and
+no-retry semantics MUST fail closed without opening the secret editor.

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.observability-001
-    revision: sha256:2f83ce90f51023daa32e5e91ea93f1d82aec2ae5ffed96a6ada0e708fb0aa9c2
+    revision: sha256:fcd536edc2e6696af8e414c3e7ce7dc4b972e89d76b07f067fde6fa493596774
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -93,6 +93,37 @@ An admitted provider-private item MUST remain payload-bearing semantic replay,
 MUST be committed atomically with its adjacent visible replay, and MUST NOT be
 copied into a message segment, Activity, correlation record, Live Projection,
 Transcript, Request Audit, discovery summary, error, log, or diagnostic.
+
+## Native secret interaction observation
+
+For the managed native interaction, the Journal MAY retain the public
+`request_secret_input` function call and its bounded public arguments, the typed
+UserInputRequest presentation including Provider and Model disclosure, and the
+existing payload-free successful response receipt. A terminal assistant message
+may enter visible segments only after its complete bounded UTF-8 bytes have been
+held outside the Live Projection and Journal and have passed exact exclusion of
+the non-empty entered secret byte sequence. A rejected echo publishes no model
+bytes, hash, length or derived placeholder, only a static public failure. The
+Journal MUST NOT create a ToolResult payload for the entered value or place that
+value in a Live Projection, active-suffix completion, replay delta, checkpoint
+proposal, Request Audit detail, usage receipt, log, error or diagnostic. A fixed
+public response state may report submission without value, hash or length.
+
+The backend command MUST only prepare the secret-bearing connector request. The
+Session worker MUST commit the payload-free receipt before allowing a later
+backend poll that can start transport. This ordering makes the receipt a durable
+Session-wide continuation barrier across the crash window without claiming that
+delivery occurred. If the receipt cannot be committed, the prepared value is
+discarded without transport. Once it is committed, recovery MUST allow only
+terminal observations from that already prepared request and MUST reject any
+later Turn, compaction, binding replacement or exact resume in that Session,
+whether the final Turn is incomplete, failed or completed.
+
+A completed visible Turn after that barrier remains valid Journal history
+without a replay delta, provider-private replay item, resumable outcome or
+Continuation Anchor. Recovery MUST show the admitted public history and MUST NOT
+reconstruct the secret result, resend it, open a successor binding or fall back to
+an older Anchor for new work in that Session.
 
 ## Rationale
 

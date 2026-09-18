@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:b696450be5be8dbeb14d1b5ec8c079b736d48935bd195defbca41e7871b8fa72
+    revision: sha256:a94f9dfd9fdf2cef787605c67437d208efae70241a11eebbb9b02a9b5ff50ca6
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -57,6 +57,80 @@ Local input or replay-capacity exhaustion before a final assistant answer, inclu
 Tool arguments and outputs MUST pass the local tool boundary's semantic-admission gate before they become Activities, later model input, or a replay delta. A provider-private assistant item MUST come only from the selected Connector's successfully completed, correlated response. The Connector alone MUST decode and validate the provider-private schema and return the bounded opaque envelope together with a connector-neutral validated visible projection. Without decoding Provider fields, the backend MUST validate the envelope's declared schema identity, binding epoch, and bounds and MUST compare the Connector-supplied projection exactly with the semantic replay group; any mismatch fails before acceptance. The backend MUST persist visible and private replay together as one semantic replay record and MUST NOT attach either payload to the payload-free resumable-outcome correlation record. Private bytes remain in the user-only local Session Repository, are not encrypted by the first implementation, and MUST be excluded from Transcript, Request trace, debug formatting, logs, errors, and diagnostics.
 
 A future `managed_server` executor MAY load the same validated replay prefix and assemble the next model request on a Yo-managed Session service. It does not define a second replay meaning and MUST use the same replay contract, ordering, bounds, and Anchor boundary as `local_client`. It remains deferred until its remote repository, identity, digest, availability, and retention evidence has an independently reviewed implementation. The current backend MUST NOT advertise it.
+
+## Native secret-request terminal continuation
+
+For a newly created tool-enabled `local_client` Session whose exact replay
+contract includes the native interaction definition owned by
+`agent.tool.local-execution-boundary`, the backend MUST recognize the exact
+`request_secret_input` function call before local-tool admission. The call MUST
+be the only function call in its completed model response. Its public arguments
+MUST become a typed, exactly correlated secret UserInputRequest whose
+presentation derives the selected Provider and Model from the effective binding.
+The interaction MUST NOT dispatch to the local execution host or create a local
+tool approval.
+
+After the exact live SecretInput response is admitted, the backend MUST validate
+and prepare one connector request containing a typed secret function-call output,
+but MUST NOT start its transport during that command. The closed first supported
+set is exactly the `openai-responses`, `openai-chat-completions`, and
+`kimi-chat-completions` Connector/dialect pairs already admitted by this loop.
+OpenAI Responses appends one input item whose decoded fields are exactly
+`type: function_call_output`, `call_id` equal to the requesting call's exact ID,
+and `output` equal to the entered UTF-8 string. OpenAI Chat Completions and Kimi
+Chat Completions append one message whose decoded fields are exactly `role: tool`,
+`tool_call_id` equal to that exact ID, and `content` equal to the entered UTF-8
+string, immediately after the correlated assistant tool-call group. JSON member
+order is not identity. No wrapper, label, redaction marker, metadata, second field,
+or second secret copy is permitted. Delegated Grok ACP and every other connector
+remain unsupported for native secret input.
+
+The backend command may return success only after the complete request passes local
+schema, correlation, replay and context accounting without compaction. That success
+lets the Session runtime replace the value and durably commit the existing
+payload-free `secret_input_submitted` receipt. The prepared request and one
+process-local comparison copy may remain only in memory. If that commit fails,
+shutdown or cancellation MUST discard both and no transport may start. Only a later
+backend poll after the successful commit may start the prepared request.
+
+The typed value is connector input only: it MUST NOT become a ModelReplayItem,
+ordinary tool output, semantic-admission string, context checkpoint input,
+request-observer payload or diagnostic value. The terminal continuation request
+MUST use the unchanged selected binding and connector, MUST expose no tools, and
+MUST permit exactly one transport start. Responses MUST omit `tools`; both Chat
+dialects MUST omit `tools` and `tool_choice`. Redirect follow-through, automatic
+retry, fallback, model or provider replacement and a second model round are
+forbidden.
+
+Successful secret-command acceptance latches the whole Session against another
+Turn, compaction, binding replacement or exact resume; the committed payload-free
+receipt is the durable recovery barrier regardless of whether later transport can
+be proved to have started. Only the already prepared terminal request may proceed
+after that receipt. A start error, disconnect, incomplete response, cancellation or
+later protocol failure has an unknown secret-delivery outcome and MUST use static
+redacted diagnostics, discard every process-local copy and leave that Session
+non-executable. Continuing work requires an explicit new Session, which inherits
+neither the secret value nor the prepared terminal request.
+
+A successful terminal response MUST contain one final assistant message and no
+function call. The backend MUST buffer its complete bounded visible UTF-8 bytes
+outside the Live Projection, Activity and Journal until response admission. If a
+non-empty entered secret occurs as one exact contiguous UTF-8 byte sequence across
+those bytes, admission MUST discard the entire answer and comparison copy, publish
+only a static redacted failure, and leave the Session non-executable. No
+normalization, decoding or transformed-value inference is claimed. After a clean
+comparison, the backend MUST discard the comparison copy before publishing the
+visible answer and ordinary public Activities. Completion MUST emit a non-resumable
+TurnFinished with no model replay delta, provider-private replay item, resumable
+outcome or Continuation Anchor. Every later Turn, binding replacement and exact
+resume in that Session MUST be rejected explicitly.
+
+Before backend command success, local validation, capacity or request-construction
+failure MUST discard the answer without a receipt or dispatch. It MUST NOT turn
+the secret into ordinary input, retry it, compact with it or expose it to another
+binding. No Provider-specific branch may weaken these rules; a binding whose exact
+Connector/dialect pair cannot implement its listed projection and terminal
+admission MUST keep the interaction unavailable.
 
 ## Image-aware request accounting and compaction
 
