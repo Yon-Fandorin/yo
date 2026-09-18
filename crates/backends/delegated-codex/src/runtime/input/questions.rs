@@ -1,12 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Value};
-use yo_core::{BackendFailure, BackendFailureKind, QuestionChoice};
+use yo_core::{BackendFailure, BackendFailureKind, QuestionChoice, SecretInput};
 
 use super::super::state::{InputQuestion, InputQuestions};
 use crate::protocol;
 
 impl InputQuestions {
+    const MAX_RETAINED_SECRET_BYTES: usize = 256 * 1024;
+    const RETAINED_SECRET_OVER_BUDGET: &'static str =
+        "retained secret input exceeds the 256 KiB batch limit";
+
     pub(in crate::runtime) fn parse(params: &Value) -> Result<Self, BackendFailure> {
         let questions = params
             .get("questions")
@@ -16,15 +20,15 @@ impl InputQuestions {
         let mut ids = HashSet::new();
         let mut parsed = Vec::with_capacity(questions.len());
         for question in questions {
-            if question
-                .get("isSecret")
-                .is_some_and(|secret| secret != &Value::Bool(false))
-            {
-                return Err(BackendFailure::new(
-                    BackendFailureKind::Unsupported,
-                    "secret input requires a secure editor; yo will not echo it into the transcript",
-                ));
-            }
+            let is_secret = match question.get("isSecret") {
+                None => false,
+                Some(Value::Bool(value)) => *value,
+                Some(_) => {
+                    return Err(protocol::protocol_failure(
+                        "question isSecret must be boolean",
+                    ));
+                },
+            };
             let other = match question.get("isOther") {
                 None => false,
                 Some(Value::Bool(value)) => *value,
@@ -60,6 +64,11 @@ impl InputQuestions {
                     prompt.push_str(&format!("\n{}. {label} — {description}", options.len()));
                 }
             }
+            if is_secret && (other || !options.is_empty()) {
+                return Err(protocol::protocol_failure(
+                    "secret questions cannot offer choices or isOther",
+                ));
+            }
             if other && !options.is_empty() {
                 let label = "None of the above";
                 let description = "Choose an answer outside this list.";
@@ -76,6 +85,7 @@ impl InputQuestions {
                 question: body.to_owned(),
                 options,
                 choices,
+                is_secret,
             });
         }
         Ok(Self {
@@ -85,6 +95,93 @@ impl InputQuestions {
             answers: Map::new(),
             drafts: HashMap::new(),
             capture: None,
+            secret_delivery_blocked: false,
         })
+    }
+
+    pub(in crate::runtime) fn has_secret(&self) -> bool {
+        self.questions.iter().any(|question| question.is_secret)
+    }
+
+    pub(in crate::runtime) fn discard_secret_values(&mut self, block_delivery: bool) {
+        for index in 0..self.questions.len() {
+            self.discard_secret_value(index);
+        }
+        if block_delivery {
+            self.secret_delivery_blocked = true;
+        }
+    }
+
+    pub(in crate::runtime) fn discard_secret_value(&mut self, index: usize) {
+        let Some((is_secret, id)) = self
+            .questions
+            .get(index)
+            .map(|question| (question.is_secret, question.id.clone()))
+        else {
+            return;
+        };
+        if !is_secret {
+            return;
+        }
+        self.answers.remove(&id);
+        self.drafts.remove(&id);
+        if let Some(answer) = self.captured_answers.get_mut(index) {
+            *answer = None;
+        }
+    }
+
+    pub(in crate::runtime) fn retain_secret(
+        &mut self,
+        index: usize,
+        input: &SecretInput,
+    ) -> Result<(), BackendFailure> {
+        let Some((is_secret, id)) = self
+            .questions
+            .get(index)
+            .map(|question| (question.is_secret, question.id.clone()))
+        else {
+            return Err(protocol::protocol_failure(
+                "secret question index is invalid",
+            ));
+        };
+        if !is_secret {
+            return Err(protocol::protocol_failure(
+                "secret input response targets a non-secret question",
+            ));
+        }
+        let retained = self
+            .answers
+            .iter()
+            .filter(|(question_id, _)| question_id.as_str() != id.as_str())
+            .filter_map(|(question_id, value)| {
+                self.questions
+                    .iter()
+                    .find(|question| {
+                        question.is_secret && question.id.as_str() == question_id.as_str()
+                    })
+                    .and_then(|_| value.get("answers"))
+                    .and_then(Value::as_array)
+                    .and_then(|answers| answers.first())
+                    .and_then(Value::as_str)
+                    .map(str::len)
+            })
+            .try_fold(input.expose().len(), |total, length| {
+                total.checked_add(length)
+            })
+            .ok_or_else(|| {
+                BackendFailure::new(
+                    BackendFailureKind::InputOverBudget,
+                    Self::RETAINED_SECRET_OVER_BUDGET,
+                )
+            })?;
+        if retained > Self::MAX_RETAINED_SECRET_BYTES {
+            return Err(BackendFailure::new(
+                BackendFailureKind::InputOverBudget,
+                Self::RETAINED_SECRET_OVER_BUDGET,
+            ));
+        }
+        self.answers
+            .insert(id, serde_json::json!({"answers": [input.expose()]}));
+        Ok(())
     }
 }

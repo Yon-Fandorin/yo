@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use yo_core::{
     ActivityRef, ActivityRequestRef, ImagePreparationRequest, InputSubmission, JournalDurability,
@@ -11,7 +11,10 @@ use crate::transcript::TranscriptState;
 use crate::{
     PromptTemplates,
     command::CommandPalette,
-    input::editor::PromptEditor,
+    input::{
+        editor::PromptEditor,
+        secret::{PromptInputView, SecretEditor},
+    },
     overlay::{
         AcceptanceReceipt, OverlayInstanceToken, PanelSnapshot, PromptOverlaySlot, SelectionPanel,
         SlotError,
@@ -76,8 +79,11 @@ pub(super) struct TuiState {
     preview_mode: bool,
     chat: ChatProjection,
     editor: PromptEditor,
+    secret_editor: Option<SecretEditor>,
     views: ObservabilityViews,
     pending_requests: VecDeque<PendingRequest>,
+    /// User-input requests stay blocked until their typed presentation arrives.
+    request_presentations_seen: HashSet<ActivityRef>,
     request_overlay: Option<(PendingRequest, OverlayInstanceToken)>,
     request_panel: Option<PanelSnapshot>,
     saved_request_panel: Option<(PendingRequest, PanelSnapshot, SelectionPanel)>,
@@ -121,7 +127,10 @@ pub(super) struct TuiState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingRequest {
     Approval(ActivityRequestRef),
+    PresentationPending(ActivityRequestRef),
+    PresentationInvalid(ActivityRequestRef),
     UserInput(ActivityRequestRef),
+    SecretInput(ActivityRequestRef),
 }
 
 impl TuiState {
@@ -170,6 +179,54 @@ impl TuiState {
         let length = self.editor.text().len();
         self.editor.replace_range(0..length, "");
         self.prompt_assist.prompt_cleared(&mut self.overlay);
+    }
+
+    pub(super) fn clear_secret_editor(&mut self) {
+        if let Some(editor) = self.secret_editor.as_mut() {
+            editor.clear();
+        }
+        self.secret_editor = None;
+    }
+
+    pub(super) fn presentation_blocked(&self) -> bool {
+        matches!(
+            self.pending_requests.front(),
+            Some(PendingRequest::PresentationPending(_) | PendingRequest::PresentationInvalid(_))
+        )
+    }
+
+    pub(super) fn is_secret_input(&self) -> bool {
+        matches!(
+            self.pending_requests.front(),
+            Some(PendingRequest::SecretInput(_))
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_secret_editor(&self) -> bool {
+        self.secret_editor.is_some()
+    }
+
+    pub(super) fn prompt_input(&self) -> PromptInputView<'_> {
+        if self.is_editing_secret_interview() {
+            return self.secret_editor.as_ref().map_or(
+                PromptInputView::Waiting("Re-entry required"),
+                PromptInputView::Secret,
+            );
+        }
+        match self.pending_requests.front() {
+            Some(PendingRequest::PresentationPending(_)) => {
+                PromptInputView::Waiting("Waiting for question")
+            },
+            Some(PendingRequest::PresentationInvalid(_)) => {
+                PromptInputView::Waiting("Question unavailable")
+            },
+            Some(PendingRequest::SecretInput(_)) => self.secret_editor.as_ref().map_or(
+                PromptInputView::Waiting("Waiting for question"),
+                PromptInputView::Secret,
+            ),
+            _ => PromptInputView::Ordinary(&self.editor),
+        }
     }
 
     pub(super) fn restore_draft(&mut self, draft: &str) {

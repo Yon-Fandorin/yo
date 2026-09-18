@@ -121,7 +121,9 @@ impl<P: JsonPeer> Backend<P> {
                 .ok_or_else(|| protocol::protocol_failure("Grok approval choice is unavailable"))?,
             ActivityResponse::UserInput(_)
             | ActivityResponse::QuestionAnswer { .. }
-            | ActivityResponse::PreviousQuestion { .. } => {
+            | ActivityResponse::PreviousQuestion { .. }
+            | ActivityResponse::SecretInput(_)
+            | ActivityResponse::SecretInputSubmitted => {
                 return Err(BackendFailure::new(
                     BackendFailureKind::Unsupported,
                     "Grok user-input responses are not enabled in the ACP adapter",

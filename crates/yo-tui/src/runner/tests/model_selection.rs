@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use yo_core::{
-    ActivityKind, ActivityRequestRef, AgentEvent, DurabilityGapCause, JournalDurability, RequestId,
-    TurnOutcome,
+    ActivityKind, ActivityQuestion, ActivityRequestRef, ActivityUpdate, AgentEvent,
+    DurabilityGapCause, JournalDurability, RequestId, TurnOutcome,
     session_repository::{DurableCutoff, RepositorySequence},
 };
 
@@ -713,6 +713,24 @@ fn pending_activity_keeps_model_selection_local_and_the_next_reply_correlated() 
         .observe(AgentEvent::ActivityStarted {
             activity: request_activity,
             kind: ActivityKind::UserInputRequest { request_id },
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: request_activity,
+            update: ActivityUpdate::TextSnapshot(
+                ActivityQuestion {
+                    plain_text: "Continue".into(),
+                    choices: Vec::new(),
+                    allow_notes: false,
+                    is_secret: false,
+                    previous_question: false,
+                    draft: None,
+                    draft_choice: None,
+                }
+                .to_snapshot()
+                .unwrap(),
+            ),
         })
         .unwrap();
     state

@@ -143,6 +143,7 @@ impl TuiState {
             0
         };
         let live_transcript = self.chat.transcript().suffix(live_start);
+        let prompt_input = self.prompt_input();
         let overlay_presentation = self.overlay.presentation();
         let render_options = ObservabilityRenderOptions {
             appearance: snapshot,
@@ -163,7 +164,7 @@ impl TuiState {
                 overlay: render_options.overlay,
                 overlay_bindings: render_options.overlay_bindings,
             };
-            publication::compact_live_size(live_transcript, &self.editor, size, shell_options)
+            publication::compact_live_size(live_transcript, &prompt_input, size, shell_options)
                 .map_err(FrameError::Measure)?
         } else {
             size
@@ -190,7 +191,7 @@ impl TuiState {
             self.views
                 .render(
                     live_transcript,
-                    &self.editor,
+                    &prompt_input,
                     &mut view,
                     render_options,
                     after_measure,
@@ -219,12 +220,33 @@ impl TuiState {
 
     fn chrome_snapshot(&self) -> ShellChromeSnapshot<'_> {
         ShellChromeSnapshot {
-            image_thumbnail: self.prompt_assist.image_thumbnail(),
+            image_thumbnail: (!matches!(
+                self.pending_requests.front(),
+                Some(
+                    PendingRequest::PresentationPending(_)
+                        | PendingRequest::PresentationInvalid(_)
+                        | PendingRequest::SecretInput(_)
+                )
+            ))
+            .then(|| self.prompt_assist.image_thumbnail())
+            .flatten(),
             turn_active: self.active_turn.is_some(),
             queued_messages: self.follow_ups.len(),
             queue_paused: self.follow_ups_paused,
             request: self.pending_requests.front().map(|request| match request {
                 PendingRequest::Approval(_) => RequestPrompt::Approval,
+                PendingRequest::PresentationPending(_) | PendingRequest::PresentationInvalid(_) => {
+                    RequestPrompt::Waiting
+                },
+                PendingRequest::SecretInput(request)
+                    if self
+                        .chat
+                        .question(request.activity())
+                        .is_some_and(|question| question.previous_question) =>
+                {
+                    RequestPrompt::SecretPrevious
+                },
+                PendingRequest::SecretInput(_) => RequestPrompt::Secret,
                 PendingRequest::UserInput(_) if self.question_notes.is_some() => {
                     RequestPrompt::Notes
                 },

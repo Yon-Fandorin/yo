@@ -606,6 +606,7 @@ fn question_presentation_profile_preserves_choices_and_exact_bounds() {
     for count in [64, 65] {
         let question = ActivityQuestion {
             allow_notes: false,
+            is_secret: false,
             previous_question: false,
             draft: None,
             draft_choice: None,
@@ -621,6 +622,7 @@ fn question_presentation_profile_preserves_choices_and_exact_bounds() {
     }
     let mut question = ActivityQuestion {
         allow_notes: false,
+        is_secret: false,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -628,6 +630,7 @@ fn question_presentation_profile_preserves_choices_and_exact_bounds() {
         choices: vec![choice],
     };
     let wire = question.to_snapshot().unwrap();
+    assert!(!wire.contains("is_secret"));
     assert_eq!(
         ActivityQuestion::from_snapshot(&wire),
         Some(question.clone())
@@ -667,6 +670,40 @@ fn question_presentation_profile_preserves_choices_and_exact_bounds() {
     question.plain_text.push('x');
     assert!(question.to_snapshot().is_none());
     assert!(ActivityQuestion::from_snapshot(&format!("{wire} ")).is_none());
+}
+
+// 비밀 질문 presentation은 명시적인 폐쇄형 필드만 가지며 초안 값을 담지 않는지 확인한다.
+#[test]
+fn secret_question_presentation_is_explicit_closed_and_draft_free() {
+    use crate::{ActivityQuestion, QuestionChoice};
+
+    let mut question = ActivityQuestion {
+        plain_text: "Question 1 of 1\nEnter token".into(),
+        choices: Vec::new(),
+        allow_notes: false,
+        is_secret: true,
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+    };
+    let wire = question.to_snapshot().unwrap();
+    assert!(wire.contains(r#""is_secret":true"#));
+    assert_eq!(
+        ActivityQuestion::from_snapshot(&wire),
+        Some(question.clone())
+    );
+
+    question.choices.push(QuestionChoice {
+        label: "forbidden".into(),
+        description: String::new(),
+    });
+    assert!(question.to_snapshot().is_none());
+    question.choices.clear();
+    question.allow_notes = true;
+    assert!(question.to_snapshot().is_none());
+    question.allow_notes = false;
+    question.draft = Some("forbidden".into());
+    assert!(question.to_snapshot().is_none());
 }
 
 // 이전 질문 기능은 이전 프로필에서 기본 비활성이며 복원 선택은 실제 선택지·메모 지원과 일치해야
@@ -777,6 +814,7 @@ fn approval_then_interview_responses_remain_durable_through_completion() {
             },
         ],
         allow_notes: true,
+        is_secret: false,
         previous_question: false,
         draft: None,
         draft_choice: None,

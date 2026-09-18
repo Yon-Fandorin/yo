@@ -51,9 +51,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 // A completed, safely rejected idle summary leaves the prior binding
                 // and replay usable. The worker publishes the existing control outcome.
                 self.idle_context_compaction_pending = false;
-                Err(RuntimeError::backend(failure))
+                Err(RuntimeError::backend(self.redact_backend_failure(failure)))
             },
             Err(failure) => {
+                let failure = self.redact_backend_failure(failure);
                 let terminal_events = self.fail_active_turn(&failure);
                 Err(RuntimeError::Backend {
                     failure,
@@ -76,6 +77,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 Ok(events)
             },
             Err(failure) => {
+                let failure = self.redact_backend_failure(failure);
                 let terminal_events = self.fail_active_turn(&failure);
                 Err(RuntimeError::Backend {
                     failure,
@@ -89,6 +91,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         &mut self,
         event: BackendEvent,
     ) -> Result<RuntimePoll, RuntimeError> {
+        let event = self.redact_backend_event(event);
         if let Some(start) = self.interview_start.take() {
             let matching = matches!((&start, &event),
                 (AgentEvent::ActivityStarted { activity: first, .. },
@@ -370,6 +373,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                             Ok(RuntimePoll::Event(start))
                         },
                         Err(failure) => {
+                            let failure = self.redact_backend_failure(failure);
                             let terminal_events = self.fail_active_turn(&failure);
                             Err(RuntimeError::Backend {
                                 failure,

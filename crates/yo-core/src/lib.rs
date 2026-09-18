@@ -40,7 +40,9 @@ pub use backend::{
     ProviderPrivateReplayEnvelope, QWENCLOUD_GENERAL_IMAGE_ACCOUNTING_PROFILE, ReplayExecutor,
     ReplayProfile, ScriptedBackend, provider_private_schema,
 };
-pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
+pub use command::{
+    ActivityResponse, AgentCommand, ApprovalDecision, SecretInput, SecretInputError,
+};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
 pub use event::{
     ActivityApproval, ActivityDocument, ActivityKind, ActivityNotice, ActivityOutcome,

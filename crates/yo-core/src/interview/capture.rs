@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{Answer, AnswerResponse, Capture, InterviewQuestion};
+use super::{Answer, AnswerResponse, Capture, InterviewQuestion, SecretAnswerState};
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
     ActivityUpdate, AgentCommand, AgentEvent, TranscriptRecord, journal::JournalEntry,
@@ -150,6 +150,13 @@ impl InterviewCatalog {
             if !actual {
                 return None;
             }
+            if answer.secret_state() == Some(SecretAnswerState::Submitted) {
+                text.push_str(&format!(
+                    "{}\nAnswer: [secret submitted]\n",
+                    question.prompt
+                ));
+                continue;
+            }
             let value = answer
                 .option_id
                 .as_ref()
@@ -276,6 +283,7 @@ impl InterviewCatalog {
                         interview,
                         revision,
                         question,
+                        secret_batch,
                     } => {
                         let Some(ActivityKind::UserInputRequest { request_id }) =
                             self.kinds.get(activity)
@@ -289,6 +297,11 @@ impl InterviewCatalog {
                         else {
                             return;
                         };
+                        if self.interviews[batch].questions.iter().any(|q| q.is_secret)
+                            != *secret_batch
+                        {
+                            return;
+                        }
                         if activity.turn() != interview.activity().turn() {
                             return;
                         }

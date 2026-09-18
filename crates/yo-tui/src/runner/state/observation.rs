@@ -10,6 +10,7 @@ use yo_core::{
 use super::{PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
     appearance::AppearancePin,
+    input::secret::SecretEditor,
     runner::{chat::ChatProjectionChange, session::TuiDocument},
     transcript::TranscriptMeasureError,
 };
@@ -24,6 +25,24 @@ impl TuiState {
                 self.context_compaction_pending = false;
                 self.chat
                     .push_notice(format!("Context compaction was not started.\n{detail}"))?;
+            },
+            AgentControlOutcome::ActivityResponseRejected { request, .. } => {
+                // The worker retains this exact outstanding request. Re-open only its
+                // request-bound secret editor and discard the submitted value before the
+                // next frame can accept another event.
+                self.pending_requests
+                    .retain(|pending| pending.activity() != request.activity());
+                self.pending_requests
+                    .push_front(PendingRequest::SecretInput(request));
+                self.clear_secret_editor();
+                let mut editor = SecretEditor::new();
+                editor.mark_ready();
+                self.secret_editor = Some(editor);
+                self.close_request_overlay();
+                self.chat.push_notice(
+                    "Secret input was rejected before transmission; enter it again.".to_owned(),
+                )?;
+                self.sync_request_overlay()?;
             },
         }
         Ok(StateEffect::Redraw)
@@ -70,6 +89,38 @@ impl TuiState {
         }
         let lifecycle_effect = self.observe_live_lifecycle(&record)?;
         let chat_change = self.chat.observe_record(&record)?;
+        if let TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated { activity, .. }) =
+            &record
+            && let Some(request) = self
+                .pending_requests
+                .front()
+                .filter(|request| request.activity() == *activity)
+                .copied()
+        {
+            if matches!(
+                request,
+                PendingRequest::PresentationPending(_) | PendingRequest::PresentationInvalid(_)
+            ) {
+                // A matching update closes the pending window even when decoding the typed
+                // presentation failed; normalize_secret_request then keeps input fail-closed.
+                self.request_presentations_seen.insert(*activity);
+            } else if matches!(
+                request,
+                PendingRequest::UserInput(_) | PendingRequest::SecretInput(_)
+            ) && self.chat.question(*activity).is_none()
+            {
+                // Once a request has been presented, a later malformed update must not
+                // silently demote a secret editor into the ordinary draft editor.
+                let request = match request {
+                    PendingRequest::UserInput(request) | PendingRequest::SecretInput(request) => {
+                        request
+                    },
+                    _ => unreachable!("the request was checked above"),
+                };
+                self.pending_requests[0] = PendingRequest::PresentationInvalid(request);
+                self.clear_secret_editor();
+            }
+        }
         if let TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated { activity, .. }) =
             &record
             && let Some(controller) = &self.interview
@@ -293,9 +344,11 @@ impl TuiState {
                     ActivityKind::ApprovalRequest { request_id } => Some(PendingRequest::Approval(
                         ActivityRequestRef::new(*activity, *request_id),
                     )),
-                    ActivityKind::UserInputRequest { request_id } => Some(
-                        PendingRequest::UserInput(ActivityRequestRef::new(*activity, *request_id)),
-                    ),
+                    ActivityKind::UserInputRequest { request_id } => {
+                        Some(PendingRequest::PresentationPending(
+                            ActivityRequestRef::new(*activity, *request_id),
+                        ))
+                    },
                     _ => None,
                 };
                 if let Some(request) = request {
@@ -309,11 +362,21 @@ impl TuiState {
                 }
             },
             AgentEvent::ActivityFinished { activity, .. } => {
+                self.request_presentations_seen.remove(activity);
+                if self
+                    .pending_requests
+                    .front()
+                    .is_some_and(|request| request.activity() == *activity)
+                {
+                    self.clear_secret_editor();
+                }
                 self.pending_requests
                     .retain(|request| request.activity() != *activity);
             },
             AgentEvent::TurnFinished { turn, outcome } if self.active_turn == Some(*turn) => {
                 self.active_turn = None;
+                self.request_presentations_seen.clear();
+                self.clear_secret_editor();
                 if *outcome != TurnOutcome::Completed {
                     self.follow_ups_paused = true;
                 }

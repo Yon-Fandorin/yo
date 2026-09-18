@@ -24,14 +24,8 @@ pub struct InterviewQuestion {
     pub allow_notes: bool,
     pub is_secret: bool,
 }
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Answer {
-    pub question_id: String,
-    pub option_id: Option<String>,
-    pub text: String,
-    pub notes: String,
-}
+mod answer;
+pub use answer::{Answer, SecretAnswerState};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerResponse {
@@ -56,6 +50,8 @@ pub enum Capture {
         interview: ActivityRequestRef,
         revision: String,
         question: InterviewQuestion,
+        #[serde(skip)]
+        secret_batch: bool,
     },
     AcceptedAnswers {
         #[serde(with = "refs::request")]
@@ -84,6 +80,7 @@ struct Revision<'a> {
 
 impl Capture {
     pub const SCHEMA: &'static str = "yo.interview-capture/v1";
+    pub const SCHEMA_V2: &'static str = "yo.interview-capture/v2";
     pub fn batch(
         interview: ActivityRequestRef,
         questions: Vec<InterviewQuestion>,
@@ -122,10 +119,26 @@ impl Capture {
             } => (*interview, revision),
         }
     }
+    pub fn is_secret_batch(&self) -> bool {
+        match self {
+            Self::Batch { questions, .. } => questions.iter().any(|q| q.is_secret),
+            Self::Question { secret_batch, .. } => *secret_batch,
+            Self::AcceptedAnswers { answers, .. } => answers.iter().any(Answer::is_secret),
+        }
+    }
+    pub(super) fn mark_secret_batch(&mut self) {
+        if let Self::Question { secret_batch, .. } = self {
+            *secret_batch = true;
+        }
+    }
     pub fn to_snapshot(&self) -> Result<String, InterviewError> {
         self.validate()?;
         let text = serde_json::to_string(&Envelope {
-            schema: Self::SCHEMA.into(),
+            schema: if self.is_secret_batch() {
+                Self::SCHEMA_V2.into()
+            } else {
+                Self::SCHEMA.into()
+            },
             capture: self.clone(),
         })
         .map_err(|e| invalid(e.to_string()))?;
@@ -140,8 +153,16 @@ impl Capture {
         if text.len() > CAPTURE_LIMIT {
             return Err(invalid("interview capture exceeds 1 MiB"));
         }
-        let value: Envelope = serde_json::from_str(text).map_err(|e| invalid(e.to_string()))?;
-        if value.schema != Self::SCHEMA || value.capture.to_snapshot()? != text {
+        let mut value: Envelope = serde_json::from_str(text).map_err(|e| invalid(e.to_string()))?;
+        if value.schema == Self::SCHEMA_V2 {
+            value.capture.mark_secret_batch();
+        }
+        let expected = if value.capture.is_secret_batch() {
+            Self::SCHEMA_V2
+        } else {
+            Self::SCHEMA
+        };
+        if value.schema != expected || value.capture.to_snapshot()? != text {
             return Err(invalid("unsupported or noncanonical interview capture"));
         }
         Ok(value.capture)
@@ -172,7 +193,16 @@ impl Capture {
                     return Err(invalid("batch identity does not match complete questions"));
                 }
             },
-            Self::Question { question, .. } => question.validate()?,
+            Self::Question {
+                question,
+                secret_batch,
+                ..
+            } => {
+                question.validate()?;
+                if question.is_secret && !secret_batch {
+                    return Err(invalid("secret question requires v2 interview capture"));
+                }
+            },
             Self::AcceptedAnswers {
                 answers,
                 answer_responses,
@@ -193,6 +223,11 @@ impl Capture {
                         || response.response_activity.turn() != interview.activity().turn()
                     {
                         return Err(invalid("invalid answer reference"));
+                    }
+                    if answer.secret_state() == Some(SecretAnswerState::ReentryRequired) {
+                        return Err(invalid(
+                            "accepted secret interview answers require the submitted marker",
+                        ));
                     }
                 }
                 if answer_responses.last().is_none_or(|r| {
@@ -230,12 +265,17 @@ fn revision(
 }
 impl InterviewQuestion {
     pub(super) fn validate(&self) -> Result<(), InterviewError> {
-        if self.id.is_empty()
-            || self.is_secret
-            || self.question.is_empty()
-            || (!self.allow_free_text && self.options.is_empty())
-        {
+        if self.id.is_empty() || self.question.is_empty() {
             return Err(invalid("unsupported or secret interview question"));
+        }
+        if self.is_secret {
+            if !self.allow_free_text || self.allow_notes || !self.options.is_empty() {
+                return Err(invalid("invalid secret interview question shape"));
+            }
+            return Ok(());
+        }
+        if !self.allow_free_text && self.options.is_empty() {
+            return Err(invalid("unsupported interview question"));
         }
         for (i, o) in self.options.iter().enumerate() {
             if o.id != (i + 1).to_string() || o.label.is_empty() {
@@ -245,15 +285,22 @@ impl InterviewQuestion {
         Ok(())
     }
     pub fn empty_answer(&self) -> Answer {
-        Answer {
-            question_id: self.id.clone(),
-            option_id: None,
-            text: String::new(),
-            notes: String::new(),
+        if self.is_secret {
+            Answer::reentry_required_secret(self.id.clone())
+        } else {
+            Answer::public(self.id.clone(), None, String::new(), String::new())
         }
     }
     /// Projects exact committed frontend values; backend wire trimming is not recovery authority.
     pub fn project_response(&self, response: &ActivityResponse) -> Result<Answer, InterviewError> {
+        if self.is_secret {
+            return match response {
+                ActivityResponse::SecretInput(_) | ActivityResponse::SecretInputSubmitted => {
+                    Ok(Answer::submitted_secret(self.id.clone()))
+                },
+                _ => Err(invalid("secret interview question requires secret input")),
+            };
+        }
         let mut answer = self.empty_answer();
         match response {
             ActivityResponse::QuestionAnswer { choice, notes } => {
@@ -274,12 +321,34 @@ impl InterviewQuestion {
                     answer.text = input.as_str().to_owned();
                 }
             },
+            ActivityResponse::SecretInput(_) | ActivityResponse::SecretInputSubmitted => {
+                return Err(invalid("ordinary interview question rejects secret input"));
+            },
             _ => return Err(invalid("not an answering response")),
         }
         self.validate_answer(&answer, false)?;
         Ok(answer)
     }
     pub fn validate_answer(&self, answer: &Answer, editable: bool) -> Result<(), InterviewError> {
+        if self.is_secret {
+            let expected = if editable {
+                SecretAnswerState::ReentryRequired
+            } else {
+                SecretAnswerState::Submitted
+            };
+            if answer.question_id != self.id
+                || answer.secret_state() != Some(expected)
+                || answer.option_id.is_some()
+                || !answer.text.is_empty()
+                || !answer.notes.is_empty()
+            {
+                return Err(invalid("secret answer has an invalid public shape"));
+            }
+            return Ok(());
+        }
+        if answer.is_secret() {
+            return Err(invalid("public answer cannot use secret marker"));
+        }
         if answer.question_id != self.id
             || answer
                 .option_id
@@ -329,6 +398,7 @@ impl InterviewQuestion {
             previous_question: index > 0,
             draft: None,
             draft_choice: None,
+            is_secret: self.is_secret,
         }
     }
 }

@@ -158,6 +158,80 @@ fn answers_codex_questions_sequentially_with_exact_wire_ids() {
     }
 }
 
+// secret 질문은 고정된 공개 상태와 별도 live response로만 표시·전송된다. 입력 원문은
+// backend wire 결과 외의 영수증, 프롬프트 또는 진단 텍스트에 들어가지 않는다.
+#[test]
+fn secret_question_uses_redacted_presentation_and_exact_wire_value() {
+    use yo_core::{ActivityUpdate, SecretInput};
+
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let (backend, sent) = backend([
+        thread_start_response(2, "thread-a"),
+        json!({"id":3,"result":{"turn":{"id":"turn-a"}}}),
+        json!({"id":"secret-question","method":"item/tool/requestUserInput","params":{
+            "threadId":"thread-a","turnId":"turn-a","questions":[
+                {"id":"token","header":"Token","question":"Enter token","isSecret":true,"options":[]}
+            ]
+        }}),
+    ]);
+    let mut runtime = AgentRuntime::new(backend);
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("ask"),
+            },
+            submission(1),
+        )
+        .unwrap();
+    let RuntimePoll::Event(AgentEvent::ActivityStarted {
+        activity,
+        kind: ActivityKind::UserInputRequest { request_id },
+    }) = runtime.poll_event().unwrap()
+    else {
+        panic!("secret question start")
+    };
+    let RuntimePoll::Event(AgentEvent::ActivityUpdated {
+        update: ActivityUpdate::TextSnapshot(prompt),
+        ..
+    }) = runtime.poll_event().unwrap()
+    else {
+        panic!("secret question prompt")
+    };
+    let profile = display_question(&prompt).expect("secret profile");
+    assert!(profile.is_secret);
+    assert!(!profile.allow_notes);
+    assert!(profile.choices.is_empty());
+    assert!(profile.draft.is_none());
+    assert!(profile.draft_choice.is_none());
+    let request = ActivityRequestRef::new(activity, request_id);
+    let value = "line-one\n/exit @literal $literal";
+    runtime
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInput(SecretInput::new(value).unwrap()),
+        })
+        .unwrap();
+    assert_eq!(
+        sent.0.borrow().last().unwrap(),
+        &json!({"id":"secret-question","result":{"answers":{"token":{"answers":[value]}}}})
+    );
+    for _ in 0..6 {
+        if let RuntimePoll::Event(AgentEvent::ActivityUpdated {
+            update: ActivityUpdate::TextSnapshot(text),
+            ..
+        }) = runtime.poll_event().unwrap()
+        {
+            assert!(!text.contains(value));
+            assert!(!text.contains("line-one"));
+        }
+    }
+}
+
 // isOther는 선택지가 있을 때만 마지막 항목을 더하고 선택 결과를 원래 요청의 답변 이름으로 보낸다.
 // 빈 선택지의 자유 입력과 64개 초과 시 읽을 수 있는 일반 질문 fallback도 유지한다.
 #[test]

@@ -212,6 +212,109 @@ fn model_reroute_preserves_reported_details_and_terminal_outcome() {
     }
 }
 
+// secret 제출 이후 model reroute의 provider 값은 필드 검증만 수행하고 activity/debug에는
+// 정적 redacted notice만 발행한다.
+#[test]
+fn secret_submission_redacts_model_reroute_details() {
+    use yo_core::{
+        ActivityNotice, ActivityRequestRef, ActivityResponse, ActivityUpdate, BackendEvent,
+        BackendPoll, SecretInput,
+    };
+
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let (mut backend, _) = backend([
+        thread_start_response(2, "thread-a"),
+        json!({"id":3,"result":{"turn":{"id":"turn-a"}}}),
+        json!({"id":"secret-question","method":"item/tool/requestUserInput","params":{
+            "threadId":"thread-a","turnId":"turn-a","questions":[
+                {"id":"token","header":"Token","question":"Enter token","isSecret":true,"options":[]}
+            ]
+        }}),
+        json!({"method":"model/rerouted","params":{
+            "threadId":"thread-a",
+            "turnId":"turn-a",
+            "fromModel":"canary-from-model",
+            "toModel":"canary-to-model",
+            "reason":"canary-secret-reason"
+        }}),
+    ]);
+    backend
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("inspect"),
+        })
+        .unwrap();
+    let BackendPoll::Event(BackendEvent::ActivityStarted {
+        activity,
+        kind: ActivityKind::UserInputRequest { request_id },
+    }) = backend.poll_event().unwrap()
+    else {
+        panic!("missing secret question")
+    };
+    assert!(matches!(
+        backend.poll_event().unwrap(),
+        BackendPoll::Event(BackendEvent::ActivityUpdated { .. })
+    ));
+    let request = ActivityRequestRef::new(activity, request_id);
+    backend
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInput(SecretInput::new("actual-secret").unwrap()),
+        })
+        .unwrap();
+    for _ in 0..3 {
+        assert!(matches!(
+            backend.poll_event().unwrap(),
+            BackendPoll::Event(_)
+        ));
+    }
+
+    let BackendPoll::Event(BackendEvent::ActivityStarted {
+        activity: reroute_activity,
+        kind: ActivityKind::ModelWork,
+    }) = backend.poll_event().unwrap()
+    else {
+        panic!("missing redacted reroute start")
+    };
+    let BackendPoll::Event(event) = backend.poll_event().unwrap() else {
+        panic!("missing redacted reroute notice")
+    };
+    let BackendEvent::ActivityUpdated {
+        activity,
+        update: ActivityUpdate::TextSnapshot(text),
+    } = &event
+    else {
+        panic!("missing redacted reroute notice")
+    };
+    assert_eq!(*activity, reroute_activity);
+    let notice = ActivityNotice::from_snapshot(text).unwrap();
+    assert_eq!(notice.title, "Model rerouted");
+    assert_eq!(
+        notice.message,
+        "Codex reported a model change; details are redacted after secret input."
+    );
+    let event_debug = format!("{event:?}");
+    for canary in [
+        "canary-from-model",
+        "canary-to-model",
+        "canary-secret-reason",
+    ] {
+        assert!(!text.contains(canary), "activity leaked {canary}");
+        assert!(!event_debug.contains(canary), "debug leaked {canary}");
+    }
+    assert_eq!(
+        backend.poll_event().unwrap(),
+        BackendPoll::Event(BackendEvent::ActivityFinished {
+            activity: reroute_activity,
+            outcome: ActivityOutcome::Completed,
+        })
+    );
+}
+
 // 잘못된 대상·필드·크기 알림은 안내 activity를 일부 발행하기 전에 거부한다.
 #[test]
 fn malformed_model_reroute_is_rejected_before_notice_publication() {

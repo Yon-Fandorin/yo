@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     Answer, COPY_LIMIT, CapturedInterview, InterviewCatalog, InterviewError, PREVIEW_LIMIT,
-    invalid, refs,
+    SecretAnswerState, invalid, refs,
 };
 use crate::{ActivityRef, ActivityRequestRef, InputSubmission, SubmissionId, TurnRef, UserInput};
 
@@ -50,16 +50,33 @@ pub struct NewConversation {
 }
 impl WorkingCopy {
     pub const SCHEMA: &'static str = "yo.interview-working-copy/v1";
+    pub const SCHEMA_V2: &'static str = "yo.interview-working-copy/v2";
     pub fn new(capture: &CapturedInterview) -> Result<Self, InterviewError> {
+        let answers = capture
+            .questions
+            .iter()
+            .zip(&capture.answers)
+            .map(|(question, answer)| {
+                if question.is_secret {
+                    Answer::reentry_required_secret(question.id.clone())
+                } else {
+                    answer.clone()
+                }
+            })
+            .collect();
         Ok(Self {
-            schema: Self::SCHEMA.into(),
+            schema: if capture.questions.iter().any(|q| q.is_secret) {
+                Self::SCHEMA_V2.into()
+            } else {
+                Self::SCHEMA.into()
+            },
             copy_id: new_id()?,
             generation: 1,
             source: Source {
                 interview: capture.interview,
                 revision: capture.revision.clone(),
             },
-            answers: capture.answers.clone(),
+            answers,
             current_question_id: capture.current_question_id.clone(),
             context: String::new(),
             submission: capture.submitted.map(|(final_request, response_activity)| {
@@ -97,6 +114,16 @@ impl WorkingCopy {
         for (q, a) in capture.questions.iter().zip(&self.answers) {
             q.validate_answer(a, true)?;
         }
+        let expected_schema = if capture.questions.iter().any(|q| q.is_secret) {
+            Self::SCHEMA_V2
+        } else {
+            Self::SCHEMA
+        };
+        if self.schema != expected_schema {
+            return Err(invalid(
+                "working copy schema does not match captured interview",
+            ));
+        }
         if let Some(Submission::ActivityResponse {
             final_request,
             response_activity,
@@ -110,12 +137,34 @@ impl WorkingCopy {
         Ok(capture)
     }
     fn validate_shape(&self) -> Result<(), InterviewError> {
-        if self.schema != Self::SCHEMA
+        if (self.schema != Self::SCHEMA && self.schema != Self::SCHEMA_V2)
             || !valid_id(&self.copy_id)
             || self.generation == 0
             || !super::profile::valid_revision(&self.source.revision)
         {
             return Err(invalid("unsupported or invalid interview working copy"));
+        }
+        if self.schema == Self::SCHEMA && self.answers.iter().any(Answer::is_secret) {
+            return Err(invalid(
+                "v1 interview working copies cannot contain secret answers",
+            ));
+        }
+        if self.schema == Self::SCHEMA_V2
+            && self
+                .answers
+                .iter()
+                .any(|answer| answer.secret_state() == Some(SecretAnswerState::Submitted))
+        {
+            return Err(invalid(
+                "working copies retain only the secret re-entry marker",
+            ));
+        }
+        if self.schema == Self::SCHEMA_V2
+            && matches!(self.submission, Some(Submission::NewConversation { .. }))
+        {
+            return Err(invalid(
+                "secret interview working copies cannot contain a new-conversation submission",
+            ));
         }
         if let Some(Submission::NewConversation {
             submission_id,
@@ -154,7 +203,9 @@ impl WorkingCopy {
         for (q, a) in capture.questions.iter().zip(&self.answers) {
             text.push_str(&q.prompt);
             text.push('\n');
-            if let Some(id) = &a.option_id {
+            if q.is_secret {
+                text.push_str("Answer: [secret re-entry required]\n");
+            } else if let Some(id) = &a.option_id {
                 let option = q
                     .options
                     .iter()
@@ -192,6 +243,11 @@ impl WorkingCopy {
         if self.submission.is_some() {
             return Err(invalid(
                 "reopen the submitted interview as a separate editable copy first",
+            ));
+        }
+        if self.schema == Self::SCHEMA_V2 {
+            return Err(invalid(
+                "secret interview working copies cannot start a new conversation",
             ));
         }
         let preview = self.preview(catalog)?;

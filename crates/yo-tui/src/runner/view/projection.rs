@@ -359,7 +359,9 @@ fn response_name(response: &ActivityResponse) -> &'static str {
         ActivityResponse::Approval(ApprovalDecision::Offered(_)) => "approval.offered",
         ActivityResponse::UserInput(_)
         | ActivityResponse::QuestionAnswer { .. }
-        | ActivityResponse::PreviousQuestion { .. } => "user_input",
+        | ActivityResponse::PreviousQuestion { .. }
+        | ActivityResponse::SecretInput(_)
+        | ActivityResponse::SecretInputSubmitted => "user_input",
     }
 }
 

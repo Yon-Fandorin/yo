@@ -29,12 +29,19 @@ pub(in crate::shell) fn paint_request(
         RequestPrompt::Approval => (("Enter", "confirm"), ("Esc", "decline")),
         RequestPrompt::Answer | RequestPrompt::Choice => (("Enter", "answer"), ("Esc", "cancel")),
         RequestPrompt::Notes => (("Enter", "send both"), ("Esc", "cancel")),
+        RequestPrompt::Secret | RequestPrompt::SecretPrevious => {
+            (("Enter", "submit"), ("Esc", "cancel"))
+        },
+        RequestPrompt::Waiting => (("Esc", "cancel"), ("", "")),
     };
     let extra = match request {
         RequestPrompt::Approval => ("Up/Down", "choose"),
         RequestPrompt::Answer => (newline.as_str(), "newline"),
         RequestPrompt::Choice => ("Tab", "add notes"),
         RequestPrompt::Notes => ("Tab", "choices"),
+        RequestPrompt::Secret => ("Ctrl-U", "clear"),
+        RequestPrompt::SecretPrevious => ("Shift+Tab", "previous"),
+        RequestPrompt::Waiting => ("", ""),
     };
     let candidates = [
         action_spans(&[primary, extra, secondary], styles.key_hint, styles.mode),

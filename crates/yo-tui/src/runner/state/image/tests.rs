@@ -346,6 +346,7 @@ fn trailing_attachment_is_blocked_in_a_presented_question_prompt() {
         .unwrap();
     let question = ActivityQuestion {
         allow_notes: false,
+        is_secret: false,
         previous_question: false,
         draft: None,
         draft_choice: None,

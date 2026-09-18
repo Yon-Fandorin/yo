@@ -2,13 +2,14 @@ use std::{
     env, fs, num,
     os::unix::fs::PermissionsExt,
     path::PathBuf,
+    sync::{Arc, Mutex},
     thread,
     time::{self, Duration},
 };
 
 use yo_core::{
-    ActivityApproval, ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent, SubmissionId,
-    TranscriptRecord, TurnRef, UserInput, interview,
+    ActivityApproval, ActivityKind, ActivityRef, ActivityRequestRef, ActivityResponse, AgentEvent,
+    SecretInput, SubmissionId, TranscriptRecord, TurnRef, UserInput, interview,
     interview::{
         AnswerResponse, Capture, InterviewCatalog, InterviewQuestion, InterviewRepository,
         WorkingCopy,
@@ -31,6 +32,18 @@ impl crate::InterviewHistoryHost for Host {
         _: ActivityRequestRef,
     ) -> Result<InterviewCatalog, interview::InterviewError> {
         Ok(self.0.clone())
+    }
+    fn validate_submission(&mut self, _: &WorkingCopy) -> Result<(), interview::InterviewError> {
+        Ok(())
+    }
+}
+struct MutableHost(Arc<Mutex<InterviewCatalog>>);
+impl crate::InterviewHistoryHost for MutableHost {
+    fn resolve(
+        &mut self,
+        _: ActivityRequestRef,
+    ) -> Result<InterviewCatalog, interview::InterviewError> {
+        Ok(self.0.lock().expect("mixed interview host lock").clone())
     }
     fn validate_submission(&mut self, _: &WorkingCopy) -> Result<(), interview::InterviewError> {
         Ok(())
@@ -81,7 +94,7 @@ impl Fixture {
             update: yo_core::ActivityUpdate::TextSnapshot(batch.to_snapshot().unwrap()),
         });
         if submitted {
-            let response = yo_core::ActivityResponse::UserInput(UserInput::new("기존 제출"));
+            let response = ActivityResponse::UserInput(UserInput::new("기존 제출"));
             let answer = question.project_response(&response).unwrap();
             catalog.observe_committed(&TranscriptRecord::CommandCommitted(
                 yo_core::AgentCommand::RespondToActivity { request, response },
@@ -143,6 +156,57 @@ impl Fixture {
         state
     }
 }
+
+fn interview_copy(
+    questions: Vec<InterviewQuestion>,
+) -> (InterviewCatalog, WorkingCopy, ActivityRequestRef, Capture) {
+    let request = ActivityRequestRef::new(
+        ActivityRef::new(
+            turn(),
+            yo_core::ActivityId::new(num::NonZeroU64::new(11).unwrap()),
+        ),
+        yo_core::RequestId::new(num::NonZeroU64::new(11).unwrap()),
+    );
+    let batch = Capture::batch(request, questions).unwrap();
+    let mut catalog = InterviewCatalog::default();
+    for event in [
+        AgentEvent::ActivityStarted {
+            activity: request.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: request.request_id(),
+            },
+        },
+        AgentEvent::ActivityUpdated {
+            activity: request.activity(),
+            update: yo_core::ActivityUpdate::TextSnapshot(batch.to_snapshot().unwrap()),
+        },
+    ] {
+        catalog.observe_committed(&TranscriptRecord::EventCommitted(event));
+    }
+    let copy = WorkingCopy::new(&catalog.interviews()[0]).unwrap();
+    (catalog, copy, request, batch)
+}
+
+fn secret_copy() -> (
+    InterviewCatalog,
+    WorkingCopy,
+    ActivityRequestRef,
+    InterviewQuestion,
+    Capture,
+) {
+    let question = InterviewQuestion {
+        id: "secret".into(),
+        prompt: "비밀 입력".into(),
+        question: "토큰을 입력하세요".into(),
+        options: vec![],
+        allow_free_text: true,
+        allow_notes: false,
+        is_secret: true,
+    };
+    let (catalog, copy, request, batch) = interview_copy(vec![question.clone()]);
+    (catalog, copy, request, question, batch)
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::set_permissions(&self.root, fs::Permissions::from_mode(0o700));
@@ -154,6 +218,244 @@ fn command(state: &mut TuiState, text: &str) -> StateEffect {
     state
         .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
         .unwrap()
+}
+
+// 실제 비밀 응답과 최종 seal을 관찰해도 자동 저장 사본에는 재입력 마커만 남고 제출 근거는
+// 보존되는지 확인한다.
+#[test]
+fn secret_receipts_autosave_only_the_reentry_marker() {
+    let fixture = Fixture::new(false);
+    let (catalog, _, request, question, batch) = secret_copy();
+    let durable = Arc::new(Mutex::new(catalog));
+    let repository = InterviewRepository::open(&fixture.root).unwrap();
+    let mut controller = super::super::interview::InterviewController::new(
+        repository,
+        Box::new(MutableHost(Arc::clone(&durable))),
+    );
+    for event in [
+        AgentEvent::ActivityStarted {
+            activity: request.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: request.request_id(),
+            },
+        },
+        AgentEvent::ActivityUpdated {
+            activity: request.activity(),
+            update: yo_core::ActivityUpdate::TextSnapshot(batch.to_snapshot().unwrap()),
+        },
+    ] {
+        assert!(
+            controller
+                .observe(&TranscriptRecord::EventCommitted(event))
+                .is_none()
+        );
+    }
+    let copy = InterviewRepository::open(&fixture.root)
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .filter_map(|(_, copy)| copy.ok())
+        .find(|copy| copy.source().0 == request)
+        .expect("live secret capture creates an editable copy");
+
+    let canary = "secret-autosave-canary";
+    assert!(
+        controller
+            .retain_live_response(
+                request,
+                ActivityResponse::SecretInput(SecretInput::new(canary).unwrap()),
+            )
+            .is_none()
+    );
+    let saved = InterviewRepository::open(&fixture.root)
+        .unwrap()
+        .load(&copy.copy_id)
+        .unwrap()
+        .unwrap();
+    let encoded = String::from_utf8(saved.encode().unwrap()).unwrap();
+    assert!(encoded.contains(r#""secret":"reentry_required""#));
+    assert!(!encoded.contains(canary));
+    assert!(!encoded.contains(r#""secret":"submitted""#));
+
+    let response_activity = ActivityRef::new(
+        turn(),
+        yo_core::ActivityId::new(num::NonZeroU64::new(12).unwrap()),
+    );
+    let answer = question
+        .project_response(&ActivityResponse::SecretInputSubmitted)
+        .unwrap();
+    let seal = Capture::AcceptedAnswers {
+        interview: request,
+        revision: batch.source().1.to_owned(),
+        answers: vec![answer],
+        answer_responses: vec![AnswerResponse {
+            question_id: question.id.clone(),
+            request,
+            response_activity,
+        }],
+        final_request: request,
+        response_activity,
+    };
+    let records = [
+        TranscriptRecord::CommandCommitted(yo_core::AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInputSubmitted,
+        }),
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityStarted {
+            activity: response_activity,
+            kind: ActivityKind::UserInputResponse {
+                request_id: request.request_id(),
+            },
+        }),
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated {
+            activity: response_activity,
+            update: yo_core::ActivityUpdate::TextSnapshot(seal.to_snapshot().unwrap()),
+        }),
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
+            activity: response_activity,
+            outcome: yo_core::ActivityOutcome::Completed,
+        }),
+    ];
+    for record in records {
+        durable.lock().unwrap().observe_committed(&record);
+        assert!(controller.observe(&record).is_none());
+    }
+    assert!(
+        durable.lock().unwrap().interviews()[0].submitted.is_some(),
+        "durable secret seal was not accepted"
+    );
+    assert!(controller.flush().is_none());
+
+    let saved = InterviewRepository::open(&fixture.root)
+        .unwrap()
+        .load(&copy.copy_id)
+        .unwrap()
+        .unwrap();
+    saved.validate(&durable.lock().unwrap()).unwrap();
+    assert!(saved.submission.is_some(), "saved copy: {saved:?}");
+    let encoded = String::from_utf8(saved.encode().unwrap()).unwrap();
+    assert!(encoded.contains(r#""secret":"reentry_required""#));
+    assert!(!encoded.contains(r#""secret":"submitted""#));
+}
+
+// 복구한 비밀 질문은 값 입력을 받지 않지만 고정 탐색 키로 혼합 질문을 오가고 닫을 수 있으며,
+// 공개 질문으로 이동한 뒤에는 일반 편집기가 다시 활성화되는지 확인한다.
+#[test]
+fn recovered_secret_question_only_accepts_fixed_navigation() {
+    let fixture = Fixture::new(false);
+    let secret = InterviewQuestion {
+        id: "secret-1".into(),
+        prompt: "첫 비밀".into(),
+        question: "첫 토큰을 입력하세요".into(),
+        options: vec![],
+        allow_free_text: true,
+        allow_notes: false,
+        is_secret: true,
+    };
+    let public = InterviewQuestion {
+        id: "public".into(),
+        prompt: "공개 입력".into(),
+        question: "공개 답변을 입력하세요".into(),
+        options: vec![],
+        allow_free_text: true,
+        allow_notes: true,
+        is_secret: false,
+    };
+    let mut second_secret = secret.clone();
+    second_secret.id = "secret-2".into();
+    second_secret.prompt = "둘째 비밀".into();
+    second_secret.question = "둘째 토큰을 입력하세요".into();
+    let (catalog, copy, _, _) = interview_copy(vec![secret, public, second_secret]);
+    InterviewRepository::open(&fixture.root)
+        .unwrap()
+        .save(&copy, None, &catalog)
+        .unwrap();
+    let mut controller = super::super::interview::InterviewController::new(
+        InterviewRepository::open(&fixture.root).unwrap(),
+        Box::new(Host(catalog)),
+    );
+    let recovered = controller
+        .command(&format!("recover {}", copy.copy_id), false)
+        .unwrap();
+    assert!(recovered.document.contains("[secret re-entry required]"));
+    assert_eq!(recovered.editor.as_deref(), Some(""));
+    assert!(controller.local_enter("must-not-appear").is_err());
+    for command in ["option 1", "notes must-not-appear", "send"] {
+        assert!(controller.command(command, false).is_err());
+    }
+
+    let mut state = TuiState::new();
+    state.interview = Some(controller);
+    assert_eq!(
+        state.apply_interview_command(Ok(recovered), "").unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(state.is_editing_secret_interview());
+    assert!(state.has_secret_editor());
+    assert!(state.editor.text().is_empty());
+    let canary = "recovered-secret-canary";
+    for input in [
+        InputEvent::Paste(canary.into()),
+        key(KeyCode::Enter, KeyModifiers::NONE),
+        key(KeyCode::Character('c'), KeyModifiers::CONTROL),
+    ] {
+        assert_eq!(
+            state.handle(input, Duration::ZERO).unwrap(),
+            StateEffect::Unchanged
+        );
+    }
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('z'), KeyModifiers::CONTROL),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Suspend
+    );
+    assert!(state.editor.text().is_empty());
+    assert!(!format!("{:?}", state.interview).contains(canary));
+
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Tab, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(!state.is_editing_secret_interview());
+    assert!(!state.has_secret_editor());
+    assert_eq!(
+        state
+            .handle(InputEvent::Paste("public-answer".into()), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(state.editor.text(), "public-answer");
+
+    assert_eq!(command(&mut state, "/interview next"), StateEffect::Redraw);
+    assert!(state.is_editing_secret_interview());
+    assert!(state.has_secret_editor());
+    assert_eq!(
+        state
+            .handle(key(KeyCode::BackTab, KeyModifiers::SHIFT), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(!state.is_editing_secret_interview());
+
+    assert_eq!(
+        command(&mut state, "/interview previous"),
+        StateEffect::Redraw
+    );
+    assert!(state.is_editing_secret_interview());
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Escape, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(!state.is_editing_secret_interview());
 }
 
 // 복구한 답안에서 Enter는 로컬 편집만 저장하며 실제 Activity 응답이나 Turn을 만들지 않는다.

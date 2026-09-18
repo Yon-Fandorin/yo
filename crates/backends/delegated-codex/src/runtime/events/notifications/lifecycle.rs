@@ -8,6 +8,16 @@ impl<P: JsonMessagePeer> Backend<P> {
         &mut self,
         terminal: Result<(), BackendFailure>,
     ) -> Result<BackendPoll, BackendFailure> {
+        let terminal = if self.secret_dispatch_attempted() {
+            terminal.map_err(|failure| {
+                BackendFailure::new(
+                    failure.kind(),
+                    "secret input delivery failed with an unknown outcome",
+                )
+            })
+        } else {
+            terminal
+        };
         // 런타임의 최종 실패가 턴을 닫기 전에 인터뷰 영수증을 전달합니다.
         // 전송이 끊긴 뒤 기록된 로컬 답변을 제출된 것으로 보고하지 않습니다.
         let mut requests = self.requests.keys().copied().collect::<Vec<_>>();

@@ -10,6 +10,9 @@ use crate::{
     journal::CommittedCommand,
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireCommand {
@@ -55,6 +58,7 @@ pub(super) enum WireActivityResponse {
         choice: Option<u32>,
         draft: WireUserInput,
     },
+    SecretInputSubmitted {},
 }
 
 #[derive(Deserialize, Serialize)]
@@ -185,6 +189,12 @@ impl TryFrom<&ActivityResponse> for WireActivityResponse {
             ActivityResponse::UserInput(input) => Self::UserInput {
                 input: WireUserInput::try_from(input)?,
             },
+            ActivityResponse::SecretInput(_) => {
+                return Err(JournalCodecError::new(
+                    "live secret input is outside the persistence grammar",
+                ));
+            },
+            ActivityResponse::SecretInputSubmitted => Self::SecretInputSubmitted {},
         })
     }
 }
@@ -208,6 +218,7 @@ impl TryFrom<WireActivityResponse> for ActivityResponse {
                 choice,
                 notes: notes.try_into()?,
             },
+            WireActivityResponse::SecretInputSubmitted {} => Self::SecretInputSubmitted,
         };
         if response.has_resolved_skill() || response_has_images(&response) {
             return Err(JournalCodecError::new(
@@ -238,7 +249,9 @@ fn parse_submission_id(value: &str) -> Result<SubmissionId, JournalCodecError> {
 
 fn response_has_images(response: &ActivityResponse) -> bool {
     match response {
-        ActivityResponse::Approval(_) => false,
+        ActivityResponse::Approval(_)
+        | ActivityResponse::SecretInput(_)
+        | ActivityResponse::SecretInputSubmitted => false,
         ActivityResponse::UserInput(input)
         | ActivityResponse::QuestionAnswer { notes: input, .. }
         | ActivityResponse::PreviousQuestion { draft: input, .. } => !input.images().is_empty(),

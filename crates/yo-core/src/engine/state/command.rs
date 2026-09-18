@@ -204,6 +204,8 @@ fn response_kind(response: &ActivityResponse) -> ResponseKind {
         ActivityResponse::Approval(_) => ResponseKind::Approval,
         ActivityResponse::UserInput(_)
         | ActivityResponse::QuestionAnswer { .. }
-        | ActivityResponse::PreviousQuestion { .. } => ResponseKind::UserInput,
+        | ActivityResponse::PreviousQuestion { .. }
+        | ActivityResponse::SecretInput(_)
+        | ActivityResponse::SecretInputSubmitted => ResponseKind::UserInput,
     }
 }

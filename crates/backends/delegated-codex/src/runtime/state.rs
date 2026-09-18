@@ -58,6 +58,9 @@ pub(super) struct InputQuestions {
     pub(super) drafts: HashMap<String, (Option<u32>, String)>,
     pub(super) capture: Option<Arc<Capture>>,
     pub(super) captured_answers: Vec<Option<(Answer, AnswerResponse)>>,
+    /// A failed final secret write has an unknown delivery outcome. Keep the
+    /// request bound, but make another response for that request impossible.
+    pub(super) secret_delivery_blocked: bool,
 }
 
 #[derive(Clone)]
@@ -67,6 +70,7 @@ pub(super) struct InputQuestion {
     pub(super) question: String,
     pub(super) options: Vec<String>,
     pub(super) choices: Vec<QuestionChoice>,
+    pub(super) is_secret: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -102,8 +106,14 @@ pub(super) struct Backend<P> {
     pub(super) turn_errors: HashMap<String, String>,
     pub(super) pending_events: VecDeque<BackendEvent>,
     pub(super) terminal_poll: Option<Result<(), BackendFailure>>,
+    pub(super) secret_diagnostics_tainted: bool,
     pub(super) next_activity_id: u64,
     pub(super) next_request_id: u64,
+}
+
+fn secret_request_attempted(binding: &RequestBinding) -> bool {
+    matches!(&binding.kind, RequestKind::Input(questions)
+        if questions.has_secret() && (binding.responded || questions.secret_delivery_blocked))
 }
 
 impl<P: JsonMessagePeer> Backend<P> {
@@ -139,6 +149,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             turn_errors: HashMap::new(),
             pending_events: VecDeque::new(),
             terminal_poll: None,
+            secret_diagnostics_tainted: false,
             next_activity_id: 1,
             next_request_id: 1,
         }
@@ -149,6 +160,22 @@ impl<P: JsonMessagePeer> Backend<P> {
             .with_steer()
             .with_native_model_rebind()
             .with_image_input(self.image_capability)
+    }
+
+    pub(super) fn secret_dispatch_attempted(&self) -> bool {
+        self.secret_diagnostics_tainted || self.requests.values().any(secret_request_attempted)
+    }
+
+    pub(super) fn secret_dispatch_attempted_for_turn(&self, turn: TurnRef) -> bool {
+        self.secret_diagnostics_tainted
+            || self.requests.values().any(|binding| {
+                binding.request_activity.turn() == turn && secret_request_attempted(binding)
+            })
+    }
+
+    pub(super) fn mark_secret_diagnostics_tainted(&mut self) {
+        self.secret_diagnostics_tainted = true;
+        self.client.mark_secret_diagnostics_tainted();
     }
 
     pub(super) fn apply_thread_policy(&self, params: &mut Value) {

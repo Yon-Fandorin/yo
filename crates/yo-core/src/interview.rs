@@ -1,4 +1,5 @@
-//! Nonsecret interview capture and editable copies, independent of backend wire state.
+//! Public/redacted interview capture and editable copies, independent of backend wire state.
+//! Secret values remain outside these durable profiles.
 
 use std::{
     error::Error,
@@ -16,7 +17,9 @@ mod working_copy;
 
 pub(crate) use capture::initial_submission_evidence;
 pub use capture::{CapturedInterview, InterviewCatalog};
-pub use profile::{Answer, AnswerResponse, Capture, InterviewOption, InterviewQuestion};
+pub use profile::{
+    Answer, AnswerResponse, Capture, InterviewOption, InterviewQuestion, SecretAnswerState,
+};
 pub use repository::{InterviewCopyEntry, InterviewRepository};
 pub use working_copy::{NewConversation, Submission, WorkingCopy};
 

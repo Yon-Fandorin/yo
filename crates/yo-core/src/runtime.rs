@@ -65,6 +65,9 @@ pub struct AgentRuntime<B> {
     interview_start: Option<AgentEvent>,
     interview_delivery: VecDeque<AgentEvent>,
     interview_backend: Option<BackendEvent>,
+    /// Once protected input reaches a backend call, later backend diagnostics may
+    /// echo it and therefore remain redacted for this runtime's lifetime.
+    secret_diagnostics_redacted: bool,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -101,6 +104,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             interview_start: None,
             interview_delivery: VecDeque::new(),
             interview_backend: None,
+            secret_diagnostics_redacted: false,
         }
     }
 
@@ -142,6 +146,48 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
     pub(crate) fn durability(&self) -> crate::JournalDurability {
         self.journal.transcript_reader().durability()
+    }
+
+    pub(super) fn redact_backend_failure(
+        &self,
+        failure: crate::BackendFailure,
+    ) -> crate::BackendFailure {
+        if self.secret_diagnostics_redacted {
+            crate::BackendFailure::new(
+                failure.kind(),
+                "backend operation failed after protected input dispatch; details are withheld",
+            )
+        } else {
+            failure
+        }
+    }
+
+    pub(super) fn redact_backend_event(&self, event: BackendEvent) -> BackendEvent {
+        if !self.secret_diagnostics_redacted {
+            return event;
+        }
+        let redacted = || {
+            crate::Failure::new(
+                "backend operation failed after protected input dispatch; details are withheld",
+            )
+        };
+        match event {
+            BackendEvent::ActivityFinished {
+                activity,
+                outcome: crate::ActivityOutcome::Failed(_),
+            } => BackendEvent::ActivityFinished {
+                activity,
+                outcome: crate::ActivityOutcome::Failed(redacted()),
+            },
+            BackendEvent::TurnFinished {
+                turn,
+                outcome: crate::TurnOutcome::Failed(_),
+            } => BackendEvent::TurnFinished {
+                turn,
+                outcome: crate::TurnOutcome::Failed(redacted()),
+            },
+            event => event,
+        }
     }
 
     pub(crate) const fn idle_context_compaction_pending(&self) -> bool {

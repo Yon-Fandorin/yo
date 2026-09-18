@@ -12,7 +12,7 @@ use std::num::NonZeroU16;
 
 use crate::{
     input,
-    input::editor::{PromptEditor, layout::LayoutError},
+    input::{editor::layout::LayoutError, secret::PromptInput},
     surface,
     surface::{Point, Rect, SurfaceView, WriteOutcome},
 };
@@ -69,7 +69,7 @@ pub(crate) enum PromptPaintError {
 }
 
 pub(crate) fn measure(
-    editor: &PromptEditor,
+    editor: &dyn PromptInput,
     width: u16,
 ) -> Result<PromptMeasure, PromptMeasureError> {
     let prepared = prepare(editor, width)?;
@@ -79,7 +79,7 @@ pub(crate) fn measure(
 }
 
 pub(crate) fn prepare(
-    editor: &PromptEditor,
+    editor: &dyn PromptInput,
     width: u16,
 ) -> Result<PreparedPrompt, PromptMeasureError> {
     let width = NonZeroU16::new(width).ok_or(PromptMeasureError::ZeroWidth)?;
@@ -90,14 +90,14 @@ pub(crate) fn prepare(
     Ok(PreparedPrompt {
         layout,
         chrome,
-        empty: editor.text().is_empty(),
+        empty: editor.public_text().is_empty(),
         placeholder: None,
         image_thumbnail: None,
     })
 }
 
 pub(crate) fn render(
-    editor: &PromptEditor,
+    editor: &dyn PromptInput,
     view: &mut SurfaceView<'_>,
     styles: PromptStyles,
     state: &mut PromptViewState,

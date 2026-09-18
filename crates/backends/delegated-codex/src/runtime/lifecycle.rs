@@ -437,6 +437,11 @@ impl<P: JsonMessagePeer> Backend<P> {
     }
 
     pub(super) fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        for binding in self.requests.values_mut() {
+            if let super::state::RequestKind::Input(questions) = &mut binding.kind {
+                questions.discard_secret_values(false);
+            }
+        }
         self.client.shutdown()
     }
 }

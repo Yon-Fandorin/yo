@@ -75,6 +75,9 @@ pub(crate) enum RequestPrompt {
     Answer,
     Choice,
     Notes,
+    Secret,
+    SecretPrevious,
+    Waiting,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -207,9 +210,12 @@ pub(super) fn paint_transient(
     if let Some(request) = snapshot.request {
         let label = match request {
             RequestPrompt::Approval => "Waiting for approval",
-            RequestPrompt::Answer | RequestPrompt::Choice | RequestPrompt::Notes => {
-                "Waiting for your answer"
-            },
+            RequestPrompt::Answer
+            | RequestPrompt::Choice
+            | RequestPrompt::Notes
+            | RequestPrompt::Secret
+            | RequestPrompt::SecretPrevious => "Waiting for your answer",
+            RequestPrompt::Waiting => "Waiting for question",
         };
         paint_fitting_row(
             view,

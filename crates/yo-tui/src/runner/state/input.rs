@@ -13,6 +13,7 @@ use crate::{
     input::{
         editor::EditorEffect,
         event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
+        secret::SecretEditorEffect,
     },
     overlay::OverlayInputEffect,
     prompt::{assist::PromptAssistRequest, workspace_reference::WorkspaceEdit},
@@ -90,6 +91,7 @@ impl TuiState {
                         draft: UserInput::new(draft),
                     },
                 )),
+                StateEffect::Dispatch(AgentAction::RespondToSecretInput { .. }) => None,
                 _ => None,
             };
             let notice = if let Some((request, response)) = response {
@@ -142,6 +144,21 @@ impl TuiState {
         }
         if input.is_ctrl_z_press() {
             return Ok(StateEffect::Suspend);
+        }
+        if self.presentation_blocked() {
+            return self.handle_presentation_blocked(input);
+        }
+        if self.is_secret_input() {
+            if self.is_secret_previous_question_input(&input) {
+                return self.handle_secret_previous_question();
+            }
+            return self.handle_secret_input(input);
+        }
+        if self.is_editing_secret_interview() {
+            // A recovered v2 marker is display-only. There is no live request to
+            // correlate, so never route bytes through the ordinary editor or turn
+            // cancellation path. Only fixed navigation and close keys remain available.
+            return self.handle_recovered_secret_input(input);
         }
         if let InputEvent::Key(key) = &input
             && key.modifiers == KeyModifiers::CONTROL
@@ -317,6 +334,13 @@ impl TuiState {
                             self.approval_response(request, "n".to_owned())
                         },
                         PendingRequest::UserInput(_) => {
+                            Ok(StateEffect::Dispatch(AgentAction::Interrupt))
+                        },
+                        PendingRequest::PresentationPending(_)
+                        | PendingRequest::PresentationInvalid(_) => {
+                            Ok(StateEffect::Dispatch(AgentAction::Interrupt))
+                        },
+                        PendingRequest::SecretInput(_) => {
                             Ok(StateEffect::Dispatch(AgentAction::Interrupt))
                         },
                     };
@@ -676,6 +700,135 @@ impl TuiState {
             EditorEffect::Unhandled | EditorEffect::NoChange | EditorEffect::ExitArmed => {
                 Ok(StateEffect::Unchanged)
             },
+        }
+    }
+
+    fn handle_secret_input(&mut self, input: InputEvent) -> Result<StateEffect, StateError> {
+        let effect = self
+            .secret_editor
+            .as_mut()
+            .map_or(SecretEditorEffect::NoChange, |editor| editor.handle(input));
+        match effect {
+            SecretEditorEffect::Unhandled | SecretEditorEffect::NoChange => {
+                Ok(StateEffect::Unchanged)
+            },
+            SecretEditorEffect::Changed => Ok(StateEffect::Redraw),
+            SecretEditorEffect::Rejected => {
+                self.chat.push_notice(
+                    "Secret input exceeds the 64 KiB UTF-8 limit; the value was not changed."
+                        .to_owned(),
+                )?;
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::Cancel => {
+                self.clear_secret_editor();
+                Ok(StateEffect::Dispatch(AgentAction::Interrupt))
+            },
+            SecretEditorEffect::Exit => {
+                self.clear_secret_editor();
+                Ok(StateEffect::Exit)
+            },
+            SecretEditorEffect::Submitted(input) => {
+                let Some(PendingRequest::SecretInput(request)) =
+                    self.pending_requests.front().copied()
+                else {
+                    self.clear_secret_editor();
+                    return Ok(StateEffect::Unchanged);
+                };
+                self.pending_requests.pop_front();
+                self.clear_secret_editor();
+                self.close_request_overlay();
+                self.sync_request_overlay()?;
+                Ok(StateEffect::Dispatch(AgentAction::RespondToSecretInput {
+                    request,
+                    input,
+                }))
+            },
+        }
+    }
+
+    fn is_secret_previous_question_input(&self, input: &InputEvent) -> bool {
+        matches!(
+            input,
+            InputEvent::Key(key)
+                if key.code == KeyCode::BackTab
+                    && key.action == KeyAction::Press
+                    && (key.modifiers == KeyModifiers::NONE
+                        || key.modifiers == KeyModifiers::SHIFT)
+        ) && self
+            .pending_requests
+            .front()
+            .and_then(|pending| match pending {
+                PendingRequest::SecretInput(request) => self.chat.question(request.activity()),
+                _ => None,
+            })
+            .is_some_and(|question| question.previous_question)
+    }
+
+    fn handle_secret_previous_question(&mut self) -> Result<StateEffect, StateError> {
+        let Some(PendingRequest::SecretInput(request)) = self.pending_requests.pop_front() else {
+            return Ok(StateEffect::Unchanged);
+        };
+        // Previous-question navigation carries no draft for a secret request. Clear before
+        // dispatching so the transient value cannot be retained by the interview controller.
+        self.clear_secret_editor();
+        self.close_request_overlay();
+        self.sync_request_overlay()?;
+        Ok(StateEffect::Dispatch(AgentAction::PreviousQuestion {
+            request,
+            choice: None,
+            draft: String::new(),
+        }))
+    }
+
+    fn handle_presentation_blocked(
+        &mut self,
+        input: InputEvent,
+    ) -> Result<StateEffect, StateError> {
+        if matches!(
+            input,
+            InputEvent::Key(key)
+                if key.action == KeyAction::Press
+                    && ((key.code == KeyCode::Escape && key.modifiers == KeyModifiers::NONE)
+                        || (matches!(key.code, KeyCode::Character('c' | 'C'))
+                            && key.modifiers == KeyModifiers::CONTROL))
+        ) {
+            return Ok(StateEffect::Dispatch(AgentAction::Interrupt));
+        }
+        // Until the typed question arrives, ordinary drafts, palettes, and submit keys are
+        // intentionally inert. A malformed presentation remains blocked for the same reason.
+        Ok(StateEffect::Unchanged)
+    }
+
+    fn handle_recovered_secret_input(
+        &mut self,
+        input: InputEvent,
+    ) -> Result<StateEffect, StateError> {
+        // The editor is intentionally not an input surface for a recovered secret.
+        // Fixed navigation keys remain available without admitting value bytes.
+        match input {
+            InputEvent::Key(key)
+                if key.action == KeyAction::Press
+                    && key.code == KeyCode::Escape
+                    && key.modifiers == KeyModifiers::NONE =>
+            {
+                self.handle_interview_command("close", "")
+            },
+            InputEvent::Key(key)
+                if key.action == KeyAction::Press
+                    && key.code == KeyCode::Tab
+                    && key.modifiers == KeyModifiers::NONE =>
+            {
+                self.handle_interview_command("next", "")
+            },
+            InputEvent::Key(key)
+                if key.action == KeyAction::Press
+                    && key.code == KeyCode::BackTab
+                    && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT) =>
+            {
+                self.handle_interview_command("previous", "")
+            },
+            _ => Ok(StateEffect::Unchanged),
         }
     }
 

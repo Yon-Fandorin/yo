@@ -13,4 +13,5 @@ pub(crate) mod control;
 pub(crate) mod editor;
 pub(crate) mod event;
 pub(crate) mod key_notation;
+pub(crate) mod secret;
 pub(crate) mod view_binding;

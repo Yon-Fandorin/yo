@@ -3,7 +3,7 @@
 use yo_core::{ActivityDocument, interview as core_interview};
 
 use super::{StateEffect, StateError, TuiState};
-use crate::runner::session::TuiDocument;
+use crate::{input::secret::SecretEditor, runner::session::TuiDocument};
 
 impl TuiState {
     pub(in crate::runner) fn tick_interview(&mut self) -> Result<bool, StateError> {
@@ -31,6 +31,22 @@ impl TuiState {
         self.interview
             .as_ref()
             .is_some_and(|controller| controller.is_editing())
+    }
+
+    pub(super) fn is_editing_secret_interview(&self) -> bool {
+        self.interview
+            .as_ref()
+            .is_some_and(|controller| controller.is_editing_secret())
+    }
+
+    fn sync_interview_input(&mut self) {
+        if self.is_editing_secret_interview() {
+            self.clear_editor();
+            self.clear_secret_editor();
+            self.secret_editor = Some(SecretEditor::reentry_required());
+        } else if !self.is_secret_input() {
+            self.clear_secret_editor();
+        }
     }
 
     pub(super) fn handle_interview_command(
@@ -70,6 +86,7 @@ impl TuiState {
                 } else {
                     self.clear_editor();
                 }
+                self.sync_interview_input();
                 if self.is_editing_interview() {
                     self.prompt_assist.cancel();
                     self.command_palette.close(&mut self.overlay);
@@ -91,7 +108,12 @@ impl TuiState {
                 }
             },
             Err(error) => {
-                self.restore_draft(draft);
+                if self.is_editing_secret_interview() {
+                    self.clear_editor();
+                } else {
+                    self.restore_draft(draft);
+                }
+                self.sync_interview_input();
                 self.chat.push_notice(error.to_string())?;
             },
         }

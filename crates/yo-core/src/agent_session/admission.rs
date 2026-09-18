@@ -152,6 +152,17 @@ impl AgentSession {
                     },
                 ))
             },
+            AgentIntent::RespondToSecretInput { request, input } => {
+                if !state.outstanding_requests.contains(&request) {
+                    return Err(AgentSessionError::NoOutstandingRequest);
+                }
+                Ok(PendingCommand::from_command(
+                    AgentCommand::RespondToActivity {
+                        request,
+                        response: ActivityResponse::SecretInput(input),
+                    },
+                ))
+            },
         }
     }
 
@@ -366,6 +377,12 @@ impl AgentSession {
                     response: ActivityResponse::UserInput(UserInput::new(input)),
                 },
             )),
+            AgentIntent::RespondToSecretInput { request, input } => Ok(
+                PendingCommand::from_command(AgentCommand::RespondToActivity {
+                    request,
+                    response: ActivityResponse::SecretInput(input),
+                }),
+            ),
         }
     }
 

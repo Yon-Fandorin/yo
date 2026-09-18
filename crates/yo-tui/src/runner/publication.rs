@@ -3,7 +3,7 @@
 use super::chat::PublicationCandidate;
 use crate::{
     appearance::{AppearanceRevision, AppearanceSnapshot},
-    input::editor::PromptEditor,
+    input::secret::PromptInput,
     shell::{AgentShellMeasureError, AgentShellRenderOptions, natural_height},
     surface::{Point, Rect, Size, Surface, SurfaceError, WriteOutcome},
     transcript::{
@@ -37,7 +37,7 @@ impl PublicationPrepareError {
 
 pub(super) fn compact_live_size(
     transcript: TranscriptSlice<'_>,
-    editor: &PromptEditor,
+    editor: &dyn PromptInput,
     terminal_size: Size,
     options: AgentShellRenderOptions<'_>,
 ) -> Result<Size, AgentShellMeasureError> {

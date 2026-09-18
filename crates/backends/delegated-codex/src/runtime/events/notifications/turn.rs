@@ -67,6 +67,16 @@ impl<P: JsonMessagePeer> Backend<P> {
                 )));
             },
         };
+        let outcome = if self.secret_dispatch_attempted_for_turn(turn) {
+            match outcome {
+                TurnOutcome::Failed(_) => TurnOutcome::Failed(Failure::new(
+                    "secret input delivery failed with an unknown outcome",
+                )),
+                outcome => outcome,
+            }
+        } else {
+            outcome
+        };
         let turn_finished = if outcome == TurnOutcome::Completed {
             BackendEvent::ResumableTurnFinished {
                 turn,
@@ -297,11 +307,14 @@ impl<P: JsonMessagePeer> Backend<P> {
         let from = protocol::string_at(params, &["fromModel"])?;
         let to = protocol::string_at(params, &["toModel"])?;
         let reason = protocol::string_at(params, &["reason"])?;
+        let message = if self.secret_dispatch_attempted() {
+            "Codex reported a model change; details are redacted after secret input.".to_owned()
+        } else {
+            format!("Codex reported a model change.\nFrom: {from}\nTo: {to}\nReason: {reason}")
+        };
         let notice = ActivityNotice {
             title: "Model rerouted".to_owned(),
-            message: format!(
-                "Codex reported a model change.\nFrom: {from}\nTo: {to}\nReason: {reason}"
-            ),
+            message,
             level: NoticeLevel::Warning,
         }
         .to_snapshot()
@@ -330,8 +343,13 @@ impl<P: JsonMessagePeer> Backend<P> {
         params: &Value,
     ) -> Result<Option<BackendEvent>, BackendFailure> {
         self.validate_thread(params)?;
-        let message = protocol::string_at(params, &["error", "message"])?.to_owned();
+        let message = protocol::string_at(params, &["error", "message"])?;
         let Some(wire_turn) = params.get("turnId").and_then(Value::as_str) else {
+            let message = if self.secret_dispatch_attempted() {
+                "secret input delivery failed with an unknown outcome"
+            } else {
+                message
+            };
             return Err(BackendFailure::new(BackendFailureKind::Turn, message));
         };
         let binding = self.wire_turns.get(wire_turn).copied().ok_or_else(|| {
@@ -340,6 +358,11 @@ impl<P: JsonMessagePeer> Backend<P> {
         if binding.finished {
             return Ok(None);
         }
+        let message = if self.secret_dispatch_attempted_for_turn(binding.turn) {
+            "secret input delivery failed with an unknown outcome".to_owned()
+        } else {
+            message.to_owned()
+        };
         let will_retry = match params.get("willRetry") {
             None => false,
             Some(Value::Bool(value)) => *value,

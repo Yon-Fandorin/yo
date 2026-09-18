@@ -216,7 +216,14 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
             self.replay_contract_rebind_required = true;
         }
         let mut previous = mem::replace(&mut self.backend, candidate);
-        Ok(previous.shutdown().err())
+        let cleanup_failure = previous
+            .shutdown()
+            .err()
+            .map(|failure| self.redact_backend_failure(failure));
+        // A replacement backend has never received this process-local secret. Its own
+        // diagnostics start untainted after the previous backend has been released.
+        self.secret_diagnostics_redacted = false;
+        Ok(cleanup_failure)
     }
 }
 

@@ -7,8 +7,8 @@ use yo_core::{RequestTraceEntry, TranscriptRecord, session_repository::Inherited
 use crate::{
     appearance::AppearanceSnapshot,
     input::{
-        editor::PromptEditor,
         event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
+        secret::PromptInput,
         view_binding::{ViewSwitchBindings, ViewSwitchTarget},
     },
     overlay::{OverlayBindings, SelectionPanel},
@@ -395,7 +395,7 @@ impl ObservabilityViews {
     pub(super) fn render(
         &self,
         chat: TranscriptSlice<'_>,
-        editor: &PromptEditor,
+        editor: &dyn PromptInput,
         view: &mut SurfaceView<'_>,
         options: ObservabilityRenderOptions<'_>,
         after_measure: impl FnOnce(),

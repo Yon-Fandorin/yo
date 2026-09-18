@@ -64,6 +64,13 @@ fn questions() -> Vec<InterviewQuestion> {
         })
         .collect()
 }
+fn secret_questions() -> Vec<InterviewQuestion> {
+    let mut questions = questions();
+    questions[1].options.clear();
+    questions[1].allow_notes = false;
+    questions[1].is_secret = true;
+    questions
+}
 fn event(catalog: &mut InterviewCatalog, event: AgentEvent) {
     catalog.observe_committed(&TranscriptRecord::EventCommitted(event));
 }
@@ -156,6 +163,7 @@ fn next_question(
                     interview,
                     revision: revision.into(),
                     question: questions()[index].clone(),
+                    secret_batch: false,
                 }
                 .to_snapshot()
                 .unwrap(),
@@ -823,4 +831,239 @@ fn recovery_diagnostic_requires_completion_and_rejects_first_excess_byte() {
         );
         assert!(catalog.interviews()[0].submitted.is_none());
     }
+}
+
+// 비밀 질문이 포함된 캡처만 v2를 쓰고 공개 질문의 기존 v1 wire 형태는 유지하는지 확인한다.
+#[test]
+fn secret_capture_uses_v2_without_changing_later_question_wire_shape() {
+    let public = questions();
+    let public_capture = Capture::Question {
+        interview: request(1),
+        revision: Capture::batch(request(1), public.clone())
+            .unwrap()
+            .source()
+            .1
+            .to_owned(),
+        question: public[0].clone(),
+        secret_batch: false,
+    };
+    let public_text = public_capture.to_snapshot().unwrap();
+    assert!(public_text.starts_with("{\"schema\":\"yo.interview-capture/v1\""));
+    assert_eq!(
+        public_text,
+        r#"{"schema":"yo.interview-capture/v1","capture":{"kind":"question","interview":{"activity":{"turn":{"session_id":"01890f00-0000-7000-8000-000000000001","turn_id":1},"activity_id":1},"request_id":1},"revision":"sha256:1b719cdb5963bc3e5ff6c64785acd23df7c44e57854323aa45407dcbab45f852","question":{"id":"q1","prompt":"질문 1","question":"어떤 답인가요?","options":[{"id":"1","label":"선택","description":"설명"}],"allow_free_text":true,"allow_notes":true,"is_secret":false}}}"#
+    );
+    assert!(!public_text.contains("secret_batch"));
+    assert_eq!(
+        Capture::from_snapshot(&public_text)
+            .unwrap()
+            .to_snapshot()
+            .unwrap(),
+        public_text
+    );
+
+    let secret_capture = Capture::batch(request(1), secret_questions()).unwrap();
+    let secret_text = secret_capture.to_snapshot().unwrap();
+    assert!(secret_text.starts_with("{\"schema\":\"yo.interview-capture/v2\""));
+    assert!(secret_text.contains("\"is_secret\":true"));
+    assert!(!secret_text.contains("secret_batch"));
+
+    let (interview, revision) = secret_capture.source();
+    let public_later = Capture::Question {
+        interview,
+        revision: revision.to_owned(),
+        question: secret_questions()[0].clone(),
+        secret_batch: true,
+    };
+    let later_text = public_later.to_snapshot().unwrap();
+    assert!(later_text.starts_with("{\"schema\":\"yo.interview-capture/v2\""));
+    assert_eq!(
+        later_text,
+        r#"{"schema":"yo.interview-capture/v2","capture":{"kind":"question","interview":{"activity":{"turn":{"session_id":"01890f00-0000-7000-8000-000000000001","turn_id":1},"activity_id":1},"request_id":1},"revision":"sha256:22bc0e7e62147040e726afae96e8019a6a01887ebef823fc87fe51eb0e21336a","question":{"id":"q1","prompt":"질문 1","question":"어떤 답인가요?","options":[{"id":"1","label":"선택","description":"설명"}],"allow_free_text":true,"allow_notes":true,"is_secret":false}}}"#
+    );
+    assert!(!later_text.contains("secret_batch"));
+    assert!(
+        Capture::from_snapshot(&later_text)
+            .unwrap()
+            .is_secret_batch()
+    );
+}
+
+// 비밀 답은 고정 마커로만 직렬화되고 복구 사본에서 새 대화를 시작할 수 없는지 확인한다.
+#[test]
+fn secret_answers_are_fixed_markers_and_working_copies_cannot_start_turns() {
+    let questions = secret_questions();
+    let capture = Capture::batch(request(1), questions.clone()).unwrap();
+    let secret = &questions[1];
+    let submitted = secret
+        .project_response(&ActivityResponse::SecretInput(
+            crate::SecretInput::new("value-that-must-not-be-serialized").unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        serde_json::to_string(&submitted).unwrap(),
+        r#"{"question_id":"q2","secret":"submitted"}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&secret.empty_answer()).unwrap(),
+        r#"{"question_id":"q2","secret":"reentry_required"}"#
+    );
+    let mut poisoned_marker = secret.empty_answer();
+    poisoned_marker.text = "raw-secret-must-not-cross-the-wire".into();
+    assert_eq!(
+        serde_json::to_string(&poisoned_marker).unwrap(),
+        r#"{"question_id":"q2","secret":"reentry_required"}"#
+    );
+
+    let mut catalog = InterviewCatalog::default();
+    event(
+        &mut catalog,
+        AgentEvent::ActivityStarted {
+            activity: request(1).activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: request(1).request_id(),
+            },
+        },
+    );
+    event(
+        &mut catalog,
+        AgentEvent::ActivityUpdated {
+            activity: request(1).activity(),
+            update: ActivityUpdate::TextSnapshot(capture.to_snapshot().unwrap()),
+        },
+    );
+    let copy = WorkingCopy::new(&catalog.interviews()[0]).unwrap();
+    let encoded = copy.encode().unwrap();
+    assert!(
+        String::from_utf8_lossy(&encoded).contains("\"schema\":\"yo.interview-working-copy/v2\"")
+    );
+    assert!(!String::from_utf8_lossy(&encoded).contains("value-that-must-not-be-serialized"));
+    assert!(copy.new_conversation(&catalog).is_err());
+    assert!(
+        copy.preview(&catalog)
+            .unwrap()
+            .contains("[secret re-entry required]")
+    );
+
+    let submission_id = working_copy::new_id().unwrap();
+    let turn = request(1).activity().turn();
+    let forbidden_submission = format!(
+        r#"{{"kind":"new_conversation","turn":{{"session_id":"{}","turn_id":1}},"submission_id":"{}","accepted_request_sequence":1}}"#,
+        turn.session_id(),
+        submission_id
+    );
+    let mutated = String::from_utf8(encoded).unwrap().replace(
+        "\"submission\":null",
+        &format!("\"submission\":{forbidden_submission}"),
+    );
+    assert!(WorkingCopy::decode(mutated.as_bytes()).is_err());
+}
+
+// 혼합 질문의 비밀 답이 값 없는 제출 영수증을 받은 뒤에만 완료 처리되는지 확인한다.
+#[test]
+fn catalog_seals_mixed_secret_answers_only_from_the_payload_free_receipt() {
+    let questions = secret_questions();
+    let capture = Capture::batch(request(1), questions.clone()).unwrap();
+    let mut catalog = InterviewCatalog::default();
+    event(
+        &mut catalog,
+        AgentEvent::ActivityStarted {
+            activity: request(1).activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: request(1).request_id(),
+            },
+        },
+    );
+    event(
+        &mut catalog,
+        AgentEvent::ActivityUpdated {
+            activity: request(1).activity(),
+            update: ActivityUpdate::TextSnapshot(capture.to_snapshot().unwrap()),
+        },
+    );
+    let (public_answer, public_response) = answered(&mut catalog, request(1), 0, "public", true);
+    let (interview, revision) = capture.source();
+    let secret_request = request(2);
+    event(
+        &mut catalog,
+        AgentEvent::ActivityStarted {
+            activity: secret_request.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: secret_request.request_id(),
+            },
+        },
+    );
+    event(
+        &mut catalog,
+        AgentEvent::ActivityUpdated {
+            activity: secret_request.activity(),
+            update: ActivityUpdate::TextSnapshot(
+                Capture::Question {
+                    interview,
+                    revision: revision.into(),
+                    question: questions[1].clone(),
+                    secret_batch: true,
+                }
+                .to_snapshot()
+                .unwrap(),
+            ),
+        },
+    );
+    let secret_response_activity = request(12).activity();
+    catalog.observe_committed(&TranscriptRecord::CommandCommitted(
+        AgentCommand::RespondToActivity {
+            request: secret_request,
+            response: ActivityResponse::SecretInputSubmitted,
+        },
+    ));
+    event(
+        &mut catalog,
+        AgentEvent::ActivityStarted {
+            activity: secret_response_activity,
+            kind: ActivityKind::UserInputResponse {
+                request_id: secret_request.request_id(),
+            },
+        },
+    );
+    let secret_answer = questions[1]
+        .project_response(&ActivityResponse::SecretInputSubmitted)
+        .unwrap();
+    let secret_response = AnswerResponse {
+        question_id: "q2".into(),
+        request: secret_request,
+        response_activity: secret_response_activity,
+    };
+    event(
+        &mut catalog,
+        AgentEvent::ActivityUpdated {
+            activity: secret_response_activity,
+            update: ActivityUpdate::TextSnapshot(
+                Capture::AcceptedAnswers {
+                    interview,
+                    revision: revision.into(),
+                    answers: vec![public_answer, secret_answer],
+                    answer_responses: vec![public_response, secret_response],
+                    final_request: secret_request,
+                    response_activity: secret_response_activity,
+                }
+                .to_snapshot()
+                .unwrap(),
+            ),
+        },
+    );
+    assert_eq!(
+        catalog.answer_receipt(secret_response_activity).as_deref(),
+        Some("질문 1\nAnswer: public\n질문 2\nAnswer: [secret submitted]\n")
+    );
+    event(
+        &mut catalog,
+        AgentEvent::ActivityFinished {
+            activity: secret_response_activity,
+            outcome: ActivityOutcome::Completed,
+        },
+    );
+    assert_eq!(
+        catalog.interviews()[0].submitted,
+        Some((secret_request, secret_response_activity))
+    );
 }

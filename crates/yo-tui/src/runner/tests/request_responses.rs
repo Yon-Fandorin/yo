@@ -1,6 +1,10 @@
 use std::time::Duration;
 
-use yo_core::{ActivityKind, ActivityRequestRef, AgentEvent, ApprovalDecision, RequestId};
+use yo_core::{
+    ActivityKind, ActivityQuestion, ActivityRequestRef, ActivityUpdate, AgentControlOutcome,
+    AgentEvent, ApprovalDecision, QuestionChoice, RequestId, SubmissionRejection,
+    SubmissionRejectionKind,
+};
 
 use super::{activity, key, nonzero};
 use crate::{
@@ -54,6 +58,7 @@ fn converts_text_into_a_correlated_agent_input_response() {
             kind: ActivityKind::UserInputRequest { request_id },
         })
         .unwrap();
+    present_plain_question(&mut state, request_activity);
     state
         .handle(
             InputEvent::Paste("use the second option".to_owned()),
@@ -70,6 +75,260 @@ fn converts_text_into_a_correlated_agent_input_response() {
             input: "use the second option".to_owned(),
         })
     );
+}
+
+// secret presentation 이후에는 일반 editor와 명령 경로를 건너뛰고 고정 상태만 렌더링하며
+// Enter는 정확한 request에 process-local SecretInput을 전달한다.
+#[test]
+fn secret_questions_use_a_separate_literal_editor_and_correlated_action() {
+    let mut state = TuiState::new();
+    let request_activity = activity(41);
+    let request_id = RequestId::new(nonzero(41));
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        })
+        .unwrap();
+    let profile = ActivityQuestion {
+        plain_text: "Enter the provider token".into(),
+        choices: Vec::<QuestionChoice>::new(),
+        allow_notes: false,
+        is_secret: true,
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+    };
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: request_activity,
+            update: ActivityUpdate::TextSnapshot(profile.to_snapshot().unwrap()),
+        })
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('z'), KeyModifiers::CONTROL),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Suspend
+    );
+    assert!(state.has_secret_editor());
+    state
+        .handle(InputEvent::Paste("/token\n$HOME".into()), Duration::ZERO)
+        .unwrap();
+    assert!(state.editor().text().is_empty());
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToSecretInput {
+            request: ActivityRequestRef::new(request_activity, request_id),
+            input: yo_core::SecretInput::new("/token\n$HOME").unwrap(),
+        })
+    );
+}
+
+// backend preflight가 secret 답변을 aggregate budget 때문에 거절하면 같은 request만
+// 다시 열고 이전 값을 복원하지 않는다. 다음 제출은 새로 입력한 값만 전달한다.
+#[test]
+fn rejected_secret_response_reopens_empty_editor_for_the_same_request() {
+    let mut state = TuiState::new();
+    let request_activity = activity(44);
+    let request_id = RequestId::new(nonzero(44));
+    let request = ActivityRequestRef::new(request_activity, request_id);
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        })
+        .unwrap();
+    let profile = ActivityQuestion {
+        plain_text: "Enter the provider token".into(),
+        choices: Vec::<QuestionChoice>::new(),
+        allow_notes: false,
+        is_secret: true,
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+    };
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: request_activity,
+            update: ActivityUpdate::TextSnapshot(profile.to_snapshot().unwrap()),
+        })
+        .unwrap();
+    state
+        .handle(InputEvent::Paste("old-secret".into()), Duration::ZERO)
+        .unwrap();
+    assert!(matches!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToSecretInput {
+            request: submitted,
+            input: _
+        }) if submitted == request
+    ));
+
+    state
+        .observe_control_outcome(AgentControlOutcome::ActivityResponseRejected {
+            request,
+            rejection: SubmissionRejection::new(
+                SubmissionRejectionKind::OverBudget,
+                "aggregate budget exceeded",
+            ),
+        })
+        .unwrap();
+    state
+        .handle(InputEvent::Paste("new-secret".into()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToSecretInput {
+            request,
+            input: yo_core::SecretInput::new("new-secret").unwrap(),
+        })
+    );
+}
+
+// 이전 질문으로 이동하는 BackTab은 secret 값을 draft로 넘기지 않고 빈
+// PreviousQuestion response만 전달한다.
+#[test]
+fn secret_previous_question_navigation_discards_value_and_uses_empty_draft() {
+    let mut state = TuiState::new();
+    let request_activity = activity(45);
+    let request_id = RequestId::new(nonzero(45));
+    let request = ActivityRequestRef::new(request_activity, request_id);
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        })
+        .unwrap();
+    let profile = ActivityQuestion {
+        plain_text: "Enter the provider token".into(),
+        choices: Vec::<QuestionChoice>::new(),
+        allow_notes: false,
+        is_secret: true,
+        previous_question: true,
+        draft: None,
+        draft_choice: None,
+    };
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: request_activity,
+            update: ActivityUpdate::TextSnapshot(profile.to_snapshot().unwrap()),
+        })
+        .unwrap();
+    state
+        .handle(
+            InputEvent::Paste("must-not-be-retained".into()),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::BackTab, KeyModifiers::SHIFT), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::PreviousQuestion {
+            request,
+            choice: None,
+            draft: String::new(),
+        })
+    );
+    assert!(!state.has_pending_request());
+    assert!(!state.has_secret_editor());
+    assert!(state.editor().text().is_empty());
+}
+
+// ActivityStarted만 도착한 구간에서는 일반 editor도 submit도 request presentation을
+// 우회하지 못한다. typed snapshot이 온 뒤에만 ordinary input으로 승격된다.
+#[test]
+fn input_before_request_presentation_cannot_edit_or_submit_prompt() {
+    let mut state = TuiState::new();
+    let request_activity = activity(42);
+    let request_id = RequestId::new(nonzero(42));
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        })
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(InputEvent::Paste("draft".into()), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    assert!(state.editor().text().is_empty());
+    assert!(state.has_pending_request());
+}
+
+// secret discriminator가 있는 malformed snapshot은 ordinary fallback을 허용하지 않고
+// presentation repair 또는 request 종료까지 계속 입력을 닫아 둔다.
+#[test]
+fn malformed_secret_presentation_fails_closed_without_ordinary_fallback() {
+    let mut state = TuiState::new();
+    let request_activity = activity(43);
+    let request_id = RequestId::new(nonzero(43));
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        })
+        .unwrap();
+    let ordinary = ActivityQuestion {
+        plain_text: "Malformed secret".into(),
+        choices: vec![QuestionChoice {
+            label: "unsafe choice".into(),
+            description: "must not be accepted as secret".into(),
+        }],
+        allow_notes: false,
+        is_secret: false,
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+    };
+    let malformed = ordinary.to_snapshot().unwrap().replace(
+        "\"allow_notes\":false",
+        "\"allow_notes\":false,\"is_secret\":true",
+    );
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: request_activity,
+            update: ActivityUpdate::TextSnapshot(malformed),
+        })
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(
+                InputEvent::Paste("must stay blocked".into()),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    assert!(state.editor().text().is_empty());
+    assert!(state.has_pending_request());
 }
 
 // 서로 다른 Activity의 approval·user-input request가 동시에 대기하면 첫 Enter는 queue 앞의
@@ -97,6 +356,7 @@ fn multiple_pending_requests_are_answered_fifo_with_their_own_correlations() {
             },
         })
         .unwrap();
+    present_plain_question(&mut state, input_activity);
 
     state
         .handle(InputEvent::Paste("y".to_owned()), Duration::ZERO)
@@ -142,6 +402,7 @@ fn local_help_does_not_answer_an_outstanding_activity() {
             kind: ActivityKind::UserInputRequest { request_id },
         })
         .unwrap();
+    present_plain_question(&mut state, request_activity);
     state
         .handle(InputEvent::Paste("/help".to_owned()), Duration::ZERO)
         .unwrap();
@@ -174,6 +435,7 @@ fn cursor_ineligible_command_draft_answers_the_outstanding_activity() {
             kind: ActivityKind::UserInputRequest { request_id },
         })
         .unwrap();
+    present_plain_question(&mut state, request_activity);
     state
         .handle(InputEvent::Paste("/help".to_owned()), Duration::ZERO)
         .unwrap();
@@ -209,6 +471,7 @@ fn escaped_command_draft_answers_the_outstanding_activity() {
             kind: ActivityKind::UserInputRequest { request_id },
         })
         .unwrap();
+    present_plain_question(&mut state, request_activity);
     state
         .handle(InputEvent::Paste("/foo".to_owned()), Duration::ZERO)
         .unwrap();
@@ -248,6 +511,7 @@ fn exit_remains_an_explicit_process_lifecycle_exception_during_activity() {
             kind: ActivityKind::UserInputRequest { request_id },
         })
         .unwrap();
+    present_plain_question(&mut state, request_activity);
     state
         .handle(InputEvent::Paste("/exit".to_owned()), Duration::ZERO)
         .unwrap();
@@ -267,6 +531,27 @@ fn present_request(state: &mut TuiState) {
         .unwrap();
     assert!(frame.overlay_presented);
     state.commit_frame(&frame);
+}
+
+fn present_plain_question(state: &mut TuiState, activity: yo_core::ActivityRef) {
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity,
+            update: ActivityUpdate::TextSnapshot(
+                ActivityQuestion {
+                    plain_text: "Type your answer".into(),
+                    choices: Vec::new(),
+                    allow_notes: false,
+                    is_secret: false,
+                    previous_question: false,
+                    draft: None,
+                    draft_choice: None,
+                }
+                .to_snapshot()
+                .unwrap(),
+            ),
+        })
+        .unwrap();
 }
 
 // 파일을 선택한 초안은 이전 질문 이동과 메모 제출에서도 문자열로 축소하지 않고 보존한다.
@@ -323,6 +608,7 @@ fn previous_question_preserves_selected_reference_draft() {
                         description: "Layout".into(),
                     }],
                     allow_notes: true,
+                    is_secret: false,
                     previous_question: true,
                     draft: None,
                     draft_choice: None,
@@ -442,6 +728,7 @@ fn visible_interview_accepts_text_or_cancels() {
                 kind: ActivityKind::UserInputRequest { request_id },
             })
             .unwrap();
+        present_plain_question(&mut state, activity(1));
         present_request(&mut state);
         state
             .handle(InputEvent::Paste("직접 쓴 답변".to_owned()), Duration::ZERO)
@@ -534,6 +821,7 @@ fn output_navigation_preserves_an_outstanding_question() {
             kind: ActivityKind::UserInputRequest { request_id },
         })
         .unwrap();
+    present_plain_question(&mut state, request_activity);
     for event in [
         InputEvent::Paste("not an answer".into()),
         key(KeyCode::Enter, KeyModifiers::NONE),
@@ -582,6 +870,7 @@ fn structured_question_choices_require_presentation_and_preserve_request_identit
         .unwrap();
     let profile = ActivityQuestion {
         allow_notes: true,
+        is_secret: false,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -659,6 +948,7 @@ fn question_notes_keep_selection_and_literal_text_after_narrow_reflow() {
         let request = ActivityRequestRef::new(activity(1), request_id);
         let profile = ActivityQuestion {
             allow_notes,
+            is_secret: false,
             previous_question: false,
             draft: None,
             draft_choice: None,
@@ -745,6 +1035,7 @@ fn question_notes_refresh_and_return_to_choices_preserve_draft_without_stale_sel
         let request = ActivityRequestRef::new(activity(1), request_id);
         let mut profile = ActivityQuestion {
             allow_notes: true,
+            is_secret: false,
             previous_question: false,
             draft: None,
             draft_choice: None,
@@ -1359,6 +1650,7 @@ fn request_history_roundtrip_restores_only_unchanged_selection() {
                 .unwrap();
             let profile = ActivityQuestion {
                 allow_notes: false,
+                is_secret: false,
                 previous_question: false,
                 draft: None,
                 draft_choice: None,
@@ -1466,6 +1758,7 @@ fn previous_question_requires_fresh_profile_and_preserves_draft() {
                 description: "Readable output".into(),
             }],
             allow_notes: true,
+            is_secret: false,
             previous_question: supported,
             draft: Some("메모\n/exit".into()),
             draft_choice: choice,

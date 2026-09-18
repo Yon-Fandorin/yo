@@ -23,7 +23,13 @@ impl InputQuestions {
         };
         let mut message = base.clone();
         for (index, question) in self.questions.iter().enumerate() {
-            let state = if self.answers.contains_key(&question.id) {
+            let state = if question.is_secret {
+                if self.answers.contains_key(&question.id) {
+                    "Entered"
+                } else {
+                    "Not entered"
+                }
+            } else if self.answers.contains_key(&question.id) {
                 "Recorded"
             } else {
                 "Unanswered"
@@ -61,6 +67,9 @@ impl InputQuestions {
             "Recorded; waiting for the remaining questions."
         };
         let question = &self.questions[self.current].question;
+        if self.questions[self.current].is_secret {
+            return format!("{progress}Secret answer entered.\n\n{delivery}");
+        }
         let parts = [
             progress.as_str(),
             question,
@@ -88,7 +97,9 @@ impl InputQuestions {
 
     pub(in crate::runtime) fn question_profile(&self, index: usize) -> ActivityQuestion {
         let question = &self.questions[index];
-        let hint = if question.options.is_empty() {
+        let hint = if question.is_secret {
+            "Enter your secret answer."
+        } else if question.options.is_empty() {
             "Enter your answer."
         } else {
             "Enter a number or write your answer."
@@ -111,15 +122,25 @@ impl InputQuestions {
             question.prompt
         );
         ActivityQuestion {
-            allow_notes: true,
+            allow_notes: !question.is_secret,
+            is_secret: question.is_secret,
             previous_question: index > 0,
-            draft: self.drafts.get(&question.id).map(|(_, text)| text.clone()),
-            draft_choice: self
-                .drafts
-                .get(&question.id)
-                .and_then(|(choice, _)| *choice),
+            draft: (!question.is_secret)
+                .then(|| self.drafts.get(&question.id).map(|(_, text)| text.clone()))
+                .flatten(),
+            draft_choice: (!question.is_secret)
+                .then(|| {
+                    self.drafts
+                        .get(&question.id)
+                        .and_then(|(choice, _)| *choice)
+                })
+                .flatten(),
             plain_text,
-            choices: question.choices.clone(),
+            choices: if question.is_secret {
+                Vec::new()
+            } else {
+                question.choices.clone()
+            },
         }
     }
 
@@ -139,6 +160,7 @@ impl InputQuestions {
                     interview: *interview,
                     revision: revision.clone(),
                     question: questions[self.current].clone(),
+                    secret_batch: self.has_secret(),
                 }
             };
             if let Ok(snapshot) = capture.to_snapshot() {

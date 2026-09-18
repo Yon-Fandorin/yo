@@ -5,6 +5,33 @@ use crate::{
     BackendScriptStep, RequestId, RuntimeError, RuntimePoll, ScriptedBackend, UserInput,
 };
 
+fn runtime_with_secret_request(
+    response_steps: impl IntoIterator<Item = BackendScriptStep>,
+) -> (AgentRuntime<ScriptedBackend>, ActivityRequestRef) {
+    let active_turn = turn(session(1), 1);
+    let request_activity = activity(active_turn, 1);
+    let request_id = RequestId::new(id(1));
+    let request = ActivityRequestRef::new(request_activity, request_id);
+    let steps = [
+        vec![
+            BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+                activity: request_activity,
+                kind: ActivityKind::UserInputRequest { request_id },
+            }),
+            BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+                activity: request_activity,
+                outcome: ActivityOutcome::Completed,
+            }),
+        ],
+        response_steps.into_iter().collect(),
+    ]
+    .concat();
+    let (mut runtime, _) = runtime_with_active_turn(steps);
+    runtime.poll_event().unwrap();
+    runtime.poll_event().unwrap();
+    (runtime, request)
+}
+
 // approval 요청과 사용자 응답이 steer나 새 Turn으로 바뀌지 않고 하나의 상관관계 흐름으로
 // 정상 완료되는지 확인한다.
 #[test]
@@ -194,6 +221,266 @@ fn resolved_skills_in_activity_responses_never_reach_the_backend() {
         assert_eq!(runtime.backend().remaining_steps(), 2);
     }
     runtime.execute_command(plain).unwrap();
+    assert_eq!(runtime.backend().remaining_steps(), 1);
+    runtime.shutdown().unwrap();
+}
+
+// 비밀 입력은 백엔드에 정확한 바이트로 전달되지만 transcript에는 값 없는 영수증만 남는지 확인한다.
+#[test]
+fn secret_input_reaches_the_backend_exactly_but_only_a_receipt_is_committed() {
+    use crate::{SecretInput, TranscriptRecord};
+
+    let secret = "한글\nexact\0🙂";
+    let request_activity = activity(turn(session(1), 1), 1);
+    let request = ActivityRequestRef::new(request_activity, RequestId::new(id(1)));
+    let live = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(SecretInput::new(secret).unwrap()),
+    };
+    let (mut runtime, observed_request) = runtime_with_secret_request([
+        BackendScriptStep::AcceptCommand(live.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    assert_eq!(observed_request, request);
+
+    runtime.execute_command(live).unwrap();
+
+    let records = runtime.transcript_reader().read_after(None);
+    assert!(records.entries().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            TranscriptRecord::CommandCommitted(AgentCommand::RespondToActivity {
+                request: committed_request,
+                response: ActivityResponse::SecretInputSubmitted,
+            }) if *committed_request == request
+        )
+    }));
+    assert!(!format!("{records:?}").contains(secret));
+    runtime.shutdown().unwrap();
+}
+
+// 비밀 전송 실패가 백엔드의 원문 대신 고정된 공개 진단만 반환하는지 확인한다.
+#[test]
+fn failed_secret_dispatch_exposes_only_static_public_diagnostics() {
+    use crate::SecretInput;
+
+    let secret = "must-never-echo";
+    let request = ActivityRequestRef::new(activity(turn(session(1), 1), 1), RequestId::new(id(1)));
+    let live = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(SecretInput::new(secret).unwrap()),
+    };
+    let backend_failure = crate::BackendFailure::new(
+        crate::BackendFailureKind::Protocol,
+        format!("backend echoed {secret}"),
+    );
+    let (mut runtime, _) = runtime_with_secret_request([
+        BackendScriptStep::RejectCommand {
+            command: live.clone(),
+            failure: backend_failure,
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+
+    let error = runtime.execute_command(live).unwrap_err();
+
+    let RuntimeError::Backend { failure, .. } = error else {
+        panic!("secret transport failure must remain a backend failure");
+    };
+    assert_eq!(failure.kind(), crate::BackendFailureKind::Protocol);
+    assert_eq!(
+        failure.message(),
+        "secret input delivery failed with an unknown outcome"
+    );
+    assert!(!format!("{failure:?}").contains(secret));
+    runtime.shutdown().unwrap();
+}
+
+// secret 응답을 backend가 수락한 뒤 poll이 비밀을 포함한 실패를 반환해도 반환 오류와
+// 이미 기록된 durable transcript가 backend 진단을 다시 노출하지 않는지 확인한다.
+#[test]
+fn secret_poll_failure_redacts_backend_diagnostics_from_error_and_transcript() {
+    use crate::SecretInput;
+
+    let secret = "poll-secret-canary";
+    let request = ActivityRequestRef::new(activity(turn(session(1), 1), 1), RequestId::new(id(1)));
+    let live = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(SecretInput::new(secret).unwrap()),
+    };
+    let failure = crate::BackendFailure::new(
+        crate::BackendFailureKind::Protocol,
+        format!("poll backend echoed {secret}"),
+    );
+    let (mut runtime, _) = runtime_with_secret_request([
+        BackendScriptStep::AcceptCommand(live.clone()),
+        BackendScriptStep::Fail(failure),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+
+    runtime.execute_command(live).unwrap();
+    let error = runtime.poll_event().unwrap_err();
+    let diagnostic = format!("{error:?} {error}");
+    assert!(!diagnostic.contains(secret), "{diagnostic}");
+
+    let transcript = runtime.transcript_reader().read_after(None);
+    let transcript_debug = format!("{transcript:?}");
+    assert!(!transcript_debug.contains(secret), "{transcript_debug}");
+    runtime.shutdown().unwrap();
+}
+
+// backend가 secret request binding을 이미 제거한 뒤 실패 Turn event를 보내더라도 core의
+// process-local 보호 상태가 backend 진단을 공개 event나 durable transcript에 남기지 않는다.
+#[test]
+fn secret_turn_failure_event_is_redacted_after_request_cleanup() {
+    use crate::{Failure, SecretInput, TurnOutcome};
+
+    let secret = "turn-event-secret-canary";
+    let active_turn = turn(session(1), 1);
+    let request = ActivityRequestRef::new(activity(active_turn, 1), RequestId::new(id(1)));
+    let live = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(SecretInput::new(secret).unwrap()),
+    };
+    let (mut runtime, _) = runtime_with_secret_request([
+        BackendScriptStep::AcceptCommand(live.clone()),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: active_turn,
+            outcome: TurnOutcome::Failed(Failure::new(format!("backend echoed {secret}"))),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+
+    runtime.execute_command(live).unwrap();
+    let RuntimePoll::Event(AgentEvent::TurnFinished { outcome, .. }) =
+        runtime.poll_event().unwrap()
+    else {
+        panic!("expected the redacted terminal Turn event");
+    };
+    let diagnostic = format!("{outcome:?}");
+    assert!(!diagnostic.contains(secret), "{diagnostic}");
+    assert!(matches!(
+        outcome,
+        TurnOutcome::Failed(ref failure)
+            if failure.message()
+                == "backend operation failed after protected input dispatch; details are withheld"
+    ));
+
+    let transcript = runtime.transcript_reader().read_after(None);
+    let transcript_debug = format!("{transcript:?}");
+    assert!(!transcript_debug.contains(secret), "{transcript_debug}");
+    runtime.shutdown().unwrap();
+}
+
+// secret 응답을 backend가 수락한 뒤 shutdown이 비밀을 포함한 실패를 반환해도 반환 오류와
+// durable transcript가 backend 진단을 다시 노출하지 않는지 확인한다.
+#[test]
+fn secret_shutdown_failure_redacts_backend_diagnostics_from_error_and_transcript() {
+    use crate::SecretInput;
+
+    let secret = "shutdown-secret-canary";
+    let request = ActivityRequestRef::new(activity(turn(session(1), 1), 1), RequestId::new(id(1)));
+    let live = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(SecretInput::new(secret).unwrap()),
+    };
+    let failure = crate::BackendFailure::new(
+        crate::BackendFailureKind::Cleanup,
+        format!("shutdown backend echoed {secret}"),
+    );
+    let (mut runtime, _) = runtime_with_secret_request([
+        BackendScriptStep::AcceptCommand(live.clone()),
+        BackendScriptStep::Shutdown(Err(failure)),
+    ]);
+
+    runtime.execute_command(live).unwrap();
+    let error = runtime.shutdown().unwrap_err();
+    let diagnostic = format!("{error:?} {error}");
+    assert!(!diagnostic.contains(secret), "{diagnostic}");
+
+    let transcript = runtime.transcript_reader().read_after(None);
+    let transcript_debug = format!("{transcript:?}");
+    assert!(!transcript_debug.contains(secret), "{transcript_debug}");
+}
+
+// backend가 secret batch를 초과했다고 거절하면 payload-free InputRejected를 반환하고 receipt를
+// 기록하지 않으며, 같은 outstanding request를 더 작은 secret으로 재시도할 수 있는지 확인한다.
+#[test]
+fn over_budget_secret_rejection_is_safe_and_retryable() {
+    use crate::{SecretInput, SubmissionRejectionKind, TranscriptRecord};
+
+    let canary = "over-budget-secret-canary";
+    let smaller_secret = "retry-secret";
+    let request = ActivityRequestRef::new(activity(turn(session(1), 1), 1), RequestId::new(id(1)));
+    let oversized = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(SecretInput::new(canary).unwrap()),
+    };
+    let retry = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(SecretInput::new(smaller_secret).unwrap()),
+    };
+    let (mut runtime, _) = runtime_with_secret_request([
+        BackendScriptStep::RejectCommand {
+            command: oversized.clone(),
+            failure: crate::BackendFailure::new(
+                crate::BackendFailureKind::InputOverBudget,
+                format!("backend retained {canary}"),
+            ),
+        },
+        BackendScriptStep::AcceptCommand(retry.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+
+    let error = runtime.execute_command(oversized).unwrap_err();
+    let diagnostic = format!("{error:?} {error}");
+    assert!(!diagnostic.contains(canary), "{diagnostic}");
+    assert!(matches!(
+        error,
+        RuntimeError::InputRejected(ref rejection)
+            if rejection.kind() == SubmissionRejectionKind::OverBudget
+                && rejection.message() == "secret interview input exceeds the 256 KiB live batch limit"
+    ));
+    let rejected_transcript = runtime.transcript_reader().read_after(None);
+    assert!(!rejected_transcript.entries().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            TranscriptRecord::CommandCommitted(AgentCommand::RespondToActivity {
+                response: ActivityResponse::SecretInputSubmitted,
+                ..
+            })
+        )
+    }));
+    let rejected_transcript_debug = format!("{rejected_transcript:?}");
+    assert!(!rejected_transcript_debug.contains(canary));
+
+    runtime.execute_command(retry).unwrap();
+    let retried_transcript = runtime.transcript_reader().read_after(None);
+    assert!(retried_transcript.entries().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            TranscriptRecord::CommandCommitted(AgentCommand::RespondToActivity {
+                request: committed_request,
+                response: ActivityResponse::SecretInputSubmitted,
+            }) if *committed_request == request
+        )
+    }));
+    runtime.shutdown().unwrap();
+}
+
+// 값 없는 비밀 제출 영수증을 실제 응답처럼 다시 전송할 수 없는지 확인한다.
+#[test]
+fn a_secret_receipt_cannot_be_dispatched_as_a_live_response() {
+    let (mut runtime, request) = runtime_with_secret_request([BackendScriptStep::Shutdown(Ok(()))]);
+
+    let error = runtime
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInputSubmitted,
+        })
+        .unwrap_err();
+
+    assert!(matches!(error, RuntimeError::InputRejected(_)));
     assert_eq!(runtime.backend().remaining_steps(), 1);
     runtime.shutdown().unwrap();
 }

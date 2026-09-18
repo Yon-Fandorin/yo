@@ -29,6 +29,7 @@ pub(super) struct AppServerClient<P> {
     mailbox: JsonRpcMailbox<Incoming>,
     warning_observer: Option<CodexWarningObserver>,
     notice_thread: Option<String>,
+    secret_diagnostics_tainted: bool,
 }
 
 pub(super) struct CallResult {
@@ -44,6 +45,7 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             mailbox: JsonRpcMailbox::new("Codex app-server"),
             warning_observer: None,
             notice_thread: None,
+            secret_diagnostics_tainted: false,
         }
     }
 
@@ -57,6 +59,10 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
 
     pub(super) fn bind_notice_thread(&mut self, thread: &str) {
         self.notice_thread = Some(thread.to_owned());
+    }
+
+    pub(super) fn mark_secret_diagnostics_tainted(&mut self) {
+        self.secret_diagnostics_tainted = true;
     }
 
     fn observe_warning(&self, incoming: &Incoming, discard_other_threads: bool) -> bool {
@@ -75,6 +81,11 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             }
         }
         if let Some(observer) = &self.warning_observer {
+            let warning = if self.secret_diagnostics_tainted {
+                CodexWarning::redacted_for_secret()
+            } else {
+                warning
+            };
             observer(warning);
             true
         } else {
@@ -104,7 +115,11 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             self.warning_observer.as_ref(),
             initialize.compatibility_warning.as_ref(),
         ) {
-            observer(warning.clone());
+            observer(if self.secret_diagnostics_tainted {
+                CodexWarning::redacted_for_secret()
+            } else {
+                warning.clone()
+            });
         }
         self.send_bounded(
             &protocol::initialized_notification(),

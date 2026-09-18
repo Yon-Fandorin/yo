@@ -12,7 +12,7 @@ use std::time;
 
 use crate::{
     appearance::ActivityMotionFrame,
-    input::editor::PromptEditor,
+    input::secret::PromptInput,
     layout::vertical::VerticalLayoutError,
     overlay,
     overlay::{OverlayBindings, PanelPaintError, SelectionPanel},
@@ -114,7 +114,7 @@ pub(crate) enum AgentShellMeasureError {
 
 pub(crate) fn render(
     transcript: &TranscriptState,
-    editor: &PromptEditor,
+    editor: &dyn PromptInput,
     view: &mut SurfaceView<'_>,
     transcript_config: &TranscriptLayoutConfig,
     styles: AgentShellStyles,
@@ -154,7 +154,7 @@ pub(crate) fn render(
 
 pub(crate) fn render_with_measure_hook(
     transcript: TranscriptSlice<'_>,
-    editor: &PromptEditor,
+    editor: &dyn PromptInput,
     view: &mut SurfaceView<'_>,
     options: AgentShellRenderOptions<'_>,
     state: &mut AgentShellViewState,
@@ -332,6 +332,8 @@ pub(crate) fn render_with_measure_hook(
             Some(RequestPrompt::Approval) => {
                 prompt.with_placeholder("Choose above, then press Enter")
             },
+            Some(RequestPrompt::Secret | RequestPrompt::SecretPrevious) => prompt,
+            Some(RequestPrompt::Waiting) => prompt,
             None => prompt,
         };
         paint_prompt(prompt, &mut prompt_view, styles.prompt, &mut state.prompt)
@@ -379,7 +381,7 @@ pub(crate) fn render_with_measure_hook(
                 chrome,
                 styles.chrome,
                 editor.newline_binding(),
-                editor.text().is_empty(),
+                editor.public_text().is_empty(),
             )
         }
         .map_err(AgentShellRenderError::Chrome)?;
@@ -401,7 +403,7 @@ pub(crate) fn render_with_measure_hook(
 
 pub(crate) fn natural_height(
     transcript: TranscriptSlice<'_>,
-    editor: &PromptEditor,
+    editor: &dyn PromptInput,
     width: u16,
     options: AgentShellRenderOptions<'_>,
 ) -> Result<usize, AgentShellMeasureError> {

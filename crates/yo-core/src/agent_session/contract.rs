@@ -1,5 +1,5 @@
 use crate::{
-    ActivityRequestRef, AgentCommand, ApprovalDecision, InputSubmission, SubmissionId,
+    ActivityRequestRef, AgentCommand, ApprovalDecision, InputSubmission, SecretInput, SubmissionId,
     SubmissionIdGenerationError, SubmissionRejection, TurnRef, UserInput,
 };
 
@@ -32,6 +32,13 @@ pub enum AgentIntent {
         request: ActivityRequestRef,
         /// 사용자의 response text입니다.
         input: String,
+    },
+    /// 연결된 secret question에 process-local exact value로 답합니다.
+    RespondToSecretInput {
+        /// 답변할 outstanding secret request입니다.
+        request: ActivityRequestRef,
+        /// persistence grammar 밖의 bounded secret value입니다.
+        input: SecretInput,
     },
     /// 현재 draft를 제출하지 않고 이전 question으로 돌아갑니다.
     PreviousQuestion {
@@ -84,6 +91,13 @@ pub enum CommandAdmission {
 pub enum AgentControlOutcome {
     /// 현재 Session 경계에서 manual context compaction을 사용할 수 없습니다.
     ContextCompactionRejected { detail: String },
+    /// 전송 전에 거절된 비밀 응답의 정확한 요청을 새 입력으로 다시 엽니다.
+    ActivityResponseRejected {
+        /// 다시 응답할 outstanding request입니다.
+        request: ActivityRequestRef,
+        /// 값이나 값에서 파생된 정보를 포함하지 않는 거절 사유입니다.
+        rejection: SubmissionRejection,
+    },
 }
 
 impl AgentControlOutcome {
@@ -91,6 +105,7 @@ impl AgentControlOutcome {
     pub fn detail(&self) -> &str {
         match self {
             Self::ContextCompactionRejected { detail } => detail,
+            Self::ActivityResponseRejected { rejection, .. } => rejection.message(),
         }
     }
 }

@@ -73,6 +73,9 @@ pub struct ActivityQuestion {
     /// host가 typed choice-plus-notes 응답을 지원하는지 나타냅니다.
     #[serde(default)]
     pub allow_notes: bool,
+    /// 이 request가 별도 process-local secret input 경로만 허용하는지 나타냅니다.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_secret: bool,
     /// 제출하지 않고 이전 question을 다시 볼 수 있는지 나타냅니다.
     #[serde(default)]
     pub previous_question: bool,
@@ -84,10 +87,19 @@ pub struct ActivityQuestion {
     pub draft_choice: Option<u32>,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 impl ActivityQuestion {
     fn valid(&self) -> bool {
         !self.plain_text.is_empty()
             && self.choices.len() <= 64
+            && (!self.is_secret
+                || (self.choices.is_empty()
+                    && !self.allow_notes
+                    && self.draft.is_none()
+                    && self.draft_choice.is_none()))
             && self.draft_choice.is_none_or(|choice| {
                 self.allow_notes
                     && self.draft.is_some()

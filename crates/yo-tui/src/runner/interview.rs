@@ -7,8 +7,8 @@ use std::{
 use yo_core::{
     ActivityRequestRef, ActivityResponse, SubmissionOutcome, TranscriptReader, TranscriptRecord,
     interview::{
-        InterviewCatalog, InterviewError, InterviewRepository, NewConversation, PREVIEW_LIMIT,
-        Submission, WorkingCopy,
+        Answer, CapturedInterview, InterviewCatalog, InterviewError, InterviewQuestion,
+        InterviewRepository, NewConversation, PREVIEW_LIMIT, Submission, WorkingCopy,
     },
 };
 
@@ -124,6 +124,23 @@ impl InterviewController {
     pub(super) fn is_editing(&self) -> bool {
         self.editing
     }
+    pub(super) fn is_editing_secret(&self) -> bool {
+        if !self.editing {
+            return false;
+        }
+        let Some(copy) = &self.copy else {
+            return false;
+        };
+        self.source
+            .find(copy.source().0, copy.source().1)
+            .and_then(|capture| {
+                capture
+                    .questions
+                    .iter()
+                    .find(|question| question.id == copy.current_question_id)
+            })
+            .is_some_and(|question| question.is_secret)
+    }
     pub(super) fn observe(&mut self, record: &TranscriptRecord) -> Option<String> {
         self.live.observe_committed(record);
         let relevant = match record {
@@ -189,12 +206,19 @@ impl InterviewController {
                 // Only actual completed answering responses enter this projection.
                 if let Some((interview, index, answer)) = self.source.completed_answer(*activity)
                     && interview == copy.source().0
+                    && let Some(question) = self
+                        .source
+                        .find(copy.source().0, copy.source().1)
+                        .and_then(|capture| capture.questions.get(index))
                 {
-                    copy.answers[index] = answer.clone();
+                    copy.answers[index] = Self::project_answer(question, answer.clone());
                 }
             }
             if let Some((final_request, response_activity)) = latest.submitted {
-                copy.answers = latest.answers;
+                copy.answers = match Self::project_editable_answers(&latest, &latest.answers) {
+                    Ok(answers) => answers,
+                    Err(error) => return Some(error.to_string()),
+                };
                 copy.submission = Some(Submission::ActivityResponse {
                     final_request,
                     response_activity,
@@ -244,6 +268,7 @@ impl InterviewController {
                 Err(error) => return Some(error.to_string()),
             },
         };
+        let answer = Self::project_answer(&capture.questions[index], answer);
         self.copy.as_mut().expect("selected copy").answers[index] = answer;
         self.mark_dirty();
         self.save().err().map(|e| e.to_string())
@@ -254,6 +279,9 @@ impl InterviewController {
         live_request: Option<ActivityRequestRef>,
         choice: Option<u32>,
     ) {
+        if self.is_editing_secret() {
+            return;
+        }
         let literal = self.editing && text.starts_with("//");
         let text = if literal { &text[1..] } else { text };
         // Clearing the editor is also how users make room for an interview
@@ -324,15 +352,60 @@ impl InterviewController {
             self.next_save = Some(Instant::now() + Duration::from_millis(250));
         }
     }
+
+    /// Project the volatile live answer view into the editable working-copy shape.
+    ///
+    /// A v2 capture may contain a submitted secret answer while it is still being
+    /// observed.  The working copy deliberately cannot persist that answer state:
+    /// every secret row is always the payload-free re-entry marker.  Keep public
+    /// answers byte-for-byte intact while projecting only the secret rows.
+    fn project_editable_answers(
+        capture: &CapturedInterview,
+        answers: &[Answer],
+    ) -> Result<Vec<Answer>, InterviewError> {
+        if capture.questions.len() != answers.len() {
+            return Err(error("working copy answer count does not match capture"));
+        }
+        Ok(capture
+            .questions
+            .iter()
+            .zip(answers)
+            .map(|(question, answer)| Self::project_answer(question, answer.clone()))
+            .collect())
+    }
+
+    fn project_answer(question: &InterviewQuestion, answer: Answer) -> Answer {
+        if question.is_secret {
+            question.empty_answer()
+        } else {
+            answer
+        }
+    }
+
+    fn project_copy_for_save(&mut self, copy: &mut WorkingCopy) -> Result<(), InterviewError> {
+        let (interview, revision) = (copy.source().0, copy.source().1.to_owned());
+        let capture = self
+            .source
+            .find(interview, &revision)
+            .ok_or_else(|| error("complete capture for working-copy save is unavailable"))?;
+        copy.answers = Self::project_editable_answers(capture, &copy.answers)?;
+        Ok(())
+    }
+
     fn save(&mut self) -> Result<(), InterviewError> {
         if !self.dirty {
             return Ok(());
         }
-        let Some(copy) = self.copy.as_mut() else {
+        let Some(mut copy) = self.copy.take() else {
             return Ok(());
         };
-        match self.repository.save(copy, self.expected, &self.source) {
+        let projection = self.project_copy_for_save(&mut copy);
+        let result =
+            projection.and_then(|()| self.repository.save(&copy, self.expected, &self.source));
+        self.copy = Some(copy);
+        match result {
             Ok(generation) => {
+                let copy = self.copy.as_mut().expect("selected copy");
                 copy.generation = generation;
                 self.expected = Some(generation);
                 self.dirty = false;
@@ -489,6 +562,11 @@ impl InterviewController {
             .trim()
             .split_once(' ')
             .unwrap_or((argument.trim(), ""));
+        if self.is_editing_secret() && matches!(verb, "option" | "notes" | "send") {
+            return Err(error(
+                "secret interview answers require a new live request; this edit is unavailable",
+            ));
+        }
         let mut editor = None;
         let mut conversation = None;
         match verb {
@@ -686,6 +764,11 @@ impl InterviewController {
     }
     pub(super) fn local_enter(&mut self, text: &str) -> Result<InterviewCommand, InterviewError> {
         self.require_editing()?;
+        if self.is_editing_secret() {
+            return Err(error(
+                "secret interview answers require a new live request; local editing is unavailable",
+            ));
+        }
         if self.preview.is_some() {
             if text.len() > PREVIEW_LIMIT {
                 return Err(error("editable preview exceeds 64 KiB"));
@@ -724,6 +807,9 @@ impl InterviewController {
                     .find(|a| a.question_id == c.current_question_id)
             })
             .map(|a| {
+                if a.is_secret() {
+                    return String::new();
+                }
                 a.option_id.clone().unwrap_or_else(|| {
                     if a.text.starts_with('/') {
                         format!("/{}", a.text)
@@ -754,7 +840,11 @@ impl InterviewController {
             capture.questions.len(),
             q.prompt,
         );
-        text.push_str(&format!("\nAnswer: {}\nNotes: {}\n\nEdit locally; /interview preview then /interview send starts a new conversation.",a.option_id.as_deref().unwrap_or(&a.text),a.notes));
+        if q.is_secret {
+            text.push_str("\nAnswer: [secret re-entry required]\nNotes: \n\nSecret answers can only be entered for a new live request. Tab: next · Shift-Tab: previous · Esc: close.");
+        } else {
+            text.push_str(&format!("\nAnswer: {}\nNotes: {}\n\nEdit locally; /interview preview then /interview send starts a new conversation.",a.option_id.as_deref().unwrap_or(&a.text),a.notes));
+        }
         Ok(text)
     }
 }

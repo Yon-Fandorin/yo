@@ -158,7 +158,7 @@ impl<P: JsonMessagePeer> Backend<P> {
         let request_id = self.next_request()?;
         let request = ActivityRequestRef::new(activity, request_id);
         if let RequestKind::Input(questions) = &mut kind {
-            questions.capture = Capture::batch(
+            let capture = Capture::batch(
                 request,
                 questions
                     .questions
@@ -178,13 +178,45 @@ impl<P: JsonMessagePeer> Backend<P> {
                             })
                             .collect(),
                         allow_free_text: true,
-                        allow_notes: true,
-                        is_secret: false,
+                        allow_notes: !q.is_secret,
+                        is_secret: q.is_secret,
                     })
                     .collect(),
-            )
-            .ok()
-            .map(Arc::new);
+            );
+            if questions.has_secret() {
+                let capture = match capture {
+                    Ok(capture) => capture,
+                    Err(_) => {
+                        self.client.reject(
+                            wire_id.clone(),
+                            -32602,
+                            "secret question capture is invalid or exceeds the display limit",
+                        )?;
+                        return Err(protocol::protocol_failure(
+                            "secret question capture is invalid or exceeds the display limit",
+                        ));
+                    },
+                };
+                questions.capture = Some(Arc::new(capture));
+                if questions
+                    .questions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, question)| question.is_secret)
+                    .any(|(index, _)| questions.question_profile(index).to_snapshot().is_none())
+                {
+                    self.client.reject(
+                        wire_id.clone(),
+                        -32602,
+                        "secret question presentation is invalid or exceeds the display limit",
+                    )?;
+                    return Err(protocol::protocol_failure(
+                        "secret question presentation is invalid or exceeds the display limit",
+                    ));
+                }
+            } else {
+                questions.capture = capture.ok().map(Arc::new);
+            }
         }
         let wire_key = wire_key(&wire_id)?;
         if self.wire_requests.contains_key(&wire_key) {

@@ -11,8 +11,9 @@ use crate::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand,
     AgentControlOutcome, AgentEvent, ApprovalDecision, BackendCapabilities, BackendEvent,
     BackendFailure, BackendFailureKind, BackendScriptStep, CommandAdmission, InputSubmission,
-    RequestId, RuntimeError, RuntimePoll, ScriptedBackend, SubmissionId, SubmissionOutcome,
-    SubmissionRejection, SubmissionRejectionKind, TurnOutcome, UserInput,
+    RequestId, RuntimeError, RuntimePoll, ScriptedBackend, SecretInput, SubmissionId,
+    SubmissionOutcome, SubmissionRejection, SubmissionRejectionKind, TranscriptRecord, TurnOutcome,
+    UserInput,
 };
 
 fn wait_for_control_outcome(app: &mut AgentSession) -> AgentControlOutcome {
@@ -905,7 +906,7 @@ fn rejects_interrupt_without_an_active_turn() {
 // Turn의 steer command로 재해석되지 않는다.
 #[test]
 fn correlates_agent_requested_input_instead_of_steering() {
-    for mode in 0..3 {
+    for mode in 0..4 {
         let first = turn(1);
         let request_activity = activity(first, 1);
         let request_id = RequestId::new(id(2));
@@ -924,7 +925,9 @@ fn correlates_agent_requested_input_instead_of_steering() {
             }),
             BackendScriptStep::AcceptCommand(AgentCommand::RespondToActivity {
                 request,
-                response: if mode == 2 {
+                response: if mode == 3 {
+                    ActivityResponse::SecretInput(SecretInput::new("the answer").unwrap())
+                } else if mode == 2 {
                     ActivityResponse::PreviousQuestion {
                         choice: Some(2),
                         draft: UserInput::from("the answer"),
@@ -946,7 +949,12 @@ fn correlates_agent_requested_input_instead_of_steering() {
         next_poll(&mut app).unwrap();
         next_poll(&mut app).unwrap();
 
-        app.dispatch(if mode == 2 {
+        app.dispatch(if mode == 3 {
+            AgentIntent::RespondToSecretInput {
+                request,
+                input: SecretInput::new("the answer").unwrap(),
+            }
+        } else if mode == 2 {
             AgentIntent::PreviousQuestion {
                 request,
                 choice: Some(2),
@@ -969,6 +977,105 @@ fn correlates_agent_requested_input_instead_of_steering() {
 
         app.shutdown().unwrap();
     }
+}
+
+// live secret 응답의 over-budget 거절은 정확한 request를 다시 열어 같은 Session에서
+// 더 작은 secret을 재시도하게 하며, 거절된 secret은 Journal이나 진단에 남지 않는다.
+#[test]
+fn retries_a_rejected_secret_response_on_the_same_request() {
+    let first_secret = "first-secret-must-never-appear";
+    let second_secret = "smaller-secret";
+    let first_input = SecretInput::new(first_secret).unwrap();
+    let second_input = SecretInput::new(second_secret).unwrap();
+    let first = turn(1);
+    let request_activity = activity(first, 1);
+    let request_id = RequestId::new(id(3));
+    let request = ActivityRequestRef::new(request_activity, request_id);
+    let response = |input: SecretInput| AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(input),
+    };
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: first,
+            input: UserInput::from("ask me for a secret"),
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        }),
+        BackendScriptStep::RejectCommand {
+            command: response(first_input.clone()),
+            failure: BackendFailure::new(
+                BackendFailureKind::InputOverBudget,
+                "secret batch is full",
+            ),
+        },
+        BackendScriptStep::AcceptCommand(response(second_input.clone())),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = start_app(backend);
+    let reader = app.transcript_reader();
+
+    app.dispatch(AgentIntent::submit("ask me for a secret".to_owned()).unwrap())
+        .unwrap();
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnStarted { turn: first })
+    );
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        })
+    );
+
+    app.dispatch(AgentIntent::RespondToSecretInput {
+        request,
+        input: first_input,
+    })
+    .unwrap();
+    app.wait_until_processed(2);
+    let rejection = wait_for_control_outcome(&mut app);
+    assert_eq!(
+        rejection,
+        AgentControlOutcome::ActivityResponseRejected {
+            request,
+            rejection: SubmissionRejection::new(
+                SubmissionRejectionKind::OverBudget,
+                "secret interview input exceeds the 256 KiB live batch limit",
+            ),
+        }
+    );
+    let rejected_debug = format!("{rejection:?}\n{:?}", reader.read_after(None));
+    assert!(
+        !rejected_debug.contains(first_secret),
+        "rejected secret leaked into transcript or debug: {rejected_debug}"
+    );
+
+    app.dispatch(AgentIntent::RespondToSecretInput {
+        request,
+        input: second_input,
+    })
+    .unwrap();
+    app.wait_until_processed(3);
+    assert!(app.take_control_outcome().is_none());
+    let accepted = reader.read_after(None);
+    assert!(accepted.entries().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            TranscriptRecord::CommandCommitted(AgentCommand::RespondToActivity {
+                request: committed_request,
+                response: ActivityResponse::SecretInputSubmitted,
+            }) if *committed_request == request
+        )
+    }));
+    assert!(!format!("{accepted:?}").contains(first_secret));
+    app.shutdown().unwrap();
 }
 
 // Session 생성 실패 뒤 명시적 backend shutdown도 실패하면 두 RuntimeError를 하나도

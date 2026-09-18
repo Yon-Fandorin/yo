@@ -62,6 +62,7 @@ pub(super) fn interview_prompt(first: bool) -> String {
     }
     ActivityQuestion {
         allow_notes: true,
+        is_secret: false,
         previous_question: false,
         draft: None,
         draft_choice: None,

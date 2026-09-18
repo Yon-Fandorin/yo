@@ -1,11 +1,13 @@
+use std::mem;
+
 use super::{
     AgentBackend, AgentRuntime, RuntimeError,
     replacement::{command_kind, submission_turn},
 };
 use crate::{
-    AgentCommand, AgentEvent, BackendCommandEvidence, BackendEvent, BackendFailureKind,
-    BackendPoll, ContinuationStrategy, ImageInputCapability, InputImageHistory, SubmissionId,
-    SubmissionRejection, SubmissionRejectionKind, journal::ContextActiveSource,
+    ActivityResponse, AgentCommand, AgentEvent, BackendCommandEvidence, BackendEvent,
+    BackendFailureKind, BackendPoll, ContinuationStrategy, ImageInputCapability, InputImageHistory,
+    SubmissionId, SubmissionRejection, SubmissionRejectionKind, journal::ContextActiveSource,
 };
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -56,7 +58,11 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 })
             )
         {
-            match self.backend.poll_event().map_err(RuntimeError::backend)? {
+            let poll = self
+                .backend
+                .poll_event()
+                .map_err(|failure| RuntimeError::backend(self.redact_backend_failure(failure)))?;
+            match poll {
                 BackendPoll::Event(event @ BackendEvent::ContextPolicyChanged { .. }) => {
                     self.apply_backend_event(event)?;
                 },
@@ -78,6 +84,18 @@ impl<B: AgentBackend> AgentRuntime<B> {
             return Err(RuntimeError::InputRejected(SubmissionRejection::new(
                 SubmissionRejectionKind::InvalidReference,
                 "Activity responses cannot contain images or resolved skill instructions",
+            )));
+        }
+        if matches!(
+            command,
+            AgentCommand::RespondToActivity {
+                response: ActivityResponse::SecretInputSubmitted,
+                ..
+            }
+        ) {
+            return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                SubmissionRejectionKind::InvalidReference,
+                "a secret-input receipt cannot be dispatched as a live response",
             )));
         }
         let historical_image_guard = matches!(
@@ -165,16 +183,54 @@ impl<B: AgentBackend> AgentRuntime<B> {
             command,
             AgentCommand::StartTurn { .. } | AgentCommand::SteerTurn { .. }
         );
-        let evidence = match self.backend.execute_command(command.clone()) {
-            Err(failure)
-                if turn_submission && failure.kind() == BackendFailureKind::InputOverBudget =>
-            {
-                return Err(RuntimeError::InputRejected(SubmissionRejection::new(
-                    SubmissionRejectionKind::OverBudget,
-                    failure.message(),
-                )));
+        let live_secret_response = matches!(
+            command,
+            AgentCommand::RespondToActivity {
+                response: ActivityResponse::SecretInput(_),
+                ..
+            }
+        );
+        let backend_command = if live_secret_response {
+            let AgentCommand::RespondToActivity { request, response } = &mut command else {
+                unreachable!("the guarded live secret command is an Activity response");
+            };
+            let response = mem::replace(response, ActivityResponse::SecretInputSubmitted);
+            AgentCommand::RespondToActivity {
+                request: *request,
+                response,
+            }
+        } else {
+            command.clone()
+        };
+        if live_secret_response {
+            // The backend call may write the value before reporting any failure. From this
+            // boundary onward, backend-owned diagnostics are unsafe for public or durable use.
+            self.secret_diagnostics_redacted = true;
+        }
+        let evidence = match self.backend.execute_command(backend_command) {
+            Err(failure) => {
+                let kind = failure.kind();
+                if live_secret_response && kind == BackendFailureKind::InputOverBudget {
+                    return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                        SubmissionRejectionKind::OverBudget,
+                        "secret interview input exceeds the 256 KiB live batch limit",
+                    )));
+                }
+                if live_secret_response {
+                    return Err(RuntimeError::backend(crate::BackendFailure::new(
+                        kind,
+                        "secret input delivery failed with an unknown outcome",
+                    )));
+                }
+                let failure = self.redact_backend_failure(failure);
+                if turn_submission && kind == BackendFailureKind::InputOverBudget {
+                    return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                        SubmissionRejectionKind::OverBudget,
+                        failure.message(),
+                    )));
+                }
+                return Err(RuntimeError::backend(failure));
             },
-            Err(failure) => return Err(RuntimeError::backend(failure)),
             Ok(evidence) => evidence,
         };
         if let Err(error) = self.validate_command_evidence(&command, submission_id, &evidence) {

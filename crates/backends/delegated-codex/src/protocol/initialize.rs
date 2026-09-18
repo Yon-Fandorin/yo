@@ -36,6 +36,18 @@ pub struct CodexWarning {
 pub type CodexCompatibilityWarning = CodexWarning;
 
 impl CodexWarning {
+    pub(crate) fn redacted_for_secret() -> Self {
+        Self {
+            display_user_agent: String::new(),
+            notice: Some(ActivityNotice {
+                title: "Codex warning (details redacted)".to_owned(),
+                message: "Warning details are redacted after secret input.".to_owned(),
+                level: NoticeLevel::Warning,
+            }),
+            thread_id: None,
+        }
+    }
+
     /// Turn/tool activity와 독립적으로 표시할 terminal-safe notice를 반환합니다.
     pub fn to_notice(&self) -> ActivityNotice {
         self.notice.clone().unwrap_or_else(|| ActivityNotice {

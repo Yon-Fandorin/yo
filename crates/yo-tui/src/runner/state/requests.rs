@@ -6,7 +6,7 @@ use yo_core::{
 
 use super::{PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
-    input::event::InputEvent,
+    input::{event::InputEvent, secret::SecretEditor},
     overlay::{AcceptanceReceipt, OverlayInstanceToken, PanelSnapshot, SelectionEntry, SlotError},
     runner::{AgentAction, view::ObservabilityView},
 };
@@ -71,6 +71,7 @@ impl TuiState {
             self.close_request_overlay();
             return Ok(());
         }
+        self.normalize_secret_request();
         let pending = self.pending_requests.front().copied();
         if self.question_notes_refresh != pending {
             self.question_notes_refresh = None;
@@ -80,6 +81,20 @@ impl TuiState {
             .is_some_and(|(request, _)| Some(request) != pending)
         {
             self.question_notes = None;
+        }
+        if matches!(
+            pending,
+            Some(
+                PendingRequest::PresentationPending(_)
+                    | PendingRequest::PresentationInvalid(_)
+                    | PendingRequest::SecretInput(_)
+            )
+        ) {
+            self.restored_question_draft = None;
+            self.question_notes = None;
+            self.saved_request_panel = None;
+            self.close_request_overlay();
+            return Ok(());
         }
         if self.restored_question_draft != pending {
             self.restored_question_draft = None;
@@ -170,6 +185,79 @@ impl TuiState {
         Ok(true)
     }
 
+    fn normalize_secret_request(&mut self) {
+        let Some(pending) = self.pending_requests.front().copied() else {
+            self.clear_secret_editor();
+            return;
+        };
+        let request = match pending {
+            PendingRequest::PresentationPending(request)
+            | PendingRequest::PresentationInvalid(request)
+            | PendingRequest::UserInput(request)
+            | PendingRequest::SecretInput(request) => request,
+            PendingRequest::Approval(_) => {
+                self.clear_secret_editor();
+                return;
+            },
+        };
+        let question = self.chat.question(request.activity());
+        if matches!(
+            pending,
+            PendingRequest::PresentationPending(_) | PendingRequest::PresentationInvalid(_)
+        ) {
+            match question {
+                Some(question) if question.is_secret => {
+                    self.pending_requests[0] = PendingRequest::SecretInput(request);
+                    self.clear_secret_editor();
+                    let mut editor = SecretEditor::new();
+                    editor.mark_ready();
+                    self.secret_editor = Some(editor);
+                },
+                Some(_) => {
+                    self.pending_requests[0] = PendingRequest::UserInput(request);
+                    self.clear_secret_editor();
+                },
+                None if matches!(pending, PendingRequest::PresentationPending(_)) => {
+                    if self
+                        .request_presentations_seen
+                        .contains(&request.activity())
+                    {
+                        self.pending_requests[0] = PendingRequest::PresentationInvalid(request);
+                    }
+                    self.clear_secret_editor();
+                },
+                None => self.clear_secret_editor(),
+            }
+            return;
+        }
+        let is_secret = question.is_some_and(|question| question.is_secret);
+        match (pending, is_secret) {
+            (PendingRequest::UserInput(request), true) => {
+                self.pending_requests[0] = PendingRequest::SecretInput(request);
+                self.clear_secret_editor();
+                let mut editor = SecretEditor::new();
+                editor.mark_ready();
+                self.secret_editor = Some(editor);
+            },
+            (PendingRequest::SecretInput(_), true) => {
+                if self.secret_editor.is_none() {
+                    let mut editor = SecretEditor::new();
+                    editor.mark_ready();
+                    self.secret_editor = Some(editor);
+                }
+            },
+            (PendingRequest::SecretInput(request), false) => {
+                // A request already classified as secret never falls back to the ordinary
+                // editor when its presentation disappears or changes shape.
+                self.pending_requests[0] = PendingRequest::PresentationInvalid(request);
+                self.clear_secret_editor();
+            },
+            _ => {
+                self.clear_secret_editor();
+            },
+        }
+    }
+
     pub(super) fn request_response(
         &mut self,
         pending: PendingRequest,
@@ -197,6 +285,10 @@ impl TuiState {
                         input: text,
                     },
                 }))
+            },
+            PendingRequest::SecretInput(_) => Ok(StateEffect::Unchanged),
+            PendingRequest::PresentationPending(_) | PendingRequest::PresentationInvalid(_) => {
+                Ok(StateEffect::Unchanged)
             },
         }
     }
@@ -343,6 +435,20 @@ impl PendingRequest {
                     ),
                 ],
             ),
+            Self::PresentationPending(_) => (
+                "Waiting for question",
+                vec![SelectionEntry::status(
+                    "waiting",
+                    "The request is waiting for its typed presentation.",
+                )],
+            ),
+            Self::PresentationInvalid(_) => (
+                "Question unavailable",
+                vec![SelectionEntry::status(
+                    "unavailable",
+                    "This request cannot accept input until its presentation is repaired.",
+                )],
+            ),
             Self::UserInput(_) => (
                 "Your answer",
                 if let Some(question) = question.filter(|question| !question.choices.is_empty()) {
@@ -380,6 +486,13 @@ impl PendingRequest {
                     )]
                 },
             ),
+            Self::SecretInput(_) => (
+                "Secret input",
+                vec![SelectionEntry::status(
+                    "secret",
+                    "Enter submits the value. Esc cancels.",
+                )],
+            ),
         };
         match PanelSnapshot::new(title, entries) {
             Ok(panel) => panel.for_request(matches!(self, Self::Approval(_))),
@@ -390,7 +503,11 @@ impl PendingRequest {
 
     pub(super) const fn activity(self) -> ActivityRef {
         match self {
-            Self::Approval(request) | Self::UserInput(request) => request.activity(),
+            Self::Approval(request)
+            | Self::PresentationPending(request)
+            | Self::PresentationInvalid(request)
+            | Self::UserInput(request)
+            | Self::SecretInput(request) => request.activity(),
         }
     }
 }

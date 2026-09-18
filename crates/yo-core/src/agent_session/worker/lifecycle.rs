@@ -189,6 +189,13 @@ impl AgentWorker {
                     let (command, submission_id) = pending.into_parts();
                     let is_context_compaction =
                         matches!(&command, AgentCommand::CompactContext { .. });
+                    let secret_response_request = match &command {
+                        AgentCommand::RespondToActivity {
+                            request,
+                            response: crate::ActivityResponse::SecretInput(_),
+                        } => Some(*request),
+                        _ => None,
+                    };
                     let result = self.dispatch(command, submission_id);
                     if let Ok(mut count) = processed.0.lock() {
                         *count += 1;
@@ -215,6 +222,36 @@ impl AgentWorker {
                             }
                         },
                         Err(error) => {
+                            if let Some(request) = secret_response_request
+                                && let AgentSessionError::Runtime(
+                                    crate::RuntimeError::InputRejected(rejection),
+                                ) = &error
+                                && rejection.kind() == SubmissionRejectionKind::OverBudget
+                            {
+                                let restored = {
+                                    let mut state =
+                                        self.state.lock().unwrap_or_else(PoisonError::into_inner);
+                                    if state.active_turn == Some(request.activity().turn()) {
+                                        state.outstanding_requests.insert(request);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if restored {
+                                    self.control_outcomes
+                                        .lock()
+                                        .unwrap_or_else(PoisonError::into_inner)
+                                        .push_back(AgentControlOutcome::ActivityResponseRejected {
+                                            request,
+                                            rejection: rejection.clone(),
+                                        });
+                                    if !changes.changed() || stopping {
+                                        return WorkerExit::from_cleanup(self.runtime.shutdown());
+                                    }
+                                    continue;
+                                }
+                            }
                             if let Some(id) = submission_id
                                 && let AgentSessionError::Runtime(runtime_error) = &error
                                 && let Some(rejection) = submission_rejection(runtime_error)
