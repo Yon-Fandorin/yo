@@ -137,6 +137,9 @@ yo account grok --refresh
 
 실제 prompt나 TUI smoke run은 외부 service capacity를 소비한다. Turn 수준
 compatibility를 검증해야 할 때만 한 번 실행하고 설치 version, 인증 상태,
-정확한 command, 관찰한 route, 미검증 환경을 기록한다. 마지막으로
+정확한 command, 관찰한 route, 미검증 환경을 기록한다. 2026-09-18 Grok 1.0.34
+단일 선택 왕복은
+[현재 사용자 질문 실제 서비스 흐름](../validation/terminal-matrix.md#grok-사용자-질문-실제-서비스-흐름)에
+기록했다. 마지막으로
 [Slice 종료 기준선](../validation/#slice-종료-기준선)을 실행하고 변경된
 compatibility 경계에 fresh-context review를 받는다.

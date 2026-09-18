@@ -643,6 +643,34 @@ The owned tmux session was closed and temporary authentication was removed.
 The installed host advertises no image prompt support; a native read-only review
 sandbox remains unavailable.
 
+### Grok user-question live journey
+
+On 2026-09-18, commit `37a94b68` completed a real user-question round trip in a
+dedicated 140×44 Linux tmux session. The exact Yo launch was
+`target/debug/yo --model host:grok`, using normal stored state, cached Grok login,
+installed Grok `1.0.34 (3736acbc8658)`, and `grok-4.6`. The preflight
+account observation reported a SuperGrok weekly allowance with 82 percent
+remaining. `grok models` advertised only `grok-4.6` and `grok-4.5`, so this run
+used included subscription capacity rather than a free Build model.
+
+The single prompt required one `ask_user_question` call with “Choose a
+validation color” and the choices “Blue” and “Green.” Grok emitted the actual
+private question request, Yo published one `UserInputRequest`, and the TUI
+presented both choices. Selecting “Blue” produced the accepted answer, the Grok
+tool result reported that exact question and answer, and the assistant completed
+with `Validation choice: Blue`. The stored Transcript preserved the batch
+capture, committed answer seal, correlated tool completion, final message, usage
+receipt, and completed Turn in order. The receipt reported two model calls,
+37,073 input tokens, 173 output tokens, 19,200 cache-read tokens, and 113
+reasoning tokens.
+
+No other tool activity or repository mutation was observed. Ctrl+D returned to
+the shell and the owned tmux session was removed. This run establishes the
+installed single-select path and durable result; deterministic tests remain the
+authority for batch navigation, free text, notes, limits, interruption, stale
+identity rejection, and unsupported multi-select behavior. This live journey
+was not repeated on macOS.
+
 ### Grok large-context resume
 
 On 2026-09-11, the same binary and Grok `1.0.25 (f7e67d6988e2)` passed seven

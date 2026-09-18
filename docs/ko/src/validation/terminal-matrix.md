@@ -579,6 +579,31 @@ continuation anchor 두 개와 journal prefix를 보존했다. 검사한 바이�
 소유한 tmux Session을 종료하고 임시 인증을 제거했다. 설치된 호스트는 이미지 prompt
 지원을 광고하지 않으며 native read-only review sandbox는 계속 사용할 수 없다.
 
+### Grok 사용자 질문 실제 서비스 흐름
+
+2026-09-18에 커밋 `37a94b68`은 전용 140×44 Linux tmux Session에서 실제 사용자
+질문 왕복을 완료했다. 정확한 Yo 실행은 `target/debug/yo --model host:grok`이었고,
+일반 저장 상태와 캐시된 Grok login, 설치된 Grok `1.0.34 (3736acbc8658)`,
+`grok-4.6`을 사용했다. 사전 account 관찰은 SuperGrok 주간
+포함 한도가 82퍼센트 남았다고 보고했다. `grok models`는 `grok-4.6`과
+`grok-4.5`만 광고했으므로 이 실행은 무료 Build model이 아니라 구독 포함 한도를
+사용했다.
+
+단일 prompt는 “Choose a validation color” 질문과 “Blue”, “Green” 선택지를 가진
+`ask_user_question` 호출 하나를 요구했다. Grok은 실제 비공개 질문 request를 보냈고,
+Yo는 `UserInputRequest` 하나를 게시했으며 TUI는 두 선택지를 표시했다. “Blue”를
+선택하자 accepted 답안이 만들어졌고 Grok tool result는 정확한 질문과 답을 보고했으며,
+assistant는 `Validation choice: Blue`로 완료했다. 저장된 Transcript에는 일괄 capture,
+확정 답안 seal, 연결된 tool 완료, 최종 message, usage receipt와 완료 Turn이 순서대로
+보존됐다. 영수증은 model call 2회, input token 37,073개, output token 173개,
+cache-read token 19,200개, reasoning token 113개를 보고했다.
+
+다른 tool 활동이나 repository 변경은 관찰되지 않았다. Ctrl+D로 shell에 돌아온 뒤
+소유한 tmux Session을 제거했다. 이 실행은 설치 환경의 단일 선택 경로와 durable 결과를
+입증한다. 일괄 이동, 직접 입력, 메모, 한도, 중단, 오래된 identity 거부와 미지원 다중
+선택 동작은 계속 결정적 test가 기준이다. 이 실제 서비스 흐름은 macOS에서 반복하지
+않았다.
+
 ### Grok 큰 문맥 재개
 
 2026-09-11 같은 바이너리와 Grok `1.0.25 (f7e67d6988e2)`를 격리된 Linux 110×40

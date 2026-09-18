@@ -150,6 +150,9 @@ yo account grok --refresh
 A real prompt or TUI smoke run consumes external service capacity. Run one only
 when Turn-level compatibility needs verification, then record the installed
 version, authentication state, exact command, observed route, and any
-unverified environments. Finish with the
+unverified environments. The 2026-09-18 Grok 1.0.34 single-select round trip is
+recorded in the
+[current live user-question journey](../validation/terminal-matrix.md#grok-user-question-live-journey).
+Finish with the
 [Slice-close baseline](../validation/#slice-close-baseline) and obtain
 fresh-context review for a changed compatibility boundary.
