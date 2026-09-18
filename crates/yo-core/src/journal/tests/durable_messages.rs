@@ -706,6 +706,149 @@ fn secret_question_presentation_is_explicit_closed_and_draft_free() {
     assert!(question.to_snapshot().is_none());
 }
 
+// 요청 시작과 typed 질문 snapshot을 한 batch로 게시해도 질문 본문은 그 batch의 물리
+// commit에 저장되어야 한다. 그렇지 않으면 1초 age flush가 같은 semantic cutoff를 다시
+// 사용해 실제 로컬 저장소에서 거부되고 다음 payload 없는 비밀 제출 영수증도 실패한다.
+#[test]
+fn secret_question_snapshot_is_durable_before_its_payload_free_receipt() {
+    use std::{
+        env, fs,
+        path::PathBuf,
+        process,
+        time::{Duration, SystemTime},
+    };
+
+    use crate::{
+        ActivityQuestion, ActivityRequestRef, ActivityResponse, RequestId,
+        journal::codec::JournalRecord,
+        session_repository::{
+            LocalSessionReader, LocalSessionRepository, StoredSessionReader, StoredSessionSnapshot,
+        },
+    };
+
+    struct TestDirectory(PathBuf);
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let activity = ActivityRef::new(active_turn, ActivityId::new(NonZeroU64::new(1).unwrap()));
+    let request_id = RequestId::new(NonZeroU64::new(1).unwrap());
+    let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = TestDirectory(env::temp_dir().join(format!(
+        "yo-secret-question-durability-{}-{nonce}",
+        process::id()
+    )));
+    fs::create_dir(&directory.0).unwrap();
+    let repository = LocalSessionRepository::open(&directory.0, 4 * 1024 * 1024).unwrap();
+    let mut journal = SessionJournal::with_repository(Box::new(repository));
+    journal.append_committed_command(
+        AgentCommand::CreateSession { session_id },
+        &[AgentEvent::SessionCreated { session_id }],
+    );
+    let snapshot = ActivityQuestion {
+        plain_text: "Enter the one-time value.".into(),
+        choices: Vec::new(),
+        allow_notes: false,
+        is_secret: true,
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+    }
+    .to_snapshot()
+    .unwrap();
+    journal.append_events(&[
+        AgentEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        },
+        AgentEvent::ActivityUpdated {
+            activity,
+            update: ActivityUpdate::TextSnapshot(snapshot.clone()),
+        },
+    ]);
+
+    let reader = LocalSessionReader::open(&directory.0).unwrap();
+    let StoredSessionSnapshot::Present(presentation_entries) =
+        reader.read_session(session_id).unwrap()
+    else {
+        panic!("the local repository must contain the Session")
+    };
+    let presentation_commit = decode(
+        presentation_entries
+            .last()
+            .expect("the presentation must publish a physical commit")
+            .record()
+            .payload(),
+    )
+    .unwrap();
+    assert_eq!(
+        presentation_commit.journal_cutoff(),
+        journal.last_sequence()
+    );
+    assert!(presentation_commit.records().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            JournalRecord::MessageSegment(segment) if segment.text() == snapshot
+        )
+    }));
+
+    journal.flush_due_at_for_test(Duration::MAX);
+    assert!(matches!(
+        journal.transcript_reader().durability(),
+        JournalDurability::Durable { .. }
+    ));
+
+    let request = ActivityRequestRef::new(activity, request_id);
+    assert!(journal.append_committed_command_transactionally(
+        AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInputSubmitted,
+        },
+        &[],
+    ));
+    assert!(matches!(
+        journal.transcript_reader().durability(),
+        JournalDurability::Durable { .. }
+    ));
+    drop(journal);
+
+    let StoredSessionSnapshot::Present(entries) = reader.read_session(session_id).unwrap() else {
+        panic!("the local repository must contain the Session")
+    };
+    let commits = entries
+        .iter()
+        .map(|entry| decode(entry.record().payload()).unwrap())
+        .collect::<Vec<_>>();
+    let recovered = recover(&commits).expect("the protected receipt remains recoverable");
+    assert!(recovered.records().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            JournalRecord::MessageSegment(segment) if segment.text() == snapshot
+        )
+    }));
+    assert!(recovered.records().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            JournalRecord::CommandCommitted(command)
+                if matches!(
+                    command.command(),
+                    AgentCommand::RespondToActivity {
+                        request: committed,
+                        response: ActivityResponse::SecretInputSubmitted,
+                    } if *committed == request
+                )
+        )
+    }));
+}
+
 // 이전 질문 기능은 이전 프로필에서 기본 비활성이며 복원 선택은 실제 선택지·메모 지원과 일치해야
 // 한다.
 #[test]

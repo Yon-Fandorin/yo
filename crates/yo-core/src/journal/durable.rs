@@ -182,7 +182,10 @@ impl DurableJournal {
 
     /// Flushes message text whose oldest byte reached the one-second boundary.
     pub(super) fn flush_due(&mut self) -> JournalDurability {
-        let now = self.started.elapsed();
+        self.flush_due_at(self.started.elapsed())
+    }
+
+    fn flush_due_at(&mut self, now: Duration) -> JournalDurability {
         let durable = self
             .messages
             .flush_due(now)
@@ -190,6 +193,11 @@ impl DurableJournal {
             .map(PendingJournalRecord::storage)
             .collect();
         self.publish_records(durable, self.live_cutoff)
+    }
+
+    #[cfg(test)]
+    pub(super) fn flush_due_at_for_test(&mut self, now: Duration) -> JournalDurability {
+        self.flush_due_at(now)
     }
 
     fn translate(

@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use super::super::codec::{JournalRecord, MessageOutcome, MessageSegmenter, MessageStream};
-use crate::{ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, interview::Capture};
+use crate::{
+    ActivityKind, ActivityOutcome, ActivityQuestion, ActivityRef, ActivityUpdate,
+    interview::Capture,
+};
 
 #[derive(Debug, Default)]
 pub(super) struct MessageTracker {
@@ -31,11 +34,16 @@ impl MessageTracker {
             ActivityUpdate::TextDelta(text) => message.push_text(text, now),
             ActivityUpdate::TextSnapshot(text) => message.replace_text(text, now),
         };
-        let capture = matches!(
+        let request_snapshot = matches!(
             self.kinds.get(&activity),
             Some(ActivityKind::UserInputRequest { .. } | ActivityKind::UserInputResponse { .. })
-        ) && matches!(update, ActivityUpdate::TextSnapshot(text) if Capture::from_snapshot(text).is_ok());
-        let boundary = capture.then(|| message.flush_boundary()).flatten();
+        ) && matches!(
+            update,
+            ActivityUpdate::TextSnapshot(text)
+                if Capture::from_snapshot(text).is_ok()
+                    || ActivityQuestion::from_snapshot(text).is_some()
+        );
+        let boundary = request_snapshot.then(|| message.flush_boundary()).flatten();
         let mut records = segments
             .into_iter()
             .map(JournalRecord::MessageSegment)

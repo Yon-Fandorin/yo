@@ -385,11 +385,13 @@ semantic 게시 cursor를 전진시키지 않는 치명적 오류로 유지한�
 
 Codex `turn/plan/updated`는 Turn별 ModelWork 하나를 갱신하고 Turn 완료 전에 종료한다.
 늦게 도착한 계획은 재개하지 않으며 남은 단계를 임의로 완료하지 않는다. `plan`은 같은
-snapshot 투영을 보여준다. `item/tool/requestUserInput`은 비밀이 아닌 질문을 순서대로
-제시하고 마지막 답변 뒤 원래 JSON-RPC ID로 답변 map을 한 번 전송한다. 선택 번호는
-label로 변환하고 직접 쓴 Unicode 답변은 보존한다. Core runtime 테스트로 후속 요청의
-상관관계, 중복 응답, 부분 답변 중단과 늦은 resolved를 확인한다. 잘못되거나 비밀인 질문은
-내용을 표시하지 않고 거절한다. 비밀 입력이나 모델용 이미지 입력을 추가하지 않는다.
+snapshot 투영을 보여준다. `item/tool/requestUserInput`은 질문을 순서대로 제시하고 마지막
+답변 뒤 원래 JSON-RPC ID로 답변 map을 한 번 전송한다. 비밀이 아닌 선택 번호는 label로
+변환하고 직접 쓴 Unicode 답변은 보존한다. 비밀 질문은 선택지·메모 없는 자유 입력이어야
+하며 요청 전용 숨김 편집기를 사용한다. 값은 최종 응답을 쓸 때까지 프로세스 메모리에만
+둔다. Core runtime 테스트로 후속 요청의 상관관계, 중복 응답, 부분 답변 중단, 늦은
+resolved와 값 없는 비밀 영수증을 확인한다. 잘못된 비밀 질문은 입력 전에 닫힌 실패로
+끝낸다. 모델용 이미지 입력이나 비밀 값 저장은 추가하지 않는다.
 
 
 `runner/chat.rs`는 `SessionUsageProjection`으로 단일 사용량 snapshot을 검증하고,
@@ -1648,7 +1650,9 @@ payload는 읽기 전용 상세 페이지가 아니라 이스케이프된 JSON�
 요청이 수락 결과를 사용할 수 없다. 기존 패널 색상·포커스·개행·설명을 사용한다.
 `/preview interview`의 두 질문도 같은 프로필을 사용한다. 정확한 크기·개수 경계,
 숫자·이름 전달, 표시 전 수락 차단, 좁은 화면과 읽을 수 있는 내보내기를 검증한다.
-위임형 Codex `request_user_input`의 비밀 질문은 여전히 지원하지 않는다. 고정한 Codex
+위임형 Codex `request_user_input`은 선택지·메모 없는 제한된 자유 입력 비밀 질문도 요청에
+묶인 숨김 편집기로 받는다. 비밀 값은 프로세스 메모리에만 두고 영수증에는 값·해시·길이를
+남기지 않는다. 고정한 Codex
 request_user_input 구현의
 options_len_for_question/option_label_for_index처럼 isOther는 비어 있지 않은 선택지 끝에
 “None of the above”를 추가한다. 선택하면 같은 요청 ID로 그 이름을 답한다. 생략·false면
@@ -1667,8 +1671,8 @@ Codex adapter는 전송 전에 원래 선택지에 대한 1부터 시작하는 �
 이름과 비어 있지 않은 경우 별도 `user_note: <앞뒤 공백을 제거한 메모>` 답변을 보내며,
 고정한 request_user_input renderer의 형식을 따른다. 빈 메모는 이름만 보낸다. 기본 기능
 플래그, 0·첫 초과·u32 최댓값 선택, 정확한 wire ID, 순차 응답, 오래된 표시, 24열 화면,
-메모 원문과 저널 코덱 왕복을 검증한다. Codex 인터뷰의 비밀 답변·저장·복원은 후속
-기능이다.
+메모 원문과 저널 코덱 왕복을 검증한다. 재시작한 비밀 답변은 `Re-entry required`가 되며,
+비밀 값의 영속 저장과 내용 복원은 후속 기능이다.
 제출한 비밀이 아닌 답안은 별도 편집 복사본으로 다시 열어 새 대화로 명시적으로 보낼 수 있다. 아래 답안 복사본 절을 따른다.
 
 ### 관리형 모델의 네이티브 비밀 요청
@@ -1821,7 +1825,8 @@ TUI는 typed UserInputResponse를 “Answer recorded” 제목으로 보존하�
 보존한다. 80/24/80 화면, 사용자 색상, 원문, 내보내기, 순차 질문 ID, 인터뷰 중단과 응답
 쓰기 실패를 검증한다. 오프라인 인터뷰 프리뷰도 같은 Activity 종류를 사용하며 로컬 기록에
 오프라인임을 명시한다. 고정한 Codex history_cell/request_user_input.rs의 필드 구분을 참고했다.
-Codex 인터뷰의 비밀 입력·저장·복원은 후속 기능으로 유지한다.
+Codex의 실시간 자유 입력 비밀 질문은 요청 전용 숨김 편집기를 사용하며, 비밀 값 저장·복원은
+후속 기능으로 유지한다.
 
 ### 미완료 인터뷰 요약
 
@@ -1861,17 +1866,17 @@ RequestStillUnanswered 검증에서 계속 실패한다. 표시를 위해 답변
 
 실제 `/help`는 처음부터 펼친 TuiDocument를 표시한다. 명령 목록은 기존 registry에서 생성하고 읽기·편집·승인·인터뷰 안내는 command/help.rs가 소유한다. 기존 DocumentRenderer·테마를 적용한다. 명령 초안을 비우는 로컬 동작이며 Turn을 시작하거나 대기 요청에 응답하지 않는다. 등록된 모든 명령·키 안내·80/24/80 처음/끝 탐색·접힌 행 없음·원문 보존을 검사한다. 오프라인 프리뷰 밖의 `/help`와 대기 요청 테스트를 함께 확인한다.
 
-### 비밀이 아닌 인터뷰 답안 복사본
+### 인터뷰 답안 복사본과 비밀 재입력
 
-Codex는 처음 실제 UserInputRequest의 `yo.interview-capture/v1` snapshot에 허용된 전체 비밀이 아닌 질문 묶음을 저장한다. 이후 질문은 같은 원본과 revision을 고정한다. core는 모든 수락 답안을 실제 committed response와 완료된 UserInputResponse에 대조한다. 최종 묶음 seal은 백엔드 응답 쓰기 성공 뒤에만 공개한다. ModelWork나 도구 출력의 같은 표지는 그대로 문자열로 남는다. 기존 Journal envelope와 Activity 종류는 유지한다. 최초 요청과 전체 캡처는 함께 게시하며 canonical 캡처는 envelope escaping 전1MiB까지다. 비밀·미지원·초과 묶음은 전체 복구 불가를 명시한다.
+Codex는 처음 실제 UserInputRequest snapshot에 허용된 전체 질문 묶음을 저장한다. 비밀 질문이 전혀 없는 묶음은 `yo.interview-capture/v1`, 비밀 질문이 포함된 묶음은 v2를 사용한다. 이후 질문은 같은 원본과 revision을 고정한다. core는 모든 수락 답안을 실제 committed response와 완료된 UserInputResponse에 대조한다. 최종 묶음 seal은 백엔드 응답 쓰기 성공 뒤에만 공개한다. ModelWork나 도구 출력의 같은 표지는 그대로 문자열로 남는다. 기존 Journal envelope와 Activity 종류는 유지한다. 최초 요청과 전체 캡처는 함께 게시하며 canonical 캡처는 envelope escaping 전1MiB까지다. 미지원·초과 묶음은 전체 복구 불가를 명시한다. v2 캡처는 공개 질문 정보와 값 없는 답변 증거만 보존하고 비밀 값·해시·길이는 보존하지 않는다.
 
-TuiSession controller는 플랫폼 Yo state 디렉터리의 `interviews` 아래에 별도 `yo.interview-working-copy/v1` 파일을 저장한다. 공개 질문 원본/revision, 순서 있는 편집 답안·메모·이동 위치·사용자 문맥·확인된 제출 기록만 포함하며 백엔드 wire ID나 인증 정보는 넣지 않는다. 사용자 소유0700 디렉터리와 일반0600 파일을 요구하고 symlink와 알 수 없는 형식을 거부한다. 단독 lease와 generation CAS, 같은 디렉터리의 배타적 임시 파일, 파일 fsync, atomic rename, 디렉터리 fsync를 사용한다. 충돌·실패 시 게시본과 편집 데이터 모두 보존하고 Saved로 표시하지 않는다. 편집 후1초 안에 게시를 예약하며 이동·제출·정상 종료 전에 flush한다. 재시작은 마지막 durable 게시본까지만 복구하고 crash로 유실된 키 입력은 포함하지 않는다.
+TuiSession controller는 플랫폼 Yo state 디렉터리의 `interviews` 아래에 별도 답안 복사본 파일을 저장한다. 비밀이 아닌 복사본은 `yo.interview-working-copy/v1`, 비밀 질문이 포함된 복사본은 v2를 사용한다. 두 형식 모두 공개 질문 원본/revision, 순서 있는 공개 답안·메모·이동 위치·사용자 문맥·확인된 제출 기록을 포함한다. v2는 모든 비밀 답안을 `Re-entry required`로만 표시하며 백엔드 wire ID, 인증 정보, 비밀 값·해시·길이를 넣지 않는다. 사용자 소유0700 디렉터리와 일반0600 파일을 요구하고 symlink와 알 수 없는 형식을 거부한다. 단독 lease와 generation CAS, 같은 디렉터리의 배타적 임시 파일, 파일 fsync, atomic rename, 디렉터리 fsync를 사용한다. 충돌·실패 시 게시본과 편집 데이터 모두 보존하고 Saved로 표시하지 않는다. 편집 후1초 안에 게시를 예약하며 이동·제출·정상 종료 전에 flush한다. 재시작은 마지막 durable 게시본까지만 복구하고 crash로 유실된 키 입력은 포함하지 않는다.
 
-`/interview list`에서 저장된 복사본 UUID를 확인한다. `/interview recover <UUID>`는 미제출본을 복구하고 `/interview reopen <UUID>`는 제출한 원본을 보존하며 다른 UUID/generation1 복사본을 만든다. 답안을 입력하고 Enter로 로컬에 보관한다. `/interview next`, `/interview previous`로 이동하고 `/interview option <number>`로 선택, `/interview notes <text>`로 메모, `/interview context <text>`로 명시적 문맥을 편집한다. `/interview save`는 편집을 게시하고 `/interview close`는 일반 입력창으로 돌아간다. 저장·미저장·복구 불가 상태를 분명히 표시한다.
+`/interview list`에서 저장된 복사본 UUID를 확인한다. `/interview recover <UUID>`는 미제출본을 복구하고 `/interview reopen <UUID>`는 제출한 원본을 보존하며 다른 UUID/generation1 복사본을 만든다. 공개 답안을 입력하고 Enter로 로컬에 보관한다. `/interview next`, `/interview previous`로 이동하고 `/interview option <number>`로 선택, `/interview notes <text>`로 메모, `/interview context <text>`로 명시적 문맥을 편집한다. `/interview save`는 편집을 게시하고 `/interview close`는 일반 입력창으로 돌아간다. 저장·미저장·복구 불가 상태를 분명히 표시한다. 복구한 v2 복사본은 고정된 비밀 재입력 표식을 유지하고 종료된 원래 provider 요청을 재개하지 않는다.
 
-`/interview preview`는 원본 질문과 편집 답안을 순서대로 사용자 문맥만 더해 표시하며 일반 텍스트 편집을 허용한다. preview 편집은 이번 제출을 위해 메모리에 보관하고 재시작하면 저장된 답안·문맥을 복구한다. `/interview send`는 현재 백엔드/모델과 일반 입력 검증으로 새 Session과 첫 Turn을 명시적으로 만든다. 활성·대기 Turn은 busy로 보고 복사본을 유지한다. backpressure에서 같은 불변 preview와 SubmissionId를 유지한다. 모호한 실패는 자동 재시도하지 않는다. 제출 표시는 일치하는 SubmissionId, 새 TurnRef, 양의 JournalSequence가 있는 실제 durable 최초 StartTurn 수락 기록을 요구하며 실행 완료를 뜻하지 않는다. preview는 UTF-8 기준64KiB, 전체 인코딩 복사본은256KiB까지이며 첫 초과는 자르지 않고 거부한다.
+v1 복사본에서 `/interview preview`는 원본 질문과 편집 답안을 순서대로 사용자 문맥만 더해 표시하며 일반 텍스트 편집을 허용한다. preview 편집은 이번 제출을 위해 메모리에 보관하고 재시작하면 저장된 답안·문맥을 복구한다. `/interview send`는 현재 백엔드/모델과 일반 입력 검증으로 새 Session과 첫 Turn을 명시적으로 만든다. v2 복사본은 살아 있는 원래 요청이 없으므로 이 새 대화 전송을 거부한다. 새로 생성된 실제 비밀 요청에서만 값을 다시 입력할 수 있다. 활성·대기 Turn은 busy로 보고 복사본을 유지한다. backpressure에서 같은 불변 preview와 SubmissionId를 유지한다. 모호한 실패는 자동 재시도하지 않는다. 제출 표시는 일치하는 SubmissionId, 새 TurnRef, 양의 JournalSequence가 있는 실제 durable 최초 StartTurn 수락 기록을 요구하며 실행 완료를 뜻하지 않는다. preview는 UTF-8 기준64KiB, 전체 인코딩 복사본은256KiB까지이며 첫 초과는 자르지 않고 거부한다.
 
-검증은 실제 질문과 위장 표지 구분, 모든 답변/최종 완료 상관관계, 오래된 답변과 이동, 여러 segment 최초 캡처의 atomic 게시, durable 복구, 안전하지 않은 저장소, generation 충돌/동시 writer, 별도 다시 열기와 UTF-8 한도를 다룬다. 실제 provider RPC 재생은 환경 의존 smoke check로 유지하며 비밀 인터뷰 복사본과 비밀 값 저장·복원은 후속 기능이다. 수정 빌드의 실제 Mac 입력은 승인된 runtime tree에서 통과했다. [현재 직접 입력 검증](terminal-matrix.md#현재-mac-직접-입력-검증)을 참고한다.
+검증은 실제 질문과 위장 표지 구분, 모든 답변/최종 완료 상관관계, 오래된 답변과 이동, 여러 segment 최초 캡처의 atomic 게시, durable 복구, 안전하지 않은 저장소, generation 충돌/동시 writer, 별도 다시 열기, 비밀을 지운 v2 복사본과 UTF-8 한도를 다룬다. 실제 provider RPC 재생은 환경 의존 smoke check로 유지하며 비밀 값 저장과 그 내용 복원은 후속 기능이다. 수정 빌드의 실제 Mac 입력은 승인된 runtime tree에서 통과했다. [현재 직접 입력 검증](terminal-matrix.md#현재-mac-직접-입력-검증)을 참고한다.
 
 `/`로 시작하는 문자 그대로의 답변은 첫 슬래시를 두 번 입력합니다(`//interview ...`). 저장된 답변에는 슬래시가 정확히 하나 남습니다. 일시 저장 오류 뒤 새 편집은 자동 저장을 다시 시도합니다. 실제 저장된 원본 캡처만 복구 가능 상태를 표시하고, volatile 캡처는 회복 불가를 표시합니다. 접수 미확인 첫 Turn이 종료되면 불변 intent를 유지하면서 프리뷰 편집을 복구하며 자동 재전송하지 않습니다. 이후 known cutoff gap이 생겨도 앞서 내구성 경계 안에 저장된 접수 증거는 유효합니다. 예약된 우리 임시 파일은 exclusive lease에서 회수하고 unknown·unsafe 파일은 보존합니다. wire 답변 전송은 성공했지만 최종 seal이 유효하지 않거나 상한을 초과하면 완전한 회복 불가 이유를 명시합니다.
 

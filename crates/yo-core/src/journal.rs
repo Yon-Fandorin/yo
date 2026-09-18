@@ -8,6 +8,8 @@ mod request_trace;
 mod transcript;
 
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+#[cfg(test)]
+use std::time::Duration;
 
 pub use codec::{ContextPolicyChanged, ContextStrategy};
 pub(crate) use correlation::ContextActiveSource;
@@ -205,6 +207,15 @@ impl SessionJournal {
         let durability = durable.flush_due();
         let mut state = write_state(&self.state);
         state.observe_durability(durability);
+    }
+
+    #[cfg(test)]
+    fn flush_due_at_for_test(&mut self, now: Duration) {
+        let Some(durable) = &mut self.durable else {
+            return;
+        };
+        let durability = durable.flush_due_at_for_test(now);
+        write_state(&self.state).observe_durability(durability);
     }
 
     fn append_records(&mut self, records: Vec<SemanticRecord>) {

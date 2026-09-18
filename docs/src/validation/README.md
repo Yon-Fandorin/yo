@@ -485,12 +485,14 @@ allocation failure and existing snapshot/storage limits remain explicit.
 Codex `turn/plan/updated` replaces one ModelWork activity per turn and closes it
 before turn completion; late plan updates cannot reopen it. Remaining steps are
 never marked completed by inference. `plan` previews the same snapshot projection.
-`item/tool/requestUserInput` presents nonsecret questions sequentially and sends
-one answer map on the original JSON-RPC ID after the final answer. Numbered choices
-map to labels; free-form Unicode answers are preserved. Core-runtime tests cover
+`item/tool/requestUserInput` presents questions sequentially and sends one answer
+map on the original JSON-RPC ID after the final answer. Numbered nonsecret choices
+map to labels; free-form Unicode answers are preserved. A secret question must be
+free text without choices or notes and uses the request-bound hidden editor. Its
+value remains process-local until the final response write. Core-runtime tests cover
 successor request correlation, duplicate responses, partial-answer interruption,
-and late resolution. Invalid/secret questions are rejected without showing their
-contents. This does not add secret entry or image model input.
+late resolution and payload-free secret receipts. Malformed secret questions fail
+closed before input. This does not add image model input or secret-value storage.
 
 
 `runner/chat.rs` reuses `SessionUsageProjection` to validate one usage snapshot;
@@ -1876,8 +1878,10 @@ an answer keeps the free-text route. Changed choices replace the panel token; la
 unrelated requests cannot use its acceptance receipt. Existing panel colors, focus,
 wrapping and descriptions apply. `/preview interview` uses the same profile for both
 questions. Tests cover exact size/count bounds, ordinal/label handoff, presentation
-before acceptance, narrow frames and readable export. Secret questions from delegated
-Codex `request_user_input` remain unsupported;
+before acceptance, narrow frames and readable export. Delegated Codex
+`request_user_input` also admits bounded free-text secret questions without choices
+or notes through a request-bound hidden editor. Secret values stay process-local and
+receipts contain no value, hash or length.
 Codex's isOther flag adds “None of the above” only when options are nonempty, matching
 the pinned request_user_input overlay's options_len_for_question/option_label_for_index.
 Selecting it returns that label through the same request ID. Absent/false flags do not
@@ -1899,9 +1903,9 @@ original label and, when nonblank, a separate `user_note: <trimmed notes>` answe
 the pinned request_user_input renderer. Empty notes emit only the label. Tests cover
 capability defaults, invalid choice zero/first excess/u32 maximum, exact wire IDs,
 sequential replies, stale presentation, 24-column frames, literal notes and journal
-codec round trips. Secret Codex interview answers, storage and recovery remain future
-features.
-Submitted nonsecret answers can be reopened as a separate editable copy and sent explicitly as a new conversation, as described under Nonsecret interview copies.
+codec round trips. After restart, a secret answer is `Re-entry required`; persisted
+secret values and recovery of their contents remain future features.
+Submitted nonsecret answers can be reopened as a separate editable copy and sent explicitly as a new conversation, as described under Interview copies and secret re-entry.
 
 ### Native managed secret requests
 
@@ -2076,8 +2080,9 @@ callbacks never handle them. Failed/interrupted footers and complete plain expor
 preserved. Tests cover 80/24/80 frames, custom colors, literal text, export, sequential
 question IDs, partial interview interruption and response-write failure. The offline
 interview preview emits the same activity kind and labels its local receipt as offline.
-This follows the pinned Codex history_cell/request_user_input.rs field separation;
-secret Codex interview input, storage and recovery remain future features.
+This follows the pinned Codex history_cell/request_user_input.rs field separation.
+Live free-text secret Codex input uses the request-bound hidden editor; secret-value
+storage and recovery remain future features.
 
 ### Incomplete interview summaries
 
@@ -2122,17 +2127,17 @@ Hosts can emit `AgentPoll::Document(TuiDocument::new(ActivityDocument { title, m
 
 The real `/help` command now emits an initially expanded TuiDocument. Command entries come from the existing registry; command/help.rs owns the reading/editing/approval/interview guidance. Existing DocumentRenderer and theme apply. It remains local, clears the command draft, starts no Turn and does not answer pending requests. Tests verify every registered command, key guidance,80/24/80 start/end navigation, no folded rows and unchanged source. Validate with `/help` outside offline preview as well as during pending request tests.
 
-### Nonsecret interview copies
+### Interview copies and secret re-entry
 
-Codex captures the complete admitted nonsecret question batch in the first genuine UserInputRequest snapshot using `yo.interview-capture/v1`. Later question snapshots pin the same source and revision. The core checks every accepted answer against the actual committed response and completed UserInputResponse. The final aggregate seal is emitted only after the backend response write succeeds. ModelWork or tool-output lookalikes remain literal. Existing Journal envelopes and Activity kinds are unchanged. The initial request and complete capture publish together; the canonical capture limit is1MiB before envelope escaping. Unsupported, secret or excessive batches explicitly lack complete recovery.
+Codex captures the complete admitted question batch in the first genuine UserInputRequest snapshot. A wholly nonsecret batch uses `yo.interview-capture/v1`; a batch containing a secret question uses `yo.interview-capture/v2`. Later question snapshots pin the same source and revision. The core checks every accepted answer against the actual committed response and completed UserInputResponse. The final aggregate seal is emitted only after the backend response write succeeds. ModelWork or tool-output lookalikes remain literal. Existing Journal envelopes and Activity kinds are unchanged. The initial request and complete capture publish together; the canonical capture limit is1MiB before envelope escaping. Unsupported or excessive batches explicitly lack complete recovery. A v2 capture preserves public question data and payload-free answer evidence, never the secret value, hash or length.
 
-The TuiSession controller saves a separate `yo.interview-working-copy/v1` file under the platform Yo state directory's `interviews` directory. This stores public question source/revision, ordered editable answers, notes, navigation, user context and confirmed submission bookkeeping. It contains no backend wire IDs or credentials. Storage requires user-owned0700 directories and regular0600 files, rejects symlinks and unknown schemas, and uses an exclusive lease, generation CAS, an exclusive same-directory temporary file, file fsync, atomic rename and directory fsync. Conflict or failure preserves both published data and editable changes without claiming Saved. Edits schedule publication within one second; navigation, submission and graceful exit flush. Recovery reads the last durable publication, excluding crash-lost keystrokes.
+The TuiSession controller saves a separate working-copy file under the platform Yo state directory's `interviews` directory. Nonsecret copies use `yo.interview-working-copy/v1`; a copy containing a secret question uses v2. Both store public question source/revision, ordered public answers, notes, navigation, user context and confirmed submission bookkeeping. V2 represents every secret answer only as `Re-entry required`; it contains no backend wire ID, credential, secret value, hash or length. Storage requires user-owned0700 directories and regular0600 files, rejects symlinks and unknown schemas, and uses an exclusive lease, generation CAS, an exclusive same-directory temporary file, file fsync, atomic rename and directory fsync. Conflict or failure preserves both published data and editable changes without claiming Saved. Edits schedule publication within one second; navigation, submission and graceful exit flush. Recovery reads the last durable publication, excluding crash-lost keystrokes.
 
-Use `/interview list` to find saved copy UUIDs, `/interview recover <UUID>` to restore an unsubmitted copy, or `/interview reopen <UUID>` to create a new UUID/generation1 copy of a submitted record while preserving the original. Type answers and press Enter to keep them locally. `/interview next` and `/interview previous` navigate; `/interview option <number>` selects an option, `/interview notes <text>` edits notes, and `/interview context <text>` adds explicit context. `/interview save` publishes pending edits; `/interview close` returns to the ordinary prompt. Saved/unsaved and unavailable states are explicit.
+Use `/interview list` to find saved copy UUIDs, `/interview recover <UUID>` to restore an unsubmitted copy, or `/interview reopen <UUID>` to create a new UUID/generation1 copy of a submitted record while preserving the original. Type public answers and press Enter to keep them locally. `/interview next` and `/interview previous` navigate; `/interview option <number>` selects an option, `/interview notes <text>` edits notes, and `/interview context <text>` adds explicit context. `/interview save` publishes pending edits; `/interview close` returns to the ordinary prompt. Saved/unsaved and unavailable states are explicit. A recovered v2 copy keeps its fixed secret re-entry marker and never resumes the dead provider request.
 
-`/interview preview` renders original questions and editable answers in order with only user context, then allows plain-text editing. Preview edits are retained in memory for this send; restart restores the saved answers/context. `/interview send` explicitly creates a new Session and its first Turn with the current backend/model and ordinary input admission. An active or pending Turn is busy and retains the copy. Backpressure retains the same immutable preview and SubmissionId. Ambiguous failure never retries automatically. The submitted marker requires the actual durable accepted initial StartTurn request with matching SubmissionId, new TurnRef and positive JournalSequence; acceptance does not mean execution completed. The preview limit is64KiB UTF-8 and the entire encoded copy limit is256KiB; first excess is rejected without truncation.
+For a v1 copy, `/interview preview` renders original questions and editable answers in order with only user context, then allows plain-text editing. Preview edits are retained in memory for this send; restart restores the saved answers/context. `/interview send` explicitly creates a new Session and its first Turn with the current backend/model and ordinary input admission. A v2 copy rejects this new-conversation action because it has no live original request; only a new genuine live secret request can accept a freshly entered value. An active or pending Turn is busy and retains the copy. Backpressure retains the same immutable preview and SubmissionId. Ambiguous failure never retries automatically. The submitted marker requires the actual durable accepted initial StartTurn request with matching SubmissionId, new TurnRef and positive JournalSequence; acceptance does not mean execution completed. The preview limit is64KiB UTF-8 and the entire encoded copy limit is256KiB; first excess is rejected without truncation.
 
-Validation covers genuine-vs-lookalike provenance, all-answer/final completion correlation, stale answers and navigation, a multi-segment atomic initial capture, durable recovery, unsafe storage, generation conflicts/concurrent writers, separate reopening and UTF-8 limits. Live provider RPC replay remains an environment-dependent smoke check; secret interview copies and secret-value storage/recovery remain deferred. Corrected-build physical Mac input passed on the accepted runtime tree; see the [current direct input verification](terminal-matrix.md#current-mac-direct-input-verification).
+Validation covers genuine-vs-lookalike provenance, all-answer/final completion correlation, stale answers and navigation, a multi-segment atomic initial capture, durable recovery, unsafe storage, generation conflicts/concurrent writers, separate reopening, redacted v2 secret copies and UTF-8 limits. Live provider RPC replay remains an environment-dependent smoke check; secret-value storage and recovery of its contents remain deferred. Corrected-build physical Mac input passed on the accepted runtime tree; see the [current direct input verification](terminal-matrix.md#current-mac-direct-input-verification).
 
 Literal answers beginning `/` use a doubled leading slash (`//interview ...`); the saved answer keeps exactly one slash. New edits retry autosave after a transient error. Only physically stored source captures claim recoverability; volatile captures expose unavailable status. An unconfirmed terminal first Turn restores the editable preview while retaining its immutable intent and never retries automatically. Known durable acceptance remains valid before a later known cutoff gap. Recognized private owned attempt files are reclaimed under the exclusive lease; unknown or unsafe files remain untouched. A successful wire answer with an invalid or oversized final seal explicitly reports complete recovery unavailable.
 
