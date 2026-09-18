@@ -136,6 +136,8 @@ fn disabled_exposure_omits_current_tools_without_dropping_historical_replay() {
         128,
         None,
     )
+    .unwrap()
+    .with_protected_terminal_input()
     .unwrap();
 
     let body = response_body(&request, "model");
@@ -143,6 +145,8 @@ fn disabled_exposure_omits_current_tools_without_dropping_historical_replay() {
     assert!(body.get("tool_choice").is_none());
     assert_eq!(body["input"][1]["type"], "function_call");
     assert_eq!(body["input"][2]["type"], "function_call_output");
+    assert!(request.has_protected_terminal_input());
+    assert!(!format!("{request:?}").contains("done"));
 }
 
 // 출력 상한을 알 수 없는 Responses 요청은 숫자를 대신 만들지 않고 wire body에서

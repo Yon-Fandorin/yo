@@ -1648,7 +1648,8 @@ payload는 읽기 전용 상세 페이지가 아니라 이스케이프된 JSON�
 요청이 수락 결과를 사용할 수 없다. 기존 패널 색상·포커스·개행·설명을 사용한다.
 `/preview interview`의 두 질문도 같은 프로필을 사용한다. 정확한 크기·개수 경계,
 숫자·이름 전달, 표시 전 수락 차단, 좁은 화면과 읽을 수 있는 내보내기를 검증한다.
-비밀 입력은 여전히 지원하지 않는다. 고정한 Codex request_user_input 구현의
+위임형 Codex `request_user_input`의 비밀 질문은 여전히 지원하지 않는다. 고정한 Codex
+request_user_input 구현의
 options_len_for_question/option_label_for_index처럼 isOther는 비어 있지 않은 선택지 끝에
 “None of the above”를 추가한다. 선택하면 같은 요청 ID로 그 이름을 답한다. 생략·false면
 추가하지 않고 잘못된 타입은 거부하며 자유 입력은 이 플래그와 독립적으로 유지한다.
@@ -1666,8 +1667,35 @@ Codex adapter는 전송 전에 원래 선택지에 대한 1부터 시작하는 �
 이름과 비어 있지 않은 경우 별도 `user_note: <앞뒤 공백을 제거한 메모>` 답변을 보내며,
 고정한 request_user_input renderer의 형식을 따른다. 빈 메모는 이름만 보낸다. 기본 기능
 플래그, 0·첫 초과·u32 최댓값 선택, 정확한 wire ID, 순차 응답, 오래된 표시, 24열 화면,
-메모 원문과 저널 코덱 왕복을 검증한다. 비밀 입력·저장·복원은 후속 기능이다.
+메모 원문과 저널 코덱 왕복을 검증한다. Codex 인터뷰의 비밀 답변·저장·복원은 후속
+기능이다.
 제출한 비밀이 아닌 답안은 별도 편집 복사본으로 다시 열어 새 대화로 명시적으로 보낼 수 있다. 아래 답안 복사본 절을 따른다.
+
+### 관리형 모델의 네이티브 비밀 요청
+
+로컬 도구를 허용한 새 local-client 세션은 설정한 도구 뒤에 예약 함수
+`request_secret_input` 하나를 노출한다. 정확히 닫힌 객체에는 공개 문자열 `title`,
+`question`, `purpose`만 들어가며, 해당 응답에서 유일한 함수 호출이어야 한다. 도구를
+사용하지 않는 프로필, 요약, 과거 replay와 이 함수가 생기기 전 replay 계약을 가진 기존
+세션의 도구 표면은 바뀌지 않는다.
+
+typed 비밀 질문은 정확한 Provider와 Model을 표시하고 provider가 값을 보존할 수 있다는 점,
+제출하면 세션이 영구 종료된다는 점, 최종 답변 전체에서 정확한 echo를 검사한다는 점을
+알린다. TUI는 기존 숨김 비밀 편집기를 사용한다. Yo는 값을 프로세스 메모리에만 둔다.
+runtime이 payload가 없는 `SecretInputSubmitted` 영수증을 먼저 트랜잭션으로 저장한 뒤,
+도구를 끈 최종 요청 하나를 활성화한다. 메모리 전용 저장소, 내구성 gap, 그 commit 전의
+취소·종료에서는 transport를 시작하지 않는다. 수락 뒤에는 transport가 시작되지 않았거나
+전달 결과를 알 수 없어도 이후 Turn·모델 교체·resume·fork를 거부한다.
+
+OpenAI Responses는 정확한 `function_call_output` 하나를 보내고 OpenAI Chat Completions와
+Kimi Chat Completions는 정확한 tool message 하나를 보낸다. 보호 요청은 tools와
+tool choice를 생략하고 redirect를 끄며 transport의 무재시도 정책을 사용한다. Grok의
+위임형 backend는 이 계약을 노출하지 않는다. 최종 응답은 전부 버퍼링하며 눈에 보이는
+assistant message 하나만 허용하고 함수 호출은 금지한다. 연속 UTF-8 바이트에 제출 값을
+포함하지 않을 때만 공개한다. echo가 있으면 전체 답변을 숨기고 고정된 실패만 표시한다.
+비밀, 응답 delta, replay item, continuation anchor는 저장하지 않는다. 이는 한 번의 비밀
+전달이며 비밀 값 저장·복원 기능이 아니다. 스키마·바이트 한도, 단독 호출, 전송 전 내구성,
+connector 투영, 전체 답변 echo 거부와 복구 장벽을 테스트한다.
 
 ### 호스트 상태 줄
 
@@ -1793,7 +1821,7 @@ TUI는 typed UserInputResponse를 “Answer recorded” 제목으로 보존하�
 보존한다. 80/24/80 화면, 사용자 색상, 원문, 내보내기, 순차 질문 ID, 인터뷰 중단과 응답
 쓰기 실패를 검증한다. 오프라인 인터뷰 프리뷰도 같은 Activity 종류를 사용하며 로컬 기록에
 오프라인임을 명시한다. 고정한 Codex history_cell/request_user_input.rs의 필드 구분을 참고했다.
-비밀 입력·저장·복원은 후속 기능으로 유지한다.
+Codex 인터뷰의 비밀 입력·저장·복원은 후속 기능으로 유지한다.
 
 ### 미완료 인터뷰 요약
 
@@ -1843,7 +1871,7 @@ TuiSession controller는 플랫폼 Yo state 디렉터리의 `interviews` 아래�
 
 `/interview preview`는 원본 질문과 편집 답안을 순서대로 사용자 문맥만 더해 표시하며 일반 텍스트 편집을 허용한다. preview 편집은 이번 제출을 위해 메모리에 보관하고 재시작하면 저장된 답안·문맥을 복구한다. `/interview send`는 현재 백엔드/모델과 일반 입력 검증으로 새 Session과 첫 Turn을 명시적으로 만든다. 활성·대기 Turn은 busy로 보고 복사본을 유지한다. backpressure에서 같은 불변 preview와 SubmissionId를 유지한다. 모호한 실패는 자동 재시도하지 않는다. 제출 표시는 일치하는 SubmissionId, 새 TurnRef, 양의 JournalSequence가 있는 실제 durable 최초 StartTurn 수락 기록을 요구하며 실행 완료를 뜻하지 않는다. preview는 UTF-8 기준64KiB, 전체 인코딩 복사본은256KiB까지이며 첫 초과는 자르지 않고 거부한다.
 
-검증은 실제 질문과 위장 표지 구분, 모든 답변/최종 완료 상관관계, 오래된 답변과 이동, 여러 segment 최초 캡처의 atomic 게시, durable 복구, 안전하지 않은 저장소, generation 충돌/동시 writer, 별도 다시 열기와 UTF-8 한도를 다룬다. 실제 provider RPC 재생은 환경 의존 smoke check로 유지하며 비밀 입력·저장·복원은 후속 기능이다. 수정 빌드의 실제 Mac 입력은 승인된 runtime tree에서 통과했다. [현재 직접 입력 검증](terminal-matrix.md#현재-mac-직접-입력-검증)을 참고한다.
+검증은 실제 질문과 위장 표지 구분, 모든 답변/최종 완료 상관관계, 오래된 답변과 이동, 여러 segment 최초 캡처의 atomic 게시, durable 복구, 안전하지 않은 저장소, generation 충돌/동시 writer, 별도 다시 열기와 UTF-8 한도를 다룬다. 실제 provider RPC 재생은 환경 의존 smoke check로 유지하며 비밀 인터뷰 복사본과 비밀 값 저장·복원은 후속 기능이다. 수정 빌드의 실제 Mac 입력은 승인된 runtime tree에서 통과했다. [현재 직접 입력 검증](terminal-matrix.md#현재-mac-직접-입력-검증)을 참고한다.
 
 `/`로 시작하는 문자 그대로의 답변은 첫 슬래시를 두 번 입력합니다(`//interview ...`). 저장된 답변에는 슬래시가 정확히 하나 남습니다. 일시 저장 오류 뒤 새 편집은 자동 저장을 다시 시도합니다. 실제 저장된 원본 캡처만 복구 가능 상태를 표시하고, volatile 캡처는 회복 불가를 표시합니다. 접수 미확인 첫 Turn이 종료되면 불변 intent를 유지하면서 프리뷰 편집을 복구하며 자동 재전송하지 않습니다. 이후 known cutoff gap이 생겨도 앞서 내구성 경계 안에 저장된 접수 증거는 유효합니다. 예약된 우리 임시 파일은 exclusive lease에서 회수하고 unknown·unsafe 파일은 보존합니다. wire 답변 전송은 성공했지만 최종 seal이 유효하지 않거나 상한을 초과하면 완전한 회복 불가 이유를 명시합니다.
 

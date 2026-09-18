@@ -121,6 +121,32 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
                 });
             backend.turn = Some(state);
         }
+    } else if backend.turn.as_ref().is_some_and(|state| {
+        state
+            .prepared_secret_request
+            .as_ref()
+            .is_some_and(|prepared| prepared.armed && prepared.request.is_some())
+    }) {
+        let mut state = backend
+            .turn
+            .take()
+            .expect("prepared secret Turn was checked");
+        if let Err(_error) = backend.start_prepared_secret_request(&mut state) {
+            state.prepared_secret_request = None;
+            backend.fail_turn(
+                &mut state,
+                "terminal secret request failed after submission; delivery outcome is unknown"
+                    .to_owned(),
+            );
+        } else {
+            backend
+                .events
+                .push_back(BackendEvent::ModelRequestAccepted {
+                    turn: state.turn,
+                    evidence: backend.request_evidence(state.turn),
+                });
+            backend.turn = Some(state);
+        }
     } else if backend
         .turn
         .as_ref()
@@ -205,7 +231,14 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
             Err(error) => {
                 let mut state = backend.turn.take().expect("active Turn was checked");
                 backend.observe_connector_failure(state.turn, &error);
-                if matches!(state.compaction, Some(CompactionState::Summarizing { .. })) {
+                if state.terminal_secret_request {
+                    state.prepared_secret_request = None;
+                    backend.fail_turn(
+                        &mut state,
+                        "terminal secret request failed after submission; delivery outcome is unknown"
+                            .to_owned(),
+                    );
+                } else if matches!(state.compaction, Some(CompactionState::Summarizing { .. })) {
                     backend.context_exhausted = true;
                     backend.exhaust_turn(
                         &mut state,
@@ -227,7 +260,14 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
                         yo_core::ModelRequestFailureKind::Protocol,
                     ),
                 );
-                if matches!(state.compaction, Some(CompactionState::Summarizing { .. })) {
+                if state.terminal_secret_request {
+                    state.prepared_secret_request = None;
+                    backend.fail_turn(
+                        &mut state,
+                        "terminal secret request failed after submission; delivery outcome is unknown"
+                            .to_owned(),
+                    );
+                } else if matches!(state.compaction, Some(CompactionState::Summarizing { .. })) {
                     backend.context_exhausted = true;
                     backend.exhaust_turn(
                         &mut state,

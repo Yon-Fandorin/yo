@@ -4,6 +4,7 @@ mod connector_rounds;
 mod context_replay;
 mod image_input;
 mod model_observation;
+mod secret_interaction;
 mod semantic_security;
 pub(super) mod support;
 mod tool_execution;

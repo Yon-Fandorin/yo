@@ -47,6 +47,10 @@ pub(super) fn execute_command(
             request,
             response: ActivityResponse::Approval(decision),
         } => backend.respond_to_approval(request, decision),
+        AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInput(secret),
+        } => backend.respond_to_secret_input(request, secret),
         AgentCommand::RespondToActivity { .. } => Err(failure(
             BackendFailureKind::Unsupported,
             "native model loop only accepts approval responses",

@@ -484,3 +484,48 @@ fn a_secret_receipt_cannot_be_dispatched_as_a_live_response() {
     assert_eq!(runtime.backend().remaining_steps(), 1);
     runtime.shutdown().unwrap();
 }
+
+// Native protected input differs from legacy backend-owned interviews: backend acceptance only
+// prepares transport, so a memory-only Journal cannot authorize it or leave the Session reusable.
+#[test]
+fn prepared_native_secret_requires_a_durable_receipt_and_terminalizes_the_session() {
+    use crate::{BackendCommandEvidence, SecretInput};
+
+    let active_turn = turn(session(1), 1);
+    let request = ActivityRequestRef::new(activity(active_turn, 1), RequestId::new(id(1)));
+    let live = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::SecretInput(SecretInput::new("native-secret").unwrap()),
+    };
+    let (mut runtime, _) = runtime_with_secret_request([
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: live.clone(),
+            evidence: BackendCommandEvidence::ProtectedInputPrepared,
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+
+    let error = runtime.execute_command(live).unwrap_err();
+    assert!(matches!(error, RuntimeError::Backend { .. }), "{error:?}");
+    assert!(
+        error
+            .to_string()
+            .contains("receipt could not be committed durably"),
+        "{error:?}"
+    );
+    let later = runtime
+        .execute_submission(
+            AgentCommand::SteerTurn {
+                turn: active_turn,
+                input: UserInput::from("continue"),
+            },
+            submission(9),
+        )
+        .unwrap_err();
+    assert!(
+        later
+            .to_string()
+            .contains("ended at a protected input submission")
+    );
+    runtime.shutdown().unwrap();
+}

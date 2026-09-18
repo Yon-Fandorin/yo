@@ -3,11 +3,13 @@
 use serde_json::json;
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityUpdate, BackendEvent, BackendFailure,
-    BackendFailureKind, ModelReplayItem, ToolOutput, ToolValidationFailure,
+    BackendFailureKind, ModelReplayItem, NATIVE_SECRET_INTERACTION_NAME, ToolOutput,
+    ToolValidationFailure,
 };
 
 use super::super::{
-    CallActivity, NativeModelBackend, PendingCall, TurnState, failure,
+    CallActivity, NativeModelBackend, PendingCall, PendingSecretCall, SecretCallStart, TurnState,
+    failure,
     tools::{durable_tool_validation_message, tool_validation_failure},
 };
 
@@ -19,6 +21,49 @@ pub(super) fn function_call_started(
     call_id: String,
     name: String,
 ) -> Result<(), BackendFailure> {
+    if state.terminal_secret_request {
+        backend.fail_turn(
+            state,
+            "terminal secret response returned a function call".to_owned(),
+        );
+        return Ok(());
+    }
+    if name == NATIVE_SECRET_INTERACTION_NAME && backend.secret_interaction_enabled {
+        if state.terminal_secret_request
+            || state.secret_call_start.is_some()
+            || state.pending_secret_call.is_some()
+            || state.awaiting_secret_input.is_some()
+            || !state.call_activities.is_empty()
+            || !state.pending_calls.is_empty()
+            || state.active_tool.is_some()
+            || state.ready_tool.is_some()
+            || state.dispatch_tool.is_some()
+            || !state.seen_call_ids.insert(call_id.clone())
+            || call_id.is_empty()
+            || call_id.len() > 256
+            || call_id.chars().any(char::is_control)
+        {
+            backend.fail_turn(
+                state,
+                "native secret interaction must be the sole function call in its response"
+                    .to_owned(),
+            );
+            return Ok(());
+        }
+        state.secret_call_start = Some(SecretCallStart {
+            output_index,
+            item_id,
+            call_id,
+        });
+        return Ok(());
+    }
+    if state.secret_call_start.is_some() || state.pending_secret_call.is_some() {
+        backend.fail_turn(
+            state,
+            "native secret interaction must be the sole function call in its response".to_owned(),
+        );
+        return Ok(());
+    }
     if state.call_activities.contains_key(&item_id) || !state.seen_call_ids.insert(call_id.clone())
     {
         let message = "duplicate function item or call identity";
@@ -58,6 +103,62 @@ pub(super) fn function_call_done(
     name: String,
     arguments: String,
 ) -> Result<(), BackendFailure> {
+    if state.terminal_secret_request {
+        return Err(failure(
+            BackendFailureKind::Protocol,
+            "terminal secret response returned a function call",
+        ));
+    }
+    if name == NATIVE_SECRET_INTERACTION_NAME && backend.secret_interaction_enabled {
+        let started = state.secret_call_start.take().ok_or_else(|| {
+            failure(
+                BackendFailureKind::Protocol,
+                "completed native secret interaction was not started",
+            )
+        })?;
+        if started.output_index != output_index
+            || started.item_id != item_id
+            || started.call_id != call_id
+            || state.pending_secret_call.is_some()
+            || !state.pending_calls.is_empty()
+            || !state.call_activities.is_empty()
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "native secret interaction did not remain the sole correlated function call",
+            ));
+        }
+        if arguments.len() > backend.config.maximum_tool_argument_bytes {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "native secret request arguments exceed the configured bound",
+            ));
+        }
+        let parsed = super::super::secret::SecretRequestArguments::parse(&arguments)?;
+        let replay_item = ModelReplayItem::FunctionCall {
+            call_id: call_id.clone(),
+            name,
+            arguments,
+        };
+        backend
+            .ensure_replay_capacity_with_round_item(state, Some((output_index, &replay_item)))?;
+        if state
+            .round_replay
+            .insert(output_index, replay_item)
+            .is_some()
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "model output index was completed more than once",
+            ));
+        }
+        state.pending_secret_call = Some(PendingSecretCall {
+            output_index,
+            call_id,
+            arguments: parsed,
+        });
+        return Ok(());
+    }
     let started = state.call_activities.remove(&item_id).ok_or_else(|| {
         failure(
             BackendFailureKind::Protocol,

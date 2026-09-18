@@ -8,6 +8,9 @@ use super::{
 };
 use crate::{FunctionTool, ModelReplayTool};
 
+/// Reserved backend-owned interaction name and corresponding ToolId.
+pub const NATIVE_SECRET_INTERACTION_NAME: &str = "request_secret_input";
+
 #[derive(Clone, Debug, Default)]
 pub struct ToolRegistry {
     definitions: Vec<ToolDefinition>,
@@ -21,6 +24,13 @@ impl ToolRegistry {
         let mut ids = HashMap::new();
         let mut names = HashMap::new();
         for definition in &definitions {
+            if definition.id().as_str() == NATIVE_SECRET_INTERACTION_NAME
+                || definition.wire_name() == NATIVE_SECRET_INTERACTION_NAME
+            {
+                return Err(ToolRegistryError::new(
+                    "the native secret interaction identity and wire name are reserved",
+                ));
+            }
             if ids.insert(definition.id().clone(), ()).is_some() {
                 return Err(ToolRegistryError::new("duplicate ToolId in registry"));
             }

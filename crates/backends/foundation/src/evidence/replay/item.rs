@@ -39,6 +39,16 @@ pub enum ModelReplayItem {
 }
 
 impl ModelReplayItem {
+    /// Maximum bytes in one visible replay text field.
+    #[doc(hidden)]
+    pub const MAX_TEXT_BYTES: usize = MAX_REPLAY_TEXT_BYTES;
+
+    /// Exact canonical JSON bytes occupied by this replay item.
+    #[doc(hidden)]
+    pub fn encoded_len(&self) -> usize {
+        super::validation::encoded_item_len(self)
+    }
+
     fn is_valid(&self) -> bool {
         match self {
             Self::MultimodalUser { parts } => ModelInputPart::validate_user_parts(parts).is_ok(),

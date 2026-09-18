@@ -105,11 +105,15 @@ impl OpenAiChatCompletionsConnector {
     ) -> Result<ConnectorStream, ConnectorError> {
         let body =
             request::projected_body(&request, &self.model, self.image_policy.as_ref(), false)?;
+        let mut limits = self.limits.clone();
+        if request.has_protected_terminal_input() {
+            limits.max_redirects = 0;
+        }
         start_stream(
             self.client.clone(),
             self.request_url.clone(),
             self.credential.clone(),
-            self.limits.clone(),
+            limits,
             body,
             Box::new(ChatCompletionsSseDecoder::new(self.limits.clone())),
             cancellation,

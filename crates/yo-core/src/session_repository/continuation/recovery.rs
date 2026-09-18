@@ -274,6 +274,23 @@ pub(crate) fn build_continuation(
             "stored Session descriptor identity does not match its repository key",
         ));
     }
+    if recovered.records().iter().any(|record| {
+        matches!(
+            record.record(),
+            JournalRecord::CommandCommitted(committed)
+                if matches!(
+                    committed.command(),
+                    AgentCommand::RespondToActivity {
+                        response: crate::ActivityResponse::SecretInputSubmitted,
+                        ..
+                    }
+                )
+        )
+    }) {
+        return Err(StoredSessionContinuationError::new(
+            "stored Session ended at a protected input submission and cannot be resumed or forked",
+        ));
+    }
     let epoch = recovered.binding_epoch().ok_or_else(|| {
         StoredSessionContinuationError::new("Continuation Anchor has no open backend binding")
     })?;

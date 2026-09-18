@@ -422,8 +422,8 @@ fn no_tools_profile_requires_an_empty_registry_and_disables_request_exposure() {
     assert!(body.get("tool_choice").is_none());
 }
 
-// local-tools/v1은 binding의 durable maximum으로 유지하면서 Session이 empty registry로
-// 좁힐 수 있고, 그 조합은 실제 request-local exposure를 disabled로 투영합니다.
+// local-tools/v1의 빈 local registry도 새 Session에서는 backend-owned secret interaction
+// 하나를 exact replay contract와 request exposure의 마지막 항목으로 투영합니다.
 #[test]
 fn local_tools_profile_accepts_an_empty_session_registry() {
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -434,8 +434,12 @@ fn local_tools_profile_accepts_an_empty_session_registry() {
     )
     .unwrap();
     assert!(backend.registry.is_empty());
-    assert!(!backend.tool_exposure_enabled);
-    assert!(backend.contract.tools().is_empty());
+    assert!(backend.tool_exposure_enabled);
+    assert_eq!(backend.contract.tools().len(), 1);
+    assert_eq!(
+        backend.contract.tools()[0].name(),
+        yo_core::NATIVE_SECRET_INTERACTION_NAME
+    );
 
     backend
         .execute_command(AgentCommand::CreateSession {
@@ -450,8 +454,12 @@ fn local_tools_profile_accepts_an_empty_session_registry() {
         .unwrap();
     let requests = requests.lock().unwrap();
     let body = mock_tokenization_payload(&requests[0], "qwen3.8max");
-    assert!(body.get("tools").is_none());
-    assert!(body.get("tool_choice").is_none());
+    assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        body["tools"][0]["name"],
+        yo_core::NATIVE_SECRET_INTERACTION_NAME
+    );
+    assert_eq!(body["tool_choice"], "auto");
 }
 
 // legacy catalog entry는 새 profile을 추정하지 않고 기존 yo.model-binding/v1 identity와

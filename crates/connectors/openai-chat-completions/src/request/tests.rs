@@ -67,6 +67,8 @@ fn disabled_exposure_omits_current_chat_tools_but_preserves_replay() {
         128,
         None,
     )
+    .unwrap()
+    .with_protected_terminal_input()
     .unwrap();
 
     let body = wire_body(&request, "model").unwrap();
@@ -74,6 +76,8 @@ fn disabled_exposure_omits_current_chat_tools_but_preserves_replay() {
     assert!(body.get("tool_choice").is_none());
     assert_eq!(body["messages"][0]["tool_calls"][0]["id"], "call-1");
     assert_eq!(body["messages"][1]["role"], "tool");
+    assert!(request.has_protected_terminal_input());
+    assert!(!format!("{request:?}").contains("done"));
 }
 
 // unknown output cap은 임의 값으로 치환하지 않고 max_tokens를 완전히 생략합니다.

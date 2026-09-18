@@ -132,11 +132,12 @@ pub use skill_reference::{
     SkillReferenceSearchUpdate, search_skill_reference_candidates,
 };
 pub use tool::{
-    FrozenToolRegistry, TOOL_SCHEMA_DIALECT, ToolApprovalBinding, ToolApprovalRequirement,
-    ToolDefinition, ToolEffect, ToolExecution, ToolExecutionError, ToolExecutionHost,
-    ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionProgress, ToolExecutionRequest,
-    ToolExecutionResult, ToolId, ToolRegistry, ToolRegistryError, ToolSemanticAdmission,
-    ToolSemanticAdmissionError, ToolValidationError, ToolValidationFailure, ValidatedToolCall,
+    FrozenToolRegistry, NATIVE_SECRET_INTERACTION_NAME, TOOL_SCHEMA_DIALECT, ToolApprovalBinding,
+    ToolApprovalRequirement, ToolDefinition, ToolEffect, ToolExecution, ToolExecutionError,
+    ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionProgress,
+    ToolExecutionRequest, ToolExecutionResult, ToolId, ToolRegistry, ToolRegistryError,
+    ToolSemanticAdmission, ToolSemanticAdmissionError, ToolValidationError, ToolValidationFailure,
+    ValidatedToolCall,
 };
 pub use workspace_reference::{
     LocalWorkspaceInputAdmission, LocalWorkspaceReferenceProvider, WorkspaceReference,

@@ -222,6 +222,20 @@ impl NativeModelBackend {
         }
     }
 
+    pub(super) fn ensure_replay_item_capacity(
+        &self,
+        item: &ModelReplayItem,
+    ) -> Result<(), BackendFailure> {
+        if item.encoded_len() <= ModelReplayDelta::MAX_ENCODED_BYTES {
+            Ok(())
+        } else {
+            Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "model replay item capacity exceeded before volatile retention",
+            ))
+        }
+    }
+
     pub(super) fn ensure_accumulated_replay_capacity(
         &self,
         state: &TurnState,

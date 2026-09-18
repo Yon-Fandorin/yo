@@ -56,7 +56,11 @@ pub(super) fn provider_private_assistant(
         ));
     }
     let item = ModelReplayItem::ProviderPrivateAssistant { envelope };
-    backend.ensure_replay_capacity_with_round_item(state, Some((output_index, &item)))?;
+    if state.terminal_secret_request {
+        backend.ensure_replay_item_capacity(&item)?;
+    } else {
+        backend.ensure_replay_capacity_with_round_item(state, Some((output_index, &item)))?;
+    }
     state.round_replay.insert(output_index, item);
     Ok(())
 }
@@ -74,7 +78,9 @@ pub(super) fn terminal(
             "model terminal identity does not match the created response",
         ));
     }
-    if matches!(status, ModelConnectorTerminal::Completed) && !state.call_activities.is_empty() {
+    let incomplete_function_call = matches!(status, ModelConnectorTerminal::Completed)
+        && (!state.call_activities.is_empty() || state.secret_call_start.is_some());
+    if incomplete_function_call && !state.terminal_secret_request {
         return Err(failure(
             BackendFailureKind::Protocol,
             "model terminal arrived with an incomplete function call",
@@ -88,8 +94,10 @@ pub(super) fn terminal(
         .response
         .lock()
         .map_err(|_| failure(BackendFailureKind::Cleanup, "native stop state is poisoned"))? = None;
-    backend.ensure_replay_capacity_with_round_item(state, None)?;
-    usage::record(backend, state, &response_id, &usage_values)?;
+    if !state.terminal_secret_request {
+        backend.ensure_replay_capacity_with_round_item(state, None)?;
+        usage::record(backend, state, &response_id, &usage_values)?;
+    }
 
     let terminal_failure = match &status {
         ModelConnectorTerminal::Completed => None,
@@ -131,9 +139,46 @@ pub(super) fn terminal(
                 Some(ActivityOutcome::Completed),
             );
         }
-        // 실패한 라운드는 표시용 증거이며 재생이나 실행 가능한 호출이 아닙니다.
-        backend.fail_turn(state, message);
+        // Protected terminal requests never expose provider-controlled failure text.
+        if state.terminal_secret_request {
+            state.prepared_secret_request = None;
+            backend.fail_turn(
+                state,
+                "terminal secret request failed after submission; delivery outcome is unknown"
+                    .to_owned(),
+            );
+        } else {
+            // 실패한 라운드는 표시용 증거이며 재생이나 실행 가능한 호출이 아닙니다.
+            backend.fail_turn(state, message);
+        }
         return Ok(());
+    }
+    if state.terminal_secret_request {
+        let Some(prepared) = state.prepared_secret_request.as_ref() else {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "terminal secret response lost its comparison state",
+            ));
+        };
+        if contains_exact_secret(&response_id, &prepared.comparison) {
+            state.prepared_secret_request = None;
+            state.round_replay.clear();
+            backend.fail_turn(
+                state,
+                "terminal answer was withheld because it repeated the submitted secret".to_owned(),
+            );
+            return Ok(());
+        }
+        usage::record(backend, state, &response_id, &usage_values)?;
+        if incomplete_function_call {
+            state.prepared_secret_request = None;
+            backend.fail_turn(
+                state,
+                "terminal secret response did not contain exactly one final assistant message"
+                    .to_owned(),
+            );
+            return Ok(());
+        }
     }
     for activity in state
         .assistant_activities
@@ -156,6 +201,9 @@ pub(super) fn terminal(
         )
         .map_err(|detail| failure(BackendFailureKind::Protocol, detail))?;
     }
+    if state.terminal_secret_request {
+        return finish_secret_terminal(backend, state, status);
+    }
     let completed_round_has_assistant = state.round_replay.values().any(|item| {
         matches!(
             item,
@@ -165,6 +213,38 @@ pub(super) fn terminal(
             }
         )
     });
+    if state.pending_secret_call.is_some() {
+        let pending_secret = state
+            .pending_secret_call
+            .as_ref()
+            .expect("guarded pending secret call");
+        let function_calls = state
+            .round_replay
+            .values()
+            .filter(|item| matches!(item, ModelReplayItem::FunctionCall { .. }))
+            .count();
+        if !state.pending_calls.is_empty()
+            || function_calls != 1
+            || !matches!(
+                state.round_replay.get(&pending_secret.output_index),
+                Some(ModelReplayItem::FunctionCall { call_id, name, .. })
+                    if call_id == &pending_secret.call_id
+                        && name == yo_core::NATIVE_SECRET_INTERACTION_NAME
+            )
+        {
+            backend.fail_turn(
+                state,
+                "native secret interaction was not the sole admissible function call".to_owned(),
+            );
+            return Ok(());
+        }
+        state
+            .delta
+            .extend(mem::take(&mut state.round_replay).into_values());
+        backend.observe_model_request(state.turn, ModelRequestOutcome::Succeeded);
+        backend.open_secret_request(state)?;
+        return Ok(());
+    }
     state
         .delta
         .extend(mem::take(&mut state.round_replay).into_values());
@@ -193,6 +273,113 @@ pub(super) fn terminal(
         },
     }
     Ok(())
+}
+
+fn finish_secret_terminal(
+    backend: &mut NativeModelBackend,
+    state: &mut TurnState,
+    status: ModelConnectorTerminal,
+) -> Result<(), BackendFailure> {
+    if !matches!(status, ModelConnectorTerminal::Completed)
+        || state.pending_secret_call.is_some()
+        || !state.pending_calls.is_empty()
+        || state
+            .round_replay
+            .values()
+            .filter(|item| matches!(item, ModelReplayItem::Message { .. }))
+            .count()
+            != 1
+        || state.round_replay.values().any(|item| {
+            matches!(
+                item,
+                ModelReplayItem::FunctionCall { .. } | ModelReplayItem::FunctionCallOutput { .. }
+            )
+        })
+    {
+        state.prepared_secret_request = None;
+        backend.fail_turn(
+            state,
+            "terminal secret response did not contain exactly one final assistant message"
+                .to_owned(),
+        );
+        return Ok(());
+    }
+    let Some((content, refusal)) = state.round_replay.values().find_map(|item| match item {
+        ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content,
+            refusal,
+        } => Some((content, refusal)),
+        _ => None,
+    }) else {
+        state.prepared_secret_request = None;
+        backend.fail_turn(
+            state,
+            "terminal secret response did not contain exactly one final assistant message"
+                .to_owned(),
+        );
+        return Ok(());
+    };
+    if !content.is_empty() && refusal.as_ref().is_some_and(|value| !value.is_empty()) {
+        state.prepared_secret_request = None;
+        backend.fail_turn(
+            state,
+            "terminal secret response mixed incompatible visible message forms".to_owned(),
+        );
+        return Ok(());
+    }
+    let visible = if content.is_empty() {
+        refusal.clone().unwrap_or_default()
+    } else {
+        content.clone()
+    };
+    if visible.len() > ModelReplayItem::MAX_TEXT_BYTES {
+        state.prepared_secret_request = None;
+        state.round_replay.clear();
+        backend.fail_turn(
+            state,
+            "terminal secret response exceeded its visible byte bound".to_owned(),
+        );
+        return Ok(());
+    }
+    let Some(prepared) = state.prepared_secret_request.take() else {
+        return Err(failure(
+            BackendFailureKind::Protocol,
+            "terminal secret response lost its comparison state",
+        ));
+    };
+    let echoed = contains_exact_secret(&visible, &prepared.comparison);
+    drop(prepared);
+    state.round_replay.clear();
+    if echoed {
+        backend.fail_turn(
+            state,
+            "terminal answer was withheld because it repeated the submitted secret".to_owned(),
+        );
+        return Ok(());
+    }
+    let activity = backend.next_activity(state.turn)?;
+    backend.queue_activity_text(
+        activity,
+        yo_core::ActivityKind::AgentMessage,
+        visible,
+        Some(ActivityOutcome::Completed),
+    );
+    backend.observe_model_request(state.turn, ModelRequestOutcome::Succeeded);
+    backend.events.push_back(BackendEvent::TurnFinished {
+        turn: state.turn,
+        outcome: yo_core::TurnOutcome::Completed,
+    });
+    backend.turn = None;
+    Ok(())
+}
+
+fn contains_exact_secret(value: &str, secret: &str) -> bool {
+    !secret.is_empty()
+        && value
+            .as_bytes()
+            .windows(secret.len())
+            .any(|window| window == secret.as_bytes())
 }
 
 fn finalize_messages(state: &mut TurnState) -> Result<(), BackendFailure> {

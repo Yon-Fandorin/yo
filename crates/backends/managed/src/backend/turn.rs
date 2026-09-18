@@ -66,6 +66,11 @@ impl NativeModelBackend {
             ready_tool: None,
             dispatch_tool: None,
             awaiting_approval: None,
+            secret_call_start: None,
+            pending_secret_call: None,
+            awaiting_secret_input: None,
+            prepared_secret_request: None,
+            terminal_secret_request: false,
             start_next_round: false,
             compaction: None,
             compaction_attempted: false,
@@ -150,6 +155,7 @@ impl NativeModelBackend {
                 diagnostics.push("tool execution cleanup failed".to_owned());
             }
         }
+        state.prepared_secret_request = None;
         diagnostics
     }
 

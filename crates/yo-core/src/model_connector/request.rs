@@ -180,7 +180,7 @@ impl fmt::Debug for ModelCacheAffinityHint {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ResponsesRequest {
     input: Vec<ResponsesInputItem>,
     tool_exposure: RequestToolExposure,
@@ -188,6 +188,7 @@ pub struct ResponsesRequest {
     reasoning_effort: Option<ReasoningEffort>,
     replay_budget: Option<crate::ModelReplayBudget>,
     cache_affinity_hint: Option<ModelCacheAffinityHint>,
+    protected_terminal_input: bool,
 }
 
 impl ResponsesRequest {
@@ -260,6 +261,7 @@ impl ResponsesRequest {
             reasoning_effort,
             replay_budget: None,
             cache_affinity_hint: None,
+            protected_terminal_input: false,
         })
     }
 
@@ -271,6 +273,26 @@ impl ResponsesRequest {
     pub fn with_cache_affinity_hint(mut self, hint: ModelCacheAffinityHint) -> Self {
         self.cache_affinity_hint = Some(hint);
         self
+    }
+
+    /// Marks the one-shot request that contains process-local protected input.
+    /// Connectors must disable redirect follow-through and must not expose tools.
+    pub fn with_protected_terminal_input(mut self) -> Result<Self, ConnectorError> {
+        if self.tools().is_some()
+            || self
+                .input
+                .iter()
+                .filter(|item| matches!(item, ResponsesInputItem::FunctionCallOutput { .. }))
+                .count()
+                != 1
+        {
+            return Err(ConnectorError::new(
+                ConnectorFailureKind::Configuration,
+                "protected terminal input requires exactly one function output and no tools",
+            ));
+        }
+        self.protected_terminal_input = true;
+        Ok(self)
     }
 
     pub fn input(&self) -> &[ResponsesInputItem] {
@@ -322,6 +344,29 @@ impl ResponsesRequest {
         self.cache_affinity_hint
             .as_ref()
             .map(ModelCacheAffinityHint::as_str)
+    }
+
+    pub const fn has_protected_terminal_input(&self) -> bool {
+        self.protected_terminal_input
+    }
+}
+
+impl fmt::Debug for ResponsesRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = formatter.debug_struct("ResponsesRequest");
+        if self.protected_terminal_input {
+            debug.field("input", &"[protected]");
+        } else {
+            debug.field("input", &self.input);
+        }
+        debug
+            .field("tool_exposure", &self.tool_exposure)
+            .field("max_output_tokens", &self.max_output_tokens)
+            .field("reasoning_effort", &self.reasoning_effort)
+            .field("replay_budget", &self.replay_budget)
+            .field("cache_affinity_hint", &self.cache_affinity_hint)
+            .field("protected_terminal_input", &self.protected_terminal_input)
+            .finish()
     }
 }
 

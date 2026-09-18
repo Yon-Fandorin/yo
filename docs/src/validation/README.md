@@ -1876,7 +1876,8 @@ an answer keeps the free-text route. Changed choices replace the panel token; la
 unrelated requests cannot use its acceptance receipt. Existing panel colors, focus,
 wrapping and descriptions apply. `/preview interview` uses the same profile for both
 questions. Tests cover exact size/count bounds, ordinal/label handoff, presentation
-before acceptance, narrow frames and readable export. Secret input remains unsupported;
+before acceptance, narrow frames and readable export. Secret questions from delegated
+Codex `request_user_input` remain unsupported;
 Codex's isOther flag adds “None of the above” only when options are nonempty, matching
 the pinned request_user_input overlay's options_len_for_question/option_label_for_index.
 Selecting it returns that label through the same request ID. Absent/false flags do not
@@ -1898,8 +1899,39 @@ original label and, when nonblank, a separate `user_note: <trimmed notes>` answe
 the pinned request_user_input renderer. Empty notes emit only the label. Tests cover
 capability defaults, invalid choice zero/first excess/u32 maximum, exact wire IDs,
 sequential replies, stale presentation, 24-column frames, literal notes and journal
-codec round trips. Secret input, storage and recovery are future features.
+codec round trips. Secret Codex interview answers, storage and recovery remain future
+features.
 Submitted nonsecret answers can be reopened as a separate editable copy and sent explicitly as a new conversation, as described under Nonsecret interview copies.
+
+### Native managed secret requests
+
+New local-client Sessions with local tools expose one reserved function named
+`request_secret_input` after configured tools. Its exact closed object has public
+`title`, `question`, and `purpose` strings. The call must be the only function call in
+that response. No-tools profiles, summaries, historical replay, and old Sessions whose
+replay contract predates this function keep their existing tool surface.
+
+The resulting typed secret question names the exact Provider and Model and warns that
+the provider may retain the value, submission permanently ends the Session, and the
+complete final answer is checked for an exact echo. The TUI uses its hidden secret
+editor. Yo keeps the value only in process memory: the runtime first commits a
+payload-free `SecretInputSubmitted` receipt transactionally, then arms one tools-disabled
+terminal request. Memory-only storage, a durability gap, cancellation, or shutdown
+before that commit starts no transport. After acceptance, the Session rejects later
+Turns, model replacement, resume, and fork even when transport never starts or delivery
+remains unknown.
+
+OpenAI Responses sends one exact `function_call_output`; OpenAI Chat Completions and
+Kimi Chat Completions send one exact tool message. The protected request omits tools
+and tool choice, disables redirects, and uses the transport's no-retry policy. Grok's
+delegated backend does not expose this contract. The final response is fully buffered,
+must contain exactly one visible assistant message and no function calls, and is
+published only after its contiguous UTF-8 bytes do not contain the submitted value.
+An echo withholds the entire answer and emits a static failure. No secret, response
+delta, replay item, or continuation anchor is persisted. This is one-shot secret
+delivery, not secret-value storage or recovery. Tests cover schema and byte bounds,
+sole-call enforcement, durable-before-transport ordering, connector projection,
+whole-answer echo rejection, and the recovery barrier.
 
 ### Host status line
 
@@ -2045,7 +2077,7 @@ preserved. Tests cover 80/24/80 frames, custom colors, literal text, export, seq
 question IDs, partial interview interruption and response-write failure. The offline
 interview preview emits the same activity kind and labels its local receipt as offline.
 This follows the pinned Codex history_cell/request_user_input.rs field separation;
-secret input, storage and recovery remain future features.
+secret Codex interview input, storage and recovery remain future features.
 
 ### Incomplete interview summaries
 
@@ -2100,7 +2132,7 @@ Use `/interview list` to find saved copy UUIDs, `/interview recover <UUID>` to r
 
 `/interview preview` renders original questions and editable answers in order with only user context, then allows plain-text editing. Preview edits are retained in memory for this send; restart restores the saved answers/context. `/interview send` explicitly creates a new Session and its first Turn with the current backend/model and ordinary input admission. An active or pending Turn is busy and retains the copy. Backpressure retains the same immutable preview and SubmissionId. Ambiguous failure never retries automatically. The submitted marker requires the actual durable accepted initial StartTurn request with matching SubmissionId, new TurnRef and positive JournalSequence; acceptance does not mean execution completed. The preview limit is64KiB UTF-8 and the entire encoded copy limit is256KiB; first excess is rejected without truncation.
 
-Validation covers genuine-vs-lookalike provenance, all-answer/final completion correlation, stale answers and navigation, a multi-segment atomic initial capture, durable recovery, unsafe storage, generation conflicts/concurrent writers, separate reopening and UTF-8 limits. Live provider RPC replay remains an environment-dependent smoke check; secret input/storage/recovery remain deferred. Corrected-build physical Mac input passed on the accepted runtime tree; see the [current direct input verification](terminal-matrix.md#current-mac-direct-input-verification).
+Validation covers genuine-vs-lookalike provenance, all-answer/final completion correlation, stale answers and navigation, a multi-segment atomic initial capture, durable recovery, unsafe storage, generation conflicts/concurrent writers, separate reopening and UTF-8 limits. Live provider RPC replay remains an environment-dependent smoke check; secret interview copies and secret-value storage/recovery remain deferred. Corrected-build physical Mac input passed on the accepted runtime tree; see the [current direct input verification](terminal-matrix.md#current-mac-direct-input-verification).
 
 Literal answers beginning `/` use a doubled leading slash (`//interview ...`); the saved answer keeps exactly one slash. New edits retry autosave after a transient error. Only physically stored source captures claim recoverability; volatile captures expose unavailable status. An unconfirmed terminal first Turn restores the editable preview while retaining its immutable intent and never retries automatically. Known durable acceptance remains valid before a later known cutoff gap. Recognized private owned attempt files are reclaimed under the exclusive lease; unknown or unsafe files remain untouched. A successful wire answer with an invalid or oversized final seal explicitly reports complete recovery unavailable.
 

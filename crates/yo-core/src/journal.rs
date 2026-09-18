@@ -154,6 +154,21 @@ impl SessionJournal {
         self.append_committed(committed, events);
     }
 
+    /// Commits a command only when the complete semantic batch reaches durable
+    /// storage. Memory-only journals and durability gaps leave no live suffix.
+    pub(crate) fn append_committed_command_transactionally(
+        &mut self,
+        command: AgentCommand,
+        events: &[AgentEvent],
+    ) -> bool {
+        let committed = CommittedCommand::uncorrelated(command)
+            .expect("a submission command must use append_committed_submission");
+        let mut records = Vec::with_capacity(events.len() + 1);
+        records.push(SemanticRecord::CommandCommitted(committed));
+        records.extend(events.iter().cloned().map(SemanticRecord::EventCommitted));
+        self.append_records_transactionally(records)
+    }
+
     pub(crate) fn append_committed_submission(
         &mut self,
         command: AgentCommand,

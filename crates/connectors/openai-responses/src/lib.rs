@@ -169,11 +169,15 @@ impl OpenAiResponsesConnector {
         cancellation: ModelConnectorCancellation,
     ) -> Result<ConnectorStream, ConnectorError> {
         let body = self.wire_body(&request)?;
+        let mut limits = self.limits.clone();
+        if request.has_protected_terminal_input() {
+            limits.max_redirects = 0;
+        }
         start_stream(
             self.client.clone(),
             self.request_url.clone(),
             self.credential.clone(),
-            self.limits.clone(),
+            limits,
             body,
             Box::new(ResponsesSseDecoder::new(self.limits.clone())),
             cancellation,

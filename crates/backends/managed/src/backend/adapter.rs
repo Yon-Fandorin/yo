@@ -47,6 +47,15 @@ impl BackendAdapter for NativeModelBackend {
         commands::execute_command(self, command)
     }
 
+    fn commit_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        self.commit_secret_request()
+    }
+
+    fn abort_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        self.abort_secret_request();
+        Ok(())
+    }
+
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
         poll::poll_event(self)
     }

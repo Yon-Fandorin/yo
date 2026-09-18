@@ -48,6 +48,12 @@ impl<B: AgentBackend> AgentRuntime<B> {
         mut command: AgentCommand,
         submission_id: Option<SubmissionId>,
     ) -> Result<Vec<AgentEvent>, RuntimeError> {
+        if self.secret_input_terminal && !matches!(command, AgentCommand::InterruptTurn { .. }) {
+            return Err(RuntimeError::backend(crate::BackendFailure::new(
+                BackendFailureKind::Session,
+                "this Session ended at a protected input submission and cannot accept more commands",
+            )));
+        }
         if matches!(command, AgentCommand::StartTurn { .. })
             && !self.context_policy_initialized
             && matches!(
@@ -254,10 +260,16 @@ impl<B: AgentBackend> AgentRuntime<B> {
             AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. }
                 if !input.images().is_empty()
         );
-        let events = self
-            .engine
-            .commit_command(command, supports_steer)
-            .map_err(RuntimeError::StateDiverged)?;
+        let events = match self.engine.commit_command(command, supports_steer) {
+            Ok(events) => events,
+            Err(rejection) => {
+                if matches!(evidence, BackendCommandEvidence::ProtectedInputPrepared) {
+                    let _ = self.backend.abort_prepared_command();
+                    self.secret_input_terminal = true;
+                }
+                return Err(RuntimeError::StateDiverged(rejection));
+            },
+        };
         match (submission_id, evidence) {
             (Some(submission_id), BackendCommandEvidence::RequestAccepted(evidence)) => {
                 let inserted = self.submission_ids.insert(submission_id);
@@ -302,6 +314,26 @@ impl<B: AgentBackend> AgentRuntime<B> {
             (None, BackendCommandEvidence::None) => {
                 self.journal.append_committed_command(committed, &events);
             },
+            (None, BackendCommandEvidence::ProtectedInputPrepared) => {
+                self.secret_input_terminal = true;
+                if !self
+                    .journal
+                    .append_committed_command_transactionally(committed, &events)
+                {
+                    let _ = self.backend.abort_prepared_command();
+                    return Err(RuntimeError::backend(crate::BackendFailure::new(
+                        BackendFailureKind::Session,
+                        "protected input receipt could not be committed durably",
+                    )));
+                }
+                if self.backend.commit_prepared_command().is_err() {
+                    let _ = self.backend.abort_prepared_command();
+                    return Err(RuntimeError::backend(crate::BackendFailure::new(
+                        BackendFailureKind::Session,
+                        "protected input was committed but its terminal request could not be armed",
+                    )));
+                }
+            },
             _ => unreachable!("command evidence was validated before semantic commit"),
         }
         if starts_idle_context_compaction {
@@ -343,6 +375,15 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 ) && submission_id.is_some()
                     && self.binding_epoch.is_some()
                     && evidence.is_valid()
+            },
+            BackendCommandEvidence::ProtectedInputPrepared => {
+                matches!(
+                    command,
+                    AgentCommand::RespondToActivity {
+                        response: ActivityResponse::SecretInputSubmitted,
+                        ..
+                    }
+                ) && submission_id.is_none()
             },
         };
         if valid {

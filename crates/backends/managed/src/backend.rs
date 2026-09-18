@@ -8,6 +8,7 @@ mod identity;
 mod replay;
 mod request;
 mod response;
+mod secret;
 mod tools;
 mod turn;
 
@@ -152,6 +153,29 @@ struct CallActivity {
     name: String,
 }
 
+struct SecretCallStart {
+    output_index: usize,
+    item_id: String,
+    call_id: String,
+}
+
+struct PendingSecretCall {
+    output_index: usize,
+    call_id: String,
+    arguments: secret::SecretRequestArguments,
+}
+
+struct AwaitingSecretInput {
+    request: ActivityRequestRef,
+    call_id: String,
+}
+
+struct PreparedSecretRequest {
+    request: Option<yo_core::ModelConnectorRequest>,
+    comparison: String,
+    armed: bool,
+}
+
 enum CompactionState {
     Summarizing {
         input_tokens_before: InputCount,
@@ -202,6 +226,11 @@ struct TurnState {
     ready_tool: Option<ValidatedToolCall>,
     dispatch_tool: Option<(ValidatedToolCall, ActivityRef)>,
     awaiting_approval: Option<(ActivityRequestRef, PendingCall)>,
+    secret_call_start: Option<SecretCallStart>,
+    pending_secret_call: Option<PendingSecretCall>,
+    awaiting_secret_input: Option<AwaitingSecretInput>,
+    prepared_secret_request: Option<PreparedSecretRequest>,
+    terminal_secret_request: bool,
     start_next_round: bool,
     compaction: Option<CompactionState>,
     compaction_attempted: bool,
@@ -221,6 +250,8 @@ pub struct NativeModelBackend {
     token_counter: Box<dyn ModelTokenCounter>,
     request_observer: Option<Box<dyn ModelRequestObserver>>,
     contract: ModelReplayContract,
+    legacy_contract: ModelReplayContract,
+    secret_interaction_enabled: bool,
     replay_profile: ReplayProfile,
     session: Option<SessionId>,
     replay: ModelReplay,
@@ -299,7 +330,7 @@ impl NativeModelBackend {
                 .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
             config.reasoning_effort = admitted.profile().reasoning_effort();
             let tools = match admitted.profile().tool_policy() {
-                AdmittedToolPolicy::LocalTools => !registry.is_empty(),
+                AdmittedToolPolicy::LocalTools => true,
                 AdmittedToolPolicy::NoTools => {
                     if !registry.is_empty() {
                         return Err(failure(
@@ -342,8 +373,14 @@ impl NativeModelBackend {
                 "native local tools require an installed semantic-admission gate",
             ));
         }
-        let contract =
+        let legacy_contract =
             ModelReplayContract::new(config.system_prompt.clone(), registry.replay_tools());
+        let secret_interaction_enabled = tool_exposure_enabled;
+        let mut replay_tools = registry.replay_tools();
+        if secret_interaction_enabled {
+            replay_tools.push(secret::replay_tool());
+        }
+        let contract = ModelReplayContract::new(config.system_prompt.clone(), replay_tools);
         if !contract.is_valid() {
             return Err(failure(
                 BackendFailureKind::Initialization,
@@ -373,6 +410,8 @@ impl NativeModelBackend {
             token_counter: services.token_counter,
             request_observer: services.request_observer,
             contract,
+            legacy_contract,
+            secret_interaction_enabled,
             replay_profile,
             session: None,
             replay: ModelReplay::default(),
@@ -417,7 +456,9 @@ impl NativeModelBackend {
                 "native backend is not available for fork preparation",
             ));
         }
-        if parent.target().model_replay().contract() != Some(&self.contract) {
+        if parent.target().model_replay().contract() != Some(&self.contract)
+            && parent.target().model_replay().contract() != Some(&self.legacy_contract)
+        {
             return Err(failure(
                 BackendFailureKind::Session,
                 "fork replay contract does not match current configuration",

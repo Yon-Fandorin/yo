@@ -56,14 +56,18 @@ impl NativeModelBackend {
         });
         items.extend(self.replay.items().iter().map(replay_input));
         items.extend(state.delta.iter().map(replay_input));
-        let tool_exposure =
-            if self.tool_exposure_enabled {
-                RequestToolExposure::enabled(self.registry.function_tools().map_err(|error| {
-                    failure(BackendFailureKind::Initialization, error.to_string())
-                })?)
-            } else {
-                RequestToolExposure::disabled()
-            };
+        let tool_exposure = if self.tool_exposure_enabled {
+            let mut tools = self
+                .registry
+                .function_tools()
+                .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
+            if self.secret_interaction_enabled {
+                tools.push(super::secret::function_tool()?);
+            }
+            RequestToolExposure::enabled(tools)
+        } else {
+            RequestToolExposure::disabled()
+        };
         let replay_budget = ModelReplayDelta::replay_budget(
             self.replay.contract().is_none().then_some(&self.contract),
             state.delta.iter(),

@@ -19,7 +19,9 @@ pub use execution::{
     ToolExecution, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
     ToolExecutionProgress, ToolExecutionRequest, ToolExecutionResult,
 };
-pub use registry::{FrozenToolRegistry, ToolRegistry, ValidatedToolCall};
+pub use registry::{
+    FrozenToolRegistry, NATIVE_SECRET_INTERACTION_NAME, ToolRegistry, ValidatedToolCall,
+};
 // Keep the characterized unit-test paths attached to the facade's private
 // constants, as they were before the implementation split.
 #[cfg(test)]

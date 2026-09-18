@@ -1,5 +1,38 @@
 use super::*;
 
+// payload 없는 비밀 제출 영수증도 재개·fork가 이전 Anchor로 돌아가지 못하게 영구 차단한다.
+#[test]
+fn protected_input_receipt_permanently_blocks_resume_and_fork_recovery() {
+    let (mut repository, continuation) = durable_resumable_session();
+    let session_id = continuation.descriptor().session_id();
+    let request = crate::ActivityRequestRef::new(
+        ActivityRef::new(
+            TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap())),
+            ActivityId::new(NonZeroU64::new(1).unwrap()),
+        ),
+        crate::RequestId::new(NonZeroU64::new(1).unwrap()),
+    );
+    let mut journal = SessionJournal::with_repository_and_continuation(
+        Box::new(repository.clone()),
+        &continuation,
+    );
+    journal.initialize_durability();
+    assert!(journal.append_committed_command_transactionally(
+        AgentCommand::RespondToActivity {
+            request,
+            response: crate::ActivityResponse::SecretInputSubmitted,
+        },
+        &[],
+    ));
+
+    let error = recover_stored_session_continuation(&mut repository, session_id)
+        .expect_err("a protected-input receipt must make the Session terminal");
+    assert!(
+        error.to_string().contains("cannot be resumed or forked"),
+        "{error:?}"
+    );
+}
+
 // BackendManagedState의 image-bearing command를 durable하게 복구한 뒤에는 다음 text Turn도
 // 보존된 ContainsImages evidence를 다시 확인하므로, capability가 Unknown이면 provider에
 // 보내지지 않고 correlated rejection으로 끝나야 합니다.

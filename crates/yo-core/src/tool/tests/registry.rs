@@ -7,8 +7,8 @@ use serde_json::json;
 
 use super::{
     super::{
-        TOOL_SCHEMA_DIALECT, ToolApprovalRequirement, ToolEffect, ToolRegistry,
-        ToolValidationFailure,
+        NATIVE_SECRET_INTERACTION_NAME, TOOL_SCHEMA_DIALECT, ToolApprovalRequirement, ToolEffect,
+        ToolRegistry, ToolValidationFailure,
     },
     support::{definition, definition_with_metadata, definition_with_schema},
 };
@@ -28,6 +28,25 @@ fn registry_rejects_duplicate_id_and_wire_name() {
         definition("read-two", "read_path"),
     ]);
     assert!(duplicate_name.is_err());
+}
+
+// 백엔드 소유 비밀 상호작용의 ID와 wire 이름을 설정 도구가 가로채지 못하는지 확인한다.
+#[test]
+fn registry_reserves_the_native_secret_identity_and_wire_name() {
+    assert!(
+        ToolRegistry::new([definition(
+            NATIVE_SECRET_INTERACTION_NAME,
+            "configured_secret",
+        )])
+        .is_err()
+    );
+    assert!(
+        ToolRegistry::new([definition(
+            "configured-secret",
+            NATIVE_SECRET_INTERACTION_NAME,
+        )])
+        .is_err()
+    );
 }
 
 // 알 수 없는 도구와 잘못된 JSON·스키마·크기 초과 인자는 실행 전에 유형화된 오류로 차단한다.

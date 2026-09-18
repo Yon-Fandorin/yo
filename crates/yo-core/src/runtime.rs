@@ -68,6 +68,8 @@ pub struct AgentRuntime<B> {
     /// Once protected input reaches a backend call, later backend diagnostics may
     /// echo it and therefore remain redacted for this runtime's lifetime.
     secret_diagnostics_redacted: bool,
+    /// A protected terminal input was accepted. Only its active Turn may finish.
+    secret_input_terminal: bool,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -105,6 +107,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             interview_delivery: VecDeque::new(),
             interview_backend: None,
             secret_diagnostics_redacted: false,
+            secret_input_terminal: false,
         }
     }
 

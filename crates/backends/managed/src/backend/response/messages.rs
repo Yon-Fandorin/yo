@@ -40,7 +40,9 @@ pub(super) fn message_done(
             "model output index completed more than one semantic item",
         ));
     }
-    assistant_activity(backend, state, output_index)?;
+    if !state.terminal_secret_request {
+        assistant_activity(backend, state, output_index)?;
+    }
     Ok(())
 }
 
@@ -52,6 +54,9 @@ pub(super) fn reasoning_delta(
     channel: ReasoningChannel,
     delta: String,
 ) -> Result<(), BackendFailure> {
+    if state.terminal_secret_request {
+        return Ok(());
+    }
     if channel == ReasoningChannel::Summary {
         let key = (output_index, part_index);
         let activity = if let Some(activity) = state.reasoning_activities.get(&key) {
@@ -105,13 +110,16 @@ fn apply_visible_delta(
             "model output index changed semantic item kind",
         ));
     }
-    let activity = assistant_activity(backend, state, output_index)?;
     let target = if refusal {
         &mut state.round_refusals
     } else {
         &mut state.round_messages
     };
     target.entry(key).or_default().push_str(&delta);
+    if state.terminal_secret_request {
+        return Ok(());
+    }
+    let activity = assistant_activity(backend, state, output_index)?;
     backend.events.push_back(BackendEvent::ActivityUpdated {
         activity,
         update: ActivityUpdate::TextDelta(delta),

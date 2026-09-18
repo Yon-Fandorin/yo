@@ -70,6 +70,17 @@ pub trait BackendAdapter {
         command: Self::Command,
     ) -> Result<BackendCommandEvidence, BackendFailure>;
 
+    /// Authorizes a previously prepared protected-input command after its
+    /// payload-free semantic receipt was committed durably.
+    fn commit_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        Ok(())
+    }
+
+    /// Discards any process-local state retained for a prepared command.
+    fn abort_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        Ok(())
+    }
+
     /// Observes one already available semantic event without waiting for future backend work.
     fn poll_event(&mut self) -> Result<BackendPoll<Self::Event>, BackendFailure>;
 
@@ -122,6 +133,14 @@ where
         command: Self::Command,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
         (**self).execute_command(command)
+    }
+
+    fn commit_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        (**self).commit_prepared_command()
+    }
+
+    fn abort_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        (**self).abort_prepared_command()
     }
 
     fn poll_event(&mut self) -> Result<BackendPoll<Self::Event>, BackendFailure> {

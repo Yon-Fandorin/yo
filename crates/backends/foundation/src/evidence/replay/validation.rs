@@ -170,7 +170,7 @@ pub(super) fn encoded_prefix_len<'a>(
     empty - 4 + contract_len + items.iter().sum::<usize>() + items.len().saturating_sub(1)
 }
 
-fn encoded_item_len(item: &ModelReplayItem) -> usize {
+pub(super) fn encoded_item_len(item: &ModelReplayItem) -> usize {
     if let ModelReplayItem::MultimodalUser { parts } = item {
         #[derive(Serialize)]
         struct MultimodalUser<'a> {

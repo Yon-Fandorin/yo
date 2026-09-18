@@ -15,6 +15,15 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
         &mut self,
         mut candidate: Box<dyn AgentBackend + Send>,
     ) -> Result<Option<crate::BackendFailure>, BackendReplacementError> {
+        if self.secret_input_terminal {
+            return Err(reject_replacement_candidate(
+                &mut candidate,
+                RuntimeError::backend(crate::BackendFailure::new(
+                    BackendFailureKind::Session,
+                    "this Session ended at a protected input submission and cannot replace its binding",
+                )),
+            ));
+        }
         if self.engine.active_turn().is_some() {
             return Err(reject_replacement_candidate(
                 &mut candidate,

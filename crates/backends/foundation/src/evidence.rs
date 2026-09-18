@@ -188,6 +188,12 @@ pub enum BackendCommandEvidence {
     None,
     BindingOpened(BackendBindingEvidence),
     RequestAccepted(BackendRequestEvidence),
+    /// A protected terminal interaction was validated and prepared in memory.
+    ///
+    /// The runtime must durably commit its payload-free command before calling
+    /// `BackendAdapter::commit_prepared_command`. No transport is authorized by
+    /// this evidence alone.
+    ProtectedInputPrepared,
 }
 
 /// Provider evidence that a completed Turn is stable enough to resume.

@@ -39,6 +39,8 @@ fn private_replay_replaces_its_visible_assistant_projection_once() {
         131_072,
         Some(ReasoningEffort::Max),
     )
+    .unwrap()
+    .with_protected_terminal_input()
     .unwrap();
     let body = wire_body(&request, "kimi-k3", profile).unwrap();
     let messages = body["messages"].as_array().unwrap();
@@ -47,6 +49,8 @@ fn private_replay_replaces_its_visible_assistant_projection_once() {
     assert_eq!(messages[0]["content"], "visible");
     assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
     assert_eq!(messages[1]["role"], "tool");
+    assert!(request.has_protected_terminal_input());
+    assert!(!format!("{request:?}").contains("contents"));
 }
 
 fn private_tool_round(call_id: &str) -> Vec<ModelConnectorInputItem> {

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use yo_backend::BackendAdapter;
 use yo_core::{
     AgentCommand, BackendFailureKind, ModelConnectorEvent, ModelContextProfile, ModelReplayItem,
-    ToolApprovalRequirement, UserInput,
+    ModelReplayRole, ToolApprovalRequirement, UserInput,
 };
 
 use super::super::{
@@ -86,6 +86,89 @@ fn native_backend_bounds_complete_semantic_and_private_replay_before_retention()
                 output_index: 1,
                 envelope: private_envelope(&"r".repeat(accepted), Some(&visible)),
                 visible_projection: vec![visible_message(visible)],
+            },
+        )
+        .unwrap();
+    assert!(state.round_replay.contains_key(&1));
+}
+
+// 비밀 최종 Kimi private item은 canonical item 경계를 정확히 유지하되 재생하지 않을 이전
+// delta 용량과 합치지 않는다.
+#[test]
+fn terminal_secret_private_item_ignores_irrelevant_replay_delta_capacity() {
+    let mut backend = NativeModelBackend::with_connector_and_profile(
+        Box::new(MockConnector {
+            rounds: event_rounds(vec![Vec::new()]),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        kimi_binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(kimi_admission),
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        ModelContextProfile::new(1_048_576, 131_072, "utf8-bytes/v1").unwrap(),
+        Some(kimi_profile()),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("prepare terminal private output"),
+        })
+        .unwrap();
+
+    let mut state = backend.turn.take().unwrap();
+    state.terminal_secret_request = true;
+    state.delta.push(ModelReplayItem::Message {
+        role: ModelReplayRole::User,
+        content: "i".repeat(super::ModelReplayDelta::MAX_ENCODED_BYTES - 2 * 1024 * 1024),
+        refusal: None,
+    });
+    state.round_message_items.insert(0);
+    state.round_messages.insert((0, 0), "visible".to_owned());
+    let item = |reasoning_bytes| ModelReplayItem::ProviderPrivateAssistant {
+        envelope: private_envelope(&"r".repeat(reasoning_bytes), Some("visible")),
+    };
+    let fixed_bytes = item(0).encoded_len();
+    let accepted = super::ModelReplayDelta::MAX_ENCODED_BYTES - fixed_bytes;
+    assert_eq!(
+        item(accepted).encoded_len(),
+        super::ModelReplayDelta::MAX_ENCODED_BYTES
+    );
+    let combined_bytes = backend
+        .prospective_replay_delta_encoded_len(&state, Some((1, &item(accepted))))
+        .unwrap();
+    assert!(combined_bytes > super::ModelReplayDelta::MAX_ENCODED_BYTES);
+
+    let overflow = backend
+        .apply_response_event(
+            &mut state,
+            ModelConnectorEvent::ProviderPrivateAssistant {
+                output_index: 1,
+                envelope: private_envelope(&"r".repeat(accepted + 1), Some("visible")),
+                visible_projection: vec![visible_message("visible")],
+            },
+        )
+        .unwrap_err();
+    assert_eq!(overflow.kind(), BackendFailureKind::ContextExhausted);
+    assert!(state.round_replay.is_empty());
+
+    backend
+        .apply_response_event(
+            &mut state,
+            ModelConnectorEvent::ProviderPrivateAssistant {
+                output_index: 1,
+                envelope: private_envelope(&"r".repeat(accepted), Some("visible")),
+                visible_projection: vec![visible_message("visible")],
             },
         )
         .unwrap();
