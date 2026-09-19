@@ -1,10 +1,12 @@
 #[cfg(test)]
 use std::cell::RefCell;
 use std::{
+    collections::HashMap,
     ffi::OsStr,
     fs::{self, File},
     io::{BufRead, BufReader, Error, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, PoisonError, Weak},
 };
 
 use rustix::{
@@ -20,6 +22,21 @@ use crate::SessionId;
 
 const LEGACY_WRITER_LOCK: &str = ".writer.lock";
 const APPEND_COORDINATOR_LOCK: &str = ".append.lock";
+
+pub(super) fn process_root_append_coordinator(root: &Path) -> Arc<Mutex<()>> {
+    static COORDINATORS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+    let coordinators = COORDINATORS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut coordinators = coordinators.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(coordinator) = coordinators.get(root).and_then(Weak::upgrade) {
+        return coordinator;
+    }
+
+    coordinators.retain(|_, coordinator| coordinator.strong_count() != 0);
+    let coordinator = Arc::new(Mutex::new(()));
+    coordinators.insert(root.to_owned(), Arc::downgrade(&coordinator));
+    coordinator
+}
 
 #[cfg(test)]
 thread_local! {

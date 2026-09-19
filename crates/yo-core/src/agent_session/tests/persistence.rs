@@ -12,7 +12,7 @@ use std::{
 };
 
 use super::{
-    super::{AgentIntent, AgentSession, CommandAdmission},
+    super::{AgentIntent, AgentSession, AgentSessionError, CommandAdmission},
     support::{activity, session, turn},
 };
 #[cfg(test)]
@@ -282,6 +282,25 @@ impl StoredSessionReader for UnexpectedForkReader {
     }
 }
 
+fn capture_fork_source_error(live: &AgentSession) -> AgentSessionError {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let error = live
+            .capture_fork_source(&UnexpectedForkReader)
+            .expect_err("the fixture must be rejected before storage is read");
+        match error {
+            AgentSessionError::WorkerUnavailable(ref detail)
+                if detail == "fork capture cannot overtake a Session state update" => {},
+            error => return error,
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fork capture did not observe a quiet worker state"
+        );
+        thread::yield_now();
+    }
+}
+
 // memory-only와 아직 worker가 처리하지 않은 예약 입력은 저장소에 접근하기 전에 fork 캡처를
 // 거부합니다. TUI의 idle 표시만으로 실제 live 상태를 대신하지 않습니다.
 #[test]
@@ -294,8 +313,7 @@ fn fork_capture_rejects_memory_only_and_reserved_input_before_reading_storage() 
     ]);
     let mut live = AgentSession::start_for_test(backend, session()).unwrap();
     assert!(
-        live.capture_fork_source(&UnexpectedForkReader)
-            .unwrap_err()
+        capture_fork_source_error(&live)
             .to_string()
             .contains("durable history")
     );
@@ -304,8 +322,7 @@ fn fork_capture_rejects_memory_only_and_reserved_input_before_reading_storage() 
         state.active_turn = Some(turn(1));
     }
     assert!(
-        live.capture_fork_source(&UnexpectedForkReader)
-            .unwrap_err()
+        capture_fork_source_error(&live)
             .to_string()
             .contains("pending input")
     );
@@ -320,8 +337,7 @@ fn fork_capture_rejects_memory_only_and_reserved_input_before_reading_storage() 
         .outstanding_requests
         .insert(request);
     assert!(
-        live.capture_fork_source(&UnexpectedForkReader)
-            .unwrap_err()
+        capture_fork_source_error(&live)
             .to_string()
             .contains("pending input")
     );

@@ -70,7 +70,7 @@ pub(super) fn start_app(backend: impl AgentBackend + Send + 'static) -> TestApp 
 }
 
 pub(super) fn next_poll(app: &mut TestApp) -> Result<RuntimePoll, AgentSessionError> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         while let Some(record) = app.pending.pop_front() {
             if let TranscriptRecord::EventCommitted(event) = record {

@@ -5,6 +5,7 @@ use std::{
     fs,
     io::Error,
     path::PathBuf,
+    sync::{Arc, Mutex, PoisonError},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -16,7 +17,7 @@ use super::{
     },
     file::{
         LegacyWriterCompatibilityGuard, RootAppendGuard, SessionWriterLease, append_line,
-        coordination_file, scan_entries,
+        coordination_file, process_root_append_coordinator, scan_entries,
     },
     security::prepare_root,
     wire::WireEntry,
@@ -38,6 +39,7 @@ pub struct LocalSessionRepository {
     capacity_bytes: u64,
     sessions: HashMap<SessionId, SessionState>,
     session_leases: HashMap<SessionId, SessionWriterLease>,
+    root_append_coordinator: Arc<Mutex<()>>,
     _legacy_compatibility_guard: LegacyWriterCompatibilityGuard,
 }
 
@@ -47,12 +49,14 @@ impl LocalSessionRepository {
         super::security::validate_repository_root(&requested)?;
         let root = prepare_root(&requested)?;
         let legacy_compatibility_guard = LegacyWriterCompatibilityGuard::acquire(&root)?;
+        let root_append_coordinator = process_root_append_coordinator(&root);
 
         Ok(Self {
             root,
             capacity_bytes,
             sessions: HashMap::new(),
             session_leases: HashMap::new(),
+            root_append_coordinator,
             _legacy_compatibility_guard: legacy_compatibility_guard,
         })
     }
@@ -243,9 +247,23 @@ impl SessionRepository for LocalSessionRepository {
         encoded.push(b'\n');
         let encoded_bytes = u64::try_from(encoded.len()).unwrap_or(u64::MAX);
 
-        let append_guard = RootAppendGuard::acquire(&self.root).map_err(|error| {
-            self.mark_pressure(session_id, StoragePressureCause::Storage, Some(error))
-        })?;
+        // macOS에서는 같은 process의 별도 file descriptor가 이 advisory lock 경계에 함께
+        // 진입할 수 있으므로 exact root의 in-process coordinator를 먼저 잡습니다.
+        // Cross-process serialization은 아래 durable file lock이 유지합니다.
+        let root_append_coordinator = Arc::clone(&self.root_append_coordinator);
+        let _process_guard = root_append_coordinator
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let append_guard = match RootAppendGuard::acquire(&self.root) {
+            Ok(guard) => guard,
+            Err(error) => {
+                return Err(self.mark_pressure(
+                    session_id,
+                    StoragePressureCause::Storage,
+                    Some(error),
+                ));
+            },
+        };
         let storage_bytes = match self.storage_bytes() {
             Ok(bytes) => bytes,
             Err(error @ RepositoryError::Unavailable { .. }) => {
