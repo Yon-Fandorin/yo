@@ -4,16 +4,22 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::git;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
+static TEMPORARY_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 pub(crate) fn unique_path(label: &str) -> PathBuf {
     let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-    env::temp_dir().join(format!("yo-xtask-{label}-{}-{sequence}", process::id()))
+    TEMPORARY_ROOT
+        .get_or_init(|| fs::canonicalize(env::temp_dir()).expect("temporary root must resolve"))
+        .join(format!("yo-xtask-{label}-{}-{sequence}", process::id()))
 }
 
 pub(crate) struct TestRepository {
