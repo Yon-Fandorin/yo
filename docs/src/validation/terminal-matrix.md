@@ -50,6 +50,7 @@ bound while `yo` was still starting; the other five scenarios passed, and the
 exact input scenario passed after one successful Fullscreen warm-up. No model
 request occurred. Physical IME and Command-V were repeated on the accepted candidate
 in the [current direct input verification](#current-mac-direct-input-verification).
+
 The Mac run did not make a model request. The live-provider send was later
 verified in the isolated Linux run described below.
 
@@ -68,6 +69,27 @@ or preview while Ctrl+U/Ctrl+C opens an interview command, explicitly committing
 an empty value with Enter, and rendering a recovered prompt once. No model
 request or normal Yo state was used; each remote checkout, bundle, runner and
 summary was removed after its run.
+
+## Encrypted secret interview recovery
+
+Accepted `develop` commit `3313a28a` adds opt-in encrypted recovery for an exact
+delegated Codex live secret request. On Linux, the exact candidate passed
+`cargo test --workspace --all-targets`, workspace Clippy with warnings denied,
+the full change-scoped `hk` check, focused core/TUI tests, and independent
+fresh-context plus code-quality review. Tests cover the fixed-size encrypted
+entry, exact destination and question binding, tag-only availability checks,
+key loss, corruption, seven-day expiry, restart/final-seal reconciliation,
+and explicit store, recover and forget gestures.
+
+The post-change macOS route remains unverified. On the configured arm64 Mac,
+rerun `cargo test --workspace --all-targets` and workspace Clippy, then use an
+isolated state root with one genuine delegated Codex secret request to check:
+first and second `Ctrl+R` disclosure/opt-in, restart and exact-match recovery,
+fresh Enter submission, `Ctrl+F` forgetting, and normal terminal restoration.
+Inspect the public working copy and retained output only for the absence of
+secret bytes; do not copy a test secret into chat, logs or this document. This
+backlog item is separate from the earlier physical IME, Command-V and exit
+evidence below.
 
 ## Live-provider interview recovery
 

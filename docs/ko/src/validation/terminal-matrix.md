@@ -64,6 +64,23 @@ Ctrl+U/Ctrl+C로 interview 명령 입력을 시작할 때 확정 답안이나 pr
 표시하는 동작을 직접 포함했다. Model 요청이나 일반 Yo state는 사용하지 않았고,
 각 실행 뒤 원격 checkout·bundle·runner·summary를 제거했다.
 
+## 암호화된 비밀 인터뷰 복구
+
+수용된 `develop` 커밋 `3313a28a`는 정확한 delegated Codex live secret 요청에 opt-in
+암호화 복구를 추가한다. Linux에서 정확한 후보가 `cargo test --workspace --all-targets`,
+warning을 거부하는 workspace Clippy, 변경 범위 전체 `hk` 검사, 집중 core/TUI 검사와
+독립적인 fresh-context·code-quality review를 통과했다. 고정 크기 암호화 entry, 정확한
+destination·question binding, tag-only availability 검사, key 손실, 손상, 7일 만료,
+restart/final-seal reconciliation과 명시적인 store·recover·forget 제스처를 테스트한다.
+
+변경 뒤 macOS 경로는 미검증으로 남아 있다. 설정된 arm64 Mac에서
+`cargo test --workspace --all-targets`와 workspace Clippy를 다시 실행한 뒤, 격리된
+state root와 genuine delegated Codex secret 요청 하나로 첫 번째·두 번째 `Ctrl+R`
+안내와 opt-in, 재시작과 exact-match 복구, 새 Enter 제출, `Ctrl+F` 제거와 정상 terminal
+복원을 확인한다. 공개 working copy와 보존 출력에는 secret byte가 없다는 점만 확인하며,
+test secret을 chat·log·이 문서에 복사하지 않는다. 이 backlog 항목은 아래의 이전 물리
+IME·Command-V·종료 증거와 별개다.
+
 ## 실제 Provider 인터뷰 복구
 
 2026-09-19에 `bf95149444f907f05f988aa34c78e595ee4b1d48` 제품 tree를
