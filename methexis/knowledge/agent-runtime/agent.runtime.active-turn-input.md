@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-004
-    revision: sha256:4e8cd9c154492372c9b7074659230efdf9ead67276a7d5d17cf2d76f44fa0297
+    revision: sha256:cb4d759cfe26654c7e8d0473ad5f9b350e66397fc480b220e61a19f76f15338f
 relations:
   depends_on:
     - agent.runtime.command-event-boundary
@@ -105,46 +105,123 @@ when it has already observed the enclosing UserInputRequest Activity start.
 The TUI MUST collect a secret through a request-bound editor that does not use
 ordinary prompt history, kill/yank state, command or skill expansion, workspace
 references, attachments, notes, working-copy edits or preview text. It MUST
-render only a fixed public state such as `Not entered`, `Entered` or
-`Re-entry required`; rendering, cursor geometry and receipts MUST NOT reveal the
-answer or its length. Committed Unicode text and bracketed paste are literal
-answer bytes. Embedded newlines, slash-prefixed text, `@` and `$` text MUST NOT
-submit or activate another input path. Only an explicit submit key press for the
-currently presented request may submit. Leaving an unsubmitted secret question,
-cancelling the request, completing or interrupting its Turn, or replacing its
-request MUST discard the value. Returning to a secret question requires fresh
-entry. An individual secret is limited to 64 KiB of UTF-8 and all live secrets
-retained for one batch are limited to 256 KiB; the first excess byte rejects the
-input without truncation.
+render only a fixed public state such as `Not entered`, `Entered`, `Recovery
+available` or `Recovered`; rendering, cursor geometry and receipts MUST NOT
+reveal the answer or its length. Committed Unicode text and bracketed paste are
+literal answer bytes. Embedded newlines, slash-prefixed text, `@` and `$` text
+MUST NOT submit or activate another input path. Only an explicit submit key
+press for the currently presented request may submit. An individual secret is
+limited to 64 KiB of UTF-8 and all live secrets retained for one batch are
+limited to 256 KiB; the first excess byte rejects the input without truncation.
+
+Secret recovery is an explicit opt-in on each entered answer and MUST remain off
+by default. Enabling it MUST name the local retention boundary before any
+durable write and MUST NOT itself submit the answer. Leaving an unsubmitted
+question, replacing its request, cancelling or terminating its Turn discards the
+process-local value; an opted-in encrypted recovery entry follows its separate
+lifecycle below. Without opt-in, restart and interview recovery retain only the
+public questions, public answers, submission evidence and `Re-entry required`.
 
 The live response MUST carry the exact answer only to the backend that owns the
 same outstanding ActivityRequestRef. Before backend dispatch, existing bounded
 backpressure MAY retain that same request-bound intent. Once transport write is
 attempted, a failure or disconnect has an unknown delivery outcome: Yo MUST
-discard the value, MUST NOT automatically retry it and MUST reject another
-response attempt for that request. A successful backend command, including one that only stages an intermediate
-answer, permits only a payload-free semantic receipt to cross the command-commit
-and Journal boundary; only the final aggregate response write and final seal
-establish batch submission.
-For any batch containing secret questions, including an all-secret batch,
-earlier secret answers MAY remain process-local until the one final batch
-response is written; they MUST be discarded on final success,
-failure, cancellation or Turn termination.
+discard the process-local value, MUST NOT automatically retry it and MUST reject
+another response attempt for that request. A successful backend command,
+including one that only stages an intermediate answer, permits only a
+payload-free semantic receipt to cross the command-commit and Journal boundary;
+only the final aggregate response write and final seal establish batch
+submission. For a batch containing secret questions, earlier secret answers MAY
+remain process-local until that one final response is written and MUST otherwise
+be discarded from memory on final success, failure, cancellation or Turn
+termination.
 
-Restart and interview recovery restore public questions, public answers and
-submission evidence only. Each secret answer is restored as `Re-entry required`,
-without a value, hash or length, and can be entered again only for a new genuine
-live secret request. A working copy containing a secret question MUST reject the
-existing `send as a new conversation` action because that path is ordinary
-persisted StartTurn input and has no original outstanding Activity. It MUST NOT
-send an empty answer, a mask or a redaction label as a substitute.
+## Opt-in encrypted recovery vault
 
-Yo MUST NOT directly copy the entered secret value into its input display,
-scrollback, Journal, interview working copy, preview, export, logs or
-diagnostics. Delivery to the requesting backend is intentional. Backend or
-provider retention, later model or tool output, the system clipboard, swap,
-process memory and crash dumps are outside this guarantee. Secret interview
-input is not credential storage and does not add OS keychain behavior.
+An opted-in answer MUST be stored only in a separate local recovery vault. It
+MUST NOT enter the interview working-copy JSON, Session Journal, Request Audit,
+ordinary configuration, Provider credential mapping, preview, source export,
+logs or diagnostics. A v3 secret working copy MAY retain one independently
+random opaque recovery-entry identity and the fixed public state `Recovery
+available` for the corresponding question. It MUST contain no ciphertext,
+nonce, key material, secret value, hash, plaintext length or backend request
+identity. Existing v1 nonsecret and v2 redacted copies remain valid without
+migration; neither gains recovery authority.
+
+The first local vault profile uses XChaCha20-Poly1305 with a freshly generated
+256-bit recovery key and an independently random 192-bit nonce for every entry.
+The authenticated plaintext carries the exact UTF-8 answer and its internal
+length, then pads to the fixed 64-KiB answer capacity before encryption so the
+entry size does not disclose answer length. Authenticated associated data binds
+the closed format version, opaque entry identity, working-copy identity, public
+batch fingerprint, question identity and stable destination identity. For a
+managed backend that identity MUST include the exact Provider and Model plus a
+stable authenticated account identity observed from the live typed destination
+evidence; a configured account-slot name alone is insufficient and credential
+bytes MUST remain excluded. For a delegated backend it MUST include the exact
+host kind, observed Provider and Model, and authenticated account identity from
+the same class of live evidence. A backend that cannot supply every applicable
+stable non-secret component, including authenticated account identity, is
+unsupported for secret recovery. Replacement or
+mismatch of any component, or authentication failure, MUST fail closed without
+returning partial plaintext or rewriting evidence.
+
+The recovery key is a dedicated raw 32-byte owner-only file beside the selected
+absolute Yo configuration path; it is not an API credential. It is created only
+on the first opted-in save with no-follow, exclusive creation, mode `0600`, file
+fsync and parent-directory fsync. Existing opens require one link, a regular
+current-user-owned file, exact mode `0600` and exact length. The vault is rooted
+under the separately validated absolute Yo state root in an owner-only `0700`
+directory with regular `0600` entries and the same no-follow identity checks.
+Relative, missing, substituted, insecure or malformed key and vault paths make
+secret recovery unavailable and MUST NOT trigger regeneration over surviving
+ciphertext. Key bytes and plaintext never enter command arguments, environment
+variables, standard input, child processes, display/debug output or repository
+identities.
+
+Publishing an entry and its public working-copy reference is one ordered
+operation under the interview repository lease: write and fsync the exclusive
+encrypted entry first, publish the generation-CAS working copy second, then
+reclaim only a newly orphaned owned entry after a failed publication. Recovery
+accepts only a reference published by that exact copy generation. Startup may
+remove an owned encrypted entry that no valid working copy references, but MUST
+leave unknown, malformed, unsafe or concurrently owned files untouched. A final
+successfully sealed batch, an explicit forget action, or a fixed seven-day
+expiry removes the public reference before unlinking the encrypted entry.
+Deletion makes the entry unavailable but MUST NOT claim physical erasure from
+flash media, filesystem history, backups, swap or crash dumps.
+
+Recovery never restores a dead backend RPC. The user MUST first select the
+saved copy, then receive a new genuine live secret request whose stable
+destination, ordered public batch fingerprint, question identity and secret
+presentation match the vault binding exactly. Only that live request may offer
+the fixed `Recovery available` state. An explicit recovery action decrypts into
+the hidden request-bound editor and changes the public state to `Recovered`;
+it does not send. A fresh explicit submit key press sends it through the same
+live-response admission as newly typed text. Ambiguous or multiple matches fail
+closed. Provider/model replacement, host-account replacement, changed public
+wording/options/order, an ordinary new-conversation action and a persisted
+StartTurn MUST NOT receive the recovered value.
+
+A working copy containing any secret question continues to reject `send as a
+new conversation`; it MUST NOT send an empty answer, mask, recovery marker or
+encrypted bytes as a substitute. Loss of the recovery key leaves public copies
+readable and explicitly marks their secret recovery unavailable. Yo MUST offer
+an explicit forget operation that removes its own public reference and vault
+entry without exposing the value. It MUST NOT export, reveal or copy a restored
+secret to the clipboard.
+
+Delivery to the requesting backend is intentional. The local recovery profile
+keeps the value out of Yo's public state and Journal and protects a copied or
+inspected vault only while the recovery key was not also captured. It makes no
+location-based backup guarantee: a backup, filesystem view, process or account
+that can read both the owner-only recovery key and vault is outside the
+protection, including when the selected configuration path places both under one
+backup root. Provider retention, transformed, encoded, partial or semantically
+derived model or tool output, the system clipboard, process memory, swap, crash
+dumps, filesystem history and external backups also remain outside this
+Yo-local guarantee. It is not Provider credential storage and does not add OS
+keychain behavior.
 
 ## Native selected-destination disclosure
 
