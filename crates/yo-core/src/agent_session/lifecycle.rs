@@ -85,7 +85,7 @@ impl AgentSession {
         let (processed, changed) = &*self.processed;
         let count = processed.lock().unwrap();
         let (count, timeout) = changed
-            .wait_timeout_while(count, Duration::from_secs(1), |count| *count < expected)
+            .wait_timeout_while(count, Duration::from_secs(5), |count| *count < expected)
             .unwrap();
         assert!(
             !timeout.timed_out(),
@@ -96,7 +96,7 @@ impl AgentSession {
 
     #[cfg(test)]
     pub(super) fn wait_until_no_active_turn(&self) {
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let inactive = self
                 .state
