@@ -669,7 +669,11 @@ fn reserved_worker_turn_is_busy_before_frontend_observation() {
         BackendScriptStep::Shutdown(Ok(())),
     ]);
     let mut session = AgentSession::start_for_test(backend, turn.session_id()).unwrap();
-    assert!(session.is_idle_for_new_conversation());
+    let idle_deadline = Instant::now() + Duration::from_secs(2);
+    while !session.is_idle_for_new_conversation() {
+        assert!(Instant::now() < idle_deadline);
+        thread::yield_now();
+    }
     let admission = session
         .dispatch(AgentIntent::Submit(InputSubmission::new(
             SubmissionId::new().unwrap(),

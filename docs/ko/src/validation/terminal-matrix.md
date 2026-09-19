@@ -46,8 +46,9 @@ paste와 `Ctrl+C` 지우기가 통과했다. 첫 cold Fullscreen 입력 시도�
 시작되는 동안 5초 준비 제한을 넘겼다. 나머지 다섯 시나리오는 통과했고,
 Fullscreen을 한 번 준비한 뒤 같은 입력 시나리오도 통과했다. Model 요청은
 없었다. 승인된 후보의 실제 IME와 Command-V는
-[현재 직접 입력 검증](#현재-mac-직접-입력-검증)에서 반복했다. 실제 Provider
-send는 아직 검증하지 않았다.
+[현재 직접 입력 검증](#현재-mac-직접-입력-검증)에서 반복했다. Mac 실행은
+Model 요청을 보내지 않았다. 실제 Provider send는 아래의 격리된 Linux
+실행에서 나중에 검증했다.
 
 2026-09-17에 후속 후보 `6a7d3156ffd4553d55b6d5fa7c6daaa54342e01a`가
 같은 고정 macOS arm64 host에서 기본 profile과 `yo-tui` profile을 통과했다.
@@ -62,6 +63,29 @@ Ctrl+U/Ctrl+C로 interview 명령 입력을 시작할 때 확정 답안이나 pr
 보존하는 회귀, Enter로 빈 값을 명시적으로 확정하는 동작, 복구 prompt를 한 번만
 표시하는 동작을 직접 포함했다. Model 요청이나 일반 Yo state는 사용하지 않았고,
 각 실행 뒤 원격 checkout·bundle·runner·summary를 제거했다.
+
+## 실제 Provider 인터뷰 복구
+
+2026-09-19에 `bf95149444f907f05f988aa34c78e595ee4b1d48` 제품 tree를
+전용 tmux server의 격리된 Linux 실제 서비스 복구 실행으로 검증했다. 실제
+비밀이 아닌 v1 인터뷰 capture를 reopen하고 편집·저장한 뒤 Yo를 완전히
+재시작하여 recover했다. Preview는 승인된 답변과 추가 context를 정확히
+보존했다. `/interview send`는 원본 Provider RPC를 재개하지 않고 새 Session과
+승인된 첫 Turn을 만들었다.
+
+도구를 끈 상태에서 무료 QwenCloud `qwencloud:general:qwen3.8-flash` route를
+사용했다. Quota 사전 검사는 남은 요청 976,535회를 보고했고, 승인된 실행
+횟수는 1회였다. Journal에는 승인된 backend 요청이 정확히 1개 있었고 도구
+활동은 없었다. Turn 완료, 정확한 응답 `YO_INTERVIEW_RECOVERY_OK`, input 405·
+output 6 token의 usage receipt도 확인했다. 제출된 working copy는 승인 이후에만
+새 Session과 Turn을 기록했다. 일반 설정, 인증 저장소, 원본 Session과 원본
+인터뷰 copy의 hash는 그대로였다. 검사 후 격리 state와 tmux server를 제거했다.
+
+결정적 사전 검사에서는 test 전용 race도 발견했다. 새 test Session의 worker가
+state lock을 잠깐 보유하는 동안 busy로 관찰될 수 있었다. 해당 test는 이제
+예약 Turn admission을 확인하기 전에 관찰 가능한 idle 상태를 최대 2초 기다린다.
+제품 동작은 바뀌지 않았고, 정확한 test는 package 인터뷰 suite 전에 100회
+연속 통과했다.
 
 ## 저장된 Mac의 큰 본문 페이지 검증
 

@@ -50,7 +50,8 @@ bound while `yo` was still starting; the other five scenarios passed, and the
 exact input scenario passed after one successful Fullscreen warm-up. No model
 request occurred. Physical IME and Command-V were repeated on the accepted candidate
 in the [current direct input verification](#current-mac-direct-input-verification).
-A live-provider send remains unverified.
+The Mac run did not make a model request. The live-provider send was later
+verified in the isolated Linux run described below.
 
 On 2026-09-17, follow-up candidate
 `6a7d3156ffd4553d55b6d5fa7c6daaa54342e01a` passed the default and `yo-tui`
@@ -67,6 +68,31 @@ or preview while Ctrl+U/Ctrl+C opens an interview command, explicitly committing
 an empty value with Enter, and rendering a recovered prompt once. No model
 request or normal Yo state was used; each remote checkout, bundle, runner and
 summary was removed after its run.
+
+## Live-provider interview recovery
+
+On 2026-09-19, the `bf95149444f907f05f988aa34c78e595ee4b1d48`
+product tree passed an isolated live-service recovery run on Linux in a
+dedicated tmux server. A real nonsecret v1 interview capture was reopened,
+edited and saved, then recovered after a full Yo restart. Its preview preserved
+the accepted answer and added context exactly. `/interview send` created a new
+Session and accepted first Turn rather than resuming the source Provider RPC.
+
+The run used the free QwenCloud `qwencloud:general:qwen3.8-flash` route with
+tools disabled. The quota preflight reported 976,535 requests remaining, and
+the authorized launch count was one. The Journal contained exactly one accepted
+backend request, no tool activity, a completed Turn, the exact response
+`YO_INTERVIEW_RECOVERY_OK`, and a usage receipt for 405 input and 6 output
+tokens. The submitted working copy recorded the new Session and Turn only after
+acceptance. Hashes for the normal configuration, credential store, source
+Session and source interview copy were unchanged. The isolated state and tmux
+server were removed after inspection.
+
+The deterministic preflight also exposed a test-only race: a new test Session
+can briefly report busy while its worker holds the state lock. The affected test
+now waits for the observable idle state with a two-second bound before checking
+reserved-Turn admission. Its production behavior is unchanged, and the exact
+test passed 100 consecutive runs before the package interview suites.
 
 ## Large-body paging on the saved Mac
 
