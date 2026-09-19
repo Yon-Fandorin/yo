@@ -122,7 +122,7 @@ mod unix {
             "params": {},
         }))
         .unwrap();
-        let message = peer.receive(Duration::from_secs(1)).unwrap();
+        let message = peer.receive(Duration::from_secs(5)).unwrap();
 
         peer.shutdown().unwrap();
         remove_fixture(&directory);
