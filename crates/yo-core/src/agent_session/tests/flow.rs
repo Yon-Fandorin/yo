@@ -594,10 +594,9 @@ fn prevents_binding_replacement_from_overtaking_idle_compaction() {
             if detail.contains("cannot overtake pending context compaction")
     ));
 
-    app.wait_until_processed(1);
     assert!(matches!(
-        app.take_control_outcome(),
-        Some(AgentControlOutcome::ContextCompactionRejected { .. })
+        wait_for_control_outcome(&mut app),
+        AgentControlOutcome::ContextCompactionRejected { .. }
     ));
     app.shutdown().unwrap();
 }
