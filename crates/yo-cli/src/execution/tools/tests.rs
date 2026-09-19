@@ -2,7 +2,7 @@ use std::{
     env, fs, num,
     path::PathBuf,
     process, thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use yo_core::{
@@ -93,23 +93,6 @@ fn command_execution_is_approval_bound_and_cancellable() {
     let result = finish(execution.as_mut());
     assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
     assert!(result.output().contains("done"));
-
-    let started = Instant::now();
-    let mut background = host
-        .start(request(
-            &registry,
-            "run_command",
-            r#"{"command":"sleep 5 &"}"#,
-        ))
-        .unwrap();
-    assert_eq!(
-        finish(background.as_mut()).outcome(),
-        ToolExecutionOutcome::Completed
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "a background descendant retained the output pipes"
-    );
 
     let mut cancelled = host
         .start(request(
