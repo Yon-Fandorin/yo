@@ -559,7 +559,7 @@ fn prepare_agent_with_target(
         active_host.as_ref(),
         confirmed_codex_binding
             .as_ref()
-            .map(|binding| (binding.account(), binding.model())),
+            .map(|binding| (binding.account(), binding.provider(), binding.model())),
         supports_native_model_rebind,
         is_resume,
         &host_catalogs,

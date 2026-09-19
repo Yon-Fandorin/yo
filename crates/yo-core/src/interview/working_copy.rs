@@ -1,8 +1,10 @@
+use std::{collections::HashSet, mem};
+
 use serde::{Deserialize, Serialize};
 
 use super::{
     Answer, COPY_LIMIT, CapturedInterview, InterviewCatalog, InterviewError, PREVIEW_LIMIT,
-    SecretAnswerState, invalid, refs,
+    SecretAnswerState, invalid, recovery::SecretRecoveryReference, refs,
 };
 use crate::{ActivityRef, ActivityRequestRef, InputSubmission, SubmissionId, TurnRef, UserInput};
 
@@ -40,6 +42,8 @@ pub struct WorkingCopy {
     pub current_question_id: String,
     pub context: String,
     pub submission: Option<Submission>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) secret_recovery: Vec<SecretRecoveryReference>,
 }
 /// Immutable explicit first-Turn intent; callers retain it across backpressure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,6 +55,7 @@ pub struct NewConversation {
 impl WorkingCopy {
     pub const SCHEMA: &'static str = "yo.interview-working-copy/v1";
     pub const SCHEMA_V2: &'static str = "yo.interview-working-copy/v2";
+    pub const SCHEMA_V3: &'static str = "yo.interview-working-copy/v3";
     pub fn new(capture: &CapturedInterview) -> Result<Self, InterviewError> {
         let answers = capture
             .questions
@@ -85,6 +90,7 @@ impl WorkingCopy {
                     response_activity,
                 }
             }),
+            secret_recovery: Vec::new(),
         })
     }
     pub fn reopen(&self) -> Result<Self, InterviewError> {
@@ -92,6 +98,10 @@ impl WorkingCopy {
         copy.copy_id = new_id()?;
         copy.generation = 1;
         copy.submission = None;
+        copy.secret_recovery.clear();
+        if copy.schema == Self::SCHEMA_V3 {
+            copy.schema = Self::SCHEMA_V2.into();
+        }
         Ok(copy)
     }
     pub fn source(&self) -> (ActivityRequestRef, &str) {
@@ -114,7 +124,9 @@ impl WorkingCopy {
         for (q, a) in capture.questions.iter().zip(&self.answers) {
             q.validate_answer(a, true)?;
         }
-        let expected_schema = if capture.questions.iter().any(|q| q.is_secret) {
+        let expected_schema = if !self.secret_recovery.is_empty() {
+            Self::SCHEMA_V3
+        } else if capture.questions.iter().any(|q| q.is_secret) {
             Self::SCHEMA_V2
         } else {
             Self::SCHEMA
@@ -137,7 +149,9 @@ impl WorkingCopy {
         Ok(capture)
     }
     fn validate_shape(&self) -> Result<(), InterviewError> {
-        if (self.schema != Self::SCHEMA && self.schema != Self::SCHEMA_V2)
+        if (self.schema != Self::SCHEMA
+            && self.schema != Self::SCHEMA_V2
+            && self.schema != Self::SCHEMA_V3)
             || !valid_id(&self.copy_id)
             || self.generation == 0
             || !super::profile::valid_revision(&self.source.revision)
@@ -149,7 +163,7 @@ impl WorkingCopy {
                 "v1 interview working copies cannot contain secret answers",
             ));
         }
-        if self.schema == Self::SCHEMA_V2
+        if matches!(self.schema.as_str(), Self::SCHEMA_V2 | Self::SCHEMA_V3)
             && self
                 .answers
                 .iter()
@@ -159,7 +173,7 @@ impl WorkingCopy {
                 "working copies retain only the secret re-entry marker",
             ));
         }
-        if self.schema == Self::SCHEMA_V2
+        if matches!(self.schema.as_str(), Self::SCHEMA_V2 | Self::SCHEMA_V3)
             && matches!(self.submission, Some(Submission::NewConversation { .. }))
         {
             return Err(invalid(
@@ -174,6 +188,30 @@ impl WorkingCopy {
             && (!valid_id(submission_id) || *accepted_request_sequence == 0)
         {
             return Err(invalid("invalid conversation submission evidence"));
+        }
+        if self.schema != Self::SCHEMA_V3 && !self.secret_recovery.is_empty() {
+            return Err(invalid(
+                "only v3 interview working copies may contain recovery references",
+            ));
+        }
+        if self.schema == Self::SCHEMA_V3 && self.secret_recovery.is_empty() {
+            return Err(invalid(
+                "v3 interview working copies require a recovery reference",
+            ));
+        }
+        let mut question_ids = HashSet::new();
+        let mut entry_ids = HashSet::new();
+        for reference in &self.secret_recovery {
+            reference.validate()?;
+            if !question_ids.insert(reference.question_id.as_str())
+                || !entry_ids.insert(reference.entry_id.as_str())
+                || !self
+                    .answers
+                    .iter()
+                    .any(|answer| answer.question_id == reference.question_id && answer.is_secret())
+            {
+                return Err(invalid("invalid or duplicate secret recovery reference"));
+            }
         }
         Ok(())
     }
@@ -245,7 +283,7 @@ impl WorkingCopy {
                 "reopen the submitted interview as a separate editable copy first",
             ));
         }
-        if self.schema == Self::SCHEMA_V2 {
+        if matches!(self.schema.as_str(), Self::SCHEMA_V2 | Self::SCHEMA_V3) {
             return Err(invalid(
                 "secret interview working copies cannot start a new conversation",
             ));
@@ -257,6 +295,54 @@ impl WorkingCopy {
             submission: InputSubmission::new(id, UserInput::new(preview.clone())),
             preview,
         })
+    }
+
+    pub(super) fn recovery_reference(&self, question_id: &str) -> Option<&SecretRecoveryReference> {
+        self.secret_recovery
+            .iter()
+            .find(|reference| reference.question_id == question_id)
+    }
+
+    #[must_use]
+    pub fn has_secret_recovery(&self, question_id: &str) -> bool {
+        self.recovery_reference(question_id).is_some()
+    }
+
+    #[must_use]
+    pub fn has_any_secret_recovery(&self) -> bool {
+        !self.secret_recovery.is_empty()
+    }
+
+    pub(super) fn set_recovery_reference(&mut self, reference: SecretRecoveryReference) {
+        self.secret_recovery
+            .retain(|current| current.question_id != reference.question_id);
+        self.secret_recovery.push(reference);
+        self.secret_recovery
+            .sort_by(|left, right| left.question_id.cmp(&right.question_id));
+        self.schema = Self::SCHEMA_V3.into();
+    }
+
+    pub(super) fn take_recovery_reference(
+        &mut self,
+        question_id: &str,
+    ) -> Option<SecretRecoveryReference> {
+        let index = self
+            .secret_recovery
+            .iter()
+            .position(|reference| reference.question_id == question_id)?;
+        let reference = self.secret_recovery.remove(index);
+        if self.secret_recovery.is_empty() {
+            self.schema = Self::SCHEMA_V2.into();
+        }
+        Some(reference)
+    }
+
+    pub(super) fn take_all_recovery_references(&mut self) -> Vec<SecretRecoveryReference> {
+        let references = mem::take(&mut self.secret_recovery);
+        if !references.is_empty() {
+            self.schema = Self::SCHEMA_V2.into();
+        }
+        references
     }
 }
 pub(super) fn new_id() -> Result<String, InterviewError> {

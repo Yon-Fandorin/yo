@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use yo_core::{InputSubmission, SubmissionId, SubmissionOutcome, UserInput};
+use yo_core::{
+    InputSubmission, SubmissionId, SubmissionOutcome, UserInput, interview::InterviewError,
+};
 
 use super::{FOLLOW_UP_BYTES, FOLLOW_UP_LIMIT, PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
@@ -718,6 +720,120 @@ impl TuiState {
                     "Secret input exceeds the 64 KiB UTF-8 limit; the value was not changed."
                         .to_owned(),
                 )?;
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::RecoveryDisclosureRequested => {
+                let result = self
+                    .interview
+                    .as_ref()
+                    .ok_or_else(|| {
+                        InterviewError::Invalid("secret recovery storage is unavailable".into())
+                    })
+                    .and_then(|controller| controller.recovery_boundary());
+                match result {
+                    Ok(boundary) => {
+                        self.chat.push_notice(format!(
+                            "Secret recovery is off by default. Enabling it stores this answer in {boundary}. Press Ctrl-R again to opt in; Enter still submits separately."
+                        ))?;
+                        if let Some(editor) = &mut self.secret_editor {
+                            editor.mark_recovery_disclosed();
+                        }
+                    },
+                    Err(error) => {
+                        self.chat.push_notice(error.to_string())?;
+                    },
+                }
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::StoreRecovery(input) => {
+                let Some(PendingRequest::SecretInput(request)) =
+                    self.pending_requests.front().copied()
+                else {
+                    return Ok(StateEffect::Unchanged);
+                };
+                let result = self
+                    .interview
+                    .as_mut()
+                    .ok_or_else(|| {
+                        InterviewError::Invalid("secret recovery storage is unavailable".into())
+                    })
+                    .and_then(|controller| controller.store_secret_recovery(request, &input));
+                match result {
+                    Ok(()) => {
+                        if let Some(editor) = &mut self.secret_editor {
+                            editor.mark_recovery_available();
+                        }
+                        self.chat.push_notice(
+                            "Encrypted recovery saved. Enter still requires a fresh explicit submission."
+                                .into(),
+                        )?;
+                    },
+                    Err(error) => {
+                        self.chat.push_notice(error.to_string())?;
+                    },
+                }
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::RecoverRequested => {
+                let Some(PendingRequest::SecretInput(request)) =
+                    self.pending_requests.front().copied()
+                else {
+                    return Ok(StateEffect::Unchanged);
+                };
+                let result = self
+                    .interview
+                    .as_ref()
+                    .ok_or_else(|| {
+                        InterviewError::Invalid("secret recovery storage is unavailable".into())
+                    })
+                    .and_then(|controller| controller.recover_secret(request));
+                match result {
+                    Ok(input) => {
+                        if let Some(editor) = &mut self.secret_editor {
+                            editor.restore(input);
+                        }
+                        self.chat.push_notice(
+                            "Secret recovered into the hidden editor. Press Enter to submit it."
+                                .into(),
+                        )?;
+                    },
+                    Err(error) => {
+                        self.chat.push_notice(error.to_string())?;
+                    },
+                }
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::ForgetRecovery => {
+                let request = self
+                    .pending_requests
+                    .front()
+                    .and_then(|pending| match pending {
+                        PendingRequest::SecretInput(request) => Some(*request),
+                        _ => None,
+                    });
+                let result = self
+                    .interview
+                    .as_mut()
+                    .ok_or_else(|| {
+                        InterviewError::Invalid("secret recovery storage is unavailable".into())
+                    })
+                    .and_then(|controller| controller.forget_secret_recovery(request));
+                match result {
+                    Ok(warning) => {
+                        if let Some(editor) = &mut self.secret_editor {
+                            editor.mark_recovery_forgotten();
+                        }
+                        self.chat.push_notice(match warning {
+                            Some(warning) => {
+                                format!("Secret recovery reference removed; {warning}")
+                            },
+                            None => "Secret recovery forgotten.".into(),
+                        })?;
+                    },
+                    Err(error) => {
+                        self.chat.push_notice(error.to_string())?;
+                    },
+                }
                 Ok(StateEffect::Redraw)
             },
             SecretEditorEffect::Cancel => {

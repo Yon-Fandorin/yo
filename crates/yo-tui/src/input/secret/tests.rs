@@ -99,3 +99,40 @@ fn ctrl_u_clears_without_kill_or_yank_state() {
         )
     );
 }
+
+// 첫 Ctrl-R은 저장 경계를 먼저 보여 주도록 요청하고, 별도 두 번째 Ctrl-R만 현재 값을
+// 저장 후보로 내보낸다. 복구도 버퍼를 표시하지 않고 fresh Enter 전까지 보내지 않는다.
+#[test]
+fn recovery_requires_disclosure_then_a_second_action_and_fresh_submit() {
+    let mut editor = SecretEditor::new();
+    editor.mark_ready();
+    editor.handle(InputEvent::Paste("vault-value".into()));
+
+    assert_eq!(
+        editor.handle(key(KeyCode::Character('r'), KeyModifiers::CONTROL)),
+        SecretEditorEffect::RecoveryDisclosureRequested
+    );
+    editor.mark_recovery_disclosed();
+    assert_eq!(
+        editor.handle(key(KeyCode::Character('r'), KeyModifiers::CONTROL)),
+        SecretEditorEffect::StoreRecovery(
+            yo_core::SecretInput::new("vault-value").expect("bounded secret")
+        )
+    );
+    editor.mark_recovery_available();
+    assert_eq!(editor.public_text(), "Recovery available");
+
+    let mut recovered = SecretEditor::new();
+    recovered.mark_ready();
+    recovered.mark_recovery_available();
+    assert_eq!(
+        recovered.handle(key(KeyCode::Character('r'), KeyModifiers::CONTROL)),
+        SecretEditorEffect::RecoverRequested
+    );
+    recovered.restore(yo_core::SecretInput::new("vault-value").unwrap());
+    assert_eq!(recovered.public_text(), "Recovered");
+    assert_eq!(
+        recovered.handle(key(KeyCode::Enter, KeyModifiers::NONE)),
+        SecretEditorEffect::Submitted(yo_core::SecretInput::new("vault-value").unwrap())
+    );
+}

@@ -209,9 +209,7 @@ impl TuiState {
                 Some(question) if question.is_secret => {
                     self.pending_requests[0] = PendingRequest::SecretInput(request);
                     self.clear_secret_editor();
-                    let mut editor = SecretEditor::new();
-                    editor.mark_ready();
-                    self.secret_editor = Some(editor);
+                    self.secret_editor = Some(self.secret_editor_for(request));
                 },
                 Some(_) => {
                     self.pending_requests[0] = PendingRequest::UserInput(request);
@@ -235,15 +233,15 @@ impl TuiState {
             (PendingRequest::UserInput(request), true) => {
                 self.pending_requests[0] = PendingRequest::SecretInput(request);
                 self.clear_secret_editor();
-                let mut editor = SecretEditor::new();
-                editor.mark_ready();
-                self.secret_editor = Some(editor);
+                self.secret_editor = Some(self.secret_editor_for(request));
             },
             (PendingRequest::SecretInput(_), true) => {
-                if self.secret_editor.is_none() {
-                    let mut editor = SecretEditor::new();
-                    editor.mark_ready();
-                    self.secret_editor = Some(editor);
+                if self
+                    .secret_editor
+                    .as_ref()
+                    .is_none_or(|editor| !editor.ready())
+                {
+                    self.secret_editor = Some(self.secret_editor_for(request));
                 }
             },
             (PendingRequest::SecretInput(request), false) => {
@@ -256,6 +254,19 @@ impl TuiState {
                 self.clear_secret_editor();
             },
         }
+    }
+
+    fn secret_editor_for(&self, request: ActivityRequestRef) -> SecretEditor {
+        let mut editor = SecretEditor::new();
+        editor.mark_ready();
+        if self
+            .interview
+            .as_ref()
+            .is_some_and(|controller| controller.recovery_available(request).unwrap_or(false))
+        {
+            editor.mark_recovery_available();
+        }
+        editor
     }
 
     pub(super) fn request_response(

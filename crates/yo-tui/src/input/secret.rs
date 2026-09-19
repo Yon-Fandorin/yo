@@ -20,6 +20,8 @@ pub(crate) enum SecretPublicState {
     NotEntered,
     Entered,
     ReentryRequired,
+    RecoveryAvailable,
+    Recovered,
 }
 
 impl SecretPublicState {
@@ -28,6 +30,8 @@ impl SecretPublicState {
             Self::NotEntered => "Not entered",
             Self::Entered => "Entered",
             Self::ReentryRequired => "Re-entry required",
+            Self::RecoveryAvailable => "Recovery available",
+            Self::Recovered => "Recovered",
         }
     }
 }
@@ -42,6 +46,10 @@ pub(crate) enum SecretEditorEffect {
     Cancel,
     Exit,
     Rejected,
+    RecoveryDisclosureRequested,
+    StoreRecovery(SecretInput),
+    RecoverRequested,
+    ForgetRecovery,
 }
 
 /// A separate editor for one live secret request.
@@ -52,6 +60,7 @@ pub(crate) struct SecretEditor {
     buffer: TextBuffer,
     public_state: SecretPublicState,
     ready: bool,
+    recovery_disclosed: bool,
 }
 
 impl fmt::Debug for SecretEditor {
@@ -70,6 +79,7 @@ impl SecretEditor {
             buffer: TextBuffer::new(),
             public_state: SecretPublicState::NotEntered,
             ready: false,
+            recovery_disclosed: false,
         }
     }
 
@@ -78,6 +88,7 @@ impl SecretEditor {
             buffer: TextBuffer::new(),
             public_state: SecretPublicState::ReentryRequired,
             ready: false,
+            recovery_disclosed: false,
         }
     }
 
@@ -93,10 +104,39 @@ impl SecretEditor {
         self.ready = true;
     }
 
+    pub(crate) fn mark_recovery_available(&mut self) {
+        self.public_state = SecretPublicState::RecoveryAvailable;
+        self.recovery_disclosed = false;
+    }
+
+    pub(crate) fn mark_recovery_disclosed(&mut self) {
+        self.recovery_disclosed = true;
+    }
+
+    pub(crate) fn mark_recovery_forgotten(&mut self) {
+        self.public_state = if self.buffer.is_empty() {
+            SecretPublicState::NotEntered
+        } else {
+            SecretPublicState::Entered
+        };
+        self.recovery_disclosed = false;
+    }
+
+    pub(crate) fn restore(&mut self, input: SecretInput) {
+        self.buffer.clear();
+        let value = input.into_inner();
+        let inserted = self.buffer.insert(&value);
+        debug_assert!(inserted || value.is_empty());
+        self.public_state = SecretPublicState::Recovered;
+        self.recovery_disclosed = false;
+        self.ready = true;
+    }
+
     pub(crate) fn clear(&mut self) {
         self.buffer.clear();
         self.public_state = SecretPublicState::NotEntered;
         self.ready = false;
+        self.recovery_disclosed = false;
     }
 
     /// Returns a fixed public label used by prompt geometry and painting.
@@ -148,6 +188,7 @@ impl SecretEditor {
         }
         if self.buffer.insert(text) {
             self.public_state = SecretPublicState::Entered;
+            self.recovery_disclosed = false;
             SecretEditorEffect::Changed
         } else {
             SecretEditorEffect::NoChange
@@ -163,6 +204,25 @@ impl SecretEditor {
         }
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
+                KeyCode::Character('r' | 'R') => {
+                    if self.public_state == SecretPublicState::RecoveryAvailable
+                        && self.buffer.is_empty()
+                    {
+                        return SecretEditorEffect::RecoverRequested;
+                    }
+                    if self.buffer.is_empty() {
+                        return SecretEditorEffect::NoChange;
+                    }
+                    if !self.recovery_disclosed {
+                        return SecretEditorEffect::RecoveryDisclosureRequested;
+                    }
+                    let input = SecretInput::new(self.buffer.as_str().to_owned())
+                        .expect("the editor enforces the secret input bound");
+                    return SecretEditorEffect::StoreRecovery(input);
+                },
+                KeyCode::Character('f' | 'F') => {
+                    return SecretEditorEffect::ForgetRecovery;
+                },
                 KeyCode::Character('u' | 'U') => {
                     let removed = self.buffer.kill_line_start();
                     return if removed.is_some() {
@@ -171,6 +231,7 @@ impl SecretEditor {
                         } else {
                             SecretPublicState::Entered
                         };
+                        self.recovery_disclosed = false;
                         SecretEditorEffect::Changed
                     } else {
                         SecretEditorEffect::NoChange
@@ -233,6 +294,7 @@ impl SecretEditor {
             } else {
                 SecretPublicState::Entered
             };
+            self.recovery_disclosed = false;
             SecretEditorEffect::Changed
         } else {
             SecretEditorEffect::NoChange

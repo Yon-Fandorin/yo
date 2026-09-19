@@ -227,11 +227,23 @@ fn secret_receipts_autosave_only_the_reentry_marker() {
     let fixture = Fixture::new(false);
     let (catalog, _, request, question, batch) = secret_copy();
     let durable = Arc::new(Mutex::new(catalog));
-    let repository = InterviewRepository::open(&fixture.root).unwrap();
+    let vault = fixture.root.join("vault");
+    let repository = InterviewRepository::open_with_recovery(
+        &fixture.root,
+        vault.clone(),
+        fixture.root.join("config").join("secret-recovery.key"),
+    )
+    .unwrap();
     let mut controller = super::super::interview::InterviewController::new(
         repository,
         Box::new(MutableHost(Arc::clone(&durable))),
     );
+    controller.set_recovery_destination(interview::SecretRecoveryDestination::delegated(
+        &yo_core::HostId::codex(),
+        &yo_core::ProviderId::new("openai").unwrap(),
+        &yo_core::ModelId::new("gpt-test").unwrap(),
+        &yo_core::AccountId::new("authenticated-account").unwrap(),
+    ));
     for event in [
         AgentEvent::ActivityStarted {
             activity: request.activity(),
@@ -277,6 +289,16 @@ fn secret_receipts_autosave_only_the_reentry_marker() {
     assert!(encoded.contains(r#""secret":"reentry_required""#));
     assert!(!encoded.contains(canary));
     assert!(!encoded.contains(r#""secret":"submitted""#));
+
+    controller
+        .store_secret_recovery(request, &SecretInput::new(canary).unwrap())
+        .unwrap();
+    let opted_in = InterviewRepository::open(&fixture.root)
+        .unwrap()
+        .load(&copy.copy_id)
+        .unwrap()
+        .unwrap();
+    assert!(opted_in.has_any_secret_recovery());
 
     let response_activity = ActivityRef::new(
         turn(),
@@ -337,6 +359,251 @@ fn secret_receipts_autosave_only_the_reentry_marker() {
     let encoded = String::from_utf8(saved.encode().unwrap()).unwrap();
     assert!(encoded.contains(r#""secret":"reentry_required""#));
     assert!(!encoded.contains(r#""secret":"submitted""#));
+    assert!(!saved.has_any_secret_recovery());
+    assert_eq!(fs::read_dir(vault).unwrap().count(), 0);
+}
+
+// A durable final seal can outlive the process that was about to clean the vault.
+// Controller construction reconciles that Journal authority before recovery can
+// be offered again.
+#[test]
+fn restart_reconciles_a_durable_final_seal_before_recovery() {
+    let temp = fs::canonicalize(env::temp_dir())
+        .expect("the TUI interview fixture temp directory must resolve physically")
+        .join(format!(
+            "yo-tui-secret-seal-recovery-{}",
+            SubmissionId::new().unwrap()
+        ));
+    fs::create_dir(&temp).unwrap();
+    fs::set_permissions(&temp, fs::Permissions::from_mode(0o700)).unwrap();
+    let copies = temp.join("copies");
+    let vault = temp.join("vault");
+    let key = temp.join("config").join("secret-recovery.key");
+    let (mut source, mut copy, request, question, batch) = secret_copy();
+    let repository =
+        InterviewRepository::open_with_recovery(&copies, vault.clone(), key.clone()).unwrap();
+    copy.generation = repository.save(&copy, None, &source).unwrap();
+    let destination = interview::SecretRecoveryDestination::delegated(
+        &yo_core::HostId::codex(),
+        &yo_core::ProviderId::new("openai").unwrap(),
+        &yo_core::ModelId::new("gpt-test").unwrap(),
+        &yo_core::AccountId::new("authenticated-account").unwrap(),
+    );
+    copy = repository
+        .store_secret_recovery(
+            &copy,
+            Some(copy.generation),
+            &source,
+            &question.id,
+            &destination,
+            &SecretInput::new("crash-window-secret").unwrap(),
+        )
+        .unwrap();
+
+    let response_activity = ActivityRef::new(
+        turn(),
+        yo_core::ActivityId::new(num::NonZeroU64::new(42).unwrap()),
+    );
+    let answer = question
+        .project_response(&ActivityResponse::SecretInputSubmitted)
+        .unwrap();
+    let seal = Capture::AcceptedAnswers {
+        interview: request,
+        revision: batch.source().1.to_owned(),
+        answers: vec![answer],
+        answer_responses: vec![AnswerResponse {
+            question_id: question.id,
+            request,
+            response_activity,
+        }],
+        final_request: request,
+        response_activity,
+    };
+    for record in [
+        TranscriptRecord::CommandCommitted(yo_core::AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInputSubmitted,
+        }),
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityStarted {
+            activity: response_activity,
+            kind: ActivityKind::UserInputResponse {
+                request_id: request.request_id(),
+            },
+        }),
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated {
+            activity: response_activity,
+            update: yo_core::ActivityUpdate::TextSnapshot(seal.to_snapshot().unwrap()),
+        }),
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
+            activity: response_activity,
+            outcome: yo_core::ActivityOutcome::Completed,
+        }),
+    ] {
+        source.observe_committed(&record);
+    }
+    drop(repository);
+
+    let reopened = InterviewRepository::open_with_recovery(&copies, vault.clone(), key).unwrap();
+    let _controller =
+        super::super::interview::InterviewController::new(reopened, Box::new(Host(source.clone())));
+    let saved = InterviewRepository::open(&copies)
+        .unwrap()
+        .load(&copy.copy_id)
+        .unwrap()
+        .unwrap();
+    saved.validate(&source).unwrap();
+    assert!(saved.submission.is_some());
+    assert!(!saved.has_any_secret_recovery());
+    assert_eq!(fs::read_dir(vault).unwrap().count(), 0);
+    fs::remove_dir_all(temp).unwrap();
+}
+
+// 사용자가 고른 saved copy와 공개 질문이 같은 새 live request만 vault 값을 복구하며,
+// 복구 결과는 ordinary editor나 문서 대신 SecretInput으로만 반환된다.
+#[test]
+fn selected_copy_recovers_only_into_a_matching_live_secret_request() {
+    let temp = fs::canonicalize(env::temp_dir())
+        .expect("the TUI interview fixture temp directory must resolve physically")
+        .join(format!(
+            "yo-tui-secret-recovery-{}",
+            SubmissionId::new().unwrap()
+        ));
+    fs::create_dir(&temp).unwrap();
+    fs::set_permissions(&temp, fs::Permissions::from_mode(0o700)).unwrap();
+    let copies = temp.join("copies");
+    let vault = temp.join("vault");
+    let key = temp.join("config").join("secret-recovery.key");
+    let (source, copy, _, question, _) = secret_copy();
+    let repository = InterviewRepository::open_with_recovery(&copies, vault, key.clone()).unwrap();
+    repository.save(&copy, None, &source).unwrap();
+    let destination = interview::SecretRecoveryDestination::delegated(
+        &yo_core::HostId::codex(),
+        &yo_core::ProviderId::new("openai").unwrap(),
+        &yo_core::ModelId::new("gpt-test").unwrap(),
+        &yo_core::AccountId::new("authenticated-account").unwrap(),
+    );
+    let mut controller = super::super::interview::InterviewController::new(
+        repository,
+        Box::new(Host(source.clone())),
+    );
+    controller.set_recovery_destination(destination);
+    controller
+        .command(&format!("recover {}", copy.copy_id), false)
+        .unwrap();
+
+    let live_request = ActivityRequestRef::new(
+        ActivityRef::new(
+            turn(),
+            yo_core::ActivityId::new(num::NonZeroU64::new(31).unwrap()),
+        ),
+        yo_core::RequestId::new(num::NonZeroU64::new(31).unwrap()),
+    );
+    let live_batch = Capture::batch(live_request, vec![question]).unwrap();
+    for event in [
+        AgentEvent::ActivityStarted {
+            activity: live_request.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: live_request.request_id(),
+            },
+        },
+        AgentEvent::ActivityUpdated {
+            activity: live_request.activity(),
+            update: yo_core::ActivityUpdate::TextSnapshot(live_batch.to_snapshot().unwrap()),
+        },
+    ] {
+        assert!(
+            controller
+                .observe(&TranscriptRecord::EventCommitted(event))
+                .is_none()
+        );
+    }
+    assert!(!controller.recovery_available(live_request).unwrap());
+    controller
+        .store_secret_recovery(
+            live_request,
+            &SecretInput::new("restored-only-here").unwrap(),
+        )
+        .unwrap();
+    assert!(controller.recovery_available(live_request).unwrap());
+    assert_eq!(
+        controller.recover_secret(live_request).unwrap().expose(),
+        "restored-only-here"
+    );
+
+    let mismatched_request = ActivityRequestRef::new(
+        ActivityRef::new(
+            turn(),
+            yo_core::ActivityId::new(num::NonZeroU64::new(32).unwrap()),
+        ),
+        yo_core::RequestId::new(num::NonZeroU64::new(32).unwrap()),
+    );
+    let mut changed_question = live_batch.clone();
+    if let Capture::Batch { questions, .. } = &mut changed_question {
+        questions[0].question.push_str(" changed");
+    }
+    let changed = Capture::batch(
+        mismatched_request,
+        match changed_question {
+            Capture::Batch { questions, .. } => questions,
+            _ => unreachable!(),
+        },
+    )
+    .unwrap();
+    for event in [
+        AgentEvent::ActivityStarted {
+            activity: mismatched_request.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: mismatched_request.request_id(),
+            },
+        },
+        AgentEvent::ActivityUpdated {
+            activity: mismatched_request.activity(),
+            update: yo_core::ActivityUpdate::TextSnapshot(changed.to_snapshot().unwrap()),
+        },
+    ] {
+        controller.observe(&TranscriptRecord::EventCommitted(event));
+    }
+    assert!(!controller.recovery_available(mismatched_request).unwrap());
+    assert!(controller.recover_secret(mismatched_request).is_err());
+
+    let ambiguous_request = ActivityRequestRef::new(
+        ActivityRef::new(
+            turn(),
+            yo_core::ActivityId::new(num::NonZeroU64::new(33).unwrap()),
+        ),
+        yo_core::RequestId::new(num::NonZeroU64::new(33).unwrap()),
+    );
+    let ambiguous = Capture::batch(
+        ambiguous_request,
+        match live_batch {
+            Capture::Batch { questions, .. } => questions,
+            _ => unreachable!(),
+        },
+    )
+    .unwrap();
+    for event in [
+        AgentEvent::ActivityStarted {
+            activity: ambiguous_request.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: ambiguous_request.request_id(),
+            },
+        },
+        AgentEvent::ActivityUpdated {
+            activity: ambiguous_request.activity(),
+            update: yo_core::ActivityUpdate::TextSnapshot(ambiguous.to_snapshot().unwrap()),
+        },
+    ] {
+        controller.observe(&TranscriptRecord::EventCommitted(event));
+    }
+    assert!(controller.recovery_available(live_request).is_err());
+    assert!(controller.recover_secret(live_request).is_err());
+
+    fs::remove_file(key).unwrap();
+    let reopened = controller
+        .command(&format!("recover {}", copy.copy_id), false)
+        .unwrap();
+    assert!(reopened.document.contains("[secret recovery unavailable]"));
+    fs::remove_dir_all(temp).unwrap();
 }
 
 // 복구한 비밀 질문은 값 입력을 받지 않지만 고정 탐색 키로 혼합 질문을 오가고 닫을 수 있으며,

@@ -1,8 +1,8 @@
 use std::{
     fs::{File, TryLockError},
-    io::{Error, Read, Write},
+    io::{Error, ErrorKind, Read, Write},
     os::unix::fs::MetadataExt,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
 };
 
 use rustix::{
@@ -12,16 +12,32 @@ use rustix::{
 };
 
 use super::{
-    COPY_LIMIT, InterviewCatalog, InterviewError, WorkingCopy, invalid,
+    COPY_LIMIT, InterviewCatalog, InterviewError, SecretRecoveryDestination, WorkingCopy, invalid,
+    recovery::{RecoveryBinding, RecoveryStore, SecretRecoveryReference},
     working_copy::{new_id, valid_id},
 };
+use crate::SecretInput;
 
 /// Pinned, user-owned storage for editable copies. It never writes a Session Journal.
 #[derive(Debug)]
 pub struct InterviewRepository {
     root: File,
+    recovery: Option<RecoveryStore>,
 }
 pub type InterviewCopyEntry = (String, Result<WorkingCopy, InterviewError>);
+
+#[derive(Debug)]
+pub struct SecretRecoveryUpdate {
+    pub copy: WorkingCopy,
+    pub cleanup_warning: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct SecretRecoveryMaintenance {
+    pub expired_references: usize,
+    pub warning: Option<String>,
+}
+
 impl InterviewRepository {
     pub fn open(path: &Path) -> Result<Self, InterviewError> {
         if !path.is_absolute() {
@@ -58,7 +74,10 @@ impl InterviewRepository {
             root = File::from(fd);
         }
         secure(&root, true)?;
-        let repository = Self { root };
+        let repository = Self {
+            root,
+            recovery: None,
+        };
         match repository.lease() {
             Ok(_lease) => {},
             Err(InterviewError::Busy) => {}, /* An active writer owns its temps; later */
@@ -66,6 +85,20 @@ impl InterviewRepository {
             Err(error) => return Err(error),
         }
         Ok(repository)
+    }
+
+    pub fn open_with_recovery(
+        copy_path: &Path,
+        vault_path: PathBuf,
+        key_path: PathBuf,
+    ) -> Result<Self, InterviewError> {
+        let mut repository = Self::open(copy_path)?;
+        repository.recovery = Some(RecoveryStore::new(vault_path, key_path)?);
+        Ok(repository)
+    }
+
+    pub fn recovery_boundary(&self) -> Option<String> {
+        self.recovery.as_ref().map(RecoveryStore::boundary)
     }
     fn lease(&self) -> Result<File, InterviewError> {
         secure(&self.root, true)?;
@@ -217,8 +250,36 @@ impl InterviewRepository {
         expected_generation: Option<u64>,
         catalog: &InterviewCatalog,
     ) -> Result<u64, InterviewError> {
-        copy.validate(catalog)?;
         let _lease = self.lease()?;
+        self.save_unlocked(copy, expected_generation, catalog)
+    }
+
+    fn save_unlocked(
+        &self,
+        copy: &WorkingCopy,
+        expected_generation: Option<u64>,
+        catalog: &InterviewCatalog,
+    ) -> Result<u64, InterviewError> {
+        copy.validate(catalog)?;
+        self.save_validated_unlocked(copy, expected_generation)
+    }
+
+    /// Recovery-reference removal preserves the already decoded working-copy
+    /// shape and does not need its historical Journal to remain available.
+    fn save_shape_unlocked(
+        &self,
+        copy: &WorkingCopy,
+        expected_generation: Option<u64>,
+    ) -> Result<u64, InterviewError> {
+        copy.encode()?;
+        self.save_validated_unlocked(copy, expected_generation)
+    }
+
+    fn save_validated_unlocked(
+        &self,
+        copy: &WorkingCopy,
+        expected_generation: Option<u64>,
+    ) -> Result<u64, InterviewError> {
         let current = self.read_unlocked(&copy.copy_id)?;
         if current.as_ref().map(|v| v.generation) != expected_generation {
             return Err(InterviewError::Conflict);
@@ -263,6 +324,342 @@ impl InterviewRepository {
             let _ = fs::unlinkat(&self.root, temp.as_str(), fs::AtFlags::empty());
         }
         result
+    }
+
+    pub fn store_secret_recovery(
+        &self,
+        copy: &WorkingCopy,
+        expected_generation: Option<u64>,
+        catalog: &InterviewCatalog,
+        question_id: &str,
+        destination: &SecretRecoveryDestination,
+        secret: &SecretInput,
+    ) -> Result<WorkingCopy, InterviewError> {
+        let recovery = self
+            .recovery
+            .as_ref()
+            .ok_or_else(|| invalid("secret recovery storage is unavailable"))?;
+        let capture = copy.validate(catalog)?;
+        let question = capture
+            .questions
+            .iter()
+            .find(|question| question.id == question_id && question.is_secret)
+            .ok_or_else(|| invalid("secret recovery question does not match the saved copy"))?;
+        question.validate_answer(
+            copy.answers
+                .iter()
+                .find(|answer| answer.question_id == question_id)
+                .ok_or_else(|| invalid("secret recovery answer marker is missing"))?,
+            true,
+        )?;
+        let fingerprint = capture.public_batch_fingerprint()?;
+        let _lease = self.lease()?;
+        let current = self.read_unlocked(&copy.copy_id)?;
+        if current.as_ref().map(|value| value.generation) != expected_generation {
+            return Err(InterviewError::Conflict);
+        }
+        let entry = recovery.write(
+            &copy.copy_id,
+            &fingerprint,
+            question_id,
+            destination,
+            secret,
+        )?;
+        let old = copy.recovery_reference(question_id).cloned();
+        let mut published = copy.clone();
+        published.set_recovery_reference(SecretRecoveryReference::new(
+            question_id.to_owned(),
+            entry.id.clone(),
+        ));
+        match self.save_unlocked(&published, expected_generation, catalog) {
+            Ok(generation) => {
+                published.generation = generation;
+                if let Some(old) = old {
+                    let _ = recovery.delete(&old.entry_id);
+                }
+                Ok(published)
+            },
+            Err(error) => {
+                let reference_state = self.read_unlocked(&copy.copy_id).map(|current| {
+                    current.is_some_and(|current| {
+                        current
+                            .recovery_reference(question_id)
+                            .is_some_and(|reference| reference.entry_id == entry.id)
+                    })
+                });
+                // A failed fsync or readback can follow a successful rename.
+                // Reclaim only when a successful read positively proves the
+                // published copy does not name this entry.
+                if matches!(reference_state, Ok(false)) {
+                    let _ = recovery.delete_written(&entry);
+                }
+                Err(error)
+            },
+        }
+    }
+
+    pub fn recovery_available(
+        &self,
+        copy: &WorkingCopy,
+        catalog: &InterviewCatalog,
+        live_capture: &super::CapturedInterview,
+        question_id: &str,
+        destination: &SecretRecoveryDestination,
+    ) -> Result<bool, InterviewError> {
+        let Some(recovery) = &self.recovery else {
+            return Ok(false);
+        };
+        let source = copy.validate(catalog)?;
+        if source.public_batch_fingerprint()? != live_capture.public_batch_fingerprint()?
+            || !live_capture
+                .questions
+                .iter()
+                .any(|question| question.id == question_id && question.is_secret)
+        {
+            return Ok(false);
+        }
+        let Some(reference) = copy.recovery_reference(question_id) else {
+            return Ok(false);
+        };
+        recovery.authenticate(RecoveryBinding {
+            entry_id: &reference.entry_id,
+            copy_id: &copy.copy_id,
+            batch_fingerprint: &source.public_batch_fingerprint()?,
+            question_id,
+            destination,
+        })?;
+        Ok(true)
+    }
+
+    pub fn stored_recovery_available(
+        &self,
+        copy: &WorkingCopy,
+        question_id: &str,
+    ) -> Result<bool, InterviewError> {
+        let Some(recovery) = &self.recovery else {
+            return Ok(false);
+        };
+        let Some(reference) = copy.recovery_reference(question_id) else {
+            return Ok(false);
+        };
+        recovery.available(&reference.entry_id)
+    }
+
+    pub fn recover_secret(
+        &self,
+        copy: &WorkingCopy,
+        catalog: &InterviewCatalog,
+        live_capture: &super::CapturedInterview,
+        question_id: &str,
+        destination: &SecretRecoveryDestination,
+    ) -> Result<SecretInput, InterviewError> {
+        let recovery = self
+            .recovery
+            .as_ref()
+            .ok_or_else(|| invalid("secret recovery storage is unavailable"))?;
+        let source = copy.validate(catalog)?;
+        let fingerprint = source.public_batch_fingerprint()?;
+        if fingerprint != live_capture.public_batch_fingerprint()?
+            || !live_capture
+                .questions
+                .iter()
+                .any(|question| question.id == question_id && question.is_secret)
+        {
+            return Err(invalid(
+                "the live secret request does not match the saved public batch",
+            ));
+        }
+        let reference = copy
+            .recovery_reference(question_id)
+            .ok_or_else(|| invalid("no secret recovery entry is available"))?;
+        let _lease = self.lease()?;
+        let current = self
+            .read_unlocked(&copy.copy_id)?
+            .ok_or_else(|| invalid("saved interview copy is unavailable"))?;
+        if current.generation != copy.generation
+            || current.recovery_reference(question_id) != Some(reference)
+        {
+            return Err(InterviewError::Conflict);
+        }
+        recovery.read(RecoveryBinding {
+            entry_id: &reference.entry_id,
+            copy_id: &copy.copy_id,
+            batch_fingerprint: &fingerprint,
+            question_id,
+            destination,
+        })
+    }
+
+    pub fn forget_secret_recovery(
+        &self,
+        copy: &WorkingCopy,
+        expected_generation: Option<u64>,
+        catalog: &InterviewCatalog,
+        question_id: &str,
+    ) -> Result<SecretRecoveryUpdate, InterviewError> {
+        let mut published = copy.clone();
+        let reference = published
+            .take_recovery_reference(question_id)
+            .ok_or_else(|| invalid("no secret recovery entry is available"))?;
+        let _lease = self.lease()?;
+        let generation = self.save_unlocked(&published, expected_generation, catalog)?;
+        published.generation = generation;
+        let cleanup_warning = self.recovery.as_ref().and_then(|recovery| {
+            recovery
+                .delete(&reference.entry_id)
+                .err()
+                .map(|error| format!("encrypted entry cleanup remains pending: {error}"))
+        });
+        Ok(SecretRecoveryUpdate {
+            copy: published,
+            cleanup_warning,
+        })
+    }
+
+    pub fn forget_all_secret_recovery(
+        &self,
+        copy: &WorkingCopy,
+        expected_generation: Option<u64>,
+        catalog: &InterviewCatalog,
+    ) -> Result<SecretRecoveryUpdate, InterviewError> {
+        let mut published = copy.clone();
+        let references = published.take_all_recovery_references();
+        if references.is_empty() {
+            return Ok(SecretRecoveryUpdate {
+                copy: published,
+                cleanup_warning: None,
+            });
+        }
+        let _lease = self.lease()?;
+        let generation = self.save_unlocked(&published, expected_generation, catalog)?;
+        published.generation = generation;
+        let mut cleanup_warning = None;
+        if let Some(recovery) = &self.recovery {
+            for reference in references {
+                if let Err(error) = recovery.delete(&reference.entry_id) {
+                    cleanup_warning = Some(format!(
+                        "one or more encrypted entry cleanups remain pending: {error}"
+                    ));
+                }
+            }
+        }
+        Ok(SecretRecoveryUpdate {
+            copy: published,
+            cleanup_warning,
+        })
+    }
+
+    pub fn expire_secret_recovery(
+        &self,
+        copy: &WorkingCopy,
+        expected_generation: Option<u64>,
+        catalog: &InterviewCatalog,
+    ) -> Result<Option<SecretRecoveryUpdate>, InterviewError> {
+        let Some(recovery) = &self.recovery else {
+            return Ok(None);
+        };
+        let mut expired_ids = Vec::new();
+        for reference in &copy.secret_recovery {
+            match recovery.expired(&reference.entry_id) {
+                Ok(true) => expired_ids.push(reference.question_id.clone()),
+                Ok(false) => {},
+                Err(InterviewError::Io(error)) if error.kind() == ErrorKind::NotFound => {},
+                Err(error) => return Err(error),
+            }
+        }
+        if expired_ids.is_empty() {
+            return Ok(None);
+        }
+        let mut published = copy.clone();
+        let mut references = Vec::new();
+        for id in expired_ids {
+            if let Some(reference) = published.take_recovery_reference(&id) {
+                references.push(reference);
+            }
+        }
+        let _lease = self.lease()?;
+        let generation = self.save_unlocked(&published, expected_generation, catalog)?;
+        published.generation = generation;
+        let mut cleanup_warning = None;
+        for reference in references {
+            if let Err(error) = recovery.delete(&reference.entry_id) {
+                cleanup_warning = Some(format!("expired entry cleanup remains pending: {error}"));
+            }
+        }
+        Ok(Some(SecretRecoveryUpdate {
+            copy: published,
+            cleanup_warning,
+        }))
+    }
+
+    /// Removes every expired public reference before attempting to unlink its
+    /// encrypted entry. This scan needs only the canonical working-copy shape,
+    /// so expiry continues even when the historical Session is unavailable.
+    pub fn maintain_secret_recovery(&self) -> Result<SecretRecoveryMaintenance, InterviewError> {
+        let Some(recovery) = &self.recovery else {
+            return Ok(SecretRecoveryMaintenance::default());
+        };
+        let _lease = self.lease()?;
+        let mut ids = Vec::new();
+        for (index, entry) in Dir::read_from(&self.root).map_err(Error::from)?.enumerate() {
+            if index >= 4096 {
+                return Err(invalid(
+                    "interview repository directory exceeds its read limit",
+                ));
+            }
+            let entry = entry.map_err(Error::from)?;
+            let Ok(name) = entry.file_name().to_str() else {
+                continue;
+            };
+            let Some(id) = name.strip_suffix(".json").filter(|id| valid_id(id)) else {
+                continue;
+            };
+            ids.push(id.to_owned());
+        }
+        ids.sort();
+
+        let mut result = SecretRecoveryMaintenance::default();
+        for id in ids {
+            let mut copy = match self.read_unlocked(&id) {
+                Ok(Some(copy)) => copy,
+                Ok(None) | Err(_) => continue,
+            };
+            let mut expired = Vec::new();
+            let mut check_failed = false;
+            for reference in &copy.secret_recovery {
+                match recovery.expired(&reference.entry_id) {
+                    Ok(true) => expired.push(reference.question_id.clone()),
+                    Ok(false) => {},
+                    Err(_) => check_failed = true,
+                }
+            }
+            if check_failed {
+                result.warning = Some(
+                    "one or more secret recovery entries could not be checked for expiry"
+                        .to_owned(),
+                );
+            }
+            if expired.is_empty() {
+                continue;
+            }
+            let mut references = Vec::new();
+            for question_id in expired {
+                if let Some(reference) = copy.take_recovery_reference(&question_id) {
+                    references.push(reference);
+                }
+            }
+            let generation = self.save_shape_unlocked(&copy, Some(copy.generation))?;
+            copy.generation = generation;
+            result.expired_references += references.len();
+            for reference in references {
+                if recovery.delete(&reference.entry_id).is_err() {
+                    result.warning = Some(
+                        "one or more expired encrypted entry cleanups remain pending".to_owned(),
+                    );
+                }
+            }
+        }
+        Ok(result)
     }
 }
 fn secure(file: &File, directory: bool) -> Result<(), InterviewError> {

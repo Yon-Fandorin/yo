@@ -3,7 +3,7 @@
 use serde_json::Value;
 use yo_core::{
     AccountId, BackendBindingEvidence, BackendFailure, BackendFailureKind, BackendIdentity, HostId,
-    ModelId, derive_host_account_id,
+    ModelId, ProviderId, derive_host_account_id,
 };
 
 use crate::{
@@ -15,6 +15,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexNativeModelBinding {
     account: AccountId,
+    provider: ProviderId,
     model: ModelId,
 }
 
@@ -25,6 +26,10 @@ impl CodexNativeModelBinding {
 
     pub const fn model(&self) -> &ModelId {
         &self.model
+    }
+
+    pub const fn provider(&self) -> &ProviderId {
+        &self.provider
     }
 }
 
@@ -66,8 +71,14 @@ fn native_model_binding_from_parts(
     let Some(account) = binding_account(binding_identity)? else {
         return Ok(None);
     };
-    let (model, _) = model_and_provider(model_identity)?;
-    Ok(Some(CodexNativeModelBinding { account, model }))
+    let (model, provider) = model_and_provider(model_identity)?;
+    let provider =
+        ProviderId::new(provider).map_err(|error| protocol::protocol_failure(error.to_string()))?;
+    Ok(Some(CodexNativeModelBinding {
+        account,
+        provider,
+        model,
+    }))
 }
 
 pub(crate) fn decode_optional_account(

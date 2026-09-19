@@ -9,6 +9,7 @@ use std::{
 
 mod capture;
 mod profile;
+mod recovery;
 mod refs;
 mod repository;
 #[cfg(test)]
@@ -20,7 +21,10 @@ pub use capture::{CapturedInterview, InterviewCatalog};
 pub use profile::{
     Answer, AnswerResponse, Capture, InterviewOption, InterviewQuestion, SecretAnswerState,
 };
-pub use repository::{InterviewCopyEntry, InterviewRepository};
+pub use recovery::SecretRecoveryDestination;
+pub use repository::{
+    InterviewCopyEntry, InterviewRepository, SecretRecoveryMaintenance, SecretRecoveryUpdate,
+};
 pub use working_copy::{NewConversation, Submission, WorkingCopy};
 
 pub const CAPTURE_LIMIT: usize = 1024 * 1024;

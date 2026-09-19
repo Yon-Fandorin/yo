@@ -5,10 +5,12 @@ use std::{
 };
 
 use yo_core::{
-    ActivityRequestRef, ActivityResponse, SubmissionOutcome, TranscriptReader, TranscriptRecord,
+    ActivityRequestRef, ActivityResponse, SecretInput, SubmissionOutcome, TranscriptReader,
+    TranscriptRecord,
     interview::{
         Answer, CapturedInterview, InterviewCatalog, InterviewError, InterviewQuestion,
-        InterviewRepository, NewConversation, PREVIEW_LIMIT, Submission, WorkingCopy,
+        InterviewRepository, NewConversation, PREVIEW_LIMIT, SecretRecoveryDestination, Submission,
+        WorkingCopy,
     },
 };
 
@@ -33,6 +35,8 @@ pub(super) struct InterviewController {
     status: String,
     pending: Option<PendingInterview>,
     unconfirmed: Option<NewConversation>,
+    recovery_destination: Option<SecretRecoveryDestination>,
+    next_recovery_maintenance: Instant,
 }
 struct PendingInterview {
     intent: NewConversation,
@@ -101,7 +105,7 @@ impl InterviewController {
         repository: InterviewRepository,
         host: Box<dyn InterviewHistoryHost>,
     ) -> Self {
-        Self {
+        let mut controller = Self {
             repository,
             host,
             live: InterviewCatalog::default(),
@@ -116,7 +120,186 @@ impl InterviewController {
             status: "No interview copy selected".into(),
             pending: None,
             unconfirmed: None,
+            recovery_destination: None,
+            next_recovery_maintenance: Instant::now() + Duration::from_secs(60),
+        };
+        if let Some(notice) = controller.maintain_recovery() {
+            controller.status = notice;
         }
+        controller
+    }
+
+    pub(super) fn set_recovery_destination(&mut self, destination: SecretRecoveryDestination) {
+        self.recovery_destination = Some(destination);
+    }
+
+    pub(super) fn recovery_boundary(&self) -> Result<String, InterviewError> {
+        if self.recovery_destination.is_none() {
+            return Err(error(
+                "secret recovery is unsupported because the live destination lacks complete authenticated account evidence",
+            ));
+        }
+        self.repository
+            .recovery_boundary()
+            .ok_or_else(|| error("secret recovery storage is unavailable"))
+    }
+
+    pub(super) fn recovery_available(
+        &self,
+        request: ActivityRequestRef,
+    ) -> Result<bool, InterviewError> {
+        let Some(destination) = self.recovery_destination.as_ref() else {
+            return Ok(false);
+        };
+        let Some((live, question_id)) = self.matching_live_secret(request)? else {
+            return Ok(false);
+        };
+        let copy = self
+            .copy
+            .as_ref()
+            .ok_or_else(|| error("select a saved interview copy before recovery"))?;
+        self.repository
+            .recovery_available(copy, &self.source, &live, &question_id, destination)
+    }
+
+    pub(super) fn store_secret_recovery(
+        &mut self,
+        request: ActivityRequestRef,
+        secret: &SecretInput,
+    ) -> Result<(), InterviewError> {
+        self.save()?;
+        let destination = self
+            .recovery_destination
+            .as_ref()
+            .ok_or_else(|| error(
+                "secret recovery is unsupported because the live destination lacks complete authenticated account evidence",
+            ))?;
+        let (_, question_id) = self.matching_live_secret(request)?.ok_or_else(|| {
+            error("the live secret request does not match the selected saved copy")
+        })?;
+        let copy = self
+            .copy
+            .as_ref()
+            .ok_or_else(|| error("select a saved interview copy before enabling recovery"))?;
+        let published = self.repository.store_secret_recovery(
+            copy,
+            self.expected,
+            &self.source,
+            &question_id,
+            destination,
+            secret,
+        )?;
+        self.expected = Some(published.generation);
+        self.copy = Some(published);
+        self.dirty = false;
+        self.next_save = None;
+        self.status = "Saved · encrypted secret recovery available".into();
+        Ok(())
+    }
+
+    pub(super) fn recover_secret(
+        &self,
+        request: ActivityRequestRef,
+    ) -> Result<SecretInput, InterviewError> {
+        let destination = self
+            .recovery_destination
+            .as_ref()
+            .ok_or_else(|| error(
+                "secret recovery is unsupported because the live destination lacks complete authenticated account evidence",
+            ))?;
+        let (live, question_id) = self.matching_live_secret(request)?.ok_or_else(|| {
+            error("the live secret request does not match the selected saved copy")
+        })?;
+        let copy = self
+            .copy
+            .as_ref()
+            .ok_or_else(|| error("select a saved interview copy before recovery"))?;
+        self.repository
+            .recover_secret(copy, &self.source, &live, &question_id, destination)
+    }
+
+    fn matching_live_secret(
+        &self,
+        request: ActivityRequestRef,
+    ) -> Result<Option<(CapturedInterview, String)>, InterviewError> {
+        let copy = self
+            .copy
+            .as_ref()
+            .ok_or_else(|| error("select a saved interview copy before recovery"))?;
+        let source = copy.validate(&self.source)?;
+        let source_fingerprint = source.public_batch_fingerprint()?;
+        let (live, index) = self
+            .live
+            .question_for_request(request)
+            .ok_or_else(|| error("the live secret request is unavailable"))?;
+        let question = live
+            .questions
+            .get(index)
+            .ok_or_else(|| error("the live secret question is unavailable"))?;
+        if !question.is_secret
+            || source_fingerprint != live.public_batch_fingerprint()?
+            || !source
+                .questions
+                .iter()
+                .any(|candidate| candidate.id == question.id && candidate.is_secret)
+        {
+            return Ok(None);
+        }
+        let matches = self
+            .live
+            .interviews()
+            .iter()
+            .filter(|candidate| {
+                candidate
+                    .public_batch_fingerprint()
+                    .is_ok_and(|fingerprint| fingerprint == source_fingerprint)
+                    && candidate
+                        .questions
+                        .iter()
+                        .any(|candidate| candidate.id == question.id && candidate.is_secret)
+            })
+            .count();
+        if matches != 1 {
+            return Err(error(
+                "secret recovery is unavailable because the matching live request is ambiguous",
+            ));
+        }
+        Ok(Some((live.clone(), question.id.clone())))
+    }
+
+    pub(super) fn forget_secret_recovery(
+        &mut self,
+        request: Option<ActivityRequestRef>,
+    ) -> Result<Option<String>, InterviewError> {
+        self.save()?;
+        let copy = self
+            .copy
+            .as_ref()
+            .ok_or_else(|| error("select a saved interview copy before forgetting recovery"))?;
+        let question_id = if let Some(request) = request {
+            let (live, index) = self
+                .live
+                .question_for_request(request)
+                .ok_or_else(|| error("the live secret request is unavailable"))?;
+            live.questions
+                .get(index)
+                .map(|question| question.id.clone())
+                .ok_or_else(|| error("the live secret question is unavailable"))?
+        } else {
+            copy.current_question_id.clone()
+        };
+        let update = self.repository.forget_secret_recovery(
+            copy,
+            self.expected,
+            &self.source,
+            &question_id,
+        )?;
+        self.expected = Some(update.copy.generation);
+        self.copy = Some(update.copy);
+        self.dirty = false;
+        self.next_save = None;
+        self.status = "Saved · secret recovery forgotten".into();
+        Ok(update.cleanup_warning)
     }
     pub(super) fn editing_text(&self) -> String {
         self.preview.clone().unwrap_or_else(|| self.answer_text())
@@ -143,6 +326,9 @@ impl InterviewController {
     }
     pub(super) fn observe(&mut self, record: &TranscriptRecord) -> Option<String> {
         self.live.observe_committed(record);
+        if let Some(notice) = self.clear_recovery_after_final_seal() {
+            return Some(notice);
+        }
         let relevant = match record {
             TranscriptRecord::EventCommitted(
                 yo_core::AgentEvent::ActivityUpdated { activity, .. }
@@ -239,6 +425,134 @@ impl InterviewController {
         } else {
             None
         }
+    }
+
+    fn clear_recovery_after_final_seal(&mut self) -> Option<String> {
+        let copy = self.copy.as_ref()?;
+        if !copy.has_any_secret_recovery() {
+            return None;
+        }
+        let source_fingerprint = copy
+            .validate(&self.source)
+            .and_then(CapturedInterview::public_batch_fingerprint)
+            .ok()?;
+        let sealed = self.live.interviews().iter().any(|capture| {
+            capture.submitted.is_some()
+                && capture
+                    .public_batch_fingerprint()
+                    .is_ok_and(|fingerprint| fingerprint == source_fingerprint)
+        });
+        if !sealed {
+            return None;
+        }
+        match self
+            .repository
+            .forget_all_secret_recovery(copy, self.expected, &self.source)
+        {
+            Ok(update) => {
+                self.expected = Some(update.copy.generation);
+                self.copy = Some(update.copy);
+                self.dirty = false;
+                self.next_save = None;
+                self.status = "Saved · final response sealed; secret recovery removed".into();
+                update.cleanup_warning
+            },
+            Err(error) => Some(format!(
+                "Final response sealed, but secret recovery cleanup is pending: {error}"
+            )),
+        }
+    }
+
+    fn maintain_recovery(&mut self) -> Option<String> {
+        if self.dirty || self.pending.is_some() {
+            return None;
+        }
+        let mut notices = Vec::new();
+        match self.repository.maintain_secret_recovery() {
+            Ok(maintenance) => {
+                if maintenance.expired_references > 0 {
+                    notices.push(format!(
+                        "Expired {} secret recovery reference(s)",
+                        maintenance.expired_references
+                    ));
+                }
+                if let Some(warning) = maintenance.warning {
+                    notices.push(warning);
+                }
+            },
+            Err(error) => notices.push(format!("Secret recovery maintenance unavailable: {error}")),
+        }
+
+        let copies = match self.repository.list() {
+            Ok(copies) => copies,
+            Err(error) => {
+                notices.push(format!(
+                    "Secret recovery seal reconciliation unavailable: {error}"
+                ));
+                return (!notices.is_empty()).then(|| notices.join("; "));
+            },
+        };
+        let selected_id = self.copy.as_ref().map(|copy| copy.copy_id.clone());
+        for (_, value) in copies {
+            let Ok(mut copy) = value else {
+                continue;
+            };
+            if !copy.has_any_secret_recovery() {
+                continue;
+            }
+            let source = match self.host.resolve(copy.source().0) {
+                Ok(source) => source,
+                Err(_) => continue,
+            };
+            let capture = match copy.validate(&source) {
+                Ok(capture) => capture.clone(),
+                Err(_) => continue,
+            };
+            let Some((final_request, response_activity)) = capture.submitted else {
+                continue;
+            };
+            copy.answers = match Self::project_editable_answers(&capture, &capture.answers) {
+                Ok(answers) => answers,
+                Err(_) => continue,
+            };
+            copy.current_question_id = capture.current_question_id.clone();
+            copy.submission = Some(Submission::ActivityResponse {
+                final_request,
+                response_activity,
+            });
+            match self
+                .repository
+                .forget_all_secret_recovery(&copy, Some(copy.generation), &source)
+            {
+                Ok(update) => {
+                    if selected_id.as_deref() == Some(update.copy.copy_id.as_str()) {
+                        self.expected = Some(update.copy.generation);
+                        self.copy = Some(update.copy.clone());
+                        self.source = source;
+                        self.editing = false;
+                    }
+                    notices.push("Final response seal removed secret recovery".to_owned());
+                    if let Some(warning) = update.cleanup_warning {
+                        notices.push(warning);
+                    }
+                },
+                Err(error) => notices.push(format!(
+                    "Final response sealed, but secret recovery cleanup is pending: {error}"
+                )),
+            }
+        }
+
+        if let Some(id) = selected_id
+            && let Ok(Some(current)) = self.repository.load(&id)
+            && self
+                .copy
+                .as_ref()
+                .is_some_and(|copy| copy.generation != current.generation)
+        {
+            self.expected = Some(current.generation);
+            self.copy = Some(current);
+        }
+        (!notices.is_empty()).then(|| notices.join("; "))
     }
     pub(super) fn retain_live_response(
         &mut self,
@@ -484,6 +798,13 @@ impl InterviewController {
             self.status = "Submission unconfirmed; immutable intent retained and preview editable. No automatic retry.".into();
             return Some(self.status.clone());
         }
+        if Instant::now() >= self.next_recovery_maintenance {
+            self.next_recovery_maintenance = Instant::now() + Duration::from_secs(60);
+            if let Some(notice) = self.maintain_recovery() {
+                self.status = notice.clone();
+                return Some(notice);
+            }
+        }
         if self.automatic_save
             && self
                 .next_save
@@ -593,7 +914,7 @@ impl InterviewController {
                         }
                     ));
                 }
-                document.push_str("\n/interview recover <copy UUID> · /interview reopen <copy UUID>\n/interview next · previous · option <number> · notes <text> · context <text> · preview · send · save · close\nType an answer and press Enter to keep it locally. Sending requires /interview send.\n");
+                document.push_str("\n/interview recover <copy UUID> · /interview reopen <copy UUID>\n/interview next · previous · option <number> · notes <text> · context <text> · preview · send · save · forget · close\nType an answer and press Enter to keep it locally. Sending requires /interview send.\nSecret recovery: Ctrl-R shows the local boundary; press Ctrl-R again to opt in. Ctrl-F or /interview forget removes it.\n");
                 return Ok(InterviewCommand {
                     document,
                     editor: None,
@@ -607,12 +928,26 @@ impl InterviewController {
                     ));
                 }
                 self.save()?;
-                let stored = self
+                if let Some(notice) = self.maintain_recovery() {
+                    self.status = notice;
+                }
+                let mut stored = self
                     .repository
                     .load(rest.trim())?
                     .ok_or_else(|| error("interview copy not found"))?;
                 let source = self.host.resolve(stored.source().0)?;
                 stored.validate(&source)?;
+                let expired = self.repository.expire_secret_recovery(
+                    &stored,
+                    Some(stored.generation),
+                    &source,
+                )?;
+                let expiry_notice = expired.as_ref().map(|_| {
+                    "Expired secret recovery was removed before opening this copy".to_owned()
+                });
+                if let Some(update) = expired {
+                    stored = update.copy;
+                }
                 self.host.validate_submission(&stored)?;
                 if verb == "recover" && stored.submission.is_some() {
                     return Err(error(
@@ -638,7 +973,9 @@ impl InterviewController {
                     self.mark_dirty();
                     self.save()?;
                 } else {
-                    self.status = "Saved · recovered editable copy; submission unconfirmed".into();
+                    self.status = expiry_notice.unwrap_or_else(|| {
+                        "Saved · recovered editable copy; submission unconfirmed".into()
+                    });
                 }
                 editor = Some(self.answer_text());
             },
@@ -731,6 +1068,14 @@ impl InterviewController {
                 if self.editing {
                     editor = Some(self.preview.clone().unwrap_or_else(|| self.answer_text()));
                 }
+            },
+            "forget" => {
+                self.require_editing()?;
+                let cleanup = self.forget_secret_recovery(None)?;
+                if let Some(cleanup) = cleanup {
+                    self.status = format!("Saved · secret recovery forgotten; {cleanup}");
+                }
+                editor = Some(self.answer_text());
             },
             "close" => {
                 self.save()?;
@@ -841,7 +1186,13 @@ impl InterviewController {
             q.prompt,
         );
         if q.is_secret {
-            text.push_str("\nAnswer: [secret re-entry required]\nNotes: \n\nSecret answers can only be entered for a new live request. Tab: next · Shift-Tab: previous · Esc: close.");
+            let state = match self.repository.stored_recovery_available(copy, &q.id) {
+                Ok(true) => "secret recovery stored; live authentication required",
+                Ok(false) if copy.has_secret_recovery(&q.id) => "secret recovery unavailable",
+                Err(_) => "secret recovery unavailable",
+                Ok(false) => "secret re-entry required",
+            };
+            text.push_str(&format!("\nAnswer: [{state}]\nNotes: \n\nSecret answers require a matching new live request. Ctrl-R recovers only into that hidden editor; /interview forget removes local recovery. Tab: next · Shift-Tab: previous · Esc: close."));
         } else {
             text.push_str(&format!("\nAnswer: {}\nNotes: {}\n\nEdit locally; /interview preview then /interview send starts a new conversation.",a.option_id.as_deref().unwrap_or(&a.text),a.notes));
         }

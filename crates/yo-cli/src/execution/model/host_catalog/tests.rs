@@ -245,7 +245,11 @@ fn confirmed_codex_binding_overrides_the_pre_start_catalog_default() {
 
     let active = resolve_active_host_model(
         Some(&host),
-        Some((&account, &started_model)),
+        Some((
+            &account,
+            &yo_core::ProviderId::new("openai").unwrap(),
+            &started_model,
+        )),
         true,
         false,
         &observations,

@@ -77,6 +77,10 @@ struct Revision<'a> {
     interview: ActivityRequestRef,
     questions: &'a [InterviewQuestion],
 }
+#[derive(Serialize)]
+struct PublicBatch<'a> {
+    questions: &'a [InterviewQuestion],
+}
 
 impl Capture {
     pub const SCHEMA: &'static str = "yo.interview-capture/v1";
@@ -400,5 +404,23 @@ impl InterviewQuestion {
             draft_choice: None,
             is_secret: self.is_secret,
         }
+    }
+}
+
+impl super::CapturedInterview {
+    /// Fingerprint of the ordered public question contract, excluding backend request identity.
+    pub fn public_batch_fingerprint(&self) -> Result<String, InterviewError> {
+        let bytes = serde_json::to_vec(&PublicBatch {
+            questions: &self.questions,
+        })
+        .map_err(|error| invalid(error.to_string()))?;
+        let digest = Sha256::digest(bytes);
+        Ok(format!(
+            "sha256:{}",
+            digest
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ))
     }
 }

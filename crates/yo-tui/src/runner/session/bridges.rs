@@ -21,6 +21,27 @@ impl TuiSession {
         ));
         self
     }
+    /// Supplies complete live destination evidence for opt-in secret recovery.
+    #[must_use]
+    pub fn with_secret_recovery_destination(
+        mut self,
+        destination: interview::SecretRecoveryDestination,
+    ) -> Self {
+        if let Some(controller) = &mut self.state.interview {
+            controller.set_recovery_destination(destination);
+        }
+        self
+    }
+
+    /// Replaces the destination evidence after an admitted live model rebind.
+    pub fn set_secret_recovery_destination(
+        &mut self,
+        destination: interview::SecretRecoveryDestination,
+    ) {
+        if let Some(controller) = &mut self.state.interview {
+            controller.set_recovery_destination(destination);
+        }
+    }
     /// 편집 가능한 사본과 변경할 수 없는 미리 보기를 새로 독립 준비한 Session으로 전달합니다.
     pub fn transfer_interview_to(
         &mut self,

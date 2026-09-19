@@ -16,6 +16,8 @@ use std::thread;
 use std::time::Duration;
 #[cfg(test)]
 use std::time::Instant;
+#[cfg(test)]
+use std::time::SystemTime;
 use std::{
     num::NonZeroU64,
     os::unix::fs::{PermissionsExt, symlink},
@@ -94,6 +96,31 @@ fn batch() -> (InterviewCatalog, Capture) {
         },
     );
     (catalog, capture)
+}
+
+fn catalog_for(
+    interview: ActivityRequestRef,
+    questions: Vec<InterviewQuestion>,
+) -> InterviewCatalog {
+    let capture = Capture::batch(interview, questions).unwrap();
+    let mut catalog = InterviewCatalog::default();
+    event(
+        &mut catalog,
+        AgentEvent::ActivityStarted {
+            activity: interview.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: interview.request_id(),
+            },
+        },
+    );
+    event(
+        &mut catalog,
+        AgentEvent::ActivityUpdated {
+            activity: interview.activity(),
+            update: ActivityUpdate::TextSnapshot(capture.to_snapshot().unwrap()),
+        },
+    );
+    catalog
 }
 fn answered(
     catalog: &mut InterviewCatalog,
@@ -961,6 +988,244 @@ fn secret_answers_are_fixed_markers_and_working_copies_cannot_start_turns() {
         &format!("\"submission\":{forbidden_submission}"),
     );
     assert!(WorkingCopy::decode(mutated.as_bytes()).is_err());
+}
+
+// opt-in 저장은 working-copy에 opaque 참조만 남기고, 고정 길이 암호문을 먼저 게시한
+// 다음 CAS generation을 올린다. 다른 live request라도 공개 batch와 destination이 같을 때만
+// 값을 hidden input으로 복구한다.
+#[test]
+fn opted_in_secret_recovery_is_padded_bound_and_explicitly_forgotten() {
+    let temp = Temp::new();
+    let copies = temp.0.join("copies");
+    let vault = temp.0.join("vault");
+    let key = temp.0.join("config").join("secret-recovery.key");
+    let repository =
+        InterviewRepository::open_with_recovery(&copies, vault.clone(), key.clone()).unwrap();
+    let source = catalog_for(request(1), secret_questions());
+    let live = catalog_for(request(20), secret_questions());
+    let mut copy = WorkingCopy::new(&source.interviews()[0]).unwrap();
+    copy.generation = repository.save(&copy, None, &source).unwrap();
+    let destination = SecretRecoveryDestination::managed(
+        &crate::ProviderId::new("provider").unwrap(),
+        &crate::ModelId::new("model").unwrap(),
+        &crate::AccountId::new("authenticated-account").unwrap(),
+    );
+    let secret_text = "복구할-비밀";
+    copy = repository
+        .store_secret_recovery(
+            &copy,
+            Some(copy.generation),
+            &source,
+            "q2",
+            &destination,
+            &crate::SecretInput::new(secret_text).unwrap(),
+        )
+        .unwrap();
+
+    let encoded = String::from_utf8(copy.encode().unwrap()).unwrap();
+    assert!(encoded.contains("\"schema\":\"yo.interview-working-copy/v3\""));
+    assert!(encoded.contains("\"state\":\"recovery_available\""));
+    for forbidden in [secret_text, "ciphertext", "nonce", "authenticated-account"] {
+        assert!(
+            !encoded.contains(forbidden),
+            "{forbidden} leaked into {encoded}"
+        );
+    }
+    let entry = fs::read_dir(&vault)
+        .unwrap()
+        .find_map(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".entry")
+                .then_some(entry.path())
+        })
+        .unwrap();
+    assert_eq!(
+        fs::metadata(&entry).unwrap().len(),
+        recovery::ENTRY_BYTES as u64
+    );
+    assert_eq!(
+        fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(fs::read(&key).unwrap().len(), 32);
+    assert!(
+        !fs::read(&entry)
+            .unwrap()
+            .windows(secret_text.len())
+            .any(|window| window == secret_text.as_bytes())
+    );
+
+    assert!(
+        repository
+            .recovery_available(&copy, &source, &live.interviews()[0], "q2", &destination,)
+            .unwrap()
+    );
+    let recovered = repository
+        .recover_secret(&copy, &source, &live.interviews()[0], "q2", &destination)
+        .unwrap();
+    assert_eq!(recovered.expose(), secret_text);
+    let mismatched = SecretRecoveryDestination::managed(
+        &crate::ProviderId::new("provider").unwrap(),
+        &crate::ModelId::new("other-model").unwrap(),
+        &crate::AccountId::new("authenticated-account").unwrap(),
+    );
+    assert!(
+        repository
+            .recovery_available(&copy, &source, &live.interviews()[0], "q2", &mismatched,)
+            .is_err()
+    );
+    assert!(
+        repository
+            .recover_secret(&copy, &source, &live.interviews()[0], "q2", &mismatched,)
+            .is_err()
+    );
+
+    let mut damaged = fs::read(&entry).unwrap();
+    damaged[recovery::ENTRY_BYTES / 2] ^= 0x40;
+    fs::write(&entry, damaged).unwrap();
+    assert!(
+        repository
+            .recovery_available(&copy, &source, &live.interviews()[0], "q2", &destination,)
+            .is_err()
+    );
+
+    let update = repository
+        .forget_secret_recovery(&copy, Some(copy.generation), &source, "q2")
+        .unwrap();
+    assert!(update.cleanup_warning.is_none());
+    assert!(!entry.exists());
+    let forgotten = String::from_utf8(update.copy.encode().unwrap()).unwrap();
+    assert!(forgotten.contains("\"schema\":\"yo.interview-working-copy/v2\""));
+    assert!(!forgotten.contains("secret_recovery"));
+}
+
+// key 손실 상태에서 살아 있는 ciphertext 위로 새 key를 만들면 기존 참조가 조용히
+// 다른 비밀로 바뀔 수 있으므로 저장을 닫고 공개 v3 사본을 그대로 둔다.
+#[test]
+fn missing_recovery_key_is_not_regenerated_over_surviving_ciphertext() {
+    let temp = Temp::new();
+    let copies = temp.0.join("copies");
+    let vault = temp.0.join("vault");
+    let key = temp.0.join("config").join("secret-recovery.key");
+    let repository =
+        InterviewRepository::open_with_recovery(&copies, vault.clone(), key.clone()).unwrap();
+    let source = catalog_for(request(1), secret_questions());
+    let mut copy = WorkingCopy::new(&source.interviews()[0]).unwrap();
+    copy.generation = repository.save(&copy, None, &source).unwrap();
+    let destination = SecretRecoveryDestination::managed(
+        &crate::ProviderId::new("provider").unwrap(),
+        &crate::ModelId::new("model").unwrap(),
+        &crate::AccountId::new("authenticated-account").unwrap(),
+    );
+    copy = repository
+        .store_secret_recovery(
+            &copy,
+            Some(copy.generation),
+            &source,
+            "q2",
+            &destination,
+            &crate::SecretInput::new("first").unwrap(),
+        )
+        .unwrap();
+    let entry = fs::read_dir(&vault)
+        .unwrap()
+        .find_map(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".entry")
+                .then_some(entry.path())
+        })
+        .unwrap();
+    fs::rename(entry, vault.join("unclassified-survivor")).unwrap();
+    fs::remove_file(&key).unwrap();
+
+    let error = repository
+        .store_secret_recovery(
+            &copy,
+            Some(copy.generation),
+            &source,
+            "q2",
+            &destination,
+            &crate::SecretInput::new("second").unwrap(),
+        )
+        .unwrap_err();
+
+    assert!(error.to_string().contains("key is missing"));
+    assert!(!key.exists());
+    assert_eq!(
+        repository
+            .load(&copy.copy_id)
+            .unwrap()
+            .unwrap()
+            .encode()
+            .unwrap(),
+        copy.encode().unwrap()
+    );
+}
+
+// Expiry is repository-wide and does not wait for the user to reopen the copy.
+// The public reference is published away before its encrypted entry is removed.
+#[test]
+fn maintenance_expires_unopened_secret_recovery() {
+    let temp = Temp::new();
+    let copies = temp.0.join("copies");
+    let vault = temp.0.join("vault");
+    let key = temp.0.join("config").join("secret-recovery.key");
+    let repository = InterviewRepository::open_with_recovery(&copies, vault.clone(), key).unwrap();
+    let source = catalog_for(request(1), secret_questions());
+    let mut copy = WorkingCopy::new(&source.interviews()[0]).unwrap();
+    copy.generation = repository.save(&copy, None, &source).unwrap();
+    let destination = SecretRecoveryDestination::managed(
+        &crate::ProviderId::new("provider").unwrap(),
+        &crate::ModelId::new("model").unwrap(),
+        &crate::AccountId::new("authenticated-account").unwrap(),
+    );
+    copy = repository
+        .store_secret_recovery(
+            &copy,
+            Some(copy.generation),
+            &source,
+            "q2",
+            &destination,
+            &crate::SecretInput::new("expires-without-open").unwrap(),
+        )
+        .unwrap();
+    let entry = fs::read_dir(&vault)
+        .unwrap()
+        .find_map(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".entry")
+                .then_some(entry.path())
+        })
+        .unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&entry)
+        .unwrap()
+        .set_times(
+            fs::FileTimes::new().set_modified(
+                SystemTime::now()
+                    .checked_sub(recovery::EXPIRY + Duration::from_secs(1))
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+
+    let maintenance = repository.maintain_secret_recovery().unwrap();
+    assert_eq!(maintenance.expired_references, 1);
+    assert!(maintenance.warning.is_none());
+    assert!(!entry.exists());
+    let current = repository.load(&copy.copy_id).unwrap().unwrap();
+    assert!(!current.has_any_secret_recovery());
+    assert!(current.generation > copy.generation);
 }
 
 // 혼합 질문의 비밀 답이 값 없는 제출 영수증을 받은 뒤에만 완료 처리되는지 확인한다.

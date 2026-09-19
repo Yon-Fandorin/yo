@@ -1,5 +1,7 @@
 use std::{env, ffi::OsStr, path, path::PathBuf};
 
+use yo_core::interview::SecretRecoveryDestination;
+
 use super::{
     super::{codex_diagnostics::CodexWarningCollector, output::write_session_output},
     LiveSession, PreparedAgent, SessionStep,
@@ -58,7 +60,18 @@ pub(super) fn build_live_session(
     }
     match storage::open_interviews() {
         Ok(repository) => {
-            tui = tui.with_interview_repository(repository, Box::new(super::interview::HistoryHost))
+            tui =
+                tui.with_interview_repository(repository, Box::new(super::interview::HistoryHost));
+            if let Some(active) = active_host_model.as_ref()
+                && let Some(provider) = active.provider()
+            {
+                tui = tui.with_secret_recovery_destination(SecretRecoveryDestination::delegated(
+                    active.host(),
+                    provider,
+                    active.model(),
+                    active.account(),
+                ));
+            }
         },
         Err(error) => {
             tui.report_interview_failure(format!("Interview recovery unavailable: {error}"))
@@ -320,6 +333,18 @@ pub(super) fn run_terminal_generation(
                         .as_mut()
                         .expect("admitted host rebind retained active host state")
                         .set_model(selection.model().clone());
+                    if let Some(active) = session.active_host_model.as_ref()
+                        && let Some(provider) = active.provider()
+                    {
+                        session.tui.set_secret_recovery_destination(
+                            SecretRecoveryDestination::delegated(
+                                active.host(),
+                                provider,
+                                active.model(),
+                                active.account(),
+                            ),
+                        );
+                    }
                     let controller = model::project_host_catalogs(
                         yo_core::ModelSelectionController::new(
                             config.model_catalog().clone(),

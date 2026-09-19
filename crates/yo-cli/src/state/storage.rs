@@ -34,8 +34,17 @@ pub(crate) fn open_default_host_identity() -> Result<WorkspaceHostId, StorageCon
 
 pub(crate) fn open_interviews() -> Result<interview::InterviewRepository, String> {
     let root = platform_state_root().map_err(|error| error.to_string())?;
-    interview::InterviewRepository::open(&root.join("interviews"))
-        .map_err(|error| error.to_string())
+    let config_path = super::config::selected_path().map_err(|error| error.to_string())?;
+    let config_parent = config_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| "selected Yo configuration path has no absolute parent".to_owned())?;
+    interview::InterviewRepository::open_with_recovery(
+        &root.join("interviews"),
+        root.join("secret-recovery"),
+        config_parent.join("secret-recovery.key"),
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Debug)]

@@ -4,7 +4,7 @@ use std::{
 };
 
 use yo_backend_delegated_codex::CodexWarningObserver;
-use yo_core::{AccountId, HostId, HostModelCatalog, ModelId, ModelSelectionController};
+use yo_core::{AccountId, HostId, HostModelCatalog, ModelId, ModelSelectionController, ProviderId};
 
 use super::DelegatedExecutionProfile;
 
@@ -28,6 +28,7 @@ pub(crate) struct HostCatalogObservation {
 pub(crate) struct ActiveHostModel {
     host: HostId,
     account: AccountId,
+    provider: Option<ProviderId>,
     model: ModelId,
     native_model_rebind: bool,
 }
@@ -42,6 +43,7 @@ impl ActiveHostModel {
         Self {
             host,
             account,
+            provider: None,
             model,
             native_model_rebind,
         }
@@ -57,6 +59,15 @@ impl ActiveHostModel {
 
     pub(crate) const fn model(&self) -> &ModelId {
         &self.model
+    }
+
+    pub(crate) const fn provider(&self) -> Option<&ProviderId> {
+        self.provider.as_ref()
+    }
+
+    pub(crate) fn with_provider(mut self, provider: ProviderId) -> Self {
+        self.provider = Some(provider);
+        self
     }
 
     pub(crate) const fn supports_native_model_rebind(&self) -> bool {
@@ -156,20 +167,23 @@ fn read_builtin_host_catalogs(
 /// durable binding; a pre-start inventory default is never treated as the running thread model.
 pub(crate) fn resolve_active_host_model(
     active_host: Option<&HostId>,
-    confirmed_codex: Option<(&AccountId, &ModelId)>,
+    confirmed_codex: Option<(&AccountId, &ProviderId, &ModelId)>,
     supports_native_model_rebind: bool,
     is_resume: bool,
     observations: &[HostCatalogObservation],
 ) -> Option<ActiveHostModel> {
     let host = active_host?;
     if host.as_str() == HostId::CODEX {
-        let (account, model) = confirmed_codex?;
-        return Some(ActiveHostModel::new(
-            host.clone(),
-            account.clone(),
-            model.clone(),
-            supports_native_model_rebind,
-        ));
+        let (account, provider, model) = confirmed_codex?;
+        return Some(
+            ActiveHostModel::new(
+                host.clone(),
+                account.clone(),
+                model.clone(),
+                supports_native_model_rebind,
+            )
+            .with_provider(provider.clone()),
+        );
     }
     let catalog = observations
         .iter()
