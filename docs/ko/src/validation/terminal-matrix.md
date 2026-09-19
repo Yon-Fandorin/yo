@@ -73,13 +73,26 @@ warning을 거부하는 workspace Clippy, 변경 범위 전체 `hk` 검사, 집�
 destination·question binding, tag-only availability 검사, key 손실, 손상, 7일 만료,
 restart/final-seal reconciliation과 명시적인 store·recover·forget 제스처를 테스트한다.
 
-변경 뒤 macOS 경로는 미검증으로 남아 있다. 설정된 arm64 Mac에서
-`cargo test --workspace --all-targets`와 workspace Clippy를 다시 실행한 뒤, 격리된
-state root와 genuine delegated Codex secret 요청 하나로 첫 번째·두 번째 `Ctrl+R`
-안내와 opt-in, 재시작과 exact-match 복구, 새 Enter 제출, `Ctrl+F` 제거와 정상 terminal
-복원을 확인한다. 공개 working copy와 보존 출력에는 secret byte가 없다는 점만 확인하며,
-test secret을 chat·log·이 문서에 복사하지 않는다. 이 backlog 항목은 아래의 이전 물리
-IME·Command-V·종료 증거와 별개다.
+2026-09-19에 후속 후보 `1d1b36a768fcb7eb0780e4948901ed6808518cb7`이 고정된
+macOS 26.6.2 arm64 host에서 `cargo test --locked --workspace --all-targets`와
+workspace all-target Clippy를 통과했다. 두 명령은 각각 390초와 16초 걸렸다.
+filesystem profile도 통과했다. Darwin `flock`의 process 단위 의미를 드러낸 잠금
+test 두 개는 각각 50회 연속 통과했다.
+
+Mac 실행에서 Session append 직렬화, repository root identity, `/var`와
+`/private/var` request 경로, Methexis target lock의 명시적 해제에 관한 실제 이식성
+결함을 발견하고 수정했다. 나머지 변경은 macOS의 경로·파일 이름·스케줄링·loopback
+timing 동작에 test를 맞추거나 더 강한 process-group test와 중복된 검사를 제거한다.
+독립 Codex Sol/high review는 정확한 최종 변경을 지적사항 없이 승인했다.
+
+설치된 Codex 0.155.0 서비스는 마지막 live 선행조건을 제공하지 못했다. 현재 input
+tool이 secret 자유 입력을 지원하지 않는다고 밝히며 `item/tool/requestUserInput`을
+게시하기 전에 요청을 거절했다. 따라서 첫 번째·두 번째 `Ctrl+R`, 재시작 복구, 새
+Enter, `Ctrl+F`, 종료 순서를 genuine-service Mac 실행으로 주장하지 않는다. 이는
+상위 요청 가용성 제한이며 production 복구 경로가 secret 요청을 받은 뒤 실패한 것이
+아니다. 합성 test secret과 격리된 Session state는 남기지 않았고 임시 checkout과 tmux
+server를 제거했다. delegated host가 `isSecret: true`를 게시할 수 있을 때 이 live
+순서만 다시 실행한다.
 
 ## 실제 Provider 인터뷰 복구
 

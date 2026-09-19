@@ -81,15 +81,30 @@ entry, exact destination and question binding, tag-only availability checks,
 key loss, corruption, seven-day expiry, restart/final-seal reconciliation,
 and explicit store, recover and forget gestures.
 
-The post-change macOS route remains unverified. On the configured arm64 Mac,
-rerun `cargo test --workspace --all-targets` and workspace Clippy, then use an
-isolated state root with one genuine delegated Codex secret request to check:
-first and second `Ctrl+R` disclosure/opt-in, restart and exact-match recovery,
-fresh Enter submission, `Ctrl+F` forgetting, and normal terminal restoration.
-Inspect the public working copy and retained output only for the absence of
-secret bytes; do not copy a test secret into chat, logs or this document. This
-backlog item is separate from the earlier physical IME, Command-V and exit
-evidence below.
+On 2026-09-19, follow-up candidate
+`1d1b36a768fcb7eb0780e4948901ed6808518cb7` passed
+`cargo test --locked --workspace --all-targets` and workspace all-target Clippy
+on the pinned macOS 26.6.2 arm64 host. The commands completed in 390 and 16
+seconds respectively. The filesystem profile also passed. Two lock tests that
+had exposed Darwin `flock` process semantics each passed 50 consecutive runs.
+
+The Mac runs found and fixed real portability defects in Session append
+serialization, repository-root identity, `/var` versus `/private/var` request
+paths, and explicit release of Methexis target locks. The remaining changes
+only make tests respect macOS path, filename, scheduling and loopback timing
+behavior, or remove coverage duplicated by a stronger process-group test. An
+independent Codex Sol/high review approved the exact final deltas with no
+findings.
+
+The installed Codex 0.155.0 service could not supply the final live precondition.
+It declined the request before emitting `item/tool/requestUserInput`, explaining
+that its current input tool does not support secret free-text fields. Therefore
+the first and second `Ctrl+R`, restart recovery, fresh Enter, `Ctrl+F`, and exit
+sequence has not been claimed as a genuine-service Mac run. This is an upstream
+request-availability limit; the production recovery path did not receive a
+secret request or fail. No synthetic test secret or isolated Session state was
+retained, and the temporary checkout and tmux server were removed. Repeat only
+this live sequence when a delegated host can emit `isSecret: true`.
 
 ## Live-provider interview recovery
 
