@@ -131,24 +131,26 @@ pub(super) fn wait_for_turn_finish(
     expected_turn_id: u64,
 ) {
     let deadline = Instant::now() + Duration::from_secs(2);
+    let mut finished = false;
     loop {
         let _ = session.poll().expect("the Session remains healthy");
         let slice = transcript.read_after(*cursor);
         if let Some(last) = slice.entries().last() {
             *cursor = Some(last.sequence());
         }
-        if slice.entries().iter().any(|entry| {
+        finished |= slice.entries().iter().any(|entry| {
             matches!(
                 entry.record(),
                 TranscriptRecord::EventCommitted(AgentEvent::TurnFinished { turn, .. })
                     if turn.turn_id().get().get() == expected_turn_id
             )
-        }) {
+        });
+        if finished && session.is_idle_for_new_conversation() {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "the expected Turn did not finish"
+            "the expected Turn did not finish and settle idle"
         );
         thread::sleep(Duration::from_millis(1));
     }
