@@ -79,6 +79,12 @@ pub(crate) struct SharedTargetLock {
     inner: TargetLock,
 }
 
+impl Drop for TargetLock {
+    fn drop(&mut self) {
+        let _ = flock(&self._lock_file, FlockOperation::Unlock);
+    }
+}
+
 pub(crate) struct RepositoryGuard {
     _root: File,
 }

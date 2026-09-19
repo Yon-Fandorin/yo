@@ -136,6 +136,10 @@ fn shared_target_locks_coexist_and_exclude_a_writer() {
     ));
 
     drop(first);
+    assert!(matches!(
+        super::lock_target(&root, &target),
+        Err(super::PublicationError::Locked(_))
+    ));
     drop(second);
     let writer = super::lock_target(&root, &target).unwrap();
     drop(writer);
