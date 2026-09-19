@@ -1,15 +1,22 @@
 //! Shared isolated-repository fixture and structured CLI assertions.
 use std::{
     env, fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     process,
     process::{Command, Output},
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{Value, json};
 
 pub(super) const KNOWLEDGE_ID: &str = "tui.relocated";
+static TEMPORARY_REPOSITORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static TEMPORARY_REPOSITORY_NONCE: OnceLock<u128> = OnceLock::new();
 
 pub(super) struct TempRepository {
     pub(super) path: PathBuf,
@@ -17,12 +24,24 @@ pub(super) struct TempRepository {
 
 impl TempRepository {
     pub(super) fn new() -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock is after the Unix epoch")
-            .as_nanos();
-        let path = env::temp_dir().join(format!("methexis-review-flow-{}-{unique}", process::id()));
-        fs::create_dir(&path).expect("create temporary repository");
+        let nonce = TEMPORARY_REPOSITORY_NONCE.get_or_init(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos()
+        });
+        let path = loop {
+            let sequence = TEMPORARY_REPOSITORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = env::temp_dir().join(format!(
+                "methexis-review-flow-{}-{nonce}-{sequence}",
+                process::id()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => break path,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {},
+                Err(error) => panic!("create temporary repository: {error}"),
+            }
+        };
         copy_directory(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/relocation-a/methexis"),
             &path.join("methexis"),
