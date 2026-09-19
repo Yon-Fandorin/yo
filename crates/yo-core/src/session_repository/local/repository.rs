@@ -16,8 +16,9 @@ use super::{
         SessionWriterRepository, StoragePressure, StoragePressureCause,
     },
     file::{
-        LegacyWriterCompatibilityGuard, RootAppendGuard, SessionWriterLease, append_line,
-        coordination_file, process_root_append_coordinator, scan_entries,
+        LegacyWriterCompatibilityGuard, RepositoryRootIdentity, RootAppendGuard,
+        SessionWriterLease, append_line, coordination_file, process_root_append_coordinator,
+        scan_entries,
     },
     security::prepare_root,
     wire::WireEntry,
@@ -49,7 +50,8 @@ impl LocalSessionRepository {
         super::security::validate_repository_root(&requested)?;
         let root = prepare_root(&requested)?;
         let legacy_compatibility_guard = LegacyWriterCompatibilityGuard::acquire(&root)?;
-        let root_append_coordinator = process_root_append_coordinator(&root);
+        let root_identity = RepositoryRootIdentity::read(&root)?;
+        let root_append_coordinator = process_root_append_coordinator(root_identity);
 
         Ok(Self {
             root,
@@ -247,9 +249,9 @@ impl SessionRepository for LocalSessionRepository {
         encoded.push(b'\n');
         let encoded_bytes = u64::try_from(encoded.len()).unwrap_or(u64::MAX);
 
-        // macOS에서는 같은 process의 별도 file descriptor가 이 advisory lock 경계에 함께
-        // 진입할 수 있으므로 exact root의 in-process coordinator를 먼저 잡습니다.
-        // Cross-process serialization은 아래 durable file lock이 유지합니다.
+        // macOS에서 같은 process의 동시 directory mutation을 별도로 직렬화합니다. 경로
+        // alias도 같은 device/inode coordinator로 모으고, cross-process serialization은
+        // 아래 durable file lock이 유지합니다.
         let root_append_coordinator = Arc::clone(&self.root_append_coordinator);
         let _process_guard = root_append_coordinator
             .lock()

@@ -5,6 +5,7 @@ use std::{
     ffi::OsStr,
     fs::{self, File},
     io::{BufRead, BufReader, Error, Seek, SeekFrom, Write},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, PoisonError, Weak},
 };
@@ -23,18 +24,35 @@ use crate::SessionId;
 const LEGACY_WRITER_LOCK: &str = ".writer.lock";
 const APPEND_COORDINATOR_LOCK: &str = ".append.lock";
 
-pub(super) fn process_root_append_coordinator(root: &Path) -> Arc<Mutex<()>> {
-    static COORDINATORS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(super) struct RepositoryRootIdentity {
+    device: u64,
+    inode: u64,
+}
+
+impl RepositoryRootIdentity {
+    pub(super) fn read(root: &Path) -> Result<Self, RepositoryError> {
+        let metadata = fs::metadata(root)?;
+        Ok(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+}
+
+pub(super) fn process_root_append_coordinator(root: RepositoryRootIdentity) -> Arc<Mutex<()>> {
+    static COORDINATORS: OnceLock<Mutex<HashMap<RepositoryRootIdentity, Weak<Mutex<()>>>>> =
+        OnceLock::new();
 
     let coordinators = COORDINATORS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut coordinators = coordinators.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(coordinator) = coordinators.get(root).and_then(Weak::upgrade) {
+    if let Some(coordinator) = coordinators.get(&root).and_then(Weak::upgrade) {
         return coordinator;
     }
 
     coordinators.retain(|_, coordinator| coordinator.strong_count() != 0);
     let coordinator = Arc::new(Mutex::new(()));
-    coordinators.insert(root.to_owned(), Arc::downgrade(&coordinator));
+    coordinators.insert(root, Arc::downgrade(&coordinator));
     coordinator
 }
 
