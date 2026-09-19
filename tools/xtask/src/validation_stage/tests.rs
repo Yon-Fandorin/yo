@@ -130,9 +130,9 @@ fn semantic_candidate_rejects_untracked_and_ignored_methexis_paths() {
     assert!(error.contains("untracked or ignored"), "{error}");
 }
 
-#[cfg(unix)]
-// Git의 NUL 구분 raw path를 UTF-8로 바꾸지 않으므로 Unix의 비 UTF-8 Knowledge
-// 파일도 panic이나 누락 없이 의미 후보 cohort로 분류한다.
+#[cfg(target_os = "linux")]
+// Git의 NUL 구분 raw path를 UTF-8로 바꾸지 않으므로 비 UTF-8 파일명을 허용하는
+// Linux의 Knowledge 파일도 panic이나 누락 없이 의미 후보 cohort로 분류한다.
 #[test]
 fn non_utf8_semantic_path_is_classified_from_raw_git_bytes() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
