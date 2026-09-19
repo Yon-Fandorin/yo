@@ -102,9 +102,15 @@ that its current input tool does not support secret free-text fields. Therefore
 the first and second `Ctrl+R`, restart recovery, fresh Enter, `Ctrl+F`, and exit
 sequence has not been claimed as a genuine-service Mac run. This is an upstream
 request-availability limit; the production recovery path did not receive a
-secret request or fail. No synthetic test secret or isolated Session state was
-retained, and the temporary checkout and tmux server were removed. Repeat only
-this live sequence when a delegated host can emit `isSecret: true`.
+secret request or fail. A fresh bounded probe later that day copied the existing
+authentication and configuration into an isolated Mac-only `CODEX_HOME` and ran
+one authenticated `gpt-5.6-sol` Turn through the same Codex 0.155.0 app-server.
+The Turn completed with the explicit unavailable result and emitted zero
+`item/tool/requestUserInput` events. The normal authentication and configuration
+hashes were unchanged, and the isolated state and probe were removed. No
+synthetic test secret or isolated Session state was retained, and the temporary
+checkout and tmux server were removed. Repeat only this live sequence when a
+delegated host can emit `isSecret: true`.
 
 ## Live-provider interview recovery
 

@@ -90,9 +90,13 @@ tool이 secret 자유 입력을 지원하지 않는다고 밝히며 `item/tool/r
 게시하기 전에 요청을 거절했다. 따라서 첫 번째·두 번째 `Ctrl+R`, 재시작 복구, 새
 Enter, `Ctrl+F`, 종료 순서를 genuine-service Mac 실행으로 주장하지 않는다. 이는
 상위 요청 가용성 제한이며 production 복구 경로가 secret 요청을 받은 뒤 실패한 것이
-아니다. 합성 test secret과 격리된 Session state는 남기지 않았고 임시 checkout과 tmux
-server를 제거했다. delegated host가 `isSecret: true`를 게시할 수 있을 때 이 live
-순서만 다시 실행한다.
+아니다. 같은 날 후속 bounded probe에서 기존 인증·설정을 Mac 내부의 격리된
+`CODEX_HOME`으로 복사하고 같은 Codex 0.155.0 app-server를 통해 인증된
+`gpt-5.6-sol` Turn 하나를 실행했다. Turn은 명시적인 unavailable 결과로 완료됐고
+`item/tool/requestUserInput` event는 0건이었다. 일반 인증·설정 hash는 바뀌지 않았고
+격리 state와 probe를 제거했다. 합성 test secret과 격리된 Session state는 남기지
+않았고 임시 checkout과 tmux server를 제거했다. delegated host가 `isSecret: true`를
+게시할 수 있을 때 이 live 순서만 다시 실행한다.
 
 ## 실제 Provider 인터뷰 복구
 
