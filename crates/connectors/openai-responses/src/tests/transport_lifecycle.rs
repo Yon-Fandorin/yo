@@ -270,11 +270,11 @@ fn each_redirect_attempt_gets_a_fresh_response_header_deadline() {
     }
     let server = LocalTlsServer::start(LocalServerMode::DelayedRedirectChain {
         final_body: terminal_stream(),
-        response_delay_millis: 80,
+        response_delay_millis: 400,
     });
     let limits = ModelConnectorLimits {
         connect_timeout: Duration::from_secs(1),
-        response_header_timeout: Duration::from_millis(150),
+        response_header_timeout: Duration::from_secs(1),
         ..ModelConnectorLimits::default()
     };
     let started = Instant::now();
@@ -284,7 +284,7 @@ fn each_redirect_attempt_gets_a_fresh_response_header_deadline() {
     let _ = poll_until_closed(&mut stream);
     drop(stream);
 
-    assert!(started.elapsed() >= Duration::from_millis(200));
+    assert!(started.elapsed() >= Duration::from_secs(1));
     let records = server.requests();
     assert_eq!(records.len(), 3);
     assert_eq!(records[0]["path"], "/v1/responses");
@@ -308,12 +308,12 @@ fn redirect_attempts_do_not_reset_the_absolute_request_deadline() {
     }
     let server = LocalTlsServer::start(LocalServerMode::DelayedRedirectChain {
         final_body: terminal_stream(),
-        response_delay_millis: 80,
+        response_delay_millis: 400,
     });
     let limits = ModelConnectorLimits {
         connect_timeout: Duration::from_secs(1),
-        response_header_timeout: Duration::from_millis(150),
-        absolute_request_timeout: Some(Duration::from_millis(190)),
+        response_header_timeout: Duration::from_secs(1),
+        absolute_request_timeout: Some(Duration::from_millis(950)),
         ..ModelConnectorLimits::default()
     };
     let started = Instant::now();
@@ -323,7 +323,7 @@ fn redirect_attempts_do_not_reset_the_absolute_request_deadline() {
 
     assert_eq!(error.kind(), ConnectorFailureKind::Timeout);
     assert!(error.message().contains("absolute request"));
-    assert!(started.elapsed() < Duration::from_millis(400));
+    assert!(started.elapsed() < Duration::from_secs(2));
     assert!((2..=3).contains(&server.requests().len()));
 }
 
