@@ -210,9 +210,16 @@ pub(crate) fn prepare_prospective_context(
         None
     } else {
         Some(
-            request_target
-                .strip_prefix(repository_root)
-                .unwrap_or(&request_target)
+            publication::repository_relative(repository_root, &request_target)
+                .map_err(|error| {
+                    publication_failure(
+                        operation,
+                        Some(snapshot.commit.clone()),
+                        &request.checkpoint_id,
+                        ActivationArtifact::Request,
+                        error,
+                    )
+                })?
                 .to_str()
                 .ok_or_else(|| {
                     failure_for(

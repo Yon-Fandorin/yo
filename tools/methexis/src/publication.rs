@@ -584,7 +584,10 @@ fn open_existing_parent(
     Ok((directory, target_name))
 }
 
-fn repository_relative(repository_root: &Path, target: &Path) -> Result<PathBuf, PublicationError> {
+pub(crate) fn repository_relative(
+    repository_root: &Path,
+    target: &Path,
+) -> Result<PathBuf, PublicationError> {
     if let Ok(relative) = target.strip_prefix(repository_root) {
         return Ok(relative.to_owned());
     }
