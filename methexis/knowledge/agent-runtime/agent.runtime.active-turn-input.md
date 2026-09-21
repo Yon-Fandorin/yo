@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-004
-    revision: sha256:6d6a51faf80078b5f60c648a912535a92d6321f678e2f506f605df70065a7d18
+    revision: sha256:d9c1431677ebc2c94593d92fe99b67a5f405d75f14f2a0cb6274250301500f11
 relations:
   depends_on:
     - agent.runtime.command-event-boundary
@@ -77,16 +77,15 @@ or ambiguous response write with no verified answer seal MUST preserve the
 unfinished draft and MUST NOT claim successful submission or retry
 automatically.
 
-Existing canonical v1, v2 and v3 working copies are legacy inputs, not a second
-archive. A submitted legacy copy MAY be removed after its matching conversation
-seal is verified. An unsubmitted legacy copy MAY be surfaced only when its
-captured Session is the selected Session in the matching workspace. A live exact
-request may continue it; a dead request permits only view or discard. Multiple
-matching legacy copies MUST be presented one at a time as an explicit migration
-cleanup and MUST NOT be selected by UUID. Malformed, incomplete or mismatched
-captures fail closed and remain untouched with a bounded diagnostic. Legacy v3
-recovery references retain only their old exact binding and seven-day cleanup;
-they are never promoted into the new reusable secret store.
+Existing canonical v1, v2, v3 and v4 working-copy files are unsupported legacy
+data, not contextual drafts. The current UI MUST NOT list, continue, view,
+migrate, reopen or submit them. Yo MAY recognize old schemas to prevent
+misclassification and perform existing exact-bound secret-reference expiry
+cleanup, but MUST NOT promote an old file into the current draft schema.
+Malformed, incomplete or mismatched old records fail closed and remain
+untouched with a bounded diagnostic. Legacy v3 recovery references retain only
+their old exact binding and seven-day cleanup; they are never promoted into
+the new reusable secret store.
 
 ## Live secret interview answers
 
