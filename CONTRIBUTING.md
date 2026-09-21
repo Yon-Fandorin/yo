@@ -70,9 +70,9 @@ hints, not semantic freshness or contract-approval proofs.
 
 Use the [affected boundary](docs/src/validation/README.md#start-from-the-changed-boundary).
 Start focused; finish with affected package/consumer checks and `git diff --check`.
-Use full workspace suites for shared runtime/build impact, releases, or unresolved
-cross-package effects. Keep platform gaps visible. Reuse passing checks while
-their relevant inputs, command, and environment are unchanged.
+Use [full workspace suites](CONTRIBUTING/validation-execution.md) for shared
+runtime/build impact, releases, or unresolved cross-package effects. Reuse
+passing checks with unchanged inputs, command, and environment.
 For noisy commands use `tools/validation/bounded-run.sh`; inspect logs on failure.
 Do not duplicate a suite merely for review, commit, or cleanup.
 
