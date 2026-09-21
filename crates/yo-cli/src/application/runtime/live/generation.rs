@@ -36,7 +36,12 @@ pub(super) fn run_generation(
             StartupOutcome::Complete => return Ok(SessionStep::Complete),
             StartupOutcome::Ready(prepared) => {
                 let config = snapshots.config;
-                *live = Some(frontend::build_live_session(*prepared, config, &options)?);
+                *live = Some(frontend::build_live_session(
+                    *prepared,
+                    config,
+                    &options,
+                    snapshots.credentials.as_ref(),
+                )?);
             },
         }
     }

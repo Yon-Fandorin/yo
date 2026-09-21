@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{OutputEnvelope, tool::ToolOutput};
 
@@ -62,6 +62,67 @@ pub struct QuestionChoice {
     pub description: String,
 }
 
+/// 모델이 제안한 공개 비밀 보관 방식이며 저장 권한은 아닙니다.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretStorageRecommendation {
+    /// 현재 요청에서 한 번만 사용합니다.
+    UseOnce,
+    /// 사용자가 선택한 일수 동안 보관하도록 제안합니다.
+    StoreForDays,
+    /// 사용자가 삭제할 때까지 보관하도록 제안합니다.
+    StoreUntilDeleted,
+}
+
+/// 비밀 요청에 붙일 수 있는 공개 보관 제안입니다.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretStorageOffer {
+    /// 현재 대상 안에서 비밀을 식별하는 공개 범위입니다.
+    pub scope: String,
+    /// 사용자가 따를 의무가 없는 모델의 제안입니다.
+    pub recommendation: SecretStorageRecommendation,
+    /// 모델이 제안한 공개 근거입니다.
+    pub reason: String,
+    /// 기간 보관을 제안할 때만 사용하는 권장 일수입니다.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub suggested_days: Option<u16>,
+}
+
+impl SecretStorageOffer {
+    /// 공개 범위·근거·기간 제안이 정확한 허용 범위에 속하는지 검사합니다.
+    pub fn is_valid(&self) -> bool {
+        let scope = self.scope.as_bytes();
+        let valid_scope = (1..=128).contains(&scope.len())
+            && scope.first().is_some_and(u8::is_ascii_alphanumeric)
+            && scope.last().is_some_and(u8::is_ascii_alphanumeric)
+            && scope.iter().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(*byte, b'.' | b'_' | b'-')
+            });
+        let valid_reason = (1..=4096).contains(&self.reason.len())
+            && !self.reason.chars().any(|character| {
+                character == '\0'
+                    || (character.is_control() && !matches!(character, '\t' | '\n' | '\r'))
+            });
+        let valid_days = matches!(
+            (self.recommendation, self.suggested_days),
+            (SecretStorageRecommendation::StoreForDays, Some(1..=365))
+                | (
+                    SecretStorageRecommendation::UseOnce
+                        | SecretStorageRecommendation::StoreUntilDeleted,
+                    None
+                )
+        );
+        valid_scope && valid_reason && valid_days
+    }
+}
+
 /// user-input request를 위한 선택적 구조화 presentation이며 request ID가 권한을 유지합니다.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,6 +137,13 @@ pub struct ActivityQuestion {
     /// 이 request가 별도 process-local secret input 경로만 허용하는지 나타냅니다.
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_secret: bool,
+    /// 비밀 요청에만 붙는 모델의 공개 보관 제안입니다.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub storage_offer: Option<SecretStorageOffer>,
     /// 제출하지 않고 이전 question을 다시 볼 수 있는지 나타냅니다.
     #[serde(default)]
     pub previous_question: bool,
@@ -91,6 +159,14 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 impl ActivityQuestion {
     fn valid(&self) -> bool {
         !self.plain_text.is_empty()
@@ -100,6 +176,10 @@ impl ActivityQuestion {
                     && !self.allow_notes
                     && self.draft.is_none()
                     && self.draft_choice.is_none()))
+            && self
+                .storage_offer
+                .as_ref()
+                .is_none_or(|offer| self.is_secret && offer.is_valid())
             && self.draft_choice.is_none_or(|choice| {
                 self.allow_notes
                     && self.draft.is_some()

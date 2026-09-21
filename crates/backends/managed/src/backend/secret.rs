@@ -1,10 +1,10 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityQuestion, ActivityRequestRef, BackendCommandEvidence,
     BackendEvent, BackendFailure, BackendFailureKind, FunctionTool, ModelConnectorInputItem,
     ModelReplayTool, NATIVE_SECRET_INTERACTION_NAME, RequestToolExposure, SecretInput,
-    TOOL_SCHEMA_DIALECT,
+    SecretStorageOffer, TOOL_SCHEMA_DIALECT,
 };
 
 use super::{
@@ -14,8 +14,8 @@ use super::{
 
 const DESCRIPTION: &str = "Ask the user for one secret value that Yo sends only to the current provider and model. Use only when the task cannot continue without it.";
 
-fn parameters() -> serde_json::Value {
-    json!({
+fn parameters(with_storage_offer: bool) -> serde_json::Value {
+    let mut schema = json!({
         "type": "object",
         "properties": {
             "title": {
@@ -33,20 +33,52 @@ fn parameters() -> serde_json::Value {
         },
         "required": ["title", "question", "purpose"],
         "additionalProperties": false
-    })
+    });
+    if with_storage_offer {
+        schema["properties"]["storage_offer"] = json!({
+            "type": "object",
+            "description": "Optional public proposal for local reuse of this secret.",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "description": "Stable public lower-case identifier for this secret within the current destination."
+                },
+                "recommendation": {
+                    "type": "string",
+                    "description": "Model recommendation; the user still chooses locally.",
+                    "enum": ["use_once", "store_for_days", "store_until_deleted"]
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Public reason for the retention recommendation."
+                },
+                "suggested_days": {
+                    "type": "integer",
+                    "description": "Suggested duration only when recommending store_for_days."
+                }
+            },
+            "required": ["scope", "recommendation", "reason"],
+            "additionalProperties": false
+        });
+    }
+    schema
 }
 
-pub(super) fn function_tool() -> Result<FunctionTool, BackendFailure> {
-    FunctionTool::new(NATIVE_SECRET_INTERACTION_NAME, DESCRIPTION, parameters())
-        .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))
+pub(super) fn function_tool(with_storage_offer: bool) -> Result<FunctionTool, BackendFailure> {
+    FunctionTool::new(
+        NATIVE_SECRET_INTERACTION_NAME,
+        DESCRIPTION,
+        parameters(with_storage_offer),
+    )
+    .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))
 }
 
-pub(super) fn replay_tool() -> ModelReplayTool {
+pub(super) fn replay_tool(with_storage_offer: bool) -> ModelReplayTool {
     ModelReplayTool::new(
         NATIVE_SECRET_INTERACTION_NAME,
         DESCRIPTION,
         TOOL_SCHEMA_DIALECT,
-        parameters(),
+        parameters(with_storage_offer),
     )
 }
 
@@ -56,10 +88,19 @@ pub(super) struct SecretRequestArguments {
     pub(super) title: String,
     pub(super) question: String,
     pub(super) purpose: String,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    pub(super) storage_offer: Option<SecretStorageOffer>,
+}
+
+fn deserialize_present<'de, D>(deserializer: D) -> Result<Option<SecretStorageOffer>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    SecretStorageOffer::deserialize(deserializer).map(Some)
 }
 
 impl SecretRequestArguments {
-    pub(super) fn parse(arguments: &str) -> Result<Self, BackendFailure> {
+    pub(super) fn parse(arguments: &str, with_storage_offer: bool) -> Result<Self, BackendFailure> {
         let parsed: Self = serde_json::from_str(arguments).map_err(|_| {
             failure(
                 BackendFailureKind::Protocol,
@@ -69,10 +110,14 @@ impl SecretRequestArguments {
         if !valid_title(&parsed.title)
             || !valid_text(&parsed.question)
             || !valid_text(&parsed.purpose)
+            || parsed
+                .storage_offer
+                .as_ref()
+                .is_some_and(|offer| !with_storage_offer || !offer.is_valid())
         {
             return Err(failure(
                 BackendFailureKind::Protocol,
-                "native secret request arguments violate their public text bounds",
+                "native secret request arguments violate their public field bounds",
             ));
         }
         Ok(parsed)
@@ -107,15 +152,34 @@ impl NativeModelBackend {
         let request = ActivityRequestRef::new(activity, self.next_request()?);
         let provider = self.binding.provider_id().as_str().to_owned();
         let model = self.binding.model_id().as_str().to_owned();
-        let plain_text = format!(
-            "{}\n\n{}\n\nPurpose: {}\nProvider: {}\nModel: {}\n\nSubmitting sends this value only to the Provider and Model shown above. They may retain it. Submission makes this Session unavailable for later Turns, model replacement, or resume even if transport never starts or no answer arrives. The final answer is withheld until its complete visible text passes an exact secret-echo check.\nEsc interrupts the Turn.",
+        let mut plain_text = format!(
+            "{}\n\n{}\n\nPurpose: {}\nProvider: {}\nModel: {}\n\nSubmitting sends this value only to the Provider and Model shown above. They may retain it. Submission makes this Session unavailable for later Turns, model replacement, or resume even if transport never starts or no answer arrives. The final answer is withheld until its complete visible text passes an exact secret-echo check.",
             call.arguments.title, call.arguments.question, call.arguments.purpose, provider, model,
         );
+        if let Some(offer) = call.arguments.storage_offer.as_ref() {
+            let recommendation = match offer.recommendation {
+                yo_core::SecretStorageRecommendation::UseOnce => "Use once",
+                yo_core::SecretStorageRecommendation::StoreForDays => "Store for…",
+                yo_core::SecretStorageRecommendation::StoreUntilDeleted => "Store until deleted",
+            };
+            let reason = offer
+                .reason
+                .replace('\\', "\\\\")
+                .replace('\r', "\\r")
+                .replace('\n', "\\n")
+                .replace('\t', "\\t");
+            plain_text.push_str(&format!(
+                "\n\nOptional local reuse offer · {}\nModel recommendation: {recommendation}\nReason: {reason}\nLocal choices: Use once (default), Store for… (1–365 days), Store until deleted. Press Ctrl-S to choose locally; Enter separately submits the value. Storage requires a verified destination account.",
+                offer.scope,
+            ));
+        }
+        plain_text.push_str("\nEsc interrupts the Turn.");
         let snapshot = ActivityQuestion {
             plain_text,
             choices: Vec::new(),
             allow_notes: false,
             is_secret: true,
+            storage_offer: call.arguments.storage_offer,
             previous_question: false,
             draft: None,
             draft_choice: None,
@@ -229,7 +293,7 @@ impl NativeModelBackend {
             ActivityKind::UserInputResponse {
                 request_id: request.request_id(),
             },
-            "Secret submitted to the disclosed Provider and Model. The value was not recorded by Yo.".to_owned(),
+            "Secret submitted to the disclosed Provider and Model.".to_owned(),
             Some(ActivityOutcome::Completed),
         );
         self.turn = Some(state);
@@ -321,7 +385,7 @@ impl NativeModelBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::SecretRequestArguments;
+    use super::{SecretRequestArguments, parameters};
 
     // 공개 인자만 정확한 닫힌 스키마와 UTF-8 바이트·제어문자 경계를 통과하는지 확인한다.
     #[test]
@@ -334,7 +398,7 @@ mod tests {
             "purpose": "Authenticate the current request."
         })
         .to_string();
-        assert!(SecretRequestArguments::parse(&exact).is_ok());
+        assert!(SecretRequestArguments::parse(&exact, true).is_ok());
 
         for rejected in [
             r#"{"title":"","question":"Question","purpose":"Purpose"}"#.to_owned(),
@@ -357,9 +421,54 @@ mod tests {
             r#"{"title":"Title","question":"Question\u0007","purpose":"Purpose"}"#.to_owned(),
         ] {
             assert!(
-                SecretRequestArguments::parse(&rejected).is_err(),
+                SecretRequestArguments::parse(&rejected, true).is_err(),
                 "unexpectedly accepted {rejected}"
             );
         }
+    }
+
+    // typed 제안은 model 인자에서 공개 데이터만 허용하며 과거 스키마는 이를 받지 않는다.
+    #[test]
+    fn secret_storage_offer_enforces_exact_shape_and_historical_exclusion() {
+        let valid = serde_json::json!({
+            "title": "Credential",
+            "question": "Enter the token.",
+            "purpose": "Authenticate this request.",
+            "storage_offer": {
+                "scope": "github.token_1",
+                "recommendation": "store_for_days",
+                "reason": "Reuse for this destination.",
+                "suggested_days": 30
+            }
+        });
+        let parsed = SecretRequestArguments::parse(&valid.to_string(), true).unwrap();
+        assert_eq!(parsed.storage_offer.unwrap().scope, "github.token_1");
+        assert!(SecretRequestArguments::parse(&valid.to_string(), false).is_err());
+        assert!(
+            parameters(false)["properties"]
+                .get("storage_offer")
+                .is_none()
+        );
+        assert_eq!(
+            parameters(true)["properties"]["storage_offer"]["properties"]["recommendation"]["enum"],
+            serde_json::json!(["use_once", "store_for_days", "store_until_deleted"])
+        );
+
+        for invalid_offer in [
+            serde_json::json!({"scope":"bad/namespace","recommendation":"use_once","reason":"Reason"}),
+            serde_json::json!({"scope":"scope","recommendation":"store_for_days","reason":"Reason"}),
+            serde_json::json!({"scope":"scope","recommendation":"store_for_days","reason":"Reason","suggested_days":0}),
+            serde_json::json!({"scope":"scope","recommendation":"store_for_days","reason":"Reason","suggested_days":366}),
+            serde_json::json!({"scope":"scope","recommendation":"store_for_days","reason":"Reason","suggested_days":null}),
+            serde_json::json!({"scope":"scope","recommendation":"use_once","reason":"Reason","suggested_days":1}),
+            serde_json::json!({"scope":"scope","recommendation":"store_until_deleted","reason":"Reason","extra":true}),
+        ] {
+            let mut request = valid.clone();
+            request["storage_offer"] = invalid_offer;
+            assert!(SecretRequestArguments::parse(&request.to_string(), true).is_err());
+        }
+        let mut null_offer = valid;
+        null_offer["storage_offer"] = serde_json::Value::Null;
+        assert!(SecretRequestArguments::parse(&null_offer.to_string(), true).is_err());
     }
 }

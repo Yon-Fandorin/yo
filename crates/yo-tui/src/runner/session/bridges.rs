@@ -1,4 +1,7 @@
-use yo_core::{ImagePreparationHost, interview};
+use yo_core::{
+    ImagePreparationHost, interview,
+    secret_store::{SecretDestination, SecretStore},
+};
 
 use super::{TuiSession, metadata::TuiStatusLine};
 #[cfg(test)]
@@ -9,6 +12,17 @@ use crate::{
 };
 
 impl TuiSession {
+    /// Supplies the separate encrypted store without placing its contents in a Session.
+    #[must_use]
+    pub fn with_secret_store(mut self, store: SecretStore) -> Self {
+        self.state.secret_store = Some(store);
+        self
+    }
+
+    /// Sets exact live authenticated destination evidence for local reuse.
+    pub fn set_secret_destination(&mut self, destination: Option<SecretDestination>) {
+        self.state.secret_destination = destination;
+    }
     /// 세션 컨트롤러가 쓰기를 소유하며, 호스트는 변경할 수 없는 Journal 근거만 해석합니다.
     #[must_use]
     pub fn with_interview_repository(

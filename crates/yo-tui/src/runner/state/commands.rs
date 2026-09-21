@@ -1,14 +1,17 @@
 //! 실행 중인 TUI 상태의 슬래시 명령과 세션 전환을 담당한다.
 
-use std::mem;
+use std::{
+    mem,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use yo_core::{ActivityDocument, JournalDurability};
+use yo_core::{ActivityDocument, JournalDurability, secret_store::SecretMetadata};
 
 use super::{PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
     command::{
         CommandEffect, CommandRegistry, compact_argument, fork_argument, model_argument,
-        prompt_argument, resume_argument, tree_argument,
+        prompt_argument, resume_argument, secrets_argument, tree_argument,
     },
     overlay::{PanelSnapshot, SlotError},
     runner::{AgentAction, ForkPickerToken, model::ModelSelectionState, session::TuiDocument},
@@ -341,6 +344,7 @@ impl TuiState {
             CommandEffect::ShowSessionTree => self.handle_tree_command(invocation, draft),
             CommandEffect::ForkSession => self.handle_fork_command(invocation, draft),
             CommandEffect::ResumeSession => self.handle_resume_command(invocation, draft),
+            CommandEffect::ShowSecrets => self.handle_secrets_command(invocation, draft),
             CommandEffect::InsertPrompt => self.handle_prompt_command(invocation, draft),
             CommandEffect::ShowHelp => {
                 let document = TuiDocument::new(CommandRegistry::built_in().help_document())
@@ -430,6 +434,92 @@ impl TuiState {
         self.editor.replace_range(0..0, &body);
         self.command_palette
             .preserve_literal(&body, &mut self.overlay);
+        Ok(StateEffect::Redraw)
+    }
+
+    pub(super) fn handle_secrets_command(
+        &mut self,
+        text: &str,
+        draft: &str,
+    ) -> Result<StateEffect, StateError> {
+        let argument = secrets_argument(text).expect("command syntax checked");
+        let delete_id = if argument.is_empty() {
+            None
+        } else if let Some(id) = parse_secret_delete_id(argument) {
+            Some(id)
+        } else {
+            self.restore_draft(draft);
+            self.chat.push_notice(
+                "Use /secrets to list saved entries, or /secrets delete <64-character public ID>. Your draft was preserved."
+                    .to_owned(),
+            )?;
+            return Ok(StateEffect::Redraw);
+        };
+        let Some(store) = self.secret_store.as_ref() else {
+            self.restore_draft(draft);
+            self.chat.push_notice("Local secret storage is unavailable; no entry was changed. Your draft was preserved.".to_owned())?;
+            return Ok(StateEffect::Redraw);
+        };
+        let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(duration) => duration.as_secs(),
+            Err(_) => {
+                self.restore_draft(draft);
+                self.chat.push_notice("Current time is unavailable; saved secrets were not changed. Your draft was preserved.".to_owned())?;
+                return Ok(StateEffect::Redraw);
+            },
+        };
+        let entries = match store.list(now) {
+            Ok(entries) => entries,
+            Err(_) => {
+                self.restore_draft(draft);
+                self.chat.push_notice("Saved secrets could not be authenticated; no entry was changed. Your draft was preserved.".to_owned())?;
+                return Ok(StateEffect::Redraw);
+            },
+        };
+        if let Some(id) = delete_id {
+            let mut selected = None;
+            for entry in entries {
+                let Ok(public_id) = entry.public_id() else {
+                    self.restore_draft(draft);
+                    self.chat.push_notice("Saved secret identity is invalid; no entry was changed. Your draft was preserved.".to_owned())?;
+                    return Ok(StateEffect::Redraw);
+                };
+                if public_id == id {
+                    if selected.is_some() {
+                        self.restore_draft(draft);
+                        self.chat.push_notice("Saved secret ID is ambiguous; no entry was changed. Your draft was preserved.".to_owned())?;
+                        return Ok(StateEffect::Redraw);
+                    }
+                    selected = Some(entry);
+                }
+            }
+            let Some(entry) = selected else {
+                self.restore_draft(draft);
+                self.chat.push_notice(
+                    "No saved secret matches that public ID. Your draft was preserved.".to_owned(),
+                )?;
+                return Ok(StateEffect::Redraw);
+            };
+            if store.delete(entry.destination(), entry.scope()).is_err() {
+                self.restore_draft(draft);
+                self.chat.push_notice("Saved secret deletion failed; the entry remains unavailable or unchanged. Your draft was preserved.".to_owned())?;
+                return Ok(StateEffect::Redraw);
+            }
+            self.clear_editor();
+            self.chat
+                .push_notice(format!("Deleted saved secret `{id}`."))?;
+            return Ok(StateEffect::Redraw);
+        }
+        let Some(document) = secrets_document(&entries).and_then(TuiDocument::new) else {
+            self.restore_draft(draft);
+            self.chat.push_notice(
+                "The saved secret list exceeds the display limit. Your draft was preserved."
+                    .to_owned(),
+            )?;
+            return Ok(StateEffect::Redraw);
+        };
+        self.observe_document(document.with_expanded(true))?;
+        self.clear_editor();
         Ok(StateEffect::Redraw)
     }
 
@@ -523,5 +613,113 @@ impl TuiState {
 
     pub(in crate::runner) const fn model_switch_ready(&self) -> bool {
         self.pending_model_selection.is_some()
+    }
+}
+
+fn parse_secret_delete_id(argument: &str) -> Option<&str> {
+    let mut parts = argument.split_whitespace();
+    let (Some("delete"), Some(id), None) = (parts.next(), parts.next(), parts.next()) else {
+        return None;
+    };
+    (id.len() == 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+    .then_some(id)
+}
+
+fn secrets_document(entries: &[SecretMetadata]) -> Option<ActivityDocument> {
+    let mut markdown = String::from("## Saved secrets\n\n");
+    if entries.is_empty() {
+        markdown.push_str("No saved secrets.\n");
+    } else {
+        markdown.push_str("Only authenticated public metadata is shown. To delete an entry, run `/secrets delete <ID>`.\n\n");
+        for entry in entries {
+            let id = entry.public_id().ok()?;
+            let destination = entry.destination();
+            let expiry = match entry.expires_at() {
+                Some(seconds) => i64::try_from(seconds)
+                    .ok()
+                    .and_then(|second| jiff::Timestamp::from_second(second).ok())
+                    .map_or_else(
+                        || format!("Unix seconds {seconds}"),
+                        |time| time.to_string(),
+                    ),
+                None => "Until deleted".to_owned(),
+            };
+            markdown.push_str(&format!(
+                "- **{}** · ID `{id}` · scope `{}` · {} / {} · account {} · {}\n",
+                escape_public_markdown(entry.title()),
+                escape_public_markdown(entry.scope()),
+                escape_public_markdown(destination.provider()),
+                escape_public_markdown(destination.model()),
+                escape_public_markdown(destination.authenticated_account()),
+                escape_public_markdown(&expiry),
+            ));
+        }
+    }
+    Some(ActivityDocument {
+        title: "Saved secrets".to_owned(),
+        markdown,
+    })
+}
+
+fn escape_public_markdown(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(
+            character,
+            '\\' | '`'
+                | '*'
+                | '_'
+                | '['
+                | ']'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '#'
+                | '+'
+                | '-'
+                | '.'
+                | '!'
+                | '|'
+                | '<'
+                | '>'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+#[cfg(test)]
+mod secrets_tests {
+    use super::{escape_public_markdown, parse_secret_delete_id};
+
+    // 삭제는 목록에 보인 정확한 공개 64자 ID만 받고 추가 토큰은 거절한다.
+    #[test]
+    fn secret_delete_requires_one_exact_public_id() {
+        let id = "a".repeat(64);
+        let command = format!("delete {id}");
+        assert_eq!(parse_secret_delete_id(&command), Some(id.as_str()));
+        for bad in [
+            format!("delete {}", "a".repeat(63)),
+            format!("delete {}", "A".repeat(64)),
+            format!("delete {} extra", "a".repeat(64)),
+            format!("show {}", "a".repeat(64)),
+        ] {
+            assert_eq!(parse_secret_delete_id(&bad), None);
+        }
+    }
+
+    // 공개 metadata에도 Markdown 구문이 들어올 수 있어 목록의 행과 링크를 만들지 못하게 한다.
+    #[test]
+    fn secret_list_escapes_public_markdown() {
+        assert_eq!(
+            escape_public_markdown("`x` [link](https://example.invalid)"),
+            "\\`x\\` \\[link\\]\\(https://example\\.invalid\\)"
+        );
     }
 }

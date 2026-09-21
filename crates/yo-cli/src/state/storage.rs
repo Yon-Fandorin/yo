@@ -1,7 +1,7 @@
 use std::{env, error, fmt};
 
 use yo_core::{
-    LocalWorkspaceHostIdentityError, WorkspaceHostId, interview,
+    LocalWorkspaceHostIdentityError, WorkspaceHostId, interview, secret_store::SecretStore,
     session_repository::RepositoryError,
 };
 
@@ -45,6 +45,17 @@ pub(crate) fn open_interviews() -> Result<interview::InterviewRepository, String
         config_parent.join("secret-recovery.key"),
     )
     .map_err(|error| error.to_string())
+}
+
+pub(crate) fn open_secret_store() -> Result<SecretStore, String> {
+    let root = platform_state_root().map_err(|error| error.to_string())?;
+    let config_path = super::config::selected_path().map_err(|error| error.to_string())?;
+    let config_parent = config_path
+        .parent()
+        .filter(|parent| parent.is_absolute())
+        .ok_or_else(|| "selected Yo configuration path has no absolute parent".to_owned())?;
+    SecretStore::open(root, config_parent.join("secret-recovery.key"))
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Debug)]

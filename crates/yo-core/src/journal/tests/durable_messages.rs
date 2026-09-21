@@ -607,6 +607,7 @@ fn question_presentation_profile_preserves_choices_and_exact_bounds() {
         let question = ActivityQuestion {
             allow_notes: false,
             is_secret: false,
+            storage_offer: None,
             previous_question: false,
             draft: None,
             draft_choice: None,
@@ -623,6 +624,7 @@ fn question_presentation_profile_preserves_choices_and_exact_bounds() {
     let mut question = ActivityQuestion {
         allow_notes: false,
         is_secret: false,
+        storage_offer: None,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -682,6 +684,7 @@ fn secret_question_presentation_is_explicit_closed_and_draft_free() {
         choices: Vec::new(),
         allow_notes: false,
         is_secret: true,
+        storage_offer: None,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -703,6 +706,57 @@ fn secret_question_presentation_is_explicit_closed_and_draft_free() {
     assert!(question.to_snapshot().is_none());
     question.allow_notes = false;
     question.draft = Some("forbidden".into());
+    assert!(question.to_snapshot().is_none());
+}
+
+// 공개 보관 제안은 비밀 질문에만 붙으며 잘못된 범위와 기간은 durable snapshot이 되지 않는다.
+#[test]
+fn secret_storage_offer_snapshot_rejects_invalid_policy_and_preserves_legacy_absence() {
+    use crate::{ActivityQuestion, SecretStorageOffer, SecretStorageRecommendation};
+
+    let mut question = ActivityQuestion {
+        plain_text: "Enter the credential.".into(),
+        choices: Vec::new(),
+        allow_notes: false,
+        is_secret: true,
+        storage_offer: None,
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+    };
+    let legacy = question.to_snapshot().unwrap();
+    assert!(!legacy.contains("storage_offer"));
+    assert_eq!(
+        ActivityQuestion::from_snapshot(&legacy),
+        Some(question.clone())
+    );
+
+    question.storage_offer = Some(SecretStorageOffer {
+        scope: "github.token_1".into(),
+        recommendation: SecretStorageRecommendation::StoreForDays,
+        reason: "Reuse this value for this destination.".into(),
+        suggested_days: Some(30),
+    });
+    let snapshot = question.to_snapshot().unwrap();
+    assert_eq!(
+        ActivityQuestion::from_snapshot(&snapshot),
+        Some(question.clone())
+    );
+    let mut null_offer: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+    null_offer["output"]["storage_offer"] = serde_json::Value::Null;
+    assert!(ActivityQuestion::from_snapshot(&null_offer.to_string()).is_none());
+    question.is_secret = false;
+    assert!(question.to_snapshot().is_none());
+    question.is_secret = true;
+    let offer = question.storage_offer.as_mut().unwrap();
+    offer.scope = "GitHub.token".into();
+    assert!(question.to_snapshot().is_none());
+    let offer = question.storage_offer.as_mut().unwrap();
+    offer.scope = "github.token".into();
+    offer.suggested_days = Some(366);
+    assert!(question.to_snapshot().is_none());
+    let offer = question.storage_offer.as_mut().unwrap();
+    offer.suggested_days = None;
     assert!(question.to_snapshot().is_none());
 }
 
@@ -758,6 +812,7 @@ fn secret_question_snapshot_is_durable_before_its_payload_free_receipt() {
         choices: Vec::new(),
         allow_notes: false,
         is_secret: true,
+        storage_offer: None,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -958,6 +1013,7 @@ fn approval_then_interview_responses_remain_durable_through_completion() {
         ],
         allow_notes: true,
         is_secret: false,
+        storage_offer: None,
         previous_question: false,
         draft: None,
         draft_choice: None,

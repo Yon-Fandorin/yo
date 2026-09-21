@@ -50,7 +50,12 @@ pub(super) fn fork_session(
     );
     let mut candidate = match prepared {
         Ok(StartupOutcome::Ready(prepared)) => {
-            match frontend::build_live_session(*prepared, snapshots.config, &options) {
+            match frontend::build_live_session(
+                *prepared,
+                snapshots.config,
+                &options,
+                snapshots.credentials.as_ref(),
+            ) {
                 Ok(candidate) => candidate,
                 Err(error) => {
                     current.tui.report_fork_failure(error.to_string());

@@ -3,6 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use yo_core::{
     ActivityRef, ActivityRequestRef, ImagePreparationRequest, InputSubmission, JournalDurability,
     SkillReferenceSearchRequest, SubmissionId, TurnRef, UserInput, WorkspaceReferenceSearchRequest,
+    secret_store::{SecretDestination, SecretStore},
 };
 
 #[cfg(test)]
@@ -78,6 +79,8 @@ pub(super) struct TuiState {
     chat: ChatProjection,
     editor: PromptEditor,
     secret_editor: Option<SecretEditor>,
+    pub(super) secret_store: Option<SecretStore>,
+    pub(super) secret_destination: Option<SecretDestination>,
     views: ObservabilityViews,
     pending_requests: VecDeque<PendingRequest>,
     /// User-input requests stay blocked until their typed presentation arrives.

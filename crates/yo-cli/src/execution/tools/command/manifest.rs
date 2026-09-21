@@ -16,7 +16,7 @@ use yo_core::{
     ToolRegistry,
 };
 
-use super::super::registry::{LocalToolRegistryRevision, registry};
+use super::super::registry::{LocalToolRegistryRevision, matches_saved_replay_tools, registry};
 use crate::state::config::CommandToolConfig;
 
 const REGISTRY_PROFILE: &str = "yo.local-tool-registry/command-tools/v1";
@@ -43,7 +43,9 @@ impl PreparedCommandTools {
         }
         let builtins = registry(LocalToolRegistryRevision::BasicFiles)?.freeze();
         let registry = configured_registry(&builtins, commands)?;
-        if contract.is_none_or(|contract| contract.tools() != registry.replay_tools()) {
+        if !contract.is_some_and(|contract| {
+            matches_saved_replay_tools(contract.tools(), &registry.replay_tools(), true)
+        }) {
             return Err(invalid(
                 "configured command tool projection does not match the saved Session",
             ));

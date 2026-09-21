@@ -24,6 +24,7 @@ fn command_filter_preserves_module_declared_order() {
             CommandId::Fork,
             CommandId::Tree,
             CommandId::Resume,
+            CommandId::Secrets,
             CommandId::Prompt,
         ]
     );

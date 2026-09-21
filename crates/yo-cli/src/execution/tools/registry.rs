@@ -1,7 +1,8 @@
 use serde_json::{Value, json};
+use yo_backend_managed::NativeModelBackend;
 use yo_core::{
-    ModelReplayContract, TOOL_SCHEMA_DIALECT, ToolApprovalRequirement, ToolDefinition, ToolEffect,
-    ToolExecutionError, ToolId, ToolRegistry,
+    ModelReplayContract, ModelReplayTool, TOOL_SCHEMA_DIALECT, ToolApprovalRequirement,
+    ToolDefinition, ToolEffect, ToolExecutionError, ToolId, ToolRegistry,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,13 +47,32 @@ pub(crate) fn revision_for_replay_contract(
         LocalToolRegistryRevision::NoTools,
     ] {
         let trusted = registry(revision)?.freeze().replay_tools();
-        if tools == trusted.as_slice() {
+        if matches_saved_replay_tools(
+            tools,
+            &trusted,
+            revision == LocalToolRegistryRevision::BasicFiles,
+        ) {
             return Ok(revision);
         }
     }
     Err(ToolExecutionError::new(
         "saved Session uses an unknown local tool registry",
     ))
+}
+
+/// A native secret interaction may follow the exact local-tool projection, but it never
+/// becomes a local executable tool or part of a configured-command manifest.
+pub(crate) fn matches_saved_replay_tools(
+    recorded: &[ModelReplayTool],
+    trusted_local: &[ModelReplayTool],
+    allow_native_secret: bool,
+) -> bool {
+    recorded == trusted_local
+        || (allow_native_secret
+            && recorded.split_last().is_some_and(|(last, prefix)| {
+                prefix == trusted_local
+                    && NativeModelBackend::known_secret_replay_tools().contains(last)
+            }))
 }
 
 fn basic_registry() -> Result<ToolRegistry, ToolExecutionError> {
@@ -263,6 +283,7 @@ fn write_file_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use yo_backend_managed::NativeModelBackend;
     use yo_core::{ModelReplayContract, ModelReplayTool, ToolApprovalRequirement, ToolEffect};
 
     use super::{LocalToolRegistryRevision, registry, revision_for_replay_contract};
@@ -357,6 +378,63 @@ mod tests {
             revision_for_replay_contract(Some(&ModelReplayContract::new("system", retired)))
                 .is_err()
         );
+    }
+
+    // Resume와 fork가 공유하는 startup admission은 로컬 도구 뒤의 정확한 native
+    // 비밀 정의 한 개만 허용하고, 구형/no-tools registry에는 붙이지 않는다.
+    #[test]
+    fn saved_registry_admits_only_one_exact_final_native_secret_tool() {
+        let basic = registry(LocalToolRegistryRevision::BasicFiles)
+            .unwrap()
+            .freeze()
+            .replay_tools();
+        for secret in NativeModelBackend::known_secret_replay_tools() {
+            let mut recorded = basic.clone();
+            recorded.push(secret.clone());
+            let contract = ModelReplayContract::new("system", recorded.clone());
+            assert_eq!(
+                revision_for_replay_contract(Some(&contract)).unwrap(),
+                LocalToolRegistryRevision::BasicFiles
+            );
+
+            let mut reordered = recorded.clone();
+            let last = reordered.len() - 1;
+            reordered.swap(0, last);
+            assert!(
+                revision_for_replay_contract(Some(&ModelReplayContract::new("system", reordered)))
+                    .is_err()
+            );
+            let mut duplicate = recorded.clone();
+            duplicate.push(secret.clone());
+            assert!(
+                revision_for_replay_contract(Some(&ModelReplayContract::new("system", duplicate)))
+                    .is_err()
+            );
+            let mut altered = basic.clone();
+            altered.push(ModelReplayTool::new(
+                secret.name(),
+                "altered secret request",
+                secret.schema_version(),
+                secret.parameters().clone(),
+            ));
+            assert!(
+                revision_for_replay_contract(Some(&ModelReplayContract::new("system", altered)))
+                    .is_err()
+            );
+            for revision in [
+                LocalToolRegistryRevision::LegacyReadFile,
+                LocalToolRegistryRevision::NoTools,
+            ] {
+                let mut disallowed = registry(revision).unwrap().freeze().replay_tools();
+                disallowed.push(secret.clone());
+                assert!(
+                    revision_for_replay_contract(Some(&ModelReplayContract::new(
+                        "system", disallowed
+                    )))
+                    .is_err()
+                );
+            }
+        }
     }
 
     // basic manifest의 description/schema/effect/approval을 각각 직접 관찰해 이름만 맞는

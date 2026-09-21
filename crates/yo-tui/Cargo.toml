@@ -17,6 +17,7 @@ emojis = "=0.9.0"
 icu_properties = { version = "=2.2.0", features = ["compiled_data"] }
 unicode-segmentation = "=1.13.3"
 yo-core = { path = "../yo-core" }
+jiff = { version = "=0.2.35", default-features = false, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]
 crossterm = { version = "=0.29.0", default-features = false, features = ["bracketed-paste", "event-stream", "events"] }

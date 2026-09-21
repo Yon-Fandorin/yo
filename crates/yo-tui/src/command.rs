@@ -17,6 +17,7 @@ mod preview;
 mod prompt;
 mod registry;
 mod resume;
+mod secrets;
 mod tree;
 
 pub(crate) use definition::{CommandDefinition, CommandEffect, CommandId};
@@ -46,4 +47,8 @@ pub(crate) fn fork_argument(value: &str) -> Option<&str> {
 
 pub(crate) fn tree_argument(value: &str) -> Option<&str> {
     tree::argument(value)
+}
+
+pub(crate) fn secrets_argument(value: &str) -> Option<&str> {
+    secrets::argument(value)
 }

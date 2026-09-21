@@ -1,21 +1,22 @@
 //! 실행 중인 TUI 상태의 입력 승인과 후속 입력을 담당한다.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use yo_core::{
     InputSubmission, SubmissionId, SubmissionOutcome, UserInput, interview::InterviewError,
+    secret_store::RetentionPolicy,
 };
 
 use super::{FOLLOW_UP_BYTES, FOLLOW_UP_LIMIT, PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
     command::{
         CommandEffect, attachment_argument, compact_argument, fork_argument, model_argument,
-        prompt_argument, resume_argument, tree_argument,
+        prompt_argument, resume_argument, secrets_argument, tree_argument,
     },
     input::{
         editor::EditorEffect,
         event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
-        secret::SecretEditorEffect,
+        secret::{SecretEditorEffect, SecretRetention},
     },
     overlay::OverlayInputEffect,
     prompt::{assist::PromptAssistRequest, workspace_reference::WorkspaceEdit},
@@ -573,6 +574,10 @@ impl TuiState {
                         self.command_palette.close(&mut self.overlay);
                         return self.handle_model_command(&text, &text);
                     }
+                    if secrets_argument(&text).is_some() {
+                        self.command_palette.close(&mut self.overlay);
+                        return self.handle_secrets_command(&text, &text);
+                    }
                     if tree_argument(&text).is_some() {
                         self.command_palette.close(&mut self.overlay);
                         return self.handle_tree_command(&text, &text);
@@ -664,6 +669,10 @@ impl TuiState {
     }
 
     fn handle_secret_input(&mut self, input: InputEvent) -> Result<StateEffect, StateError> {
+        let retention = self
+            .secret_editor
+            .as_ref()
+            .map_or(SecretRetention::UseOnce, |editor| editor.retention());
         let effect = self
             .secret_editor
             .as_mut()
@@ -678,6 +687,42 @@ impl TuiState {
                     "Secret input exceeds the 64 KiB UTF-8 limit; the value was not changed."
                         .to_owned(),
                 )?;
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::RetentionUnavailable => {
+                self.chat.push_notice(
+                    "Storage needs a verified live account and a secure local vault. Use once remains selected."
+                        .to_owned(),
+                )?;
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::RetentionDaysRequested => {
+                self.chat.push_notice(
+                    "Enter 1–365 days, then Enter to choose the period. A later Enter submits the secret. Ctrl-S chooses Until deleted."
+                        .to_owned(),
+                )?;
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::RetentionDaysRejected => {
+                self.chat
+                    .push_notice("Choose a whole number from 1 to 365 days.".to_owned())?;
+                Ok(StateEffect::Redraw)
+            },
+            SecretEditorEffect::RetentionChanged(choice) => {
+                let notice = match choice {
+                    SecretRetention::UseOnce => "Use once selected. Enter submits the secret.".to_owned(),
+                    SecretRetention::UntilDeleted => {
+                        "Store until deleted selected. Enter separately saves and submits the secret. Storage may still fail closed."
+                            .to_owned()
+                    },
+                    SecretRetention::ForDays { days, expires_at } => {
+                        let expiry = i64::try_from(expires_at).ok()
+                            .and_then(|seconds| jiff::Timestamp::from_second(seconds).ok())
+                            .map_or_else(|| "unavailable".to_owned(), |timestamp| timestamp.to_string());
+                        format!("Store for {days} days selected; expires {expiry}. Enter separately saves and submits the secret.")
+                    },
+                };
+                self.chat.push_notice(notice)?;
                 Ok(StateEffect::Redraw)
             },
             SecretEditorEffect::RecoveryDisclosureRequested => {
@@ -738,6 +783,36 @@ impl TuiState {
                 else {
                     return Ok(StateEffect::Unchanged);
                 };
+                if let (Some(offer), Some(store), Some(destination)) = (
+                    self.chat
+                        .question(request.activity())
+                        .and_then(|question| question.storage_offer.as_ref()),
+                    self.secret_store.as_ref(),
+                    self.secret_destination.as_ref(),
+                ) {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_or(0, |duration| duration.as_secs());
+                    match store.recover(destination, &offer.scope, now) {
+                        Ok(Some(input)) => {
+                            if let Some(editor) = &mut self.secret_editor {
+                                editor.restore(input);
+                            }
+                            self.chat.push_notice(
+                                "Saved value recovered into the hidden editor. Enter still submits it separately."
+                                    .to_owned(),
+                            )?;
+                            return Ok(StateEffect::Redraw);
+                        },
+                        Err(_) => {
+                            self.chat.push_notice(
+                                "Saved value unavailable; no secret was inserted.".to_owned(),
+                            )?;
+                            return Ok(StateEffect::Redraw);
+                        },
+                        Ok(None) => {},
+                    }
+                }
                 let result = self
                     .interview
                     .as_ref()
@@ -809,6 +884,55 @@ impl TuiState {
                     self.clear_secret_editor();
                     return Ok(StateEffect::Unchanged);
                 };
+                if retention != SecretRetention::UseOnce {
+                    let result = (|| {
+                        let question = self
+                            .chat
+                            .question(request.activity())
+                            .ok_or("secret request presentation is unavailable")?;
+                        let offer = question
+                            .storage_offer
+                            .as_ref()
+                            .ok_or("secret storage offer is unavailable")?;
+                        let title = question
+                            .plain_text
+                            .lines()
+                            .next()
+                            .ok_or("secret storage title is unavailable")?;
+                        let store = self
+                            .secret_store
+                            .as_ref()
+                            .ok_or("secret storage is unavailable")?;
+                        let destination = self
+                            .secret_destination
+                            .as_ref()
+                            .ok_or("verified secret destination is unavailable")?;
+                        let policy = match retention {
+                            SecretRetention::UseOnce => unreachable!("guarded retention"),
+                            SecretRetention::ForDays { days, expires_at } => {
+                                RetentionPolicy::ForDaysAt { days, expires_at }
+                            },
+                            SecretRetention::UntilDeleted => RetentionPolicy::UntilDeleted,
+                        };
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_err(|_| "current time is unavailable")?
+                            .as_secs();
+                        store
+                            .save(destination, &offer.scope, title, policy, &input, now)
+                            .map_err(|_| "encrypted secret storage failed")?;
+                        Ok::<(), &str>(())
+                    })();
+                    if let Err(detail) = result {
+                        if let Some(editor) = &mut self.secret_editor {
+                            editor.restore_unsubmitted(input);
+                        }
+                        self.chat.push_notice(format!(
+                            "{detail}. The secret was not submitted; choose Use once or try again."
+                        ))?;
+                        return Ok(StateEffect::Redraw);
+                    }
+                }
                 self.pending_requests.pop_front();
                 self.clear_secret_editor();
                 self.close_request_overlay();

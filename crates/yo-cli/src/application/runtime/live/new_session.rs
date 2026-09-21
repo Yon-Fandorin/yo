@@ -51,7 +51,12 @@ pub(super) fn start_new_session(
     );
     let candidate = match prepared {
         Ok(StartupOutcome::Ready(prepared)) => {
-            match frontend::build_live_session(*prepared, snapshots.config, &options) {
+            match frontend::build_live_session(
+                *prepared,
+                snapshots.config,
+                &options,
+                snapshots.credentials.as_ref(),
+            ) {
                 Ok(candidate) => candidate,
                 Err(error) => {
                     current.tui.report_new_session_failure(error.to_string());

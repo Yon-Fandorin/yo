@@ -42,6 +42,7 @@ impl InputQuestions {
             draft: (!draft.is_empty()).then(|| draft.clone()),
             draft_choice: *draft_choice,
             is_secret: false,
+            storage_offer: None,
         }
     }
 

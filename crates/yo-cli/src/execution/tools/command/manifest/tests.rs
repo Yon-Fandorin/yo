@@ -9,6 +9,7 @@ use std::{
 
 use nix::{sys::stat, unistd};
 use serde_json::json;
+use yo_backend_managed::NativeModelBackend;
 use yo_core::{
     ToolExecution, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionResult, ToolId,
 };
@@ -214,6 +215,50 @@ fn replay_projection_is_checked_without_opening_configured_artifacts() {
     );
     assert!(PreparedCommandTools::validate_replay_contract(config.command_tools(), None).is_err());
     assert!(PreparedCommandTools::validate_replay_contract(&[], Some(&contract)).is_err());
+}
+
+// 설정 command manifest에는 interaction이 들어가지 않지만, 저장된 projection의
+// 정확한 최종 native 비밀 도구는 같은 설정 command와 함께 인정한다.
+#[test]
+fn command_manifest_admits_exact_saved_secret_suffix() {
+    let fixture = Fixture::new();
+    let config = fixture.config(fixture.0.join("native").to_str().unwrap(), None, &[]);
+    let prepared = fixture.prepare(&config);
+    fs::remove_file(fixture.0.join("native")).unwrap();
+    let local = prepared.registry().replay_tools();
+    for secret in NativeModelBackend::known_secret_replay_tools() {
+        let mut recorded = local.clone();
+        recorded.push(secret.clone());
+        assert!(
+            PreparedCommandTools::validate_replay_contract(
+                config.command_tools(),
+                Some(&yo_core::ModelReplayContract::new(
+                    "system",
+                    recorded.clone()
+                ))
+            )
+            .is_ok()
+        );
+
+        let mut reordered = recorded.clone();
+        let last = reordered.len() - 1;
+        reordered.swap(0, last);
+        assert!(
+            PreparedCommandTools::validate_replay_contract(
+                config.command_tools(),
+                Some(&yo_core::ModelReplayContract::new("system", reordered))
+            )
+            .is_err()
+        );
+        recorded.push(secret);
+        assert!(
+            PreparedCommandTools::validate_replay_contract(
+                config.command_tools(),
+                Some(&yo_core::ModelReplayContract::new("system", recorded))
+            )
+            .is_err()
+        );
+    }
 }
 
 // 명시 command 순서도 실행 manifest identity이며 같은 artifact의 재사용은 순서를 지우지 않는다.

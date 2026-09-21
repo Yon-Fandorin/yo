@@ -62,7 +62,9 @@ impl NativeModelBackend {
                 .function_tools()
                 .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
             if self.secret_interaction_enabled {
-                tools.push(super::secret::function_tool()?);
+                tools.push(super::secret::function_tool(
+                    !self.historical_secret_interaction,
+                )?);
             }
             RequestToolExposure::enabled(tools)
         } else {

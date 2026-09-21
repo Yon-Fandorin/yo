@@ -16,7 +16,8 @@ mod tool;
 
 pub use activity::{ActivityKind, ActivityUpdate, AgentEvent};
 pub use interaction::{
-    ActivityApproval, ActivityNotice, ActivityQuestion, ApprovalChoice, NoticeLevel, QuestionChoice,
+    ActivityApproval, ActivityNotice, ActivityQuestion, ApprovalChoice, NoticeLevel,
+    QuestionChoice, SecretStorageOffer, SecretStorageRecommendation,
 };
 pub use outcome::{ActivityOutcome, Failure, TurnOutcome};
 pub use plan::{ActivityPlan, PlanStep, PlanStepStatus};

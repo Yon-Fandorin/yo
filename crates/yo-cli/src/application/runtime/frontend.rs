@@ -1,6 +1,9 @@
 use std::{env, ffi::OsStr, path, path::PathBuf};
 
-use yo_core::interview::SecretRecoveryDestination;
+use yo_core::{
+    interview::SecretRecoveryDestination,
+    secret_store::{LiveAuthenticatedAccount, SecretDestination},
+};
 
 use super::{
     super::{codex_diagnostics::CodexWarningCollector, output::write_session_output},
@@ -18,6 +21,7 @@ pub(super) fn build_live_session(
     prepared: PreparedAgent,
     config: &config::Config,
     options: &command::LiveOptions,
+    credentials: Option<&yo_core::CredentialSnapshot>,
 ) -> Result<LiveSession, AppError> {
     let PreparedAgent {
         is_resume,
@@ -81,6 +85,14 @@ pub(super) fn build_live_session(
             tui.report_interview_failure(format!("Interview recovery unavailable: {error}"))
         },
     }
+    match storage::open_secret_store() {
+        Ok(store) => tui = tui.with_secret_store(store),
+        Err(error) => tui.report_interview_failure(format!("Secret storage unavailable: {error}")),
+    }
+    tui.set_secret_destination(observed_secret_destination(
+        selection.model_selection().as_ref(),
+        credentials,
+    ));
     if let Some(history) = inherited_history {
         tui = match tui.with_inherited_history(&history) {
             Ok(tui) => tui,
@@ -129,6 +141,18 @@ pub(super) fn build_live_session(
         active_host_model,
         host_catalogs,
     })
+}
+
+fn observed_secret_destination(
+    selection: Option<&yo_core::ModelSelection>,
+    credentials: Option<&yo_core::CredentialSnapshot>,
+) -> Option<SecretDestination> {
+    let selection = selection.filter(|selection| selection.provider().as_str() == "openrouter")?;
+    let credential = credentials?.resolve(selection.provider(), selection.account())?;
+    let identity = yo_provider_openrouter::observe_openrouter_account_id(credential).ok()?;
+    let account = LiveAuthenticatedAccount::from_live_observation(identity).ok()?;
+    SecretDestination::from_live_authentication(selection.provider(), selection.model(), &account)
+        .ok()
 }
 
 pub(super) fn run_terminal_generation(
@@ -201,6 +225,12 @@ pub(super) fn run_terminal_generation(
                             session.fork_catalog = None;
                             session.startup_target =
                                 yo_core::StartupTarget::Model(selection.clone());
+                            session
+                                .tui
+                                .set_secret_destination(observed_secret_destination(
+                                    Some(&selection),
+                                    credentials.as_ref(),
+                                ));
                             let cleanup_warning =
                                 outcome.cleanup_failure().map(ToString::to_string);
                             let label = format!("{} · {}", selection.provider(), selection.model());

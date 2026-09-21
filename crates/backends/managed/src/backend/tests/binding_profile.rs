@@ -34,7 +34,7 @@ use super::support::{
 };
 use crate::backend::{
     NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-    identity::semantically_equal_native_binding_identity,
+    identity::semantically_equal_native_binding_identity, secret,
 };
 
 fn parameters(value: &str) -> ModelProfileParameters {
@@ -460,6 +460,32 @@ fn local_tools_profile_accepts_an_empty_session_registry() {
         yo_core::NATIVE_SECRET_INTERACTION_NAME
     );
     assert_eq!(body["tool_choice"], "auto");
+}
+
+// 과거 비밀 도구 계약은 새 storage_offer 필드를 덧붙이지 않고 같은 정의로 재개한다.
+#[test]
+fn historical_secret_interaction_resume_keeps_its_recorded_tool_schema() {
+    let mut source = backend_with_profile(profile("{}", "{}", "local-tools/v1")).unwrap();
+    let historical = source.historical_secret_contract.clone().unwrap();
+    assert_ne!(historical, source.contract);
+    source.contract = historical.clone();
+    source.historical_secret_interaction = true;
+    let (_directory, continuation) = durable_continuation(source);
+    assert_eq!(
+        continuation.target().model_replay().contract(),
+        Some(&historical)
+    );
+
+    let mut resumed = backend_with_profile(profile("{}", "{}", "local-tools/v1")).unwrap();
+    resumed.resume_session(continuation.target()).unwrap();
+    assert!(resumed.secret_interaction_enabled);
+    assert!(resumed.historical_secret_interaction);
+    assert_eq!(resumed.contract, historical);
+    assert!(
+        secret::function_tool(false).unwrap().parameters()["properties"]
+            .get("storage_offer")
+            .is_none()
+    );
 }
 
 // legacy catalog entry는 새 profile을 추정하지 않고 기존 yo.model-binding/v1 identity와

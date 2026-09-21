@@ -124,6 +124,7 @@ impl InputQuestions {
         ActivityQuestion {
             allow_notes: !question.is_secret,
             is_secret: question.is_secret,
+            storage_offer: None,
             previous_question: index > 0,
             draft: (!question.is_secret)
                 .then(|| self.drafts.get(&question.id).map(|(_, text)| text.clone()))

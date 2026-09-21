@@ -1928,7 +1928,7 @@ replay contract predates this function keep their existing tool surface.
 The resulting typed secret question names the exact Provider and Model and warns that
 the provider may retain the value, submission permanently ends the Session, and the
 complete final answer is checked for an exact echo. The TUI uses its hidden secret
-editor. Yo keeps the value only in process memory: the runtime first commits a
+editor. Without a storage offer, Yo keeps the value only in process memory: the runtime first commits a
 payload-free `SecretInputSubmitted` receipt transactionally, then arms one tools-disabled
 terminal request. Memory-only storage, a durability gap, cancellation, or shutdown
 before that commit starts no transport. After acceptance, the Session rejects later
@@ -1942,8 +1942,19 @@ delegated backend does not expose this contract. The final response is fully buf
 must contain exactly one visible assistant message and no function calls, and is
 published only after its contiguous UTF-8 bytes do not contain the submitted value.
 An echo withholds the entire answer and emits a static failure. No secret, response
-delta, replay item, or continuation anchor is persisted. This is one-shot secret
-delivery, not secret-value storage or recovery. Tests cover schema and byte bounds,
+delta, replay item, or continuation anchor is persisted in the Session Journal.
+With a typed public storage offer, the TUI starts at `Use once` and permits a
+separate 1–365-day or until-deleted local choice. A later Enter submits; selection
+alone does not. Durable storage requires a live authenticated account identity and
+secure state/configuration paths. The current managed binding obtains OpenRouter's
+creator, organization, and workspace identifiers from the authenticated current-key
+endpoint; unsupported or unavailable identity leaves `Use once` available. The
+separate local vault encrypts fixed-capacity entries, authenticates public metadata,
+and makes replacement, deletion, and expiry maintenance recoverable. `/secrets`
+lists only authenticated public metadata; `/secrets delete <ID>` deletes one exact
+current entry. A subsequent matching live request shows `Recovery available` and
+`Ctrl-R` loads the value; a fresh Enter is still required to submit it. Delegated secret requests do not carry
+this storage offer. Tests cover schema and byte bounds,
 sole-call enforcement, durable-before-transport ordering, connector projection,
 whole-answer echo rejection, and the recovery barrier.
 
@@ -2169,8 +2180,8 @@ restores only the last durable publication. Conflict or failure keeps the
 editable value without claiming Saved.
 
 Older working-copy files are not listed or migrated. Existing
-secret-reference expiry maintenance may update those older records; reusable
-secret storage is separate follow-up work. Core and TUI interview tests cover
+secret-reference expiry maintenance may update those older records; the separate
+reusable secret vault does not migrate or list them. Core and TUI interview tests cover
 exact live continuation, dead read-only view, same-Session selection,
 explicit discard, durable-seal cleanup and secret exclusion. The current v1
 schema passed the Linux workspace suite. The exact `9c3f6caa` candidate also

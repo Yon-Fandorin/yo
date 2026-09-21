@@ -1,9 +1,30 @@
 use std::{env, fs, path::PathBuf, process, time::SystemTime};
 
+use yo_backend_managed::NativeModelBackend;
 use yo_core::{EffectiveModelProfile, ModelProfileParameters, VersionedProfileId};
 
 use super::*;
-use crate::state::config;
+use crate::{execution::tools::registry, state::config};
+
+// Resume와 exact fork가 공유하는 durable-target registry 선택 경계에서 두 알려진
+// native 비밀 도구 계약을 로컬 도구로 오인하지 않는다.
+#[test]
+fn saved_native_registry_admits_current_and_historical_secret_profiles() {
+    let config = Config::default();
+    let local = registry(LocalToolRegistryRevision::BasicFiles)
+        .unwrap()
+        .freeze()
+        .replay_tools();
+    for secret in NativeModelBackend::known_secret_replay_tools() {
+        let mut tools = local.clone();
+        tools.push(secret);
+        let contract = ModelReplayContract::new("system", tools);
+        assert_eq!(
+            saved_native_registry_revision(&config, None, Some(&contract)).unwrap(),
+            LocalToolRegistryRevision::BasicFiles
+        );
+    }
+}
 
 struct TestDirectory(PathBuf);
 

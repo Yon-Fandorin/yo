@@ -403,6 +403,7 @@ impl InterviewQuestion {
             draft: None,
             draft_choice: None,
             is_secret: self.is_secret,
+            storage_offer: None,
         }
     }
 }

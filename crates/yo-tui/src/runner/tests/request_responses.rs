@@ -1,9 +1,16 @@
-use std::time::Duration;
+use std::{
+    env, fs,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    process,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use yo_core::{
     ActivityKind, ActivityQuestion, ActivityRequestRef, ActivityUpdate, AgentControlOutcome,
-    AgentEvent, ApprovalDecision, QuestionChoice, RequestId, SubmissionRejection,
-    SubmissionRejectionKind,
+    AgentEvent, ApprovalDecision, QuestionChoice, RequestId, SecretStorageOffer,
+    SecretStorageRecommendation, SubmissionRejection, SubmissionRejectionKind,
+    secret_store::{LiveAuthenticatedAccount, SecretDestination, SecretStore},
 };
 
 use super::{activity, key, nonzero};
@@ -95,6 +102,7 @@ fn secret_questions_use_a_separate_literal_editor_and_correlated_action() {
         choices: Vec::<QuestionChoice>::new(),
         allow_notes: false,
         is_secret: true,
+        storage_offer: None,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -131,6 +139,149 @@ fn secret_questions_use_a_separate_literal_editor_and_correlated_action() {
     );
 }
 
+struct SecretStorageFixture {
+    root: PathBuf,
+    destination: SecretDestination,
+}
+
+impl SecretStorageFixture {
+    fn new() -> Self {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = fs::canonicalize(env::temp_dir())
+            .unwrap()
+            .join(format!("yo-tui-secret-retention-{}-{nonce}", process::id()));
+        for path in [&root, &root.join("state"), &root.join("config")] {
+            fs::create_dir(path).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let destination = SecretDestination::from_live_authentication(
+            &yo_core::ProviderId::new("openrouter").unwrap(),
+            &yo_core::ModelId::new("free-model").unwrap(),
+            &LiveAuthenticatedAccount::from_live_observation("observed-user".into()).unwrap(),
+        )
+        .unwrap();
+        Self { root, destination }
+    }
+
+    fn store(&self) -> SecretStore {
+        SecretStore::open(
+            self.root.join("state"),
+            self.root.join("config/secret-recovery.key"),
+        )
+        .unwrap()
+    }
+
+    fn state(&self) -> TuiState {
+        let mut state = TuiState::new();
+        state.secret_store = Some(self.store());
+        state.secret_destination = Some(self.destination.clone());
+        state
+    }
+}
+
+impl Drop for SecretStorageFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn present_secret_offer(state: &mut TuiState, activity_id: u64) -> ActivityRequestRef {
+    let request_activity = activity(activity_id);
+    let request_id = RequestId::new(nonzero(activity_id));
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        })
+        .unwrap();
+    let profile = ActivityQuestion {
+        plain_text: "Token\n\nEnter the token".into(),
+        choices: Vec::new(),
+        allow_notes: false,
+        is_secret: true,
+        storage_offer: Some(SecretStorageOffer {
+            scope: "service.token".into(),
+            recommendation: SecretStorageRecommendation::StoreForDays,
+            reason: "Repeated access".into(),
+            suggested_days: Some(7),
+        }),
+        previous_question: false,
+        draft: None,
+        draft_choice: None,
+    };
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: request_activity,
+            update: ActivityUpdate::TextSnapshot(profile.to_snapshot().unwrap()),
+        })
+        .unwrap();
+    ActivityRequestRef::new(request_activity, request_id)
+}
+
+// 보관 제안은 기본 저장을 유발하지 않으며, 사용자가 기간을 선택하고 다시 Enter를 눌러야
+// 저장·제출됩니다.
+#[test]
+fn secret_retention_requires_local_choice_and_separate_submit() {
+    let fixture = SecretStorageFixture::new();
+    let mut state = fixture.state();
+    let request = present_secret_offer(&mut state, 142);
+    assert!(fixture.store().list(0).unwrap().is_empty());
+    state
+        .handle(InputEvent::Paste("retained-value".into()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('s'), KeyModifiers::CONTROL),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    state
+        .handle(InputEvent::Paste("2".into()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(fixture.store().list(0).unwrap().is_empty());
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToSecretInput {
+            request,
+            input: yo_core::SecretInput::new("retained-value").unwrap(),
+        })
+    );
+    assert_eq!(fixture.store().list(0).unwrap().len(), 1);
+
+    let mut next = fixture.state();
+    let next_request = present_secret_offer(&mut next, 143);
+    assert_eq!(
+        next.handle(
+            key(KeyCode::Character('r'), KeyModifiers::CONTROL),
+            Duration::ZERO
+        )
+        .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(
+        next.handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToSecretInput {
+            request: next_request,
+            input: yo_core::SecretInput::new("retained-value").unwrap(),
+        })
+    );
+}
+
 // backend preflight가 secret 답변을 aggregate budget 때문에 거절하면 같은 request만
 // 다시 열고 이전 값을 복원하지 않는다. 다음 제출은 새로 입력한 값만 전달한다.
 #[test]
@@ -150,6 +301,7 @@ fn rejected_secret_response_reopens_empty_editor_for_the_same_request() {
         choices: Vec::<QuestionChoice>::new(),
         allow_notes: false,
         is_secret: true,
+        storage_offer: None,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -215,6 +367,7 @@ fn secret_previous_question_navigation_discards_value_and_uses_empty_draft() {
         choices: Vec::<QuestionChoice>::new(),
         allow_notes: false,
         is_secret: true,
+        storage_offer: None,
         previous_question: true,
         draft: None,
         draft_choice: None,
@@ -297,6 +450,7 @@ fn malformed_secret_presentation_fails_closed_without_ordinary_fallback() {
         }],
         allow_notes: false,
         is_secret: false,
+        storage_offer: None,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -543,6 +697,7 @@ fn present_plain_question(state: &mut TuiState, activity: yo_core::ActivityRef) 
                     choices: Vec::new(),
                     allow_notes: false,
                     is_secret: false,
+                    storage_offer: None,
                     previous_question: false,
                     draft: None,
                     draft_choice: None,
@@ -609,6 +764,7 @@ fn previous_question_preserves_selected_reference_draft() {
                     }],
                     allow_notes: true,
                     is_secret: false,
+                    storage_offer: None,
                     previous_question: true,
                     draft: None,
                     draft_choice: None,
@@ -871,6 +1027,7 @@ fn structured_question_choices_require_presentation_and_preserve_request_identit
     let profile = ActivityQuestion {
         allow_notes: true,
         is_secret: false,
+        storage_offer: None,
         previous_question: false,
         draft: None,
         draft_choice: None,
@@ -949,6 +1106,7 @@ fn question_notes_keep_selection_and_literal_text_after_narrow_reflow() {
         let profile = ActivityQuestion {
             allow_notes,
             is_secret: false,
+            storage_offer: None,
             previous_question: false,
             draft: None,
             draft_choice: None,
@@ -1036,6 +1194,7 @@ fn question_notes_refresh_and_return_to_choices_preserve_draft_without_stale_sel
         let mut profile = ActivityQuestion {
             allow_notes: true,
             is_secret: false,
+            storage_offer: None,
             previous_question: false,
             draft: None,
             draft_choice: None,
@@ -1651,6 +1810,7 @@ fn request_history_roundtrip_restores_only_unchanged_selection() {
             let profile = ActivityQuestion {
                 allow_notes: false,
                 is_secret: false,
+                storage_offer: None,
                 previous_question: false,
                 draft: None,
                 draft_choice: None,
@@ -1759,6 +1919,7 @@ fn previous_question_requires_fresh_profile_and_preserves_draft() {
             }],
             allow_notes: true,
             is_secret: false,
+            storage_offer: None,
             previous_question: supported,
             draft: Some("메모\n/exit".into()),
             draft_choice: choice,

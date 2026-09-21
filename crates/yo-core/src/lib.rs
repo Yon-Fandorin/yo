@@ -16,6 +16,7 @@ mod model_service;
 mod readiness;
 mod request_trace;
 mod runtime;
+pub mod secret_store;
 mod session;
 pub mod session_repository;
 mod skill_reference;
@@ -48,7 +49,7 @@ pub use event::{
     ActivityApproval, ActivityDocument, ActivityKind, ActivityNotice, ActivityOutcome,
     ActivityPlan, ActivityQuestion, ActivityReasoning, ActivitySummary, ActivityUpdate, AgentEvent,
     ApprovalChoice, Failure, MessageContent, NoticeLevel, PlanStep, PlanStepStatus, QuestionChoice,
-    SummaryKind, ToolOutput, TurnOutcome,
+    SecretStorageOffer, SecretStorageRecommendation, SummaryKind, ToolOutput, TurnOutcome,
 };
 pub use host::{
     HostWorkspacePath, HostWorkspacePathError, LocalWorkspaceHostIdentity,

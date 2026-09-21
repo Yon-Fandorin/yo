@@ -27,15 +27,16 @@ pub(super) fn resume_session(
             "durable native replay has no contract",
         ));
     };
-    if !same_native_resume_identity(&expected, target.binding())
-        || (contract != &backend.contract && contract != &backend.legacy_contract)
-    {
+    let profile = backend.secret_interaction_profile(contract);
+    if !same_native_resume_identity(&expected, target.binding()) || profile.is_none() {
         return Err(failure(
             BackendFailureKind::Session,
             "durable native model binding or replay contract does not match current configuration",
         ));
     }
-    backend.secret_interaction_enabled = contract == &backend.contract;
+    let (enabled, historical) = profile.expect("validated replay secret profile");
+    backend.secret_interaction_enabled = enabled;
+    backend.historical_secret_interaction = historical;
     backend.contract = contract.clone();
     backend.session = Some(target.session_id());
     backend.replay = target.model_replay().clone();
@@ -59,13 +60,16 @@ pub(super) fn resume_session_replacing_binding(
             "durable exact replay has no contract",
         ));
     };
-    if contract != &backend.contract && contract != &backend.legacy_contract {
+    let profile = backend.secret_interaction_profile(contract);
+    if profile.is_none() {
         return Err(failure(
             BackendFailureKind::Session,
             "durable exact replay contract does not match the replacement binding",
         ));
     }
-    backend.secret_interaction_enabled = contract != &backend.legacy_contract;
+    let (enabled, historical) = profile.expect("validated replay secret profile");
+    backend.secret_interaction_enabled = enabled;
+    backend.historical_secret_interaction = historical;
     backend.contract = contract.clone();
     if backend.image_accounting.is_none()
         && target

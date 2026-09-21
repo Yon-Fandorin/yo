@@ -27,10 +27,10 @@ use yo_core::{
     ContextPolicyChanged, ContextStrategy, ContinuationStrategy, EffectiveModelBinding,
     EffectiveModelProfile, Failure, FrozenToolRegistry, ModelBindingAdmission, ModelCatalogEntry,
     ModelConnector, ModelConnectorCancellation, ModelConnectorStreamPort, ModelContextProfile,
-    ModelReplay, ModelReplayContract, ModelReplayItem, ModelTokenCounter, ReasoningEffort,
-    ReplayExecutor, ReplayProfile, RequestId, SessionDescriptor, SessionId, ToolApprovalBinding,
-    ToolExecution, ToolExecutionHost, ToolOutput, ToolSemanticAdmission, TurnRef,
-    ValidatedToolCall, session_repository::StoredSessionContinuation,
+    ModelReplay, ModelReplayContract, ModelReplayItem, ModelReplayTool, ModelTokenCounter,
+    ReasoningEffort, ReplayExecutor, ReplayProfile, RequestId, SessionDescriptor, SessionId,
+    ToolApprovalBinding, ToolExecution, ToolExecutionHost, ToolOutput, ToolSemanticAdmission,
+    TurnRef, ValidatedToolCall, session_repository::StoredSessionContinuation,
 };
 
 use self::{accounting::InputCount, identity::native_binding_identity};
@@ -250,8 +250,10 @@ pub struct NativeModelBackend {
     token_counter: Box<dyn ModelTokenCounter>,
     request_observer: Option<Box<dyn ModelRequestObserver>>,
     contract: ModelReplayContract,
+    historical_secret_contract: Option<ModelReplayContract>,
     legacy_contract: ModelReplayContract,
     secret_interaction_enabled: bool,
+    historical_secret_interaction: bool,
     replay_profile: ReplayProfile,
     session: Option<SessionId>,
     replay: ModelReplay,
@@ -377,11 +379,20 @@ impl NativeModelBackend {
             ModelReplayContract::new(config.system_prompt.clone(), registry.replay_tools());
         let secret_interaction_enabled = tool_exposure_enabled;
         let mut replay_tools = registry.replay_tools();
+        let historical_secret_contract = secret_interaction_enabled.then(|| {
+            let mut historical_tools = replay_tools.clone();
+            historical_tools.push(secret::replay_tool(false));
+            ModelReplayContract::new(config.system_prompt.clone(), historical_tools)
+        });
         if secret_interaction_enabled {
-            replay_tools.push(secret::replay_tool());
+            replay_tools.push(secret::replay_tool(true));
         }
         let contract = ModelReplayContract::new(config.system_prompt.clone(), replay_tools);
-        if !contract.is_valid() {
+        if !contract.is_valid()
+            || historical_secret_contract
+                .as_ref()
+                .is_some_and(|contract| !contract.is_valid())
+        {
             return Err(failure(
                 BackendFailureKind::Initialization,
                 "native model replay contract is invalid or exceeds its bounds",
@@ -410,8 +421,10 @@ impl NativeModelBackend {
             token_counter: services.token_counter,
             request_observer: services.request_observer,
             contract,
+            historical_secret_contract,
             legacy_contract,
             secret_interaction_enabled,
+            historical_secret_interaction: false,
             replay_profile,
             session: None,
             replay: ModelReplay::default(),
@@ -440,6 +453,12 @@ impl NativeModelBackend {
         identity::decode_binding_identity(identity)
     }
 
+    /// Exact current and historical native secret interaction definitions for startup admission.
+    /// Neither definition is a local executable tool or part of a command manifest.
+    pub fn known_secret_replay_tools() -> [ModelReplayTool; 2] {
+        [secret::replay_tool(true), secret::replay_tool(false)]
+    }
+
     /// Prepares an independent exact-replay child without starting a Session or model request.
     pub fn prepare_exact_fork(
         &self,
@@ -456,8 +475,12 @@ impl NativeModelBackend {
                 "native backend is not available for fork preparation",
             ));
         }
-        if parent.target().model_replay().contract() != Some(&self.contract)
-            && parent.target().model_replay().contract() != Some(&self.legacy_contract)
+        if parent
+            .target()
+            .model_replay()
+            .contract()
+            .and_then(|contract| self.secret_interaction_profile(contract))
+            .is_none()
         {
             return Err(failure(
                 BackendFailureKind::Session,
@@ -502,6 +525,22 @@ impl NativeModelBackend {
                 replay_profile: self.replay_profile,
             },
         )
+    }
+
+    fn secret_interaction_profile(&self, contract: &ModelReplayContract) -> Option<(bool, bool)> {
+        if contract == &self.contract {
+            Some((self.tool_exposure_enabled, false))
+        } else if self
+            .historical_secret_contract
+            .as_ref()
+            .is_some_and(|historical| contract == historical)
+        {
+            Some((true, true))
+        } else if contract == &self.legacy_contract {
+            Some((false, false))
+        } else {
+            None
+        }
     }
 
     fn next_activity(&mut self, turn: TurnRef) -> Result<ActivityRef, BackendFailure> {

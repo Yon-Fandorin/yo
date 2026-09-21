@@ -2,8 +2,8 @@ use serde::Deserialize;
 use yo_backend_managed::NativeModelBackend;
 use yo_core::{
     AccountId, ApiDialect, BackendResumeTarget, CompleteModelBinding, ConnectorId, HostId, ModelId,
-    ModelSelection, ModelSelectionController, NormalizedEndpoint, ProviderId, StartupPolicy,
-    StartupSelectionSources, StartupTarget, resolve_startup_target,
+    ModelReplayContract, ModelSelection, ModelSelectionController, NormalizedEndpoint, ProviderId,
+    StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
 use super::{DelegatedExecutionProfile, StartupBackend};
@@ -176,17 +176,11 @@ fn resolve_resume(
         NativeModelBackend::decode_binding_identity(binding_identity)
             .map_err(|error| AppError::single("decoding the saved managed binding", error))?;
     let durable_binding = parse_durable_binding(model_identity.schema(), model_identity.value())?;
-    let registry_revision = if execution_manifest_digest.is_some() {
-        PreparedCommandTools::validate_replay_contract(
-            config.command_tools(),
-            target.model_replay().contract(),
-        )
-        .map_err(|error| AppError::single("selecting the saved command tool registry", error))?;
-        LocalToolRegistryRevision::CommandTools
-    } else {
-        revision_for_replay_contract(target.model_replay().contract())
-            .map_err(|error| AppError::single("selecting the saved local tool registry", error))?
-    };
+    let registry_revision = saved_native_registry_revision(
+        config,
+        execution_manifest_digest.as_deref(),
+        target.model_replay().contract(),
+    )?;
     let mut selection = resolve_native_resume(
         config.model_catalog(),
         durable_binding,
@@ -201,6 +195,23 @@ fn resolve_resume(
         *expected = execution_manifest_digest;
     }
     Ok(selection)
+}
+
+// Both resume and exact fork resolve their saved target through this admission boundary.
+fn saved_native_registry_revision(
+    config: &Config,
+    execution_manifest_digest: Option<&str>,
+    contract: Option<&ModelReplayContract>,
+) -> Result<LocalToolRegistryRevision, AppError> {
+    if execution_manifest_digest.is_some() {
+        PreparedCommandTools::validate_replay_contract(config.command_tools(), contract).map_err(
+            |error| AppError::single("selecting the saved command tool registry", error),
+        )?;
+        Ok(LocalToolRegistryRevision::CommandTools)
+    } else {
+        revision_for_replay_contract(contract)
+            .map_err(|error| AppError::single("selecting the saved local tool registry", error))
+    }
 }
 
 fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> {

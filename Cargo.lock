@@ -2855,6 +2855,7 @@ version = "0.0.0"
 dependencies = [
  "futures-util",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "unicode-normalization",
@@ -2892,6 +2893,7 @@ dependencies = [
  "futures-core",
  "icu_properties",
  "image",
+ "jiff",
  "mermaid-text",
  "pulldown-cmark",
  "rustix",

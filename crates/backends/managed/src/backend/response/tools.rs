@@ -134,7 +134,10 @@ pub(super) fn function_call_done(
                 "native secret request arguments exceed the configured bound",
             ));
         }
-        let parsed = super::super::secret::SecretRequestArguments::parse(&arguments)?;
+        let parsed = super::super::secret::SecretRequestArguments::parse(
+            &arguments,
+            !backend.historical_secret_interaction,
+        )?;
         let replay_item = ModelReplayItem::FunctionCall {
             call_id: call_id.clone(),
             name,

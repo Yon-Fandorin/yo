@@ -724,6 +724,7 @@ fn pending_activity_keeps_model_selection_local_and_the_next_reply_correlated() 
                     choices: Vec::new(),
                     allow_notes: false,
                     is_secret: false,
+                    storage_offer: None,
                     previous_question: false,
                     draft: None,
                     draft_choice: None,

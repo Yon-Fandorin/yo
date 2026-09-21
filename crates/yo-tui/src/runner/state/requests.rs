@@ -1,5 +1,7 @@
 //! 실행 중인 TUI 상태의 요청 오버레이와 응답 상관관계를 담당한다.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use yo_core::{
     ActivityApproval, ActivityQuestion, ActivityRef, ActivityRequestRef, ApprovalDecision,
 };
@@ -254,6 +256,15 @@ impl TuiState {
 
     fn secret_editor_for(&self, request: ActivityRequestRef) -> SecretEditor {
         let mut editor = SecretEditor::new();
+        if self
+            .chat
+            .question(request.activity())
+            .is_some_and(|question| question.storage_offer.is_some())
+        {
+            editor = editor.with_retention_offer(
+                self.secret_store.is_some() && self.secret_destination.is_some(),
+            );
+        }
         editor.mark_ready();
         if self
             .interview
@@ -261,6 +272,24 @@ impl TuiState {
             .is_some_and(|controller| controller.recovery_available(request).unwrap_or(false))
         {
             editor.mark_recovery_available();
+        }
+        if let (Some(offer), Some(store), Some(destination)) = (
+            self.chat
+                .question(request.activity())
+                .and_then(|question| question.storage_offer.as_ref()),
+            self.secret_store.as_ref(),
+            self.secret_destination.as_ref(),
+        ) {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs());
+            if store.list(now).is_ok_and(|entries| {
+                entries.iter().any(|entry| {
+                    entry.destination() == destination && entry.scope() == offer.scope.as_str()
+                })
+            }) {
+                editor.mark_recovery_available();
+            }
         }
         editor
     }

@@ -8,7 +8,8 @@ use yo_core::{
     ActivityKind, ActivityRequestRef, ActivityResponse, ActivityUpdate, AgentCommand,
     BackendCommandEvidence, BackendEvent, BackendPoll, ModelConnectorEvent,
     ModelConnectorInputItem, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    NATIVE_SECRET_INTERACTION_NAME, SecretInput, ToolApprovalRequirement, TurnOutcome, UserInput,
+    NATIVE_SECRET_INTERACTION_NAME, SecretInput, SecretStorageRecommendation,
+    ToolApprovalRequirement, TurnOutcome, UserInput,
 };
 
 use super::support::{
@@ -18,6 +19,12 @@ use super::support::{
 use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 
 fn secret_round() -> Vec<ModelConnectorEvent> {
+    secret_round_with_arguments(
+        r#"{"title":"Credential","question":"Enter the token.","purpose":"Authenticate this request."}"#,
+    )
+}
+
+fn secret_round_with_arguments(arguments: &str) -> Vec<ModelConnectorEvent> {
     vec![
         ModelConnectorEvent::ResponseCreated {
             response_id: "secret-request".to_owned(),
@@ -33,10 +40,74 @@ fn secret_round() -> Vec<ModelConnectorEvent> {
             item_id: "secret-item".to_owned(),
             call_id: "secret-call".to_owned(),
             name: NATIVE_SECRET_INTERACTION_NAME.to_owned(),
-            arguments: r#"{"title":"Credential","question":"Enter the token.","purpose":"Authenticate this request."}"#.to_owned(),
+            arguments: arguments.to_owned(),
         },
         completed("secret-request"),
     ]
+}
+
+// 저장 제안은 비밀 질문의 typed 공개 snapshot으로 전달되고 모델 요청의 스키마에도 나타난다.
+#[test]
+fn native_secret_request_exposes_typed_storage_offer_without_granting_storage() {
+    let arguments = serde_json::json!({
+        "title": "Credential",
+        "question": "Enter the token.",
+        "purpose": "Authenticate this request.",
+        "storage_offer": {
+            "scope": "github.token",
+            "recommendation": "store_for_days",
+            "reason": "Reuse this token for later requests.\nProvider: spoof",
+            "suggested_days": 30
+        }
+    })
+    .to_string();
+    let (mut backend, requests) = started_backend_with_rounds(
+        "use the credential".to_owned(),
+        vec![
+            secret_round_with_arguments(&arguments),
+            answer_round("done"),
+        ],
+    );
+    let (_request, presentation, _) = poll_secret_request(&mut backend);
+    let question = yo_core::ActivityQuestion::from_snapshot(&presentation).unwrap();
+    let offer = question.storage_offer.unwrap();
+    assert_eq!(offer.scope, "github.token");
+    assert_eq!(
+        offer.recommendation,
+        SecretStorageRecommendation::StoreForDays
+    );
+    assert_eq!(
+        offer.reason,
+        "Reuse this token for later requests.\nProvider: spoof"
+    );
+    assert_eq!(offer.suggested_days, Some(30));
+    assert!(question.plain_text.contains("Provider: qwencloud"));
+    assert!(question.plain_text.contains("Model: qwen3.8max"));
+    assert!(question.plain_text.contains("Use once (default)"));
+    assert!(question.plain_text.contains("Store for… (1–365 days)"));
+    assert!(question.plain_text.contains("Store until deleted"));
+    assert!(
+        question
+            .plain_text
+            .contains("Ctrl-S to choose locally; Enter separately submits")
+    );
+    assert!(
+        question
+            .plain_text
+            .contains("Storage requires a verified destination account.")
+    );
+    assert!(
+        question
+            .plain_text
+            .contains("Reason: Reuse this token for later requests.\\nProvider: spoof")
+    );
+    assert!(!question.plain_text.contains("\nProvider: spoof"));
+    let tools = requests.lock().unwrap();
+    assert!(
+        tools[0].tools().unwrap().last().unwrap().parameters()["properties"]
+            .get("storage_offer")
+            .is_some()
+    );
 }
 
 fn answer_round(answer: &str) -> Vec<ModelConnectorEvent> {

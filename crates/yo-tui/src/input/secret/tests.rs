@@ -1,4 +1,4 @@
-use super::{SecretEditor, SecretEditorEffect, SecretPublicState};
+use super::{SecretEditor, SecretEditorEffect, SecretPublicState, SecretRetention};
 use crate::input::event::{InputEvent, KeyAction, KeyCode, KeyEvent, KeyModifiers, KeyState};
 
 fn key(code: KeyCode, modifiers: KeyModifiers) -> InputEvent {
@@ -120,7 +120,10 @@ fn recovery_requires_disclosure_then_a_second_action_and_fresh_submit() {
         )
     );
     editor.mark_recovery_available();
-    assert_eq!(editor.public_text(), "Recovery available");
+    assert_eq!(
+        editor.public_text(),
+        "Recovery available · Ctrl-R to load; Enter to submit"
+    );
 
     let mut recovered = SecretEditor::new();
     recovered.mark_ready();
@@ -135,4 +138,70 @@ fn recovery_requires_disclosure_then_a_second_action_and_fresh_submit() {
         recovered.handle(key(KeyCode::Enter, KeyModifiers::NONE)),
         SecretEditorEffect::Submitted(yo_core::SecretInput::new("vault-value").unwrap())
     );
+}
+
+// 모델 제안이 있어도 이번만이 기본값이며 저장 정책 선택은 비밀 제출과 분리됩니다.
+#[test]
+fn retention_offer_starts_use_once_and_needs_a_separate_submit() {
+    let mut editor = SecretEditor::new().with_retention_offer(true);
+    editor.mark_ready();
+    editor.handle(InputEvent::Paste("private-value".into()));
+    assert_eq!(editor.retention(), SecretRetention::UseOnce);
+    assert_eq!(editor.public_text(), "Entered · Use once");
+
+    assert_eq!(
+        editor.handle(key(KeyCode::Character('s'), KeyModifiers::CONTROL)),
+        SecretEditorEffect::RetentionDaysRequested
+    );
+    assert_eq!(editor.public_text(), "Entered · Store for… days: ");
+    assert_eq!(
+        editor.handle(InputEvent::Paste("365".into())),
+        SecretEditorEffect::Changed
+    );
+    let selection = editor.handle(key(KeyCode::Enter, KeyModifiers::NONE));
+    let SecretEditorEffect::RetentionChanged(SecretRetention::ForDays { days, expires_at }) =
+        selection
+    else {
+        panic!("expected a bounded selected deadline");
+    };
+    assert_eq!(days, 365);
+    assert_eq!(
+        editor.retention(),
+        SecretRetention::ForDays { days, expires_at }
+    );
+    assert_eq!(editor.public_text(), "Entered · Store for 365 days");
+    assert_eq!(
+        editor.handle(key(KeyCode::Enter, KeyModifiers::NONE)),
+        SecretEditorEffect::Submitted(yo_core::SecretInput::new("private-value").unwrap())
+    );
+}
+
+// 기간은 1–365일만 허용하고 사용 불가한 저장소는 이번만 선택에서 벗어나지 못합니다.
+#[test]
+fn retention_days_reject_excess_and_unavailable_storage_stays_use_once() {
+    let mut unavailable = SecretEditor::new().with_retention_offer(false);
+    unavailable.mark_ready();
+    assert_eq!(
+        unavailable.handle(key(KeyCode::Character('s'), KeyModifiers::CONTROL)),
+        SecretEditorEffect::RetentionUnavailable
+    );
+    assert_eq!(unavailable.retention(), SecretRetention::UseOnce);
+
+    let mut editor = SecretEditor::new().with_retention_offer(true);
+    editor.mark_ready();
+    editor.handle(key(KeyCode::Character('s'), KeyModifiers::CONTROL));
+    assert_eq!(
+        editor.handle(InputEvent::Paste("366".into())),
+        SecretEditorEffect::Changed
+    );
+    assert_eq!(
+        editor.handle(key(KeyCode::Enter, KeyModifiers::NONE)),
+        SecretEditorEffect::RetentionDaysRejected
+    );
+    assert_eq!(editor.retention(), SecretRetention::UseOnce);
+    assert_eq!(
+        editor.handle(InputEvent::Paste("4".into())),
+        SecretEditorEffect::RetentionDaysRejected
+    );
+    assert_eq!(editor.public_text(), "Not entered · Store for… days: 366");
 }

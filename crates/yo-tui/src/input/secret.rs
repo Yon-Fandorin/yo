@@ -1,6 +1,10 @@
 //! Request-bound secret input with no ordinary prompt editing state.
 
-use std::{fmt, num::NonZeroU16};
+use std::{
+    fmt,
+    num::NonZeroU16,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use yo_core::SecretInput;
 
@@ -50,6 +54,22 @@ pub(crate) enum SecretEditorEffect {
     StoreRecovery(SecretInput),
     RecoverRequested,
     ForgetRecovery,
+    RetentionUnavailable,
+    RetentionDaysRequested,
+    RetentionDaysRejected,
+    RetentionChanged(SecretRetention),
+}
+
+/// The user's local choice; it is never sent to the model.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum SecretRetention {
+    #[default]
+    UseOnce,
+    ForDays {
+        days: u16,
+        expires_at: u64,
+    },
+    UntilDeleted,
 }
 
 /// A separate editor for one live secret request.
@@ -61,6 +81,11 @@ pub(crate) struct SecretEditor {
     public_state: SecretPublicState,
     ready: bool,
     recovery_disclosed: bool,
+    retention_offered: bool,
+    retention_available: bool,
+    retention: SecretRetention,
+    retention_days_input: Option<String>,
+    public_label: String,
 }
 
 impl fmt::Debug for SecretEditor {
@@ -80,6 +105,11 @@ impl SecretEditor {
             public_state: SecretPublicState::NotEntered,
             ready: false,
             recovery_disclosed: false,
+            retention_offered: false,
+            retention_available: false,
+            retention: SecretRetention::UseOnce,
+            retention_days_input: None,
+            public_label: SecretPublicState::NotEntered.label().to_owned(),
         }
     }
 
@@ -89,7 +119,45 @@ impl SecretEditor {
             public_state: SecretPublicState::ReentryRequired,
             ready: false,
             recovery_disclosed: false,
+            retention_offered: false,
+            retention_available: false,
+            retention: SecretRetention::UseOnce,
+            retention_days_input: None,
+            public_label: SecretPublicState::ReentryRequired.label().to_owned(),
         }
+    }
+
+    pub(crate) fn with_retention_offer(mut self, available: bool) -> Self {
+        self.retention_offered = true;
+        self.retention_available = available;
+        self.refresh_public_label();
+        self
+    }
+
+    pub(crate) const fn retention(&self) -> SecretRetention {
+        self.retention
+    }
+
+    fn refresh_public_label(&mut self) {
+        let state = if self.public_state == SecretPublicState::RecoveryAvailable {
+            "Recovery available · Ctrl-R to load; Enter to submit"
+        } else {
+            self.public_state.label()
+        };
+        if !self.retention_offered {
+            self.public_label = state.to_owned();
+            return;
+        }
+        let policy = if let Some(days) = &self.retention_days_input {
+            format!("Store for… days: {days}")
+        } else {
+            match self.retention {
+                SecretRetention::UseOnce => "Use once".to_owned(),
+                SecretRetention::ForDays { days, .. } => format!("Store for {days} days"),
+                SecretRetention::UntilDeleted => "Store until deleted".to_owned(),
+            }
+        };
+        self.public_label = format!("{state} · {policy}");
     }
 
     pub(crate) const fn public_state(&self) -> SecretPublicState {
@@ -107,6 +175,7 @@ impl SecretEditor {
     pub(crate) fn mark_recovery_available(&mut self) {
         self.public_state = SecretPublicState::RecoveryAvailable;
         self.recovery_disclosed = false;
+        self.refresh_public_label();
     }
 
     pub(crate) fn mark_recovery_disclosed(&mut self) {
@@ -120,6 +189,7 @@ impl SecretEditor {
             SecretPublicState::Entered
         };
         self.recovery_disclosed = false;
+        self.refresh_public_label();
     }
 
     pub(crate) fn restore(&mut self, input: SecretInput) {
@@ -130,6 +200,13 @@ impl SecretEditor {
         self.public_state = SecretPublicState::Recovered;
         self.recovery_disclosed = false;
         self.ready = true;
+        self.refresh_public_label();
+    }
+
+    pub(crate) fn restore_unsubmitted(&mut self, input: SecretInput) {
+        self.restore(input);
+        self.public_state = SecretPublicState::Entered;
+        self.refresh_public_label();
     }
 
     pub(crate) fn clear(&mut self) {
@@ -137,11 +214,14 @@ impl SecretEditor {
         self.public_state = SecretPublicState::NotEntered;
         self.ready = false;
         self.recovery_disclosed = false;
+        self.retention_days_input = None;
+        self.retention = SecretRetention::UseOnce;
+        self.refresh_public_label();
     }
 
     /// Returns a fixed public label used by prompt geometry and painting.
-    pub(crate) fn public_text(&self) -> &'static str {
-        self.public_state.label()
+    pub(crate) fn public_text(&self) -> &str {
+        &self.public_label
     }
 
     /// Produces a layout from the public label only; the secret never reaches it.
@@ -159,6 +239,7 @@ impl SecretEditor {
         let value = self.buffer.take()?;
         self.public_state = SecretPublicState::NotEntered;
         self.ready = false;
+        self.refresh_public_label();
         SecretInput::new(value).ok()
     }
 
@@ -167,6 +248,21 @@ impl SecretEditor {
             return SecretEditorEffect::NoChange;
         }
         match event {
+            InputEvent::Paste(text) if self.retention_days_input.is_some() => {
+                let days = self
+                    .retention_days_input
+                    .as_mut()
+                    .expect("guarded day entry");
+                if text.is_empty() {
+                    return SecretEditorEffect::NoChange;
+                }
+                if !text.bytes().all(|byte| byte.is_ascii_digit()) || days.len() + text.len() > 3 {
+                    return SecretEditorEffect::RetentionDaysRejected;
+                }
+                days.push_str(&text);
+                self.refresh_public_label();
+                SecretEditorEffect::Changed
+            },
             InputEvent::Paste(text) => self.insert(&text),
             InputEvent::Key(key) => self.handle_key(key),
             InputEvent::Resize(_) | InputEvent::MouseScroll(_) => SecretEditorEffect::Unhandled,
@@ -189,6 +285,7 @@ impl SecretEditor {
         if self.buffer.insert(text) {
             self.public_state = SecretPublicState::Entered;
             self.recovery_disclosed = false;
+            self.refresh_public_label();
             SecretEditorEffect::Changed
         } else {
             SecretEditorEffect::NoChange
@@ -202,8 +299,78 @@ impl SecretEditor {
         if key.code == KeyCode::Escape && key.modifiers == KeyModifiers::NONE {
             return SecretEditorEffect::Cancel;
         }
+        if matches!(key.code, KeyCode::Character('c' | 'C'))
+            && key.modifiers == KeyModifiers::CONTROL
+        {
+            return SecretEditorEffect::Cancel;
+        }
+        if let Some(days) = self.retention_days_input.as_mut() {
+            let effect = match (key.code, key.modifiers) {
+                (KeyCode::Character(digit @ '0'..='9'), KeyModifiers::NONE) if days.len() < 3 => {
+                    days.push(digit);
+                    SecretEditorEffect::Changed
+                },
+                (KeyCode::Character('0'..='9'), KeyModifiers::NONE) => {
+                    SecretEditorEffect::RetentionDaysRejected
+                },
+                (KeyCode::Backspace, KeyModifiers::NONE) => {
+                    days.pop();
+                    SecretEditorEffect::Changed
+                },
+                (KeyCode::Enter, KeyModifiers::NONE) => match days.parse::<u16>() {
+                    Ok(value @ 1..=365) => {
+                        let expires_at = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .ok()
+                            .and_then(|duration| {
+                                duration.as_secs().checked_add(u64::from(value) * 86_400)
+                            });
+                        if let Some(expires_at) = expires_at {
+                            self.retention_days_input = None;
+                            self.retention = SecretRetention::ForDays {
+                                days: value,
+                                expires_at,
+                            };
+                            SecretEditorEffect::RetentionChanged(self.retention)
+                        } else {
+                            SecretEditorEffect::RetentionDaysRejected
+                        }
+                    },
+                    _ => SecretEditorEffect::RetentionDaysRejected,
+                },
+                (KeyCode::Character('s' | 'S'), KeyModifiers::CONTROL) => {
+                    self.retention_days_input = None;
+                    self.retention = SecretRetention::UntilDeleted;
+                    SecretEditorEffect::RetentionChanged(self.retention)
+                },
+                _ => SecretEditorEffect::NoChange,
+            };
+            self.refresh_public_label();
+            return effect;
+        }
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
+                KeyCode::Character('s' | 'S') if self.retention_offered => {
+                    if !self.retention_available {
+                        return SecretEditorEffect::RetentionUnavailable;
+                    }
+                    let effect = match self.retention {
+                        SecretRetention::UseOnce => {
+                            self.retention_days_input = Some(String::new());
+                            SecretEditorEffect::RetentionDaysRequested
+                        },
+                        SecretRetention::ForDays { .. } => {
+                            self.retention = SecretRetention::UntilDeleted;
+                            SecretEditorEffect::RetentionChanged(self.retention)
+                        },
+                        SecretRetention::UntilDeleted => {
+                            self.retention = SecretRetention::UseOnce;
+                            SecretEditorEffect::RetentionChanged(self.retention)
+                        },
+                    };
+                    self.refresh_public_label();
+                    return effect;
+                },
                 KeyCode::Character('r' | 'R') => {
                     if self.public_state == SecretPublicState::RecoveryAvailable
                         && self.buffer.is_empty()
@@ -295,6 +462,7 @@ impl SecretEditor {
                 SecretPublicState::Entered
             };
             self.recovery_disclosed = false;
+            self.refresh_public_label();
             SecretEditorEffect::Changed
         } else {
             SecretEditorEffect::NoChange
