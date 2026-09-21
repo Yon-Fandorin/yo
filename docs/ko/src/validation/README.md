@@ -1878,70 +1878,37 @@ RequestStillUnanswered 검증에서 계속 실패한다. 표시를 위해 답변
 
 실제 `/help`는 처음부터 펼친 TuiDocument를 표시한다. 명령 목록은 기존 registry에서 생성하고 읽기·편집·승인·인터뷰 안내는 command/help.rs가 소유한다. 기존 DocumentRenderer·테마를 적용한다. 명령 초안을 비우는 로컬 동작이며 Turn을 시작하거나 대기 요청에 응답하지 않는다. 등록된 모든 명령·키 안내·80/24/80 처음/끝 탐색·접힌 행 없음·원문 보존을 검사한다. 오프라인 프리뷰 밖의 `/help`와 대기 요청 테스트를 함께 확인한다.
 
-### 인터뷰 답안 복사본과 비밀 재입력
+### 인터뷰 초안
 
-아래 검증 기록은 이전 v1~v3 사본 흐름에 관한 이력이다. 현재 TUI는 새 요청에 v4
-문맥 초안을 만들고, `/interview`에서 정확한 요청이 살아 있으면 `continue`·`discard`,
-종료되었으면 읽기 전용 `view`·`discard`를 제공한다. 사본 UUID 목록·다시 열기·미리보기·
-새 대화 전송은 노출하지 않는다. 내구성 있는 최종 답변 봉인을 확인하면 별도 초안을 삭제한다.
-기존 v1~v3 파일은 이번 단계에서 이행하거나 목록에 표시하지 않는다. 기존의 7일 비밀
-복구 참조 정리는 계속 적용된다. 이행과 새 재사용 비밀 저장소는 후속 작업이다.
+현재 문맥 인터뷰 초안의 결정 버전은 v1이다. 완전한 캡처가 가능한 실제
+UserInputRequest가 오면 플랫폼 Yo 상태 디렉터리의 `interviews` 아래에
+임시 `yo.interview-draft/v1` 기록을 만든다. 초안은 원래 Session·요청·
+캡처 revision을 참조하고 공개 답변·메모·문맥·이동 상태를 저장한다.
+질문 본문은 별도의 내구성 있는 캡처에 남으므로 캡처가 없으면 인터뷰를
+재구성할 수 없다. 비밀 값·해시·길이는 초안이나 Journal에 넣지 않는다.
+요청 캡처는 초안 버전과 무관한 별도 형식을 사용한다.
 
-Codex는 처음 실제 UserInputRequest snapshot에 허용된 전체 질문 묶음을 저장한다. 비밀 질문이 전혀 없는 묶음은 `yo.interview-capture/v1`, 비밀 질문이 포함된 묶음은 v2를 사용한다. 이후 질문은 같은 원본과 revision을 고정한다. core는 모든 수락 답안을 실제 committed response와 완료된 UserInputResponse에 대조한다. 최종 묶음 seal은 백엔드 응답 쓰기 성공 뒤에만 공개한다. ModelWork나 도구 출력의 같은 표지는 그대로 문자열로 남는다. 기존 Journal envelope와 Activity 종류는 유지한다. 최초 요청과 전체 캡처는 함께 게시하며 canonical 캡처는 envelope escaping 전1MiB까지다. 미지원·초과 묶음은 전체 복구 불가를 명시한다. v2 캡처는 공개 질문 정보와 값 없는 답변 증거만 보존하고 비밀 값·해시·길이는 보존하지 않는다.
+일치하는 작업 공간과 선택한 Session에서 `/interview`는 정확한 요청이
+살아 있을 때 `continue` 또는 `discard`를 제공한다. 종료 뒤에는
+읽기 전용 `view` 또는 `discard`만 제공한다. 재개한 프로세스는
+재생된 요청을 살아 있다고 추정하지 않는다. 답변은 원래 살아 있는
+요청에만 보낸다. UI에는 복사본 목록·다시 열기·새 대화용 미리보기·
+전송 명령이 없다. 내구성 있는 최종 답변 봉인을 확인하면 초안을
+삭제하고 재시작 뒤 남은 파일도 정리한다. 제출이 실패하거나 결과가
+불분명하면 자동 재시도나 성공 표시 없이 초안을 보존한다.
 
-TuiSession controller는 플랫폼 Yo state 디렉터리의 `interviews` 아래에 별도 답안 복사본
-파일을 저장한다. 비밀이 아닌 복사본은 `yo.interview-working-copy/v1`, 암호화 복구 없는
-비밀 질문 복사본은 v2를 사용한다. v3는 random opaque recovery-entry identity와 공개
-`Recovery available` 상태만 추가한다. 세 형식 모두 공개 질문 원본/revision, 순서 있는
-공개 답안·메모·이동 위치·사용자 문맥·확인된 제출 기록을 포함한다. recovery reference가
-없는 v2와 v3는 모든 비밀 답안을 `Re-entry required`로 표시하며, 어느 형식도 backend wire
-ID, 인증 정보, 비밀 값·해시·평문 길이·nonce·key·ciphertext를 넣지 않는다. 사용자 소유
-0700 디렉터리와 일반 0600 파일을 요구하고 symlink와 알 수 없는 형식을 거부한다. 단독
-lease와 generation CAS, 같은 디렉터리의 배타적 임시 파일, 파일 fsync, atomic rename,
-디렉터리 fsync를 사용한다. 충돌·실패 시 게시본과 편집 데이터 모두 보존하고 Saved로
-표시하지 않는다. 편집 후 1초 안에 게시를 예약하며 이동·제출·정상 종료 전에 flush한다.
-재시작은 마지막 durable 게시본까지만 복구하고 crash로 유실된 키 입력은 포함하지 않는다.
+초안 저장은 사용자 전용 0700 디렉터리·0600 일반 파일을 요구하고
+symlink를 거부한다. 단독 lease, generation CAS, 인코딩 기준 256-KiB
+한도와 동기화된 원자적 게시를 사용한다. 편집 뒤 1초 안에 저장을
+예약하고 이동·제출·정상 종료 전에 flush한다. 비정상 종료 뒤에는
+마지막 내구성 게시본까지만 복구한다. 충돌·실패 시 편집 값을 유지하고
+Saved라고 표시하지 않는다.
 
-비밀 복구는 기본적으로 꺼져 있다. 지원되는 delegated Codex live secret editor에서 값을
-입력한 뒤 첫 `Ctrl+R`은 정확한 local vault와 key 경계를 알리고, 두 번째 `Ctrl+R`은 복구를
-선택해 opaque v3 working-copy reference보다 먼저 암호화 entry를 게시한다. Entry는
-XChaCha20-Poly1305, random nonce 하나와 고정 padding된 64-KiB answer body를 사용한다.
-Associated data는 entry·copy ID, 공개 batch fingerprint, question ID와 live host·Provider·
-Model·인증 계정 identity를 묶는다. 전용 32-byte key는 선택한 Yo configuration 옆의 owner-only
-`0600` 파일이며 entry는 platform state root의 `secret-recovery` 아래 owner-only `0600`
-파일이다. Working copy, Journal, Request Audit, preview, source export, clipboard, argument,
-environment, log, diagnostic에는 비밀, 그 해시 또는 평문 길이가 들어가지 않는다.
-
-재시작한 뒤 사용자가 저장된 copy를 먼저 선택하고 새 genuine live secret 요청을 받아야
-한다. 정확한 binding 하나만 `Recovery available`을 표시할 수 있다. 여기서 `Ctrl+R`을
-누르면 인증하고 hidden editor로 복호화하며 공개 상태는 `Recovered`가 된다. 제출에는 여전히
-새 Enter가 필요하다. `Ctrl+F`는 소유한 vault entry를 unlink하기 전에 공개 reference를
-제거한다. 최종 batch seal 성공과 7일 만료도 같은 순서를 사용한다. Key 누락, destination·
-question 변경, 손상된 ciphertext, 모호한 match, 안전하지 않은 path와 미지원 backend는
-fail closed한다. 삭제는 flash media, backup, swap, crash dump나 filesystem history에서의
-물리적 삭제를 보장하지 않는다.
-
-이 Yo-local 보장은 값을 공개 state와 Journal 밖에 두며, recovery key를 함께 얻지 못한
-경우에만 복사하거나 조사한 vault를 보호한다. 위치만으로 backup 안전을 보장하지 않는다.
-Owner-only recovery key와 vault를 모두 읽을 수 있는 backup·filesystem view·process·account는
-보호 범위 밖이며, 선택한 configuration path 때문에 둘이 같은 backup root 아래 놓이는 경우도
-마찬가지다. Provider 보존, 변형·encoding·부분·semantic derivation을 거친 model·tool 출력,
-system clipboard, process memory, swap, crash dump, filesystem history와 외부 backup도 이
-경계 밖에 남는다. 이는 Provider credential 저장소가 아니며 OS keychain 동작을 추가하지 않는다.
-
-`/interview list`에서 저장된 복사본 UUID를 확인한다. `/interview recover <UUID>`는 미제출본을 복구하고 `/interview reopen <UUID>`는 제출한 원본을 보존하며 다른 UUID/generation1 복사본을 만든다. 공개 답안을 입력하고 Enter로 로컬에 보관한다. `/interview next`, `/interview previous`로 이동하고 `/interview option <number>`로 선택, `/interview notes <text>`로 메모, `/interview context <text>`로 명시적 문맥을 편집한다. `/interview save`는 편집을 게시하고 `/interview close`는 일반 입력창으로 돌아간다. 저장·미저장·복구 불가 상태를 분명히 표시한다. v2나 v3 복사본을 복구해도 종료된 원래 provider 요청을 재개하거나 자체적으로 비밀을 복호화하지 않는다. v3만 나중에 위의 정확한 live-request match를 허용한다.
-
-v1 복사본에서 `/interview preview`는 원본 질문과 편집 답안을 순서대로 사용자 문맥만 더해 표시하며 일반 텍스트 편집을 허용한다. preview 편집은 이번 제출을 위해 메모리에 보관하고 재시작하면 저장된 답안·문맥을 복구한다. `/interview send`는 현재 백엔드/모델과 일반 입력 검증으로 새 Session과 첫 Turn을 명시적으로 만든다. v2와 v3 복사본은 살아 있는 원래 요청이 없으므로 이 새 대화 전송을 거부한다. 새로 생성된 실제 비밀 요청만 새로 입력하거나 명시적으로 복구한 값을 받을 수 있다. 활성·대기 Turn은 busy로 보고 복사본을 유지한다. backpressure에서 같은 불변 preview와 SubmissionId를 유지한다. 모호한 실패는 자동 재시도하지 않는다. 제출 표시는 일치하는 SubmissionId, 새 TurnRef, 양의 JournalSequence가 있는 실제 durable 최초 StartTurn 수락 기록을 요구하며 실행 완료를 뜻하지 않는다. preview는 UTF-8 기준64KiB, 전체 인코딩 복사본은256KiB까지이며 첫 초과는 자르지 않고 거부한다.
-
-검증은 실제 질문과 위장 표지 구분, 모든 답변/최종 완료 상관관계, 오래된 답변과 이동,
-여러 segment 최초 캡처의 atomic 게시, durable 복구, 안전하지 않은 저장소, generation 충돌·
-동시 writer, 별도 다시 열기, 비밀을 지운 v2와 opaque-reference v3 복사본, 정확한 destination
-인증, key 손실, 손상, 만료, final-seal reconciliation, 명시적 recovery/forget 제스처와 UTF-8
-한도를 다룬다. 실제 provider RPC 재생은 환경 의존 smoke check로 유지한다. 암호화 복구 구현은
-Linux workspace suite와 review를 통과했다. 변경 뒤 macOS workspace와 live hidden-editor
-journey는 [terminal matrix](terminal-matrix.md#암호화된-비밀-인터뷰-복구)에 명시적으로
-미검증으로 남아 있다.
-
-`/`로 시작하는 문자 그대로의 답변은 첫 슬래시를 두 번 입력합니다(`//interview ...`). 저장된 답변에는 슬래시가 정확히 하나 남습니다. 일시 저장 오류 뒤 새 편집은 자동 저장을 다시 시도합니다. 실제 저장된 원본 캡처만 복구 가능 상태를 표시하고, volatile 캡처는 회복 불가를 표시합니다. 접수 미확인 첫 Turn이 종료되면 불변 intent를 유지하면서 프리뷰 편집을 복구하며 자동 재전송하지 않습니다. 이후 known cutoff gap이 생겨도 앞서 내구성 경계 안에 저장된 접수 증거는 유효합니다. 예약된 우리 임시 파일은 exclusive lease에서 회수하고 unknown·unsafe 파일은 보존합니다. wire 답변 전송은 성공했지만 최종 seal이 유효하지 않거나 상한을 초과하면 완전한 회복 불가 이유를 명시합니다.
-
-보존되는 회복 진단은 진짜 완료 응답과 최대4096 UTF-8 byte의 첫 줄이 필요합니다. 미완료·중단·상한 초과 진단은 회복·제출 상태의 근거가 되지 않습니다. 한 글자씩 입력한 단일 슬래시 명령 prefix는 답변을 덮어쓰지 않습니다. 복구한 답안이나 편집 가능한 preview를 Ctrl+U 또는 Ctrl+C로 비우는 동안에는 interview 명령 입력을 위해 마지막 확정 값을 유지하며, 편집기가 빈 상태에서 Enter를 누르면 빈 값을 명시적으로 확정합니다.
+이전 working-copy 파일은 현재 UI에서 목록에 표시하거나 이행하지 않는다.
+기존 비밀 복구 참조의 만료 정리는 이전 기록을 갱신할 수 있고,
+재사용 비밀 저장은 별도 후속 기능이다. 현재 경계는 core·TUI 인터뷰
+테스트로 정확한 살아 있는 요청 이어 쓰기, 종료된 요청의 읽기 전용
+보기, 동일 Session 선택, 명시적 폐기, 내구성 봉인 뒤 삭제와
+비밀 배제를 확인한다. 현행 v1 스키마는 Linux 전체 워크스페이스 테스트를
+통과했다. Mac 빌드와 실제 인터뷰 흐름은 아직 검증하지 않았고, 실제
+서비스 검증에는 진짜 UserInputRequest를 내는 호스트가 필요하다.

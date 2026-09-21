@@ -365,7 +365,7 @@ impl InterviewRepository {
         destination: &SecretRecoveryDestination,
         secret: &SecretInput,
     ) -> Result<WorkingCopy, InterviewError> {
-        if copy.is_contextual_draft() {
+        if copy.has_contextual_schema() {
             return Err(invalid(
                 "legacy secret recovery is unavailable for contextual drafts",
             ));

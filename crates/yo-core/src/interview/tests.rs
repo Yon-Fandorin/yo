@@ -374,7 +374,9 @@ fn contextual_draft_is_canonical_and_cannot_be_sent_as_new_conversation() {
     let (catalog, _) = batch();
     let copy = WorkingCopy::new_contextual(&catalog.interviews()[0]).unwrap();
     assert!(copy.is_contextual_draft());
-    assert_eq!(WorkingCopy::decode(&copy.encode().unwrap()).unwrap(), copy);
+    let encoded = copy.encode().unwrap();
+    assert!(encoded.starts_with(b"{\"schema\":\"yo.interview-draft/v1\""));
+    assert_eq!(WorkingCopy::decode(&encoded).unwrap(), copy);
     assert!(copy.reopen().is_err());
     assert!(copy.new_conversation(&catalog).is_err());
     assert!(
@@ -382,6 +384,60 @@ fn contextual_draft_is_canonical_and_cannot_be_sent_as_new_conversation() {
             .unwrap()
             .is_contextual_draft()
     );
+}
+
+// 종전 v4 초안은 디코딩만 유지하고 새 v1 초안으로 오인하거나 전송하지 않는다.
+#[test]
+fn old_contextual_draft_remains_readable_but_is_not_current() {
+    let (catalog, _) = batch();
+    let copy = WorkingCopy::new_contextual(&catalog.interviews()[0]).unwrap();
+    let old_bytes = String::from_utf8(copy.encode().unwrap()).unwrap().replacen(
+        "yo.interview-draft/v1",
+        "yo.interview-working-copy/v4",
+        1,
+    );
+    let old = WorkingCopy::decode(old_bytes.as_bytes()).unwrap();
+    assert!(!old.is_contextual_draft());
+    assert!(old.validate(&catalog).is_ok());
+    assert!(old.reopen().is_err());
+    assert!(old.new_conversation(&catalog).is_err());
+}
+
+// 종전 문맥 초안의 비밀 질문을 옛 복구 경로로 보내도 파일과 vault를 바꾸지 않는다.
+#[test]
+fn old_contextual_secret_draft_cannot_enter_legacy_recovery() {
+    let temp = Temp::new();
+    let copies = temp.0.join("copies");
+    let vault = temp.0.join("vault");
+    let key = temp.0.join("config").join("secret-recovery.key");
+    let repository = InterviewRepository::open_with_recovery(&copies, vault, key.clone()).unwrap();
+    let catalog = catalog_for(request(1), secret_questions());
+    let copy = WorkingCopy::new_contextual(&catalog.interviews()[0]).unwrap();
+    let bytes = String::from_utf8(copy.encode().unwrap()).unwrap().replacen(
+        "yo.interview-draft/v1",
+        "yo.interview-working-copy/v4",
+        1,
+    );
+    let old = WorkingCopy::decode(bytes.as_bytes()).unwrap();
+    repository.save(&old, None, &catalog).unwrap();
+    let destination = SecretRecoveryDestination::managed(
+        &crate::ProviderId::new("provider").unwrap(),
+        &crate::ModelId::new("model").unwrap(),
+        &crate::AccountId::new("account").unwrap(),
+    );
+    let result = repository.store_secret_recovery(
+        &old,
+        Some(old.generation),
+        &catalog,
+        "q2",
+        &destination,
+        &crate::SecretInput::new("must-not-be-stored").unwrap(),
+    );
+    assert!(
+        matches!(result, Err(InterviewError::Invalid(message)) if message == "legacy secret recovery is unavailable for contextual drafts")
+    );
+    assert_eq!(repository.load(&old.copy_id).unwrap().unwrap(), old);
+    assert!(!key.exists());
 }
 
 // 삭제는 저장된 최신 세대만 허용해 동시 편집 결과를 보존한다.
