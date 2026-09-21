@@ -349,6 +349,41 @@ fn durable_final_seal_removes_leftover_draft_before_presentation() {
     );
 }
 
+// 최종 봉인 뒤 늦게 들어온 활동 이벤트가 제출된 답변을 새 초안으로 만들지 않는다.
+#[test]
+fn submitted_capture_does_not_recreate_draft_after_cleanup() {
+    let fixture = Fixture::new(true);
+    let repository = InterviewRepository::open(&fixture.root).unwrap();
+    repository.delete(&fixture.copy).unwrap();
+    let mut controller = fixture.controller(turn().session_id());
+    for event in [
+        AgentEvent::ActivityStarted {
+            activity: fixture.request.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: fixture.request.request_id(),
+            },
+        },
+        AgentEvent::ActivityUpdated {
+            activity: fixture.request.activity(),
+            update: ActivityUpdate::TextSnapshot(fixture.batch.to_snapshot().unwrap()),
+        },
+    ] {
+        assert!(
+            controller
+                .observe(&TranscriptRecord::EventCommitted(event))
+                .is_none()
+        );
+    }
+    assert!(repository.list().unwrap().is_empty());
+    assert!(
+        controller
+            .command("", false)
+            .unwrap()
+            .document
+            .contains("No unfinished")
+    );
+}
+
 // 살아 있는 정확한 활동의 초안만 현재 요청으로 이어 쓸 수 있다.
 #[test]
 fn live_request_can_restore_draft_only_for_its_exact_activity() {

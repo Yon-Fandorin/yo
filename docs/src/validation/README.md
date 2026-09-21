@@ -2173,6 +2173,11 @@ secret-reference expiry maintenance may update those older records; reusable
 secret storage is separate follow-up work. Core and TUI interview tests cover
 exact live continuation, dead read-only view, same-Session selection,
 explicit discard, durable-seal cleanup and secret exclusion. The current v1
-schema passed the Linux workspace suite. Its Mac build and live interview
-journey remain unverified; a genuine service journey needs a host that emits
-a real UserInputRequest.
+schema passed the Linux workspace suite. The exact `9c3f6caa` candidate also
+passed the Mac `yo-tui` profile and an isolated Fullscreen tmux journey. An
+offline ACP host sent a nonsecret question that Yo recorded as a
+`UserInputRequest`: draft creation,
+answer and durable-seal deletion, interrupted read-only view, and explicit
+discard. This exercises the Mac Yo/ACP/TUI path, not a live model service; a
+genuine service journey still needs a suitable installed host. See the
+[Mac interview evidence](terminal-matrix.md#mac-v1-interview-request-journey).

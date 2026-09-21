@@ -628,6 +628,30 @@ authority for batch navigation, free text, notes, limits, interruption, stale
 identity rejection, and unsupported multi-select behavior. This live journey
 was not repeated on macOS.
 
+### Mac v1 interview request journey
+
+On 2026-09-21, exact commit `9c3f6caaa5a00485f20078efde348ae564181aaa`
+passed the saved Apple Silicon Mac's `yo-tui` profile: frame and zero-size
+reentry checks, all-target tests, and Clippy with `-D warnings`. An incremental
+1,380-byte Git bundle was verified and built in a disposable checkout. The
+installed app, normal credentials and user tmux sessions were not used.
+
+The unmodified Fullscreen Yo binary from that commit then ran in isolated Mac tmux and an
+isolated `HOME` with a small offline ACP peer exposed as `host:grok`. The peer
+emitted a nonsecret `_x.ai/ask_user_question`, which Yo presented as a real
+`UserInputRequest` activity. The resulting `yo.interview-draft/v1` file was
+generation 1, 480 bytes and mode 0600. Selecting “Blue” returned an accepted
+answer; the durable final seal deleted the draft. The late activity event no
+longer displayed “a submitted interview cannot become a new draft” or recreated
+the file. In a fresh Session, Esc interrupted the request and retained one
+draft. `/interview` offered `view` and `discard`; `view` was read-only, and
+explicit `discard` removed the file.
+
+This verifies the actual Mac Yo/ACP/TUI request path against a deterministic
+offline peer. No official Grok service or paid model was contacted, so it does
+not establish a live provider request. The earlier [Linux Grok service
+journey](#grok-user-question-live-journey) is separate evidence.
+
 ### Grok large-context resume
 
 On 2026-09-11, the same binary and Grok `1.0.25 (f7e67d6988e2)` passed seven

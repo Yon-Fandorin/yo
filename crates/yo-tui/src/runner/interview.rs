@@ -450,6 +450,11 @@ impl InterviewController {
                 return Some(status);
             },
         };
+        // A later activity event can arrive after the final seal removed the
+        // selected draft. Never recreate a draft from that submitted capture.
+        if latest.submitted.is_some() {
+            return None;
+        }
         if self.discarded_interviews.contains(&latest.interview) {
             return None;
         }

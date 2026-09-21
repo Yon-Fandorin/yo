@@ -566,6 +566,31 @@ cache-read token 19,200개, reasoning token 113개를 보고했다.
 선택 동작은 계속 결정적 test가 기준이다. 이 실제 서비스 흐름은 macOS에서 반복하지
 않았다.
 
+### Mac v1 인터뷰 요청 흐름
+
+2026-09-21 정확한 커밋 `9c3f6caaa5a00485f20078efde348ae564181aaa`가
+저장된 Apple Silicon Mac의 `yo-tui` profile을 통과했다. Frame·크기 0 재진입,
+all-target test와 Clippy `-D warnings`를 실행했다. 1,380바이트 증분 Git
+번들을 검증하고 임시 checkout에서 빌드했다. 설치본, 일반 인증정보와 사용자 소유
+tmux Session은 사용하지 않았다.
+
+해당 커밋의 수정하지 않은 Fullscreen Yo 바이너리를 격리된 Mac tmux와
+`HOME`에서 실행하고 작은
+오프라인 ACP peer를 `host:grok`으로 연결했다. Peer가 비밀이 아닌
+`_x.ai/ask_user_question`을 발행하자 Yo는 실제 `UserInputRequest` 활동으로
+표시했다. 생성된 `yo.interview-draft/v1` 파일은 generation 1,
+480바이트, mode 0600이었다. “Blue”를 선택해 accepted 답안을 돌려준 뒤
+durable final seal이 초안을 삭제했다. 늦은 활동 이벤트가 더는 “a submitted
+interview cannot become a new draft” 안내를 표시하거나 파일을 다시 만들지
+않았다. 새 Session에서는 Esc로 요청을 중단했을 때 초안 하나가 남았고,
+`/interview`는 `view`와 `discard`를 제공했다. `view`는 읽기 전용이었으며
+명시적인 `discard`가 파일을 삭제했다.
+
+이는 결정적 오프라인 peer를 사용한 실제 Mac Yo/ACP/TUI 요청 경로 검증이다.
+공식 Grok 서비스나 유료 모델에 연락하지 않았으므로 실제 Provider 요청의
+증거는 아니다. 위의 [Linux Grok 실제 서비스 흐름](#grok-사용자-질문-실제-서비스-흐름)은
+별도 증거다.
+
 ### Grok 큰 문맥 재개
 
 2026-09-11 같은 바이너리와 Grok `1.0.25 (f7e67d6988e2)`를 격리된 Linux 110×40
