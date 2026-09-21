@@ -1,6 +1,9 @@
 //! `$` skill catalog assist with typed selection and client-side provenance filters.
 
-use std::{collections::HashMap, ops::Range};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Range,
+};
 
 use yo_core::{
     InputReference, SkillAvailability, SkillReference, SkillReferenceCandidate,
@@ -341,19 +344,97 @@ fn ranges_intersect(left: &Range<usize>, right: &Range<usize>) -> bool {
 fn refresh_active(active: &mut ActiveSearch, overlay: &mut PromptOverlaySlot) -> bool {
     active.visible.clear();
     let mut entries = Vec::new();
-    for candidate in active
+    let candidates = active
         .candidates
         .iter()
         .filter(|candidate| active.filter.matches(candidate.reference().scope()))
-    {
+        .collect::<Vec<_>>();
+    let mut names = BTreeMap::<(&str, SkillReferenceScope), Vec<&SkillReferenceCandidate>>::new();
+    for candidate in &candidates {
+        names
+            .entry((candidate.display_name(), candidate.reference().scope()))
+            .or_default()
+            .push(candidate);
+    }
+    let mut sources = HashMap::new();
+    for peers in names.values().filter(|peers| peers.len() > 1) {
+        let mut sorted = peers.clone();
+        sorted.sort_by(|left, right| {
+            left.reference()
+                .locator()
+                .cmp(right.reference().locator())
+                .then_with(|| {
+                    left.reference()
+                        .identity()
+                        .cmp(right.reference().identity())
+                })
+        });
+        let mut counts = HashMap::new();
+        let mut visible_ranks = HashMap::new();
+        for (index, peer) in peers.iter().enumerate() {
+            *counts.entry(peer.reference().locator()).or_insert(0usize) += 1;
+            visible_ranks.insert(peer.reference().identity(), index + 1);
+        }
+        let mut seen = HashMap::new();
+        for (index, peer) in sorted.iter().enumerate() {
+            let locator = peer.reference().locator();
+            let mut common = "";
+            for neighbor in [
+                index.checked_sub(1),
+                (index + 1 < sorted.len()).then_some(index + 1),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let prefix = common_prefix(locator, sorted[neighbor].reference().locator());
+                if prefix.len() > common.len() {
+                    common = prefix;
+                }
+            }
+            let boundary = common.rfind('/').map_or(0, |index| index + 1);
+            let abbreviated = common[boundary..].chars().count() > 4;
+            let cut = if abbreviated {
+                common
+                    .char_indices()
+                    .rev()
+                    .nth(3)
+                    .map_or(boundary, |(index, _)| index)
+            } else {
+                boundary
+            };
+            let suffix = if abbreviated {
+                format!("…{}", &locator[cut..])
+            } else {
+                locator[cut..].to_owned()
+            };
+            let source = if counts[locator] > 1 {
+                let rank = seen.entry(locator).or_insert(0usize);
+                *rank += 1;
+                format!("#{rank} {suffix}")
+            } else {
+                suffix
+            };
+            let visible_index = visible_ranks[peer.reference().identity()];
+            sources.insert(
+                peer.reference().identity(),
+                format!("#{visible_index} {}", display_candidate_text(&source)),
+            );
+        }
+    }
+    for candidate in candidates {
         let identity = candidate.reference().identity().to_owned();
         active.visible.insert(identity.clone(), candidate.clone());
         let scope = scope_label(candidate.reference().scope()).to_owned();
         let label = display_candidate_text(candidate.display_name());
-        let description = Some(display_candidate_text(candidate.description()));
+        let description = display_candidate_text(candidate.description());
+        let (label, context) = if let Some(source) = sources.get(candidate.reference().identity()) {
+            (format!("{source} · {label} · {description}"), None)
+        } else {
+            (label, Some(description))
+        };
         entries.push(match candidate.availability() {
             SkillAvailability::Enabled => {
-                SelectionEntry::enabled_with_context(identity, label, description, Some(scope))
+                SelectionEntry::enabled_with_context(identity, label, context, Some(scope))
             },
             SkillAvailability::Disabled(reason) => SelectionEntry::disabled(
                 identity,
@@ -386,6 +467,17 @@ fn refresh_active(active: &mut ActiveSearch, overlay: &mut PromptOverlaySlot) ->
             filtered_status_snapshot("Skill results cannot be displayed safely", active.filter)
         });
     overlay.refresh(active.token, snapshot).is_ok()
+}
+
+fn common_prefix<'a>(left: &'a str, right: &str) -> &'a str {
+    let mut end = 0;
+    for (a, b) in left.chars().zip(right.chars()) {
+        if a != b {
+            break;
+        }
+        end += a.len_utf8();
+    }
+    &left[..end]
 }
 
 fn filtered_status_snapshot(message: &str, filter: SkillFilter) -> PanelSnapshot {

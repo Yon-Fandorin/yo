@@ -7,12 +7,14 @@ use yo_core::{
 
 use super::SkillReferenceAssist;
 use crate::{
+    appearance::AppearanceState,
     input::{
         editor::PromptEditor,
         event::{InputEvent, KeyAction, KeyCode, KeyEvent, KeyModifiers, KeyState},
     },
-    overlay::{OverlayInputEffect, PromptOverlaySlot},
+    overlay::{OverlayBindings, OverlayInputEffect, PromptOverlaySlot, SelectionEntry},
     prompt::workspace_reference::WorkspaceEdit,
+    surface::{CellContent, Point, Rect, Size, Surface},
 };
 
 fn candidate(identity: &str, name: &str, scope: SkillReferenceScope) -> SkillReferenceCandidate {
@@ -39,6 +41,166 @@ fn key(code: KeyCode) -> InputEvent {
         action: KeyAction::Press,
         state: KeyState::NONE,
     })
+}
+
+fn panel_rows(overlay: &PromptOverlaySlot, width: u16) -> Vec<String> {
+    let appearance = AppearanceState::default().pin().snapshot().styles().overlay;
+    let prepared = overlay
+        .panel()
+        .unwrap()
+        .prepare(
+            Size::new(width, 8),
+            appearance,
+            &OverlayBindings::default(),
+            false,
+        )
+        .unwrap();
+    let size = prepared.size();
+    let mut surface = Surface::new(size).unwrap();
+    prepared
+        .paint(&mut surface.view(Rect::new(Point::new(0, 0), size)).unwrap())
+        .unwrap();
+    (0..size.height)
+        .map(|y| {
+            (0..size.width)
+                .filter_map(
+                    |x| match surface.cell(Point::new(x, y)).unwrap().content() {
+                        CellContent::Blank => Some(" ".to_owned()),
+                        CellContent::Continuation { .. } => None,
+                        CellContent::Grapheme { text, .. } => Some(text.to_string()),
+                    },
+                )
+                .collect()
+        })
+        .collect()
+}
+
+// 같은 이름과 scope를 가진 두 skill도 좁은 pane에서 출처가 먼저 보여야 하며,
+// 선택 결과는 표시명이 아니라 해당 row의 typed identity를 유지한다.
+#[test]
+fn same_name_skill_sources_stay_distinct_in_narrow_panel_and_selection() {
+    let mut editor = PromptEditor::new();
+    editor.handle(
+        InputEvent::Paste("$review".to_owned()),
+        false,
+        Duration::ZERO,
+    );
+    let mut overlay = PromptOverlaySlot::default();
+    let mut assist = SkillReferenceAssist::default();
+    assist.enable();
+    let (request, _) = assist
+        .prompt_changed(&editor, &mut overlay, None, true)
+        .unwrap();
+    let disabled = SkillReferenceCandidate::new(
+        candidate("third", "review", SkillReferenceScope::Workspace)
+            .reference()
+            .clone(),
+        "review",
+        "Use review",
+        SkillAvailability::Disabled("Disabled by policy".to_owned()),
+    );
+    assist.observe(
+        SkillReferenceSearchUpdate::final_result(
+            &request,
+            SkillReferenceSearchStatus::Complete,
+            vec![
+                candidate("one", "review", SkillReferenceScope::Workspace),
+                candidate("two", "review", SkillReferenceScope::Workspace),
+                disabled,
+            ],
+        ),
+        &mut overlay,
+    );
+    overlay.set_presented(true);
+    assert_eq!(
+        overlay.panel().unwrap().entries(),
+        &[
+            SelectionEntry::enabled_with_context(
+                "one",
+                "#1 one/SKILL.md · review · Use review",
+                None,
+                Some("Workspace".to_owned()),
+            ),
+            SelectionEntry::enabled_with_context(
+                "two",
+                "#2 two/SKILL.md · review · Use review",
+                None,
+                Some("Workspace".to_owned()),
+            ),
+            SelectionEntry::disabled(
+                "third",
+                "#3 third/SKILL.md · review · Use review",
+                Some("Workspace".to_owned()),
+                "Disabled by policy",
+            ),
+        ]
+    );
+    let rows = panel_rows(&overlay, 32);
+    assert!(rows.iter().any(|row| row.contains("#1 one/SKI")));
+    assert!(rows.iter().any(|row| row.contains("#2 two/SKI")));
+    assert!(rows.iter().any(|row| row.contains("#3 th")), "{rows:?}");
+    assert_eq!(
+        overlay.handle(&key(KeyCode::Down)),
+        OverlayInputEffect::Redraw
+    );
+    let OverlayInputEffect::Accepted(receipt) = overlay.handle(&key(KeyCode::Enter)) else {
+        panic!("the second source should be selected");
+    };
+    assert_eq!(receipt.identity(), "two");
+    assert!(assist.accept(&receipt, &mut editor));
+    assert_eq!(
+        assist.accepted_reference().unwrap().locator(),
+        "/skills/two/SKILL.md"
+    );
+}
+
+// 긴 공통 디렉터리 이름으로 시작해도 다른 부분이 좁은 pane의 앞쪽에 남는다.
+#[test]
+fn three_sources_and_long_names_keep_distinct_prefixes() {
+    let mut editor = PromptEditor::new();
+    editor.handle(
+        InputEvent::Paste("$review-security".to_owned()),
+        false,
+        Duration::ZERO,
+    );
+    let mut overlay = PromptOverlaySlot::default();
+    let mut assist = SkillReferenceAssist::default();
+    assist.enable();
+    let (request, _) = assist
+        .prompt_changed(&editor, &mut overlay, None, true)
+        .unwrap();
+    let from = |identity, locator| {
+        SkillReferenceCandidate::new(
+            SkillReference::new(
+                identity,
+                "local-host:fixture",
+                locator,
+                "review-security",
+                SkillReferenceScope::Workspace,
+                1,
+                "metadata:1",
+            ),
+            "review-security",
+            "Use review-security",
+            SkillAvailability::Enabled,
+        )
+    };
+    assist.observe(
+        SkillReferenceSearchUpdate::final_result(
+            &request,
+            SkillReferenceSearchStatus::Complete,
+            vec![
+                from("one", "/skills/verylongcommonone/SKILL.md"),
+                from("two", "/skills/verylongcommontwo/SKILL.md"),
+                from("three", "/skills/other/SKILL.md"),
+            ],
+        ),
+        &mut overlay,
+    );
+    let rows = panel_rows(&overlay, 32);
+    assert!(rows.iter().any(|row| row.contains("#1 …mmono")), "{rows:?}");
+    assert!(rows.iter().any(|row| row.contains("#2 …mmont")), "{rows:?}");
+    assert!(rows.iter().any(|row| row.contains("#3 other")), "{rows:?}");
 }
 
 // 좌우 키는 provider를 다시 호출하지 않고 이미 받은 후보를 scope별로 좁히며,
