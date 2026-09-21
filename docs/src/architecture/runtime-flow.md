@@ -359,6 +359,19 @@ Esc restores the draft and cursor from before the picker opened. Rejected inputs
 activity answers, and secrets do not enter this history. It survives terminal
 suspension but does not cross a session change or process exit.
 
+`/copy` selects the most recent nonempty text AgentMessage that finished
+successfully inside the latest completed Turn with an answer. Non-text answer
+blocks are never copied as internal JSON; a Turn containing only such blocks
+reports that it has no copyable text. It uses the original answer Markdown,
+including its newlines, without display wrapping, tool output, reasoning,
+notices, or failure footers. The TUI dispatches no model request. It sends at most 75,000 UTF-8
+source bytes as a bounded OSC 52 sequence through the owned terminal writer;
+larger answers or absent completed answers receive a local notice before any
+clipboard bytes are written. A successful write reports that the request was
+sent, not that the attached terminal or tmux accepted it. SSH/tmux users must
+enable OSC 52 support in the attached terminal and permit clipboard writes in
+tmux; pasting is the end-to-end confirmation.
+
 In an editable TUI, `/model` opens one account-sectioned selection panel. Stored
 managed models are grouped under `Provider display · Account display`. Every
 editable TUI concurrently reads the session-free authenticated inventories of

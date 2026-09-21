@@ -2,6 +2,7 @@
 
 mod ansi;
 pub(crate) mod backend;
+pub(crate) mod clipboard;
 pub(crate) mod graphics;
 pub(crate) mod mode;
 mod ops;

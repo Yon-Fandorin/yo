@@ -6,8 +6,8 @@ use yo_core::{
     ActivityApproval, ActivityDocument, ActivityKind, ActivityNotice, ActivityOutcome,
     ActivityPlan, ActivityQuestion, ActivityReasoning, ActivityRef, ActivitySummary,
     ActivityUpdate, AgentCommand, AgentEvent, ContextCheckpointObservation, ContextPolicyChanged,
-    ContextPressureDecision, ContextPressureObservation, SessionUsageProjection,
-    SessionUsageSource, ToolOutput, TranscriptRecord, TurnOutcome, UsageValue, interview,
+    ContextPressureDecision, ContextPressureObservation, MessageContent, SessionUsageProjection,
+    SessionUsageSource, ToolOutput, TranscriptRecord, TurnOutcome, TurnRef, UsageValue, interview,
     session_repository::InheritedSessionHistory,
 };
 
@@ -26,6 +26,20 @@ pub(super) struct ChatProjection {
     retained_changes: HashMap<ActivityRef, TranscriptItemId>,
     context_policy: Option<ContextPolicyChanged>,
     latest_usage: Option<String>,
+    pending_completed_answer: Option<(TurnRef, CompletedAnswer)>,
+    last_completed_answer: Option<CompletedAnswer>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompletedAnswer {
+    Text(TranscriptItemId),
+    NonText,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CopyAnswer<'a> {
+    Text(&'a str),
+    NonText,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -125,6 +139,21 @@ impl ChatProjection {
         &self.transcript
     }
 
+    pub(super) fn last_completed_answer(&self) -> Option<CopyAnswer<'_>> {
+        let id = match self.last_completed_answer? {
+            CompletedAnswer::Text(id) => id,
+            CompletedAnswer::NonText => return Some(CopyAnswer::NonText),
+        };
+        self.transcript.items().iter().find_map(|item| {
+            if item.id() != id {
+                return None;
+            }
+            let TranscriptBody::Message(message) = item.body();
+            (item.phase() == TranscriptPhase::Final && !message.text().is_empty())
+                .then_some(CopyAnswer::Text(message.text()))
+        })
+    }
+
     pub(super) fn observe_inherited_history(
         &mut self,
         history: &InheritedSessionHistory,
@@ -151,6 +180,12 @@ impl ChatProjection {
             self.transcript
                 .push_final_copy(id, item)
                 .map_err(StateError::Transcript)?;
+            if source.last_completed_answer == Some(CompletedAnswer::Text(item.id())) {
+                self.last_completed_answer = Some(CompletedAnswer::Text(id));
+            }
+        }
+        if source.last_completed_answer == Some(CompletedAnswer::NonText) {
+            self.last_completed_answer = Some(CompletedAnswer::NonText);
         }
         Ok(())
     }
@@ -265,27 +300,67 @@ impl ChatProjection {
                 self.update_activity(*activity, update)
             },
             AgentEvent::ActivityFinished { activity, outcome } => {
+                let completed_answer = matches!(outcome, ActivityOutcome::Completed)
+                    .then(|| self.activities.get(activity))
+                    .flatten()
+                    .filter(|presentation| presentation.kind == ActivityKind::AgentMessage)
+                    .map(|presentation| {
+                        let text = self.transcript.items().iter().find_map(|item| {
+                            if item.id() != presentation.item {
+                                return None;
+                            }
+                            let TranscriptBody::Message(message) = item.body();
+                            Some(message.text())
+                        });
+                        if text.is_some_and(|text| {
+                            !text.is_empty() && MessageContent::from_snapshot(text).is_none()
+                        }) {
+                            CompletedAnswer::Text(presentation.item)
+                        } else {
+                            CompletedAnswer::NonText
+                        }
+                    });
                 let (item, visible) = self.finish_activity(*activity, outcome)?;
+                if let Some(answer) = completed_answer
+                    && !matches!(
+                        self.pending_completed_answer,
+                        Some((turn, CompletedAnswer::Text(_)))
+                            if turn == activity.turn() && answer == CompletedAnswer::NonText
+                    )
+                {
+                    self.pending_completed_answer = Some((activity.turn(), answer));
+                }
                 Ok(if visible {
                     ChatProjectionChange::VisibleItem(item)
                 } else {
                     ChatProjectionChange::Unchanged
                 })
             },
-            AgentEvent::TurnFinished { outcome, .. } => match outcome {
-                TurnOutcome::Completed => Ok(ChatProjectionChange::Unchanged),
-                TurnOutcome::Interrupted => self
-                    .push_outcome_notice(
+            AgentEvent::TurnFinished { turn, outcome } => match outcome {
+                TurnOutcome::Completed => {
+                    if let Some((candidate_turn, id)) = self.pending_completed_answer.take()
+                        && candidate_turn == *turn
+                    {
+                        self.last_completed_answer = Some(id);
+                    }
+                    Ok(ChatProjectionChange::Unchanged)
+                },
+                TurnOutcome::Interrupted => {
+                    self.pending_completed_answer = None;
+                    self.push_outcome_notice(
                         "Turn interrupted".to_owned(),
                         TranscriptActivityOutcome::Interrupted,
                     )
-                    .map(ChatProjectionChange::VisibleItem),
-                TurnOutcome::Failed(failure) => self
-                    .push_outcome_notice(
+                    .map(ChatProjectionChange::VisibleItem)
+                },
+                TurnOutcome::Failed(failure) => {
+                    self.pending_completed_answer = None;
+                    self.push_outcome_notice(
                         format!("Turn failed: {}", failure.message()),
                         TranscriptActivityOutcome::Failed,
                     )
-                    .map(ChatProjectionChange::VisibleItem),
+                    .map(ChatProjectionChange::VisibleItem)
+                },
             },
         }
     }
@@ -896,6 +971,7 @@ mod tests {
             TranscriptRecord::EventCommitted(AgentEvent::ActivityStarted { activity, kind: ActivityKind::AgentMessage }),
             TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated { activity, update: ActivityUpdate::TextSnapshot("```rust\nfn inherited() {}\n```\n\n| Name | Value |\n| --- | --- |\n| retained | exact |".to_owned()) }),
             TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished { activity, outcome: ActivityOutcome::Completed }),
+            TranscriptRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: TurnOutcome::Completed }),
         ];
         let mut chat = ChatProjection::new();
         chat.push_notice("child notice".to_owned()).unwrap();
@@ -907,6 +983,12 @@ mod tests {
         assert!(chat.latest_usage().is_none());
         assert!(chat.approval(activity).is_none());
         assert!(chat.question(activity).is_none());
+        assert_eq!(
+            chat.last_completed_answer(),
+            Some(CopyAnswer::Text(
+                "```rust\nfn inherited() {}\n```\n\n| Name | Value |\n| --- | --- |\n| retained | exact |"
+            ))
+        );
         assert_eq!(chat.transcript.items().len(), 5);
         for (index, item) in chat.transcript.items().iter().enumerate() {
             assert_eq!(item.id().get(), index as u64 + 1);
@@ -921,8 +1003,186 @@ mod tests {
         // 미완료 원문을 조용히 생략하지 않고 상속 projection 실패를 반환합니다.
         let mut incomplete = records.clone();
         incomplete.pop();
+        incomplete.pop();
         assert!(chat.observe_inherited_records(&incomplete).is_err());
         assert!(chat.publication_candidate().is_some());
+    }
+
+    // 복사 원문은 완료된 Turn의 AgentMessage만 고르며 추론·도구·알림과 새 스트림은 배제한다.
+    #[test]
+    fn latest_completed_answer_ignores_other_items_and_unfinished_turns() {
+        use std::num::NonZeroU64;
+
+        use yo_core::{ActivityId, SessionId, TurnId};
+
+        fn observe(chat: &mut ChatProjection, event: AgentEvent) {
+            chat.observe_record(&TranscriptRecord::EventCommitted(event))
+                .unwrap();
+        }
+
+        let session: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+        let first = TurnRef::new(session, TurnId::new(NonZeroU64::new(1).unwrap()));
+        let second = TurnRef::new(session, TurnId::new(NonZeroU64::new(2).unwrap()));
+        let reasoning = ActivityRef::new(first, ActivityId::new(NonZeroU64::new(1).unwrap()));
+        let answer = ActivityRef::new(first, ActivityId::new(NonZeroU64::new(2).unwrap()));
+        let tool = ActivityRef::new(first, ActivityId::new(NonZeroU64::new(3).unwrap()));
+        let unfinished = ActivityRef::new(second, ActivityId::new(NonZeroU64::new(1).unwrap()));
+        let mut chat = ChatProjection::new();
+        assert_eq!(chat.last_completed_answer(), None);
+
+        for (activity, kind, text) in [
+            (reasoning, ActivityKind::ModelWork, "private reasoning"),
+            (
+                answer,
+                ActivityKind::AgentMessage,
+                "한글 🦀\n```rust\nfn main() {}\n```",
+            ),
+            (tool, ActivityKind::ToolResult, "tool output"),
+        ] {
+            observe(&mut chat, AgentEvent::ActivityStarted { activity, kind });
+            observe(
+                &mut chat,
+                AgentEvent::ActivityUpdated {
+                    activity,
+                    update: ActivityUpdate::TextSnapshot(text.to_owned()),
+                },
+            );
+            observe(
+                &mut chat,
+                AgentEvent::ActivityFinished {
+                    activity,
+                    outcome: ActivityOutcome::Completed,
+                },
+            );
+        }
+        chat.push_notice("not an answer".to_owned()).unwrap();
+        assert_eq!(chat.last_completed_answer(), None);
+        observe(
+            &mut chat,
+            AgentEvent::TurnFinished {
+                turn: first,
+                outcome: TurnOutcome::Completed,
+            },
+        );
+        assert_eq!(
+            chat.last_completed_answer(),
+            Some(CopyAnswer::Text("한글 🦀\n```rust\nfn main() {}\n```"))
+        );
+
+        observe(
+            &mut chat,
+            AgentEvent::ActivityStarted {
+                activity: unfinished,
+                kind: ActivityKind::AgentMessage,
+            },
+        );
+        observe(
+            &mut chat,
+            AgentEvent::ActivityUpdated {
+                activity: unfinished,
+                update: ActivityUpdate::TextSnapshot("new partial answer".to_owned()),
+            },
+        );
+        assert_eq!(
+            chat.last_completed_answer(),
+            Some(CopyAnswer::Text("한글 🦀\n```rust\nfn main() {}\n```"))
+        );
+        observe(
+            &mut chat,
+            AgentEvent::ActivityFinished {
+                activity: unfinished,
+                outcome: ActivityOutcome::Completed,
+            },
+        );
+        observe(
+            &mut chat,
+            AgentEvent::TurnFinished {
+                turn: second,
+                outcome: TurnOutcome::Interrupted,
+            },
+        );
+        assert_eq!(
+            chat.last_completed_answer(),
+            Some(CopyAnswer::Text("한글 🦀\n```rust\nfn main() {}\n```"))
+        );
+
+        let third = TurnRef::new(session, TurnId::new(NonZeroU64::new(3).unwrap()));
+        let text = ActivityRef::new(third, ActivityId::new(NonZeroU64::new(1).unwrap()));
+        let image = ActivityRef::new(third, ActivityId::new(NonZeroU64::new(2).unwrap()));
+        let image_source = MessageContent {
+            block: serde_json::json!({"type":"image","mimeType":"image/png","data":"aGVsbG8="}),
+        }
+        .to_snapshot()
+        .unwrap();
+        for (activity, source) in [
+            (text, "copyable text".to_owned()),
+            (image, image_source.clone()),
+        ] {
+            observe(
+                &mut chat,
+                AgentEvent::ActivityStarted {
+                    activity,
+                    kind: ActivityKind::AgentMessage,
+                },
+            );
+            observe(
+                &mut chat,
+                AgentEvent::ActivityUpdated {
+                    activity,
+                    update: ActivityUpdate::TextSnapshot(source),
+                },
+            );
+            observe(
+                &mut chat,
+                AgentEvent::ActivityFinished {
+                    activity,
+                    outcome: ActivityOutcome::Completed,
+                },
+            );
+        }
+        observe(
+            &mut chat,
+            AgentEvent::TurnFinished {
+                turn: third,
+                outcome: TurnOutcome::Completed,
+            },
+        );
+        assert_eq!(
+            chat.last_completed_answer(),
+            Some(CopyAnswer::Text("copyable text"))
+        );
+
+        let fourth = TurnRef::new(session, TurnId::new(NonZeroU64::new(4).unwrap()));
+        let image_only = ActivityRef::new(fourth, ActivityId::new(NonZeroU64::new(1).unwrap()));
+        observe(
+            &mut chat,
+            AgentEvent::ActivityStarted {
+                activity: image_only,
+                kind: ActivityKind::AgentMessage,
+            },
+        );
+        observe(
+            &mut chat,
+            AgentEvent::ActivityUpdated {
+                activity: image_only,
+                update: ActivityUpdate::TextSnapshot(image_source),
+            },
+        );
+        observe(
+            &mut chat,
+            AgentEvent::ActivityFinished {
+                activity: image_only,
+                outcome: ActivityOutcome::Completed,
+            },
+        );
+        observe(
+            &mut chat,
+            AgentEvent::TurnFinished {
+                turn: fourth,
+                outcome: TurnOutcome::Completed,
+            },
+        );
+        assert_eq!(chat.last_completed_answer(), Some(CopyAnswer::NonText));
     }
 
     // context pressure receipt는 durable typed JSON을 유지하되 Chat에는 model reasoning처럼

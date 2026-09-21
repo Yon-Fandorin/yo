@@ -4,6 +4,7 @@ mod attach;
 mod changes;
 pub(crate) use attach::attachment_argument;
 mod compact;
+mod copy;
 mod definition;
 mod exit;
 mod fork;

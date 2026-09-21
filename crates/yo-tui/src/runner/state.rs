@@ -59,6 +59,7 @@ pub(super) enum StateEffect {
     WorkspaceSearch(WorkspaceReferenceSearchRequest),
     SkillSearch(SkillReferenceSearchRequest),
     PrepareImage(ImagePreparationRequest),
+    CopyToClipboard(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

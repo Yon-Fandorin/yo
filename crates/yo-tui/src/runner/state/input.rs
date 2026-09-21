@@ -214,11 +214,16 @@ impl TuiState {
         }
         // 보존된 변경 사항 검토는 승인을 제출하지 않는다. command palette가 request panel을
         // 대신하므로 해당 panel의 commit token을 요구하지 않는다.
-        let reviewing_changes = self
+        let safe_local_command = self
             .command_palette
             .exact_submission(self.editor.text(), self.editor.cursor_byte_index())
-            .is_some_and(|command| command.effect() == CommandEffect::ReviewChanges);
-        if !reviewing_changes
+            .is_some_and(|command| {
+                matches!(
+                    command.effect(),
+                    CommandEffect::ReviewChanges | CommandEffect::CopyAnswer
+                )
+            });
+        if !safe_local_command
             && self.pending_requests.front().is_some_and(|request| {
                 matches!(request, PendingRequest::Approval(_))
                     && self.chat.approval(request.activity()).is_some()

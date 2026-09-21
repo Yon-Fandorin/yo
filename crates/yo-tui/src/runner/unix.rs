@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    fmt,
+    fmt, io as std_io,
     panic::AssertUnwindSafe,
     sync::Arc,
     task::{Context, Poll, Wake, Waker},
@@ -97,6 +97,7 @@ pub(super) enum LoopError {
     Agent(String),
     State(StateError),
     Frame(FrameError),
+    Clipboard(std_io::Error),
     InlineRender(InlineRenderError),
     FullscreenRender(FullscreenRenderError),
     GeometryEpochOverflow,
@@ -127,6 +128,7 @@ impl LoopError {
                 "acknowledging a stale transcript publication failed".to_owned()
             },
             Self::Frame(error) => error.detail(),
+            Self::Clipboard(error) => format!("writing terminal clipboard request failed: {error}"),
             Self::InlineRender(error) => format!("rendering the inline frame failed: {error}"),
             Self::FullscreenRender(error) => {
                 format!("rendering the fullscreen frame failed: {error}")
@@ -627,6 +629,12 @@ where
                         }
                         frames.request(FrameRequest::Coalesced);
                     },
+                    StateEffect::CopyToClipboard(text) => {
+                        terminal::clipboard::send(session.output(), &text)
+                            .map_err(LoopError::Clipboard)?;
+                        state.report_clipboard_sent().map_err(LoopError::State)?;
+                        frames.request(FrameRequest::Coalesced);
+                    },
                     StateEffect::Resize(next) => {
                         presentation.geometry_epoch = presentation
                             .geometry_epoch
@@ -678,6 +686,7 @@ fn finish_admission_effect(effect: StateEffect, frames: &mut FrameScheduler) -> 
         | StateEffect::WorkspaceSearch(_)
         | StateEffect::SkillSearch(_)
         | StateEffect::PrepareImage(_)
+        | StateEffect::CopyToClipboard(_)
         | StateEffect::Resize(_)
         | StateEffect::Suspend => {
             unreachable!("submission admission cannot produce an unrelated state effect")

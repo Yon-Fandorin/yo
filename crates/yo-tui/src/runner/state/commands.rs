@@ -14,10 +14,24 @@ use crate::{
         prompt_argument, resume_argument, secrets_argument, tree_argument,
     },
     overlay::{PanelSnapshot, SlotError},
-    runner::{AgentAction, ForkPickerToken, model::ModelSelectionState, session::TuiDocument},
+    runner::{
+        AgentAction, ForkPickerToken, chat::CopyAnswer, model::ModelSelectionState,
+        session::TuiDocument,
+    },
+    terminal::clipboard::MAX_TEXT_BYTES,
 };
 
 impl TuiState {
+    pub(in crate::runner) fn report_clipboard_sent(&mut self) -> Result<(), StateError> {
+        let notice = "Sent answer to the terminal clipboard; paste to confirm.".to_owned();
+        if let Some(preview) = self.preview.as_mut() {
+            preview.state.chat.push_notice(notice)?;
+        } else {
+            self.chat.push_notice(notice)?;
+        }
+        Ok(())
+    }
+
     pub(in crate::runner) fn enable_model_selection(
         &mut self,
         controller: yo_core::ModelSelectionController,
@@ -332,6 +346,28 @@ impl TuiState {
         draft: &str,
     ) -> Result<StateEffect, StateError> {
         match effect {
+            CommandEffect::CopyAnswer => {
+                self.clear_editor();
+                let Some(answer) = self.chat.last_completed_answer() else {
+                    self.chat
+                        .push_notice("No completed assistant answer to copy.".to_owned())?;
+                    return Ok(StateEffect::Redraw);
+                };
+                let CopyAnswer::Text(answer) = answer else {
+                    self.chat.push_notice(
+                        "The latest completed answer has no copyable text.".to_owned(),
+                    )?;
+                    return Ok(StateEffect::Redraw);
+                };
+                if answer.len() > MAX_TEXT_BYTES {
+                    self.chat.push_notice(format!(
+                        "Answer is too large for terminal clipboard ({} bytes; limit {MAX_TEXT_BYTES}).",
+                        answer.len()
+                    ))?;
+                    return Ok(StateEffect::Redraw);
+                }
+                Ok(StateEffect::CopyToClipboard(answer.to_owned()))
+            },
             CommandEffect::Interview => self.handle_interview_command("", draft),
             CommandEffect::NewSession => {
                 if !self.allow_session_transition(draft)? {
@@ -615,6 +651,9 @@ impl TuiState {
         self.pending_model_selection.is_some()
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 fn parse_secret_delete_id(argument: &str) -> Option<&str> {
     let mut parts = argument.split_whitespace();
