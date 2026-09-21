@@ -22,6 +22,62 @@ use crate::{
     surface::{CellContent, Point, Size},
 };
 
+// 작성 중인 여러 줄 초안의 방향키는 편집 커서를 움직인다. 기록 스크롤은 PageUp으로
+// 계속 접근하며, 초안을 비우면 일반 방향키가 다시 기록을 움직인다.
+#[test]
+fn chat_draft_arrows_edit_visual_rows_without_scrolling_transcript() {
+    let mut state = TuiState::new();
+    for index in 0..20 {
+        state
+            .observe_record(TranscriptRecord::CommandCommitted(
+                AgentCommand::StartTurn {
+                    turn: turn(),
+                    input: UserInput::from(format!("history {index}")),
+                },
+            ))
+            .unwrap();
+    }
+    let size = Size::new(20, 8);
+    render_and_commit(&mut state, size);
+    state
+        .handle(InputEvent::Paste("first\nsecond".into()), Duration::ZERO)
+        .unwrap();
+    render_and_commit(&mut state, size);
+    let before = state.views().view_positions();
+
+    assert!(matches!(
+        state.handle(key(KeyCode::Up, KeyModifiers::NONE), Duration::ZERO),
+        Ok(StateEffect::Redraw)
+    ));
+    assert_eq!(state.editor().cursor_byte_index(), "first".len());
+    render_and_commit(&mut state, size);
+    assert_eq!(state.views().view_positions(), before);
+    assert_eq!(state.editor().text(), "first\nsecond");
+
+    state
+        .handle(key(KeyCode::PageUp, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    render_and_commit(&mut state, size);
+    let scrolled = state.views().view_positions();
+    assert_ne!(scrolled, before);
+    assert_eq!(state.editor().cursor_byte_index(), "first".len());
+
+    state
+        .handle(
+            key(KeyCode::Character('c'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert!(state.editor().text().is_empty());
+    render_and_commit(&mut state, size);
+    let empty_at = state.views().view_positions();
+    state
+        .handle(key(KeyCode::Up, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    render_and_commit(&mut state, size);
+    assert_ne!(state.views().view_positions(), empty_at);
+}
+
 // 저장 실패 경고는 이후 대화와 host status 갱신에 밀려 사라지지 않는다. 좁은 화면에서도
 // 상태 줄에 유지되고, 실제 Durable 복구를 관찰한 뒤에만 최신 host status가 다시 보인다.
 #[test]

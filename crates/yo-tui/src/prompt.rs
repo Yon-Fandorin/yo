@@ -78,6 +78,10 @@ pub(crate) fn measure(
     })
 }
 
+pub(crate) fn content_width(outer_width: u16) -> Option<NonZeroU16> {
+    Some(PromptChrome::new(NonZeroU16::new(outer_width)?).content_width())
+}
+
 pub(crate) fn prepare(
     editor: &dyn PromptInput,
     width: u16,

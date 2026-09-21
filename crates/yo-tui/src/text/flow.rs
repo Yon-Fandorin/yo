@@ -225,5 +225,13 @@ pub(crate) fn flow_text_with_cursor(
     })
 }
 
+/// Every editable grapheme boundary in the same visual layout as the prompt.
+pub(crate) fn flow_cursor_stops(
+    text: &str,
+    width: NonZeroU16,
+) -> Result<Vec<(usize, Point)>, TextFlowError> {
+    engine::cursor_stops(text, width)
+}
+
 #[cfg(test)]
 mod tests;

@@ -24,6 +24,19 @@ impl TextBuffer {
         self.cursor
     }
 
+    pub(crate) fn move_to_grapheme_boundary(&mut self, cursor: usize) -> bool {
+        debug_assert!(
+            cursor == self.text.len()
+                || self
+                    .text
+                    .grapheme_indices(true)
+                    .any(|(index, _)| index == cursor)
+        );
+        let changed = self.cursor != cursor;
+        self.cursor = cursor;
+        changed
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.text.is_empty()
     }

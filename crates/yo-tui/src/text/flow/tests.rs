@@ -1,10 +1,32 @@
 use std::num::NonZeroU16;
 
-use super::{TextFlowError, flow_literal_prose, flow_tail_text, flow_text, flow_text_with_cursor};
+use super::{
+    TextFlowError, flow_cursor_stops, flow_literal_prose, flow_tail_text, flow_text,
+    flow_text_with_cursor,
+};
 use crate::{surface, surface::Point};
 
 fn width(value: u16) -> NonZeroU16 {
     NonZeroU16::new(value).unwrap()
+}
+
+// 편집 가능한 모든 grapheme 위치는 기존 prompt 커서 배치와 같은 셀에 놓인다.
+// 줄 끝·빈 줄·탭·제어 표기·넓은 글자의 경계에서 다른 위치를 고르면 이동 후 입력이 어긋난다.
+#[test]
+fn editor_cursor_stops_match_rendered_cursor_at_every_boundary() {
+    for source in ["", "ab\n\nc", "abcd\nc", "가e\u{301}👨‍👩‍👧", "\tA\u{1b}\r\nB"] {
+        for columns in [2, 3, 4, 8] {
+            let width = width(columns);
+            let stops = flow_cursor_stops(source, width).unwrap();
+            for (byte, point) in stops {
+                assert_eq!(
+                    flow_text_with_cursor(source, byte, width).unwrap().cursor,
+                    point,
+                    "{source:?} width={columns} byte={byte}"
+                );
+            }
+        }
+    }
 }
 
 // 페이지 경로도 기존 단어 단위 줄바꿈·탭·제어문자·한글과 빈 줄의 최종 셀 및

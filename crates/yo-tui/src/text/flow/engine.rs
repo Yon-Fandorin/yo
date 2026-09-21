@@ -143,13 +143,28 @@ pub(super) fn flow(
     flow_with_buffer(text, source_cursor, width, GlyphBuffer::Full(Vec::new()))
 }
 
+pub(super) fn cursor_stops(
+    text: &str,
+    width: NonZeroU16,
+) -> Result<Vec<(usize, Point)>, TextFlowError> {
+    let mut stops = Vec::new();
+    scan(
+        text,
+        None,
+        width,
+        &mut GlyphBuffer::Full(Vec::new()),
+        Some(&mut stops),
+    )?;
+    Ok(stops)
+}
+
 fn flow_with_buffer(
     text: &str,
     source_cursor: Option<usize>,
     width: NonZeroU16,
     mut glyphs: GlyphBuffer,
 ) -> Result<RawFlow, TextFlowError> {
-    let (content_height, cursor_point) = scan(text, source_cursor, width, &mut glyphs)?;
+    let (content_height, cursor_point) = scan(text, source_cursor, width, &mut glyphs, None)?;
     let (glyphs, content_height, skipped_rows) = glyphs.finish(content_height)?;
 
     Ok(RawFlow {
@@ -165,6 +180,7 @@ fn scan(
     source_cursor: Option<usize>,
     width: NonZeroU16,
     glyphs: &mut impl FlowSink,
+    mut stops: Option<&mut Vec<(usize, Point)>>,
 ) -> Result<(usize, Option<Point>), TextFlowError> {
     let width = width.get();
     let mut x = 0_u16;
@@ -173,14 +189,22 @@ fn scan(
 
     for (byte_index, text) in text.grapheme_indices(true) {
         if is_hard_break(text) {
-            if source_cursor == Some(byte_index) {
-                cursor_point = Some(normalized_point(x, y, width)?);
+            if source_cursor == Some(byte_index) || stops.is_some() {
+                let point = normalized_point(x, y, width)?;
+                if source_cursor == Some(byte_index) {
+                    cursor_point = Some(point);
+                }
+                if let Some(stops) = stops.as_deref_mut() {
+                    stops.push((byte_index, point));
+                }
             }
             x = 0;
             glyphs.next_row(&mut y)?;
             glyphs.hard_break(y, byte_index + text.len());
             continue;
         }
+
+        let marked_cursor = stops.as_ref().map_or(source_cursor, |_| Some(byte_index));
 
         if text == "\t" {
             if x == width {
@@ -192,7 +216,7 @@ fn scan(
                 place_grapheme(
                     Grapheme::try_from(" ").expect("ASCII space is renderable"),
                     byte_index,
-                    source_cursor,
+                    marked_cursor,
                     offset == 0,
                     width,
                     &mut x,
@@ -200,6 +224,12 @@ fn scan(
                     &mut cursor_point,
                     glyphs,
                 )?;
+            }
+            if let Some(stops) = stops.as_deref_mut() {
+                stops.push((
+                    byte_index,
+                    cursor_point.take().expect("tab has a cursor stop"),
+                ));
             }
             continue;
         }
@@ -211,7 +241,7 @@ fn scan(
                 place_grapheme(
                     Grapheme::try_from(&*character).expect("ASCII control notation is renderable"),
                     byte_index,
-                    source_cursor,
+                    marked_cursor,
                     offset == 0,
                     width,
                     &mut x,
@@ -219,6 +249,12 @@ fn scan(
                     &mut cursor_point,
                     glyphs,
                 )?;
+            }
+            if let Some(stops) = stops.as_deref_mut() {
+                stops.push((
+                    byte_index,
+                    cursor_point.take().expect("control has a cursor stop"),
+                ));
             }
             continue;
         }
@@ -228,7 +264,7 @@ fn scan(
         place_grapheme(
             grapheme,
             byte_index,
-            source_cursor,
+            marked_cursor,
             true,
             width,
             &mut x,
@@ -236,10 +272,19 @@ fn scan(
             &mut cursor_point,
             glyphs,
         )?;
+        if let Some(stops) = stops.as_deref_mut() {
+            stops.push((
+                byte_index,
+                cursor_point.take().expect("grapheme has a cursor stop"),
+            ));
+        }
     }
 
     if source_cursor.is_some() && cursor_point.is_none() {
         cursor_point = Some(normalized_point(x, y, width)?);
+    }
+    if let Some(stops) = stops {
+        stops.push((text.len(), normalized_point(x, y, width)?));
     }
     let content_height = if text.is_empty() {
         0
@@ -270,7 +315,7 @@ impl TextPages {
             rows: 0,
             source_map: vec![(0, 0)],
         };
-        let (height, _) = scan(source, None, width, &mut pages)?;
+        let (height, _) = scan(source, None, width, &mut pages, None)?;
         if height > 0 {
             pages.advance_to(height - 1);
         }

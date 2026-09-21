@@ -19,7 +19,7 @@ use crate::{
         AcceptanceReceipt, OverlayInstanceToken, PanelSnapshot, PromptOverlaySlot, SelectionPanel,
         SlotError,
     },
-    prompt::assist::PromptAssistController,
+    prompt::{self, assist::PromptAssistController},
     runner::{
         AgentAction, ForkPickerToken, PresentationMode,
         chat::ChatProjection,
@@ -238,6 +238,9 @@ impl TuiState {
         if let Some(preview) = self.preview.as_mut() {
             preview.state.commit_frame(frame);
             return;
+        }
+        if let Some(width) = prompt::content_width(frame.surface.size().width) {
+            self.editor.set_layout_width(width);
         }
         self.views.commit(frame.view_state);
         if let Some(presentation) = frame.overlay_presentation

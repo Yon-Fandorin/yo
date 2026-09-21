@@ -24,6 +24,107 @@ fn press(code: KeyCode) -> InputEvent {
     key(code, KeyModifiers::NONE, KeyAction::Press)
 }
 
+// 위아래 이동은 실제 줄과 자동 줄바꿈을 따르며 짧은 줄을 거쳐도 원래 셀 열을 복원한다.
+#[test]
+fn vertical_navigation_preserves_preferred_cell_column() {
+    let mut editor = PromptEditor::new();
+    editor.set_layout_width(NonZeroU16::new(8).unwrap());
+    editor.handle(InputEvent::Paste("abcdef\nx\nabcdef".into()), false, NOW);
+    assert_eq!(editor.cursor_byte_index(), editor.text().len());
+
+    for (code, expected) in [
+        (KeyCode::Up, "abcdef\nx".len()),
+        (KeyCode::Up, "abcdef".len()),
+        (KeyCode::Down, "abcdef\nx".len()),
+        (KeyCode::Down, "abcdef\nx\nabcdef".len()),
+    ] {
+        assert_eq!(
+            editor.handle(press(code), false, NOW),
+            EditorEffect::BufferChanged
+        );
+        assert_eq!(editor.cursor_byte_index(), expected);
+        assert_eq!(
+            editor.handle(
+                key(code, KeyModifiers::NONE, KeyAction::Release),
+                false,
+                NOW
+            ),
+            EditorEffect::Unhandled
+        );
+    }
+    assert_eq!(
+        editor.handle(press(KeyCode::Down), false, NOW),
+        EditorEffect::NoChange
+    );
+    assert_eq!(editor.text(), "abcdef\nx\nabcdef");
+}
+
+// 하나의 탭이나 제어 표기가 여러 화면 줄을 차지해도 커서를 놓을 수 없는 중간 줄에서 멈추지 않는다.
+#[test]
+fn vertical_navigation_skips_rows_inside_one_expanded_grapheme() {
+    for source in ["\tX", "\u{0085}X"] {
+        let mut editor = PromptEditor::new();
+        editor.set_layout_width(NonZeroU16::new(2).unwrap());
+        editor.handle(InputEvent::Paste(source.into()), false, NOW);
+        assert_eq!(
+            editor.handle(press(KeyCode::Up), false, NOW),
+            EditorEffect::BufferChanged
+        );
+        assert_eq!(editor.cursor_byte_index(), 0, "{source:?}");
+        assert_eq!(
+            editor.handle(press(KeyCode::Down), false, NOW),
+            EditorEffect::BufferChanged
+        );
+        assert_eq!(editor.cursor_byte_index(), source.len(), "{source:?}");
+    }
+}
+
+// 좁은 폭에서 접힌 한 줄도 여러 화면 줄로 이동하고, 폭 변경은 이전 선호 열을 버린다.
+#[test]
+fn vertical_navigation_uses_wrapped_rows_and_current_width() {
+    let mut editor = PromptEditor::new();
+    editor.set_layout_width(NonZeroU16::new(4).unwrap());
+    editor.handle(InputEvent::Paste("abcdefghij".into()), false, NOW);
+    assert_eq!(
+        editor.handle(press(KeyCode::Up), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.cursor_byte_index(), 6);
+    assert_eq!(
+        editor.handle(press(KeyCode::Up), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.cursor_byte_index(), 2);
+    editor.set_layout_width(NonZeroU16::new(5).unwrap());
+    assert_eq!(
+        editor.handle(press(KeyCode::Down), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.cursor_byte_index(), 7);
+}
+
+// 한글·결합 문자·이모지를 통과해도 커서는 grapheme 경계에만 놓이고 원문은 그대로다.
+#[test]
+fn vertical_navigation_preserves_unicode_grapheme_boundaries() {
+    let source = "ab\n👨‍👩‍👧c\n가e\u{301}";
+    let mut editor = PromptEditor::new();
+    editor.set_layout_width(NonZeroU16::new(8).unwrap());
+    editor.handle(InputEvent::Paste(source.into()), false, NOW);
+    for (code, expected) in [
+        (KeyCode::Up, "ab\n👨‍👩‍👧c".len()),
+        (KeyCode::Up, "ab".len()),
+        (KeyCode::Down, "ab\n👨‍👩‍👧c".len()),
+        (KeyCode::Down, source.len()),
+    ] {
+        assert_eq!(
+            editor.handle(press(code), false, NOW),
+            EditorEffect::BufferChanged
+        );
+        assert_eq!(editor.cursor_byte_index(), expected);
+    }
+    assert_eq!(editor.text(), source);
+}
+
 // 단어 삭제는 공백·줄바꿈을 넘되 결합 문자와 이모지를 쪼개지 않으며 연속 삭제를 복원한다.
 #[test]
 fn word_editing_preserves_unicode_and_yanks_consecutive_deletions() {

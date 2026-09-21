@@ -1,6 +1,6 @@
 //! Prompt editing assembled from semantic input, text storage, and control policy.
 
-use std::{num::NonZeroU16, ops::Range, time::Duration};
+use std::{cmp::Reverse, num::NonZeroU16, ops::Range, time::Duration};
 
 pub(crate) mod binding;
 pub(crate) mod layout;
@@ -32,6 +32,8 @@ pub(crate) struct PromptEditor {
     newline_binding: NewlineBinding,
     killed_text: String,
     last_kill: bool,
+    layout_width: Option<NonZeroU16>,
+    preferred_column: Option<u16>,
 }
 
 impl PromptEditor {
@@ -58,9 +60,21 @@ impl PromptEditor {
         self.newline_binding
     }
 
+    pub(crate) const fn has_layout_width(&self) -> bool {
+        self.layout_width.is_some()
+    }
+
+    pub(crate) fn set_layout_width(&mut self, width: NonZeroU16) {
+        if self.layout_width != Some(width) {
+            self.layout_width = Some(width);
+            self.preferred_column = None;
+        }
+    }
+
     pub(crate) fn replace_range(&mut self, range: Range<usize>, replacement: &str) -> bool {
         self.control.cancel_exit_sequence();
         self.last_kill = false;
+        self.preferred_column = None;
         self.buffer.replace_range(range, replacement)
     }
 
@@ -74,6 +88,13 @@ impl PromptEditor {
         task_active: bool,
         now: Duration,
     ) -> EditorEffect {
+        if !matches!(&event, InputEvent::Key(key)
+            if key.action == KeyAction::Release
+                || (matches!(key.code, KeyCode::Up | KeyCode::Down)
+                    && key.modifiers == KeyModifiers::NONE))
+        {
+            self.preferred_column = None;
+        }
         if !matches!(&event, InputEvent::Key(key) if key.action == KeyAction::Release
             || (key.modifiers == KeyModifiers::CONTROL && matches!(key.code, KeyCode::Character('u' | 'U' | 'k' | 'K' | 'w' | 'W'))))
         {
@@ -167,6 +188,12 @@ impl PromptEditor {
             },
             KeyCode::Left if key.modifiers == KeyModifiers::NONE => self.buffer.move_left(),
             KeyCode::Right if key.modifiers == KeyModifiers::NONE => self.buffer.move_right(),
+            KeyCode::Up | KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
+                let Some(width) = self.layout_width else {
+                    return EditorEffect::Unhandled;
+                };
+                self.move_vertical(key.code == KeyCode::Up, width)
+            },
             KeyCode::Left if key.modifiers == KeyModifiers::CONTROL => {
                 self.buffer.move_word_start()
             },
@@ -183,6 +210,49 @@ impl PromptEditor {
         } else {
             EditorEffect::NoChange
         }
+    }
+
+    fn move_vertical(&mut self, up: bool, width: NonZeroU16) -> bool {
+        let Ok(stops) = layout::cursor_stops(self.buffer.as_str(), width) else {
+            return false;
+        };
+        let Some((_, current)) = stops
+            .iter()
+            .find(|(byte, _)| *byte == self.buffer.cursor_byte_index())
+        else {
+            return false;
+        };
+        let target_row = if up {
+            stops
+                .iter()
+                .filter_map(|(_, point)| (point.y < current.y).then_some(point.y))
+                .max()
+        } else {
+            stops
+                .iter()
+                .filter_map(|(_, point)| (point.y > current.y).then_some(point.y))
+                .min()
+        };
+        let Some(target_row) = target_row else {
+            return false;
+        };
+        let preferred = self.preferred_column.unwrap_or(current.x);
+        let target = stops
+            .iter()
+            .filter(|(_, point)| point.y == target_row)
+            .min_by_key(|(byte, point)| {
+                (
+                    point.x.abs_diff(preferred),
+                    point.x > preferred,
+                    Reverse(*byte),
+                )
+            })
+            .map(|(byte, _)| *byte);
+        let Some(target) = target else {
+            return false;
+        };
+        self.preferred_column = Some(preferred);
+        self.buffer.move_to_grapheme_boundary(target)
     }
 }
 

@@ -103,7 +103,7 @@ impl TuiState {
                 && !interview_command
                 && (self.editor.text() != previous_text
                     || previous_notes != self.question_notes
-                    || selection_edit)
+                    || (selection_edit && self.editor.text().is_empty()))
             {
                 controller.edit_text(self.editor.text(), request, choice);
                 None
@@ -486,10 +486,19 @@ impl TuiState {
             return Ok(StateEffect::Unchanged);
         }
 
-        match self.views.handle_local(&input) {
-            ViewInputEffect::Unhandled => {},
-            ViewInputEffect::Consumed => return Ok(StateEffect::Unchanged),
-            ViewInputEffect::Redraw => return Ok(StateEffect::Redraw),
+        let editor_vertical = self.views.active() == ObservabilityView::Chat
+            && !self.editor.text().is_empty()
+            && self.editor.has_layout_width()
+            && matches!(&input, InputEvent::Key(key)
+                if matches!(key.code, KeyCode::Up | KeyCode::Down)
+                    && key.modifiers == KeyModifiers::NONE
+                    && matches!(key.action, KeyAction::Press | KeyAction::Repeat));
+        if !editor_vertical {
+            match self.views.handle_local(&input) {
+                ViewInputEffect::Unhandled => {},
+                ViewInputEffect::Consumed => return Ok(StateEffect::Unchanged),
+                ViewInputEffect::Redraw => return Ok(StateEffect::Redraw),
+            }
         }
 
         if !self.has_pending_request()
