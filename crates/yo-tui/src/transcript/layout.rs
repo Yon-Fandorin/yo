@@ -295,14 +295,16 @@ pub(crate) fn paint_indexed_commands(
     let item_starts = if commands.iter().any(|command| {
         matches!(
             command,
-            TranscriptScrollCommand::PreviousItem | TranscriptScrollCommand::NextItem
+            TranscriptScrollCommand::PreviousItem
+                | TranscriptScrollCommand::NextItem
+                | TranscriptScrollCommand::JumpToItem(_)
         )
     }) {
         prepared
             .layout
             .items
             .iter()
-            .map(|item| item.first_row)
+            .map(|item| (item.id, item.first_row))
             .collect::<Vec<_>>()
     } else {
         Vec::new()

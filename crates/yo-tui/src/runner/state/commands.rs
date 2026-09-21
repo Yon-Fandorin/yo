@@ -384,6 +384,7 @@ impl TuiState {
             CommandEffect::ResumeSession => self.handle_resume_command(invocation, draft),
             CommandEffect::ShowSecrets => self.handle_secrets_command(invocation, draft),
             CommandEffect::InsertPrompt => self.handle_prompt_command(invocation, draft),
+            CommandEffect::FindMessages => self.handle_find_command(invocation, draft),
             CommandEffect::ShowHelp => {
                 let document = TuiDocument::new(CommandRegistry::built_in().help_document())
                     .expect("built-in help is a bounded document")

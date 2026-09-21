@@ -21,6 +21,7 @@ fn command_filter_preserves_module_declared_order() {
             CommandId::Preview,
             CommandId::Attach,
             CommandId::Exit,
+            CommandId::Find,
             CommandId::New,
             CommandId::Interview,
             CommandId::Fork,
@@ -54,6 +55,7 @@ fn help_document_uses_registry_and_explains_interaction() {
         "Ctrl+U/K",
         "Ctrl+Y",
         "Ctrl+-",
+        "Ctrl+F",
         "Ctrl+R",
         "Shift+Tab",
     ] {

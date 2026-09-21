@@ -34,6 +34,7 @@ use crate::{
 
 mod commands;
 mod external_editor;
+mod find;
 mod history;
 mod image;
 mod input;
@@ -109,6 +110,7 @@ pub(super) struct TuiState {
     pending_submissions: VecDeque<InputSubmission>,
     prompt_history: history::PromptHistory,
     recall_picker: Option<history::RecallPicker>,
+    find_picker: Option<find::FindPicker>,
     follow_ups: VecDeque<UserInput>,
     follow_ups_paused: bool,
     follow_up_submission: Option<SubmissionId>,

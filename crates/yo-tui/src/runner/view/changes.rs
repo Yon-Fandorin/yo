@@ -267,7 +267,9 @@ impl ChangesView {
                     .row
                     .saturating_add(usize::from(height.get()))
                     .min(last),
-                TranscriptScrollCommand::JumpToStart | TranscriptScrollCommand::PreviousItem => 0,
+                TranscriptScrollCommand::JumpToStart
+                | TranscriptScrollCommand::PreviousItem
+                | TranscriptScrollCommand::JumpToItem(_) => 0,
                 TranscriptScrollCommand::JumpToTail | TranscriptScrollCommand::NextItem => last,
             };
             position.follow_tail = matches!(command, TranscriptScrollCommand::JumpToTail)

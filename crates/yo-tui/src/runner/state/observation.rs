@@ -363,6 +363,7 @@ impl TuiState {
                     if self.pending_requests.is_empty() {
                         self.overlay.close_current();
                         self.command_palette.dismiss();
+                        self.cancel_find_picker();
                         self.model_overlay = None;
                         self.prompt_assist.cancel();
                     }

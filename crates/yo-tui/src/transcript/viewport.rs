@@ -2,6 +2,7 @@
 
 use std::num::NonZeroU16;
 
+use super::TranscriptItemId;
 use crate::surface::Point;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -44,6 +45,7 @@ pub(crate) enum TranscriptScrollCommand {
     NextItem,
     JumpToStart,
     JumpToTail,
+    JumpToItem(TranscriptItemId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,7 +61,7 @@ impl VisibleRows {
         available_height: NonZeroU16,
         state: TranscriptViewState,
         commands: &[TranscriptScrollCommand],
-        item_starts: &[usize],
+        item_starts: &[(TranscriptItemId, usize)],
     ) -> Self {
         let mut visible = Self::resolve(content_height, available_height, state, None, item_starts);
         for command in commands {
@@ -78,7 +80,7 @@ impl VisibleRows {
         available_height: NonZeroU16,
         state: TranscriptViewState,
         command: Option<TranscriptScrollCommand>,
-        item_starts: &[usize],
+        item_starts: &[(TranscriptItemId, usize)],
     ) -> Self {
         let available_height = usize::from(available_height.get());
         let maximum_first = content_height.saturating_sub(available_height);
@@ -97,7 +99,7 @@ impl VisibleRows {
                 item_starts
                     .iter()
                     .rev()
-                    .copied()
+                    .map(|(_, row)| *row)
                     .find(|&row| row < current)
                     .unwrap_or(0),
                 TranscriptViewMode::Detached,
@@ -105,7 +107,7 @@ impl VisibleRows {
             Some(TranscriptScrollCommand::NextItem) => {
                 let next = item_starts
                     .iter()
-                    .copied()
+                    .map(|(_, row)| *row)
                     .find(|&row| row > current)
                     .unwrap_or(maximum_first)
                     .min(maximum_first);
@@ -122,6 +124,14 @@ impl VisibleRows {
             Some(TranscriptScrollCommand::JumpToTail) => {
                 (maximum_first, TranscriptViewMode::FollowTail)
             },
+            Some(TranscriptScrollCommand::JumpToItem(item)) => (
+                item_starts
+                    .iter()
+                    .find_map(|(candidate, row)| (*candidate == item).then_some(*row))
+                    .unwrap_or(current)
+                    .min(maximum_first),
+                TranscriptViewMode::Detached,
+            ),
         };
 
         Self {

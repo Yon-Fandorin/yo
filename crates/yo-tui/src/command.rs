@@ -7,6 +7,7 @@ mod compact;
 mod copy;
 mod definition;
 mod exit;
+mod find;
 mod fork;
 mod help;
 mod interview;
@@ -29,6 +30,10 @@ pub(crate) use registry::CommandRegistry;
 
 pub(crate) fn prompt_argument(value: &str) -> Option<&str> {
     prompt::argument(value)
+}
+
+pub(crate) fn find_argument(value: &str) -> Option<&str> {
+    find::argument(value)
 }
 
 pub(crate) fn model_argument(value: &str) -> Option<&str> {

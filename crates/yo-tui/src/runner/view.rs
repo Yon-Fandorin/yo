@@ -182,6 +182,13 @@ impl ObservabilityViews {
         self.state.selected_change_key = Some((item, 0));
     }
 
+    pub(super) fn jump_chat_to(&mut self, item: TranscriptItemId) {
+        self.pending_navigation[ObservabilityView::Chat as usize].clear();
+        self.pending_navigation[ObservabilityView::Chat as usize]
+            .push(TranscriptScrollCommand::JumpToItem(item));
+        self.state.chat.pending_scroll = Some(TranscriptScrollCommand::JumpToItem(item));
+    }
+
     pub(super) fn chat_transcript_config(
         &self,
         appearance: &AppearanceSnapshot,
@@ -711,7 +718,8 @@ impl ObservabilityViewState {
                 | TranscriptScrollCommand::PageUp
                 | TranscriptScrollCommand::JumpToStart
                 | TranscriptScrollCommand::PreviousItem
-                | TranscriptScrollCommand::NextItem,
+                | TranscriptScrollCommand::NextItem
+                | TranscriptScrollCommand::JumpToItem(_),
             ) => false,
             Some(TranscriptScrollCommand::JumpToTail) => true,
             Some(TranscriptScrollCommand::LineDown | TranscriptScrollCommand::PageDown) | None => {

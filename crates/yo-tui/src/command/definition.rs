@@ -19,6 +19,7 @@ pub(crate) enum CommandId {
     Preview,
     Attach,
     Exit,
+    Find,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +41,7 @@ pub(crate) enum CommandEffect {
     OpenPreview,
     AttachImage,
     ExitProcess,
+    FindMessages,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

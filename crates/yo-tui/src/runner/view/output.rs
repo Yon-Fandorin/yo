@@ -216,9 +216,9 @@ impl OutputView {
                         .saturating_add(usize::from(height.get()))
                         .min(last)
                 },
-                TranscriptScrollCommand::JumpToStart | TranscriptScrollCommand::PreviousItem => {
-                    position.row = 0
-                },
+                TranscriptScrollCommand::JumpToStart
+                | TranscriptScrollCommand::PreviousItem
+                | TranscriptScrollCommand::JumpToItem(_) => position.row = 0,
                 TranscriptScrollCommand::JumpToTail | TranscriptScrollCommand::NextItem => {
                     position.row = last
                 },

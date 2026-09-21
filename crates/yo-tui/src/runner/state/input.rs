@@ -10,8 +10,8 @@ use yo_core::{
 use super::{FOLLOW_UP_BYTES, FOLLOW_UP_LIMIT, PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
     command::{
-        CommandEffect, attachment_argument, compact_argument, fork_argument, model_argument,
-        prompt_argument, resume_argument, secrets_argument, tree_argument,
+        CommandEffect, attachment_argument, compact_argument, find_argument, fork_argument,
+        model_argument, prompt_argument, resume_argument, secrets_argument, tree_argument,
     },
     input::{
         editor::EditorEffect,
@@ -41,9 +41,10 @@ impl TuiState {
             if matches!(key.code, KeyCode::Up | KeyCode::Down)
                 && key.modifiers == KeyModifiers::NONE);
         let recall_was_open = self.recall_picker.is_some();
+        let find_was_open = self.find_picker.is_some();
         let effect = self.handle_input(input, now)?;
-        let effect = if recall_was_open
-            && self.recall_picker.is_none()
+        let effect = if (recall_was_open && self.recall_picker.is_none()
+            || find_was_open && self.find_picker.is_none())
             && matches!(effect, StateEffect::Unchanged)
         {
             StateEffect::Redraw
@@ -173,7 +174,7 @@ impl TuiState {
             && key.modifiers == KeyModifiers::CONTROL
             && matches!(key.code, KeyCode::Character('v' | 'V'))
         {
-            if self.recall_picker.is_some() {
+            if self.recall_picker.is_some() || self.find_picker.is_some() {
                 return Ok(StateEffect::Unchanged);
             }
             if key.action != KeyAction::Press {
@@ -191,6 +192,7 @@ impl TuiState {
             ViewInputEffect::Redraw => {
                 if self.views.active() != active_before {
                     self.cancel_recall_picker();
+                    self.cancel_find_picker();
                     self.cancel_fork_picker();
                     if let Some((request, token)) = self.request_overlay
                         && self.overlay.is_current(token)
@@ -333,6 +335,14 @@ impl TuiState {
                     return Ok(StateEffect::Redraw);
                 }
                 if self
+                    .find_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.token == token)
+                {
+                    self.cancel_find_picker();
+                    return Ok(StateEffect::Redraw);
+                }
+                if self
                     .fork_overlay
                     .is_some_and(|(current, _)| current == token)
                 {
@@ -403,6 +413,13 @@ impl TuiState {
                             .parse()
                             .expect("history identity is an index"),
                     ));
+                }
+                if self
+                    .find_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.token == receipt.token())
+                {
+                    return Ok(self.accept_find_result(receipt.identity()));
                 }
                 if let Some((token, count)) = self.fork_overlay
                     && token == receipt.token()
@@ -530,6 +547,10 @@ impl TuiState {
             return Ok(effect);
         }
 
+        if let Some(effect) = self.handle_find_query(&input, now)? {
+            return Ok(effect);
+        }
+
         if self.question_notes.is_some()
             && matches!(&input, InputEvent::Key(key) if key.code == KeyCode::Enter
                 && key.modifiers == KeyModifiers::NONE)
@@ -544,6 +565,15 @@ impl TuiState {
                     && key.action == KeyAction::Press)
         {
             return self.open_recall_picker();
+        }
+
+        if self.can_open_find()
+            && matches!(&input, InputEvent::Key(key)
+                if matches!(key.code, KeyCode::Character('f' | 'F'))
+                    && key.modifiers == KeyModifiers::CONTROL
+                    && key.action == KeyAction::Press)
+        {
+            return self.open_find_picker("");
         }
 
         let editor_vertical = self.views.active() == ObservabilityView::Chat
@@ -638,6 +668,10 @@ impl TuiState {
                     {
                         self.command_palette.close(&mut self.overlay);
                         return self.execute_command(command.effect(), command.invocation(), &text);
+                    }
+                    if find_argument(&text).is_some() {
+                        self.command_palette.close(&mut self.overlay);
+                        return self.handle_find_command(&text, &text);
                     }
                     if model_argument(&text).is_some() {
                         self.command_palette.close(&mut self.overlay);

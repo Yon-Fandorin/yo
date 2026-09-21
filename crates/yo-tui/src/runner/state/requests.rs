@@ -73,6 +73,7 @@ impl TuiState {
         let pending = self.pending_requests.front().copied();
         if pending.is_some() {
             self.cancel_recall_picker();
+            self.cancel_find_picker();
         }
         if self.question_notes_refresh != pending {
             self.question_notes_refresh = None;
