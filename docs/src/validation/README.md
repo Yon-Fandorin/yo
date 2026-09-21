@@ -1880,9 +1880,9 @@ wrapping and descriptions apply. `/preview interview` uses the same profile for 
 questions. Tests cover exact size/count bounds, ordinal/label handoff, presentation
 before acceptance, narrow frames and readable export. Delegated Codex
 `request_user_input` also admits bounded free-text secret questions without choices
-or notes through a request-bound hidden editor. Secret values stay process-local by
-default; the separate opt-in encrypted recovery path described below never adds the
-value, hash or length to public receipts.
+or notes through a request-bound hidden editor. Current contextual drafts keep
+secret values process-local; public receipts never contain their value, hash or
+length.
 Codex's isOther flag adds “None of the above” only when options are nonempty, matching
 the pinned request_user_input overlay's options_len_for_question/option_label_for_index.
 Selecting it returns that label through the same request ID. Absent/false flags do not
@@ -1912,11 +1912,10 @@ original label and, when nonblank, a separate `user_note: <trimmed notes>` answe
 the pinned request_user_input renderer. Empty notes emit only the label. Tests cover
 capability defaults, invalid choice zero/first excess/u32 maximum, exact wire IDs,
 sequential replies, stale presentation, 24-column frames, literal notes and journal
-codec round trips. After restart, a secret answer is `Re-entry required` unless its
-working copy has an opted-in, still-valid encrypted recovery reference and a new live
-request matches its exact destination and public question binding. Even then the UI
-offers `Recovery available`; it neither decrypts nor submits automatically.
-Submitted nonsecret answers can be reopened as a separate editable copy and sent explicitly as a new conversation, as described under Interview copies and secret re-entry.
+codec round trips. In the current contextual draft flow, a secret answer is
+`Re-entry required` after restart; secret values are not restored from drafts.
+Submitted answers remain in conversation history, and their separate drafts are
+removed after a verified durable answer seal, as described under Interview drafts.
 
 ### Native managed secret requests
 
@@ -2064,10 +2063,9 @@ The common TUI never reads Codex wire fields; it consumes the validated backend-
 IDs. Exercise first answer → second draft → Shift+Tab → edit first answer → restored
 second draft → final submission, including 80/24/80 resize. Regression tests cover
 provider payloads, stale requests, optional-profile validation, draft restoration,
-source command round-trips and fresh-frame gating. Editable nonsecret restart recovery
-uses the independent working-copy flow below; provider requests are not resumed. An
-opted-in secret value may be recovered only into a new exact live request through the
-separate encrypted vault flow below; it never resumes the dead request.
+source command round-trips and fresh-frame gating. Nonsecret restart recovery uses
+the contextual draft flow below; provider requests are not resumed. A secret answer
+requires fresh entry for a new live request; the dead request is never resumed.
 
 ### Recorded interview answers
 

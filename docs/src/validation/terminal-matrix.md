@@ -433,9 +433,9 @@ created two nonsecret pending questions on the same exact native version,
 closed its process, started a new one and resumed the disk thread. The old Turn
 was `interrupted`, and no pending question RPC was replayed. Its one local
 fixture request made zero external model requests; owned temporary state was
-removed and normal user state was unchanged. This validates the recovery
-constraint behind the proposed interview feature, not implemented draft
-persistence or transparent continuation of a dead request.
+removed and normal user state was unchanged. This historical probe established
+that native resume does not replay a pending question. Current v1 persists a
+separate local draft; it does not transparently continue a dead provider request.
 The runner drains events after the resume response for a full one-second quiet
 period, within a three-second bound. Delayed question RPCs, protocol errors,
 reader EOF and process exit fail the probe; only a live, quiet app-server passes.
