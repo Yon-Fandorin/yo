@@ -1,6 +1,6 @@
 //! Prompt editing assembled from semantic input, text storage, and control policy.
 
-use std::{cmp::Reverse, num::NonZeroU16, ops::Range, time::Duration};
+use std::{cmp::Reverse, collections::VecDeque, num::NonZeroU16, ops::Range, time::Duration};
 
 pub(crate) mod binding;
 pub(crate) mod layout;
@@ -25,11 +25,56 @@ pub(crate) enum EditorEffect {
     Exit,
 }
 
+const MAX_UNDO_STATES: usize = 64;
+const MAX_UNDO_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UndoAction {
+    Type(char),
+    Atomic,
+    Break,
+    Ignore,
+    Undo,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct UndoHistory {
+    states: VecDeque<TextBuffer>,
+    retained_bytes: usize,
+    typing: bool,
+}
+
+impl UndoHistory {
+    fn clear(&mut self) {
+        self.states.clear();
+        self.retained_bytes = 0;
+        self.typing = false;
+    }
+
+    fn push(&mut self, before: TextBuffer) {
+        let bytes = before.as_str().len();
+        while self.states.len() >= MAX_UNDO_STATES || self.retained_bytes + bytes > MAX_UNDO_BYTES {
+            let old = self.states.pop_front().expect("undo state to evict");
+            self.retained_bytes -= old.as_str().len();
+        }
+        self.retained_bytes += bytes;
+        self.states.push_back(before);
+    }
+
+    fn pop(&mut self) -> Option<TextBuffer> {
+        self.typing = false;
+        let state = self.states.pop_back()?;
+        self.retained_bytes -= state.as_str().len();
+        Some(state)
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PromptEditor {
     buffer: TextBuffer,
     control: ControlKeyPolicy,
     newline_binding: NewlineBinding,
+    undo: UndoHistory,
     killed_text: String,
     last_kill: bool,
     layout_width: Option<NonZeroU16>,
@@ -75,7 +120,30 @@ impl PromptEditor {
         self.control.cancel_exit_sequence();
         self.last_kill = false;
         self.preferred_column = None;
+        self.undo.clear();
         self.buffer.replace_range(range, replacement)
+    }
+
+    pub(crate) fn replace_range_undoable(
+        &mut self,
+        range: Range<usize>,
+        replacement: &str,
+    ) -> bool {
+        self.control.cancel_exit_sequence();
+        self.last_kill = false;
+        self.preferred_column = None;
+        self.undo.typing = false;
+        let oversized_before = self.buffer.as_str().len() > MAX_UNDO_BYTES;
+        let before = self.undo_snapshot();
+        let changed = self.buffer.replace_range(range, replacement);
+        if changed {
+            if oversized_before {
+                self.undo.clear();
+            } else if let Some(before) = before {
+                self.undo.push(before);
+            }
+        }
+        changed
     }
 
     pub(crate) fn layout(&self, width: NonZeroU16) -> Result<TextLayout, LayoutError> {
@@ -88,6 +156,25 @@ impl PromptEditor {
         task_active: bool,
         now: Duration,
     ) -> EditorEffect {
+        let action = self.undo_action(&event, task_active);
+        if action == UndoAction::Undo {
+            self.control.cancel_exit_sequence();
+            self.last_kill = false;
+            self.preferred_column = None;
+            return self.undo.pop().map_or(EditorEffect::NoChange, |state| {
+                self.buffer = state;
+                EditorEffect::BufferChanged
+            });
+        }
+        let oversized_before = self.buffer.as_str().len() > MAX_UNDO_BYTES;
+        let before = match action {
+            UndoAction::Type(character) if !character.is_whitespace() && self.undo.typing => None,
+            UndoAction::Type(_) | UndoAction::Atomic => self.undo_snapshot(),
+            UndoAction::Break | UndoAction::Ignore | UndoAction::Undo => None,
+        };
+        if action == UndoAction::Break {
+            self.undo.typing = false;
+        }
         if !matches!(&event, InputEvent::Key(key)
             if key.action == KeyAction::Release
                 || (matches!(key.code, KeyCode::Up | KeyCode::Down)
@@ -100,7 +187,7 @@ impl PromptEditor {
         {
             self.last_kill = false;
         }
-        match event {
+        let effect = match event {
             InputEvent::Key(key) => self.handle_key(key, task_active, now),
             InputEvent::Paste(text) => {
                 self.control.cancel_exit_sequence();
@@ -111,6 +198,69 @@ impl PromptEditor {
                 }
             },
             InputEvent::Resize(_) | InputEvent::MouseScroll(_) => EditorEffect::Unhandled,
+        };
+        match effect {
+            EditorEffect::Submitted(_) | EditorEffect::Exit => self.undo.clear(),
+            EditorEffect::BufferChanged
+                if matches!(action, UndoAction::Type(_) | UndoAction::Atomic) =>
+            {
+                if oversized_before {
+                    self.undo.clear();
+                } else if let Some(before) = before {
+                    self.undo.push(before);
+                }
+                self.undo.typing =
+                    matches!(action, UndoAction::Type(_)) && !self.undo.states.is_empty();
+            },
+            _ if matches!(action, UndoAction::Type(_) | UndoAction::Atomic) => {
+                self.undo.typing = false;
+            },
+            _ => {},
+        }
+        effect
+    }
+
+    fn undo_snapshot(&self) -> Option<TextBuffer> {
+        if self.buffer.as_str().len() > MAX_UNDO_BYTES {
+            None
+        } else {
+            Some(self.buffer.clone())
+        }
+    }
+
+    fn undo_action(&self, event: &InputEvent, task_active: bool) -> UndoAction {
+        match event {
+            InputEvent::Paste(text) if !text.is_empty() => UndoAction::Atomic,
+            InputEvent::Paste(_) => UndoAction::Ignore,
+            InputEvent::Resize(_) | InputEvent::MouseScroll(_) => UndoAction::Break,
+            InputEvent::Key(key) if key.action == KeyAction::Release => UndoAction::Ignore,
+            InputEvent::Key(key) if is_undo_key(*key) => {
+                if key.action == KeyAction::Press {
+                    UndoAction::Undo
+                } else {
+                    UndoAction::Ignore
+                }
+            },
+            InputEvent::Key(key) => match key.code {
+                KeyCode::Character(character) if is_plain_text(key.modifiers) => {
+                    UndoAction::Type(character)
+                },
+                KeyCode::Character('c' | 'C')
+                    if key.modifiers == KeyModifiers::CONTROL && !task_active =>
+                {
+                    UndoAction::Atomic
+                },
+                KeyCode::Character('d' | 'D' | 'u' | 'U' | 'k' | 'K' | 'w' | 'W' | 'y' | 'Y')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    UndoAction::Atomic
+                },
+                KeyCode::Backspace | KeyCode::Delete if key.modifiers == KeyModifiers::NONE => {
+                    UndoAction::Atomic
+                },
+                KeyCode::Enter if self.newline_binding.matches(key.modifiers) => UndoAction::Atomic,
+                _ => UndoAction::Break,
+            },
         }
     }
 
@@ -271,6 +421,13 @@ impl From<ControlEffect> for EditorEffect {
 
 fn is_plain_text(modifiers: KeyModifiers) -> bool {
     modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT
+}
+
+fn is_undo_key(key: KeyEvent) -> bool {
+    (key.modifiers == KeyModifiers::CONTROL
+        && matches!(key.code, KeyCode::Character('7' | '-' | '_')))
+        || (key.modifiers == KeyModifiers::CONTROL.union(KeyModifiers::SHIFT)
+            && key.code == KeyCode::Character('_'))
 }
 
 #[cfg(test)]

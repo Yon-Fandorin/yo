@@ -247,7 +247,7 @@ impl SkillReferenceAssist {
         }
         let replacement = skill_reference_projection(candidate.reference());
         let start = active.trigger.span.start;
-        editor.replace_range(active.trigger.span, &replacement);
+        editor.replace_range_undoable(active.trigger.span, &replacement);
         self.accepted = Some(AcceptedAnnotation {
             span: start..start + replacement.len(),
             projection: replacement,

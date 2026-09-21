@@ -1778,15 +1778,21 @@ Ok(AgentPoll::StatusLine(status))
 방향으로 삭제한다. Ctrl+Y는 최근 삭제 내용을 현재 커서에 다시 넣는다. 줄 경계에서
 다시 삭제하면 개행을 제거해 이웃 줄을 연결한다. 연속된 뒤쪽 삭제는 보관 내용 앞에,
 앞쪽 삭제는 뒤에 합친다. 문자 입력·커서 이동·붙여넣기·초안 교체는 새 삭제 묶음을 시작한다.
-이 보관 영역은 편집기 내부의 최근 삭제 내용이며 시스템 클립보드, undo 기록 또는
-여러 삭제 기록을 순환하는 kill ring이 아니다.
+이 보관 영역은 편집기 내부의 최근 삭제 내용이며 시스템 클립보드나 여러 삭제 기록을
+순환하는 kill ring이 아니다.
+
+Ctrl+-는 일반 초안의 편집을 취소하며 legacy 터미널의 `0x1f`가 Ctrl+7로 전달되어도
+동작한다. 연속 단어 입력은 묶이고 붙여넣기·한 번의 삭제·Ctrl+C 초안 지우기·텍스트가 바뀐
+참조 완성은 별도 단위다. 원문과 커서만 복원하며 삭제된 참조의 신원은 되살리지 않는다.
+이전 상태는 최대 64개·원문 합계 2 MiB를 보관한다. 더 큰 초안에서 편집하면 이전 기록을
+버리고, 제출이나 프로그램의 초안 교체도 기록을 초기화한다. 비밀 입력은 별도 편집기다.
 
 화면 줄바꿈이나 터미널 폭이 아니라 실제 LF/CRLF가 삭제 범위를 결정한다. grapheme
 경계를 지켜 한글·결합 문자·이모지 시퀀스를 나누지 않는다. 키 release와 추가 modifier는
 이 단축키를 실행하지 않는다. 일반 메시지와 인터뷰 메모가 같은 편집기를 사용하며
 편집만으로 Turn을 제출하거나 중단하지 않는다. Home/End는 기존 대화 이동 역할을 유지한다.
 
-고정한 pi packages/tui/src/components/editor.ts의 deleteToStartOfLine·deleteToEndOfLine과
+고정한 pi packages/tui/src/components/editor.ts의 deleteToStartOfLine·deleteToEndOfLine·undo snapshot과
 Codex bottom_pane/textarea.rs의 kill action 분기를 비교했다. 테스트는 유니코드,
 연속 삭제 순서, 개행 연결, CRLF 원자성, 24/80열 레이아웃과 복원 인터뷰 답변을 다룬다.
 `/preview interview`에서 Tab으로 메모를 추가하고 답한 뒤 Shift+Tab으로 돌아와

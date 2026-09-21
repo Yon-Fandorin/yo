@@ -472,6 +472,38 @@ fn word_delete_and_yank_do_not_recreate_a_selected_reference() {
     assert!(submission.input().references().is_empty());
 }
 
+// 선택된 경로의 삭제를 되돌려도 문자만 복원하고 예전 파일 선택 권한은 되살리지 않는다.
+#[test]
+fn undo_deleted_reference_restores_only_literal_text() {
+    let (mut state, _) = selected_workspace_prompt();
+    let original = state.editor().text().to_owned();
+    state
+        .handle(
+            key(KeyCode::Character('w'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_ne!(state.editor().text(), original);
+    state
+        .handle(
+            key(KeyCode::Character('7'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(state.editor().text(), original);
+    state
+        .handle(key(KeyCode::Escape, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    let StateEffect::Dispatch(AgentAction::Submit(submission)) = state
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("literal text after undo")
+    };
+    assert_eq!(submission.input().as_str(), original);
+    assert!(submission.input().references().is_empty());
+}
+
 fn selected_workspace_prompt() -> (TuiState, WorkspaceReference) {
     use yo_core::{
         WorkspaceReferenceCandidate, WorkspaceReferenceKind, WorkspaceReferenceSearchStatus,

@@ -264,7 +264,7 @@ impl WorkspaceReferenceAssist {
             old: active.trigger.span.clone(),
             new: start..start + replacement.len(),
         };
-        editor.replace_range(active.trigger.span, &replacement);
+        editor.replace_range_undoable(active.trigger.span, &replacement);
         self.transform_annotations(editor.text(), Some(&changed));
         self.accepted.push(AcceptedAnnotation {
             span: start..start + replacement.len(),

@@ -472,6 +472,47 @@ fn clipboard_image_preserves_an_existing_image_marker() {
     assert_eq!(images[1].source_byte_length(), 456);
 }
 
+// 첨부 마커를 지운 뒤 실행 취소해도 문자만 돌아오고 이미지 바이트는 되살리지 않는다.
+#[test]
+fn undo_deleted_image_marker_does_not_restore_attachment() {
+    let mut state = TuiState::new();
+    let first = start(&mut state, "/attach first.png");
+    finish(&mut state, first, 123);
+    assert_eq!(state.editor.text(), "[image]");
+    state
+        .handle(
+            InputEvent::Key(KeyEvent {
+                code: KeyCode::Character('u'),
+                modifiers: KeyModifiers::CONTROL,
+                action: KeyAction::Press,
+                state: KeyState::NONE,
+            }),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert!(state.editor.text().is_empty());
+    state
+        .handle(
+            InputEvent::Key(KeyEvent {
+                code: KeyCode::Character('7'),
+                modifiers: KeyModifiers::CONTROL,
+                action: KeyAction::Press,
+                state: KeyState::NONE,
+            }),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(state.editor.text(), "[image]");
+    assert!(
+        state
+            .prompt_assist
+            .input(state.editor.text())
+            .unwrap()
+            .images()
+            .is_empty()
+    );
+}
+
 // 클립보드 실패와 일반 텍스트 붙여넣기는 원본 초안·첨부를 유지하며 전송하지 않는다.
 #[test]
 fn clipboard_failure_keeps_draft_and_text_paste_stays_text() {

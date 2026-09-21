@@ -2030,7 +2030,15 @@ text at the cursor. Repeated deletion at a line boundary removes the newline and
 joins adjacent lines. Consecutive backward deletions prepend and forward deletions
 append to the retained text; typing, cursor movement, pasting or replacing a draft
 starts a new deletion sequence. This is an editor-local last-deletion buffer, not
-a system clipboard, an undo history or a rotating kill ring.
+a system clipboard or a rotating kill ring.
+
+Ctrl+- undoes an ordinary draft edit; legacy terminal `0x1f` delivered as Ctrl+7
+is accepted too. Word typing coalesces, while paste, a deletion, Ctrl+C draft
+clear and text-changing reference completion are separate units. Restored state
+contains literal text and cursor only; removed reference identities do not return.
+The undo stack holds at most 64 prior states and 2 MiB of prior source text.
+An edit from a larger draft discards older history, and submission or
+programmatic replacement resets it. Secret input has a separate editor.
 
 Logical LF/CRLF boundaries determine the range; visual wrapping and terminal width
 do not. Grapheme-aware boundaries preserve CJK, combining marks and emoji sequences.
@@ -2039,7 +2047,8 @@ handles normal messages and interview notes without submitting or interrupting a
 Home/End retain their conversation navigation roles.
 
 Compare the pinned pi `packages/tui/src/components/editor.ts` deleteToStartOfLine /
-deleteToEndOfLine bodies and Codex `bottom_pane/textarea.rs` kill action dispatch.
+deleteToEndOfLine and undo snapshot bodies, and Codex `bottom_pane/textarea.rs`
+kill action dispatch.
 Tests cover Unicode text, consecutive deletion order, newline joins, CRLF atomicity,
 24/80-column layout and restored interview answers. In `/preview interview`, use Tab
 to add a note, answer, Shift+Tab back, Ctrl+U to replace that note, and verify the

@@ -359,6 +359,16 @@ Esc restores the draft and cursor from before the picker opened. Rejected inputs
 activity answers, and secrets do not enter this history. It survives terminal
 suspension but does not cross a session change or process exit.
 
+The ordinary draft editor uses Ctrl+- to undo the last text edit; terminals
+that decode legacy `0x1f` as Ctrl+7 use that alias. Consecutive word characters
+coalesce, while whitespace starts an undo unit and the following word joins it.
+Paste, deletion, Ctrl+C draft clearing, and a text-changing reference completion
+are separate units. Undo restores literal text and its cursor, never the authority of
+deleted file, skill, or image selections. At most 64 prior states and 2 MiB of
+prior text are retained in memory; an edit made from a larger draft cuts off
+older undo history. Submission and programmatic draft replacement clear it.
+Secret input uses a separate editor without this history.
+
 `/copy` selects the most recent nonempty text AgentMessage that finished
 successfully inside the latest completed Turn with an answer. Non-text answer
 blocks are never copied as internal JSON; a Turn containing only such blocks

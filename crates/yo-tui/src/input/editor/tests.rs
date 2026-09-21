@@ -1,7 +1,7 @@
 use std::{num::NonZeroU16, time::Duration};
 
 use super::{
-    EditorEffect, PromptEditor,
+    EditorEffect, MAX_UNDO_BYTES, MAX_UNDO_STATES, PromptEditor,
     binding::{NewlineBinding, NewlineBindingError},
 };
 use crate::{
@@ -22,6 +22,146 @@ fn key(code: KeyCode, modifiers: KeyModifiers, action: KeyAction) -> InputEvent 
 
 fn press(code: KeyCode) -> InputEvent {
     key(code, KeyModifiers::NONE, KeyAction::Press)
+}
+
+fn undo() -> InputEvent {
+    key(
+        KeyCode::Character('7'),
+        KeyModifiers::CONTROL,
+        KeyAction::Press,
+    )
+}
+
+// 단어 입력은 공백과 다음 단어를 한 단위로 묶고 커서를 복원하며 legacy Ctrl+7을 수용한다.
+#[test]
+fn undo_restores_word_boundaries_and_cursor() {
+    let mut editor = PromptEditor::new();
+    for character in "가나 🦀".chars() {
+        editor.handle(press(KeyCode::Character(character)), false, NOW);
+    }
+    assert_eq!(editor.text(), "가나 🦀");
+    assert_eq!(
+        editor.handle(undo(), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.text(), "가나");
+    assert_eq!(editor.cursor_byte_index(), "가나".len());
+    assert_eq!(
+        editor.handle(
+            key(
+                KeyCode::Character('-'),
+                KeyModifiers::CONTROL,
+                KeyAction::Press,
+            ),
+            false,
+            NOW,
+        ),
+        EditorEffect::BufferChanged
+    );
+    assert!(editor.text().is_empty());
+    assert_eq!(editor.cursor_byte_index(), 0);
+    assert_eq!(editor.handle(undo(), false, NOW), EditorEffect::NoChange);
+}
+
+// 붙여넣기·한 글자 삭제·Ctrl+C 초안 삭제는 각각 복원하고 이동은 입력 묶음을 끊는다.
+#[test]
+fn undo_recovers_paste_delete_and_cleared_multiline_draft() {
+    let mut editor = PromptEditor::new();
+    let source = "첫 줄\n가👨‍👩‍👧";
+    editor.handle(InputEvent::Paste(source.to_owned()), false, NOW);
+    editor.handle(press(KeyCode::Backspace), false, NOW);
+    assert_eq!(editor.text(), "첫 줄\n가");
+    assert_eq!(
+        editor.handle(undo(), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.text(), source);
+    assert_eq!(editor.cursor_byte_index(), source.len());
+    editor.handle(
+        key(
+            KeyCode::Character('a'),
+            KeyModifiers::CONTROL,
+            KeyAction::Press,
+        ),
+        false,
+        NOW,
+    );
+    let line_start = "첫 줄\n".len();
+    assert_eq!(editor.cursor_byte_index(), line_start);
+    editor.handle(
+        key(
+            KeyCode::Character('c'),
+            KeyModifiers::CONTROL,
+            KeyAction::Press,
+        ),
+        false,
+        NOW,
+    );
+    assert!(editor.text().is_empty());
+    assert_eq!(
+        editor.handle(undo(), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.text(), source);
+    assert_eq!(editor.cursor_byte_index(), line_start);
+    assert_eq!(
+        editor.handle(undo(), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert!(editor.text().is_empty());
+}
+
+// 사용자 완료 치환만 실행 취소하며 제출 뒤와 프로그램이 교체한 초안은 이전 기록을 버린다.
+#[test]
+fn undo_completion_does_not_cross_programmatic_or_submit_boundary() {
+    let mut editor = PromptEditor::new();
+    editor.handle(InputEvent::Paste("@src".to_owned()), false, NOW);
+    editor.replace_range_undoable(0..4, "@src/main.rs");
+    assert_eq!(
+        editor.handle(undo(), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.text(), "@src");
+    editor.replace_range(0..4, "new draft");
+    assert_eq!(editor.handle(undo(), false, NOW), EditorEffect::NoChange);
+    assert_eq!(
+        editor.handle(press(KeyCode::Enter), false, NOW),
+        EditorEffect::Submitted("new draft".to_owned())
+    );
+    assert_eq!(editor.handle(undo(), false, NOW), EditorEffect::NoChange);
+}
+
+// 최대 상태 수 뒤의 첫 추가 편집은 가장 오래된 기록만 버리고 최신 64개를 복원한다.
+#[test]
+fn undo_evicts_first_excess_state() {
+    let mut editor = PromptEditor::new();
+    for _ in 0..=MAX_UNDO_STATES {
+        editor.handle(InputEvent::Paste("x".to_owned()), false, NOW);
+    }
+    for _ in 0..MAX_UNDO_STATES {
+        assert_eq!(
+            editor.handle(undo(), false, NOW),
+            EditorEffect::BufferChanged
+        );
+    }
+    assert_eq!(editor.text(), "x");
+    assert_eq!(editor.handle(undo(), false, NOW), EditorEffect::NoChange);
+}
+
+// 저장할 이전 상태가 한도를 첫 초과하면 오래된 실행 취소가 새 편집에 잘못 적용되지 않는다.
+#[test]
+fn undo_clears_history_on_first_excess_source_byte() {
+    let mut editor = PromptEditor::new();
+    editor.handle(InputEvent::Paste("x".repeat(MAX_UNDO_BYTES)), false, NOW);
+    editor.handle(press(KeyCode::Backspace), false, NOW);
+    assert_eq!(
+        editor.handle(undo(), false, NOW),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.text().len(), MAX_UNDO_BYTES);
+    editor.handle(press(KeyCode::Character('y')), false, NOW);
+    editor.handle(press(KeyCode::Backspace), false, NOW);
+    assert_eq!(editor.handle(undo(), false, NOW), EditorEffect::NoChange);
 }
 
 // 위아래 이동은 실제 줄과 자동 줄바꿈을 따르며 짧은 줄을 거쳐도 원래 셀 열을 복원한다.
