@@ -40,7 +40,16 @@ impl TuiState {
         let selection_edit = matches!(&input, InputEvent::Key(key)
             if matches!(key.code, KeyCode::Up | KeyCode::Down)
                 && key.modifiers == KeyModifiers::NONE);
+        let recall_was_open = self.recall_picker.is_some();
         let effect = self.handle_input(input, now)?;
+        let effect = if recall_was_open
+            && self.recall_picker.is_none()
+            && matches!(effect, StateEffect::Unchanged)
+        {
+            StateEffect::Redraw
+        } else {
+            effect
+        };
         let request = self
             .pending_requests
             .front()
@@ -161,6 +170,9 @@ impl TuiState {
             && key.modifiers == KeyModifiers::CONTROL
             && matches!(key.code, KeyCode::Character('v' | 'V'))
         {
+            if self.recall_picker.is_some() {
+                return Ok(StateEffect::Unchanged);
+            }
             if key.action != KeyAction::Press {
                 return Ok(StateEffect::Unchanged);
             }
@@ -175,6 +187,7 @@ impl TuiState {
             ViewInputEffect::Consumed => return Ok(StateEffect::Unchanged),
             ViewInputEffect::Redraw => {
                 if self.views.active() != active_before {
+                    self.cancel_recall_picker();
                     self.cancel_fork_picker();
                     if let Some((request, token)) = self.request_overlay
                         && self.overlay.is_current(token)
@@ -302,6 +315,14 @@ impl TuiState {
             OverlayInputEffect::Redraw => return Ok(StateEffect::Redraw),
             OverlayInputEffect::Dismissed(token) => {
                 if self
+                    .recall_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.token == token)
+                {
+                    self.cancel_recall_picker();
+                    return Ok(StateEffect::Redraw);
+                }
+                if self
                     .fork_overlay
                     .is_some_and(|(current, _)| current == token)
                 {
@@ -361,6 +382,18 @@ impl TuiState {
                 return Ok(StateEffect::Redraw);
             },
             OverlayInputEffect::Accepted(receipt) => {
+                if self
+                    .recall_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.token == receipt.token())
+                {
+                    return Ok(self.accept_recalled_prompt(
+                        receipt
+                            .identity()
+                            .parse()
+                            .expect("history identity is an index"),
+                    ));
+                }
                 if let Some((token, count)) = self.fork_overlay
                     && token == receipt.token()
                 {
@@ -479,11 +512,24 @@ impl TuiState {
             },
         }
 
+        if let Some(effect) = self.handle_recall_query(&input, now)? {
+            return Ok(effect);
+        }
+
         if self.question_notes.is_some()
             && matches!(&input, InputEvent::Key(key) if key.code == KeyCode::Enter
                 && key.modifiers == KeyModifiers::NONE)
         {
             return Ok(StateEffect::Unchanged);
+        }
+
+        if self.can_open_recall()
+            && matches!(&input, InputEvent::Key(key)
+                if matches!(key.code, KeyCode::Character('r' | 'R'))
+                    && key.modifiers == KeyModifiers::CONTROL
+                    && key.action == KeyAction::Press)
+        {
+            return self.open_recall_picker();
         }
 
         let editor_vertical = self.views.active() == ObservabilityView::Chat
@@ -1028,6 +1074,7 @@ impl TuiState {
         }
         match outcome {
             SubmissionOutcome::Accepted { .. } => {
+                self.prompt_history.retain(submission.input().clone());
                 if queued {
                     self.follow_ups.pop_front();
                 } else if self.prompt_assist.input(self.editor.text()).as_ref().ok()
@@ -1123,6 +1170,7 @@ impl TuiState {
     /// 유휴 상태이고 일시 중지되지 않은 queue snapshot 하나만 기존 admission lane으로 옮긴다.
     pub(in crate::runner) fn next_follow_up(&mut self) -> Result<Option<AgentAction>, StateError> {
         if self.preview.is_some()
+            || self.recall_picker.is_some()
             || self.follow_ups_paused
             || self.active_turn.is_some()
             || self.has_pending_request()

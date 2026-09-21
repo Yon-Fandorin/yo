@@ -32,6 +32,7 @@ use crate::{
 };
 
 mod commands;
+mod history;
 mod image;
 mod input;
 mod interview;
@@ -102,6 +103,8 @@ pub(super) struct TuiState {
     prompt_assist: PromptAssistController,
     prompt_templates: PromptTemplates,
     pending_submissions: VecDeque<InputSubmission>,
+    prompt_history: history::PromptHistory,
+    recall_picker: Option<history::RecallPicker>,
     follow_ups: VecDeque<UserInput>,
     follow_ups_paused: bool,
     follow_up_submission: Option<SubmissionId>,

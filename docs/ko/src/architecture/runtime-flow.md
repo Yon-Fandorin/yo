@@ -310,6 +310,13 @@ worker가 이미 해당 Turn을 끝냈다면 core는 같은 text를 새 Turn으�
 메모리에 속해 터미널 일시중단 동안 유지되지만 Journal에 영속 기록하지 않는다.
 중첩된 오프라인 preview도 같은 queue와 접수 상태를 사용한다.
 
+TUI는 별도로 승인된 일반 prompt의 text·참조 metadata·이미지 snapshot을 현재 세션 메모리에
+최대 32개·총 32 MiB까지 보관한다. Ctrl+R은 검색 가능한 이력 panel을 연다. Enter는 선택한
+입력 전체를 편집 초안으로 복원하고, 이후 별도 Enter가 일반 접수·재검증 경로로 제출한다.
+Esc는 panel을 열기 전 초안과 커서를 복원한다. 거절된 입력·Activity 답변·비밀은 이 이력에
+들어가지 않는다. 터미널 일시중단을 지나도 유지되지만 세션을 바꾸거나 프로세스를 종료하면
+사라진다.
+
 편집 가능한 TUI에서 `/model`은 account section으로 나눈 selection panel 하나를 연다. 저장된
 managed model은 `Provider 표시 이름 · Account 표시 이름` 아래에 묶인다. 편집 가능한 모든
 TUI는 현재 backend와 무관하게 built-in host 둘의 session-free 인증 inventory를 동시에 읽는다.

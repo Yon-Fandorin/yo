@@ -71,6 +71,9 @@ impl TuiState {
     pub(super) fn sync_request_overlay(&mut self) -> Result<(), StateError> {
         self.normalize_secret_request();
         let pending = self.pending_requests.front().copied();
+        if pending.is_some() {
+            self.cancel_recall_picker();
+        }
         if self.question_notes_refresh != pending {
             self.question_notes_refresh = None;
         }

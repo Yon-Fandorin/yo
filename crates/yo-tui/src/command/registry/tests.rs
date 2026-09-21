@@ -50,6 +50,7 @@ fn help_document_uses_registry_and_explains_interaction() {
         "Ctrl+A/E",
         "Ctrl+U/K",
         "Ctrl+Y",
+        "Ctrl+R",
         "Shift+Tab",
     ] {
         assert!(document.markdown.contains(shortcut));

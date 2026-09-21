@@ -351,6 +351,14 @@ into an empty draft; Alt+Enter/Alt+Q with an empty draft resumes. Queues belong 
 live TUI session, survive terminal suspension, and are not durable journal records.
 The nested offline preview uses the same queue and admission state.
 
+The TUI separately retains up to 32 accepted ordinary prompts and 32 MiB of their
+text, reference metadata, and image snapshots in memory for the current session.
+Ctrl+R opens a filterable recall panel. Enter restores the selected complete input
+for editing; a later Enter submits it through normal admission and revalidation.
+Esc restores the draft and cursor from before the picker opened. Rejected inputs,
+activity answers, and secrets do not enter this history. It survives terminal
+suspension but does not cross a session change or process exit.
+
 In an editable TUI, `/model` opens one account-sectioned selection panel. Stored
 managed models are grouped under `Provider display · Account display`. Every
 editable TUI concurrently reads the session-free authenticated inventories of
