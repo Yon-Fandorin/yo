@@ -49,6 +49,7 @@ fn help_document_uses_registry_and_explains_interaction() {
         "Alt+O",
         "Ctrl+O",
         "Ctrl+A/E",
+        "Ctrl+G",
         "Ctrl+U/K",
         "Ctrl+Y",
         "Ctrl+-",

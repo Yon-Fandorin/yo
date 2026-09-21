@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     command,
-    execution::model,
+    execution::{model, process::external_editor},
     interaction::diagnostic::AppError,
     state::{config, storage},
 };
@@ -182,6 +182,28 @@ pub(super) fn run_terminal_generation(
     match terminal {
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
         Ok(yo_tui::TerminalOutcome::NewSessionRequested) => return Ok(SessionStep::New),
+        Ok(yo_tui::TerminalOutcome::ExternalEditorRequested) => {
+            let Some(snapshot) = session.tui.external_editor_snapshot() else {
+                session.tui.report_external_editor_failure(
+                    "the external editor draft snapshot is unavailable",
+                );
+                return Ok(SessionStep::Continue);
+            };
+            let result = external_editor::run(termination, snapshot.text());
+            match result {
+                Ok(text) => {
+                    if let Err(error) = session.tui.import_external_editor_result(&snapshot, text) {
+                        session
+                            .tui
+                            .report_external_editor_failure(error.to_string());
+                    }
+                },
+                Err(error) => session
+                    .tui
+                    .report_external_editor_failure(error.to_string()),
+            }
+            return Ok(SessionStep::Continue);
+        },
         Ok(yo_tui::TerminalOutcome::ForkSessionRequested) => return Ok(SessionStep::Fork),
         Ok(yo_tui::TerminalOutcome::ForkPickerRequested) => return Ok(SessionStep::ForkPicker),
         Ok(yo_tui::TerminalOutcome::ForkBoundaryRequested { picker, index }) => {

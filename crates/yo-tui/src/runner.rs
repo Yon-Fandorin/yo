@@ -28,8 +28,9 @@ pub use error::RunError;
 pub use frame::FrameRateLimit;
 pub use interview::InterviewHistoryHost;
 pub use session::{
-    PublicationRecoveryEvidence, PublicationRecoveryKind, ResumeSessionEntry, TuiDocument,
-    TuiSession, TuiSessionInfo, TuiStatusError, TuiStatusLine,
+    ExternalEditorImportError, ExternalEditorSnapshot, PublicationRecoveryEvidence,
+    PublicationRecoveryKind, ResumeSessionEntry, TuiDocument, TuiSession, TuiSessionInfo,
+    TuiStatusError, TuiStatusLine,
 };
 pub use skill::{SkillReferenceConnection, SkillReferencePoll};
 pub use unix::{run, run_session_with_mode, run_with_mode};
@@ -107,6 +108,8 @@ pub enum TerminalOutcome {
     ModelSelectionRequested(yo_core::ModelPickerTarget),
     /// The idle frontend requested a new independent session after terminal restoration.
     NewSessionRequested,
+    /// 터미널을 복원한 뒤 호스트에서 일반 Chat 초안을 외부 편집기로 연다.
+    ExternalEditorRequested,
     /// Requests an exact branch of the current durable conversation after terminal restoration.
     ForkSessionRequested,
     /// Requests a frozen catalog of historical boundaries for the current idle Session.

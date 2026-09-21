@@ -15,10 +15,13 @@ use crate::support::{
 };
 
 const COMMAND_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const EDITOR_READY_TIMEOUT: Duration = Duration::from_secs(15);
 const CLEAN_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 const EXIT_MARKER: &str = "YO_TMUX_EXIT";
 const SHELL_READY: &str = "YO_TMUX_READY>";
 
+#[path = "external_editor.rs"]
+mod external_editor;
 #[path = "suspend.rs"]
 mod suspend;
 
@@ -85,6 +88,15 @@ impl TmuxSession {
     }
 
     fn run_mode_under_shell(&self, option: &str, alternate_screen: bool) -> ShellJob {
+        self.run_mode_under_shell_with_editor(option, alternate_screen, None)
+    }
+
+    fn run_mode_under_shell_with_editor(
+        &self,
+        option: &str,
+        alternate_screen: bool,
+        visual: Option<&path::Path>,
+    ) -> ShellJob {
         let repository = repository_path();
         self.run_tmux(&[
             "respawn-pane",
@@ -127,11 +139,30 @@ impl TmuxSession {
         // Readline may settle its prompt termios just after the prompt becomes visible.
         thread::sleep(Duration::from_secs(1));
         let baseline = self.termios().expect("read shell terminal state");
+        if let Some(editor) = visual {
+            self.send_literal(&format!(
+                "export VISUAL={}; printf 'YO_EDITOR_ENV_READY\\n'",
+                shell_quote(editor)
+            ));
+            self.send_enter();
+            self.wait_until(COMMAND_READY_TIMEOUT, |state| {
+                !state.dead
+                    && state.command == "bash"
+                    && self.captured_text().contains("YO_EDITOR_ENV_READY")
+            });
+        }
         let yo = shell_quote(path::Path::new(env!("CARGO_BIN_EXE_yo")));
         let command = format!("{yo} {option} --model host:codex");
         self.send_literal(&command);
         self.send_enter();
-        self.wait_for_mode(alternate_screen);
+        self.wait_for_mode_with_timeout(
+            alternate_screen,
+            if visual.is_some() {
+                EDITOR_READY_TIMEOUT
+            } else {
+                COMMAND_READY_TIMEOUT
+            },
+        );
         ShellJob {
             baseline,
             yo_pid: self.shell_child().expect("read the only yo shell child"),
@@ -139,7 +170,11 @@ impl TmuxSession {
     }
 
     fn wait_for_mode(&self, alternate_screen: bool) {
-        self.wait_until(COMMAND_READY_TIMEOUT, |state| {
+        self.wait_for_mode_with_timeout(alternate_screen, COMMAND_READY_TIMEOUT);
+    }
+
+    fn wait_for_mode_with_timeout(&self, alternate_screen: bool, timeout: Duration) {
+        self.wait_until(timeout, |state| {
             !state.dead
                 && state.alternate_screen == alternate_screen
                 && self

@@ -337,6 +337,14 @@ impl WorkspaceReferenceAssist {
 }
 
 impl WorkspaceEdit {
+    pub(crate) fn old_range(&self) -> &Range<usize> {
+        &self.old
+    }
+
+    pub(crate) fn new_range(&self) -> &Range<usize> {
+        &self.new
+    }
+
     pub(crate) fn between(
         old: &str,
         old_cursor: usize,

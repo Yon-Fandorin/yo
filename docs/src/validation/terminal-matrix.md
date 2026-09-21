@@ -741,6 +741,22 @@ This tests decoded characters and terminal paste; physical key mapping,
 macOS IME preedit/commit and terminal Command-V were covered separately by the
 [direct input verification](#current-mac-direct-input-verification).
 
+The external-editor handoff has an isolated local tmux check:
+
+```bash
+cargo test -p yo-cli --test terminal_matrix external_editor \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The fixture configures a private `VISUAL` script in the shell that launches Yo.
+It checks that `Ctrl+G` returns edited multiline text to an unsent draft in
+Inline and Fullscreen, that an editor failure retains the original draft, and
+that `Ctrl+C` in a foreground editor does not end Yo, and that `Ctrl+Z` cancels
+the stopped editor without hanging Yo. An editor that reads the terminal
+immediately checks the foreground handoff race. The fixture also checks removal of
+the temporary draft file, retained Yo process identity, no inference request,
+and clean shell terminal restoration after exit.
+
 Each route checks both the empty-`Ctrl+D` exit path and two consecutive
 `Ctrl+Z` → stopped job → `fg` generations. The job-control checks compare the
 terminal with the route's actual interactive-shell termios at every stopped

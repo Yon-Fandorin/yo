@@ -1715,6 +1715,22 @@ resume 때 glyph profile을 다시 만들거나 선택하지 않는다.
 
 계약: [터미널 job-control 일시정지와 재개](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md)
 
+## 외부 프롬프트 편집기
+
+일반 Chat 초안에서 `Ctrl+G`를 누르면 TUI가 terminal 상태를 복원한 다음에만
+`ExternalEditorRequested`를 반환한다. 유지되는 `TuiSession`에는 텍스트·커서,
+승인된 참조·이미지, 초안 세대의 typed snapshot이 남는다. CLI는 `VISUAL`, 그다음
+`EDITOR`를 찾고 인용된 인자를 shell 평가 없이 해석해 텍스트만 비공개 임시 Markdown
+파일에 쓴다. 프로세스 호스트의 종료 정리 lease를 유지하면서 별도의 전경 프로세스
+그룹에서 편집기를 실행하고, 끝나면 terminal 전경 그룹을 되찾아 임시 파일을 삭제한다.
+
+정상 종료한 편집기의 크기가 제한된 UTF-8 결과는 전송되지 않은 같은 초안에 한 번의
+undo 가능한 편집으로 반영된다. Typed 참조와 이미지는 바뀐 텍스트가 원래 span에
+겹치지 않을 때만 이동한다. 모호한 변경과 오래된 snapshot은 원래 초안을 유지하고
+안내를 표시한다. 편집기 실패, `Ctrl+C`, 중지된 편집기에서도 초안은 유지된다. 다음
+terminal 세대는 같은 Inline 또는 Fullscreen mode를 다시 획득하고 보존 상태에서
+전체를 다시 그린다. 비밀 입력과 활성 요청 overlay에는 이 인계를 제공하지 않는다.
+
 ## 종료와 정리
 
 사용자 종료와 프로세스 종료는 프로세스 호스트가 signal 정책을 적용하기

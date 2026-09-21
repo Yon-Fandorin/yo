@@ -1918,6 +1918,25 @@ agent and that exact signal wins over suspension.
 
 Contract: [Terminal job-control suspend and resume](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md)
 
+## External prompt editor
+
+`Ctrl+G` on an ordinary Chat draft returns `ExternalEditorRequested` only after
+the TUI has restored terminal state. The retained `TuiSession` keeps a typed
+snapshot of text, cursor, accepted references, images, and draft generation.
+The CLI resolves `VISUAL`, then `EDITOR`, parses quoted arguments without shell
+evaluation, and writes only the text to a private temporary Markdown file. It
+runs the editor in its own foreground process group while the process host's
+termination cleanup lease remains active, then reclaims the terminal group and
+removes the temporary file.
+
+A successful, bounded UTF-8 result returns to the same unsent draft as one
+undoable edit. Typed references and images move only when the changed text
+cannot overlap their original spans; ambiguous changes and stale snapshots
+leave the original draft intact with a notice. Editor failure, `Ctrl+C`, or a
+stopped editor also preserves the draft. The next generation reacquires the
+same Inline or Fullscreen mode and redraws from retained state. Secret input and
+active request overlays do not offer this handoff.
+
 ## Exit and cleanup
 
 User exit and process termination share the same cleanup route until the

@@ -674,6 +674,21 @@ cargo test -p yo-cli --test terminal_matrix draft_input_and_bracketed_paste \
 문자열·확정 과정과 terminal의 Command-V 단축키는
 [직접 입력 검증](#현재-mac-직접-입력-검증)에서 별도로 확인했다.
 
+외부 편집기 인계는 격리된 로컬 tmux 검사로 확인한다.
+
+```bash
+cargo test -p yo-cli --test terminal_matrix external_editor \
+  -- --ignored --nocapture --test-threads=1
+```
+
+Fixture는 Yo를 시작하는 shell에 전용 `VISUAL` script를 설정한다. `Ctrl+G`가
+Inline과 Fullscreen에서 편집된 여러 줄을 전송하지 않은 초안으로 되돌리는지,
+편집기가 실패하면 원래 초안이 남는지, 전경 편집기의 `Ctrl+C`가 Yo를 종료하지
+않고 `Ctrl+Z`가 멈춘 편집기를 취소해 복귀하는지 검사한다. 시작 직후 terminal을 읽는
+편집기로 전경 인계 경쟁도 검사한다. 임시 초안 파일 삭제,
+Yo 프로세스 신원 유지, 추론 요청 없음,
+종료 후 shell terminal 복원도 검사한다.
+
 각 경로는 빈 입력 `Ctrl+D` 종료와 두 번 연속
 `Ctrl+Z` → job 정지 → `fg` terminal generation을 모두 검사한다.
 job-control 검사는 매 정지 구간의 터미널을 해당 경로의 실제 interactive shell

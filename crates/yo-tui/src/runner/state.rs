@@ -21,7 +21,7 @@ use crate::{
     },
     prompt::{self, assist::PromptAssistController},
     runner::{
-        AgentAction, ForkPickerToken, PresentationMode,
+        AgentAction, ExternalEditorSnapshot, ForkPickerToken, PresentationMode,
         chat::ChatProjection,
         model::ModelSelectionState,
         session::{TuiSessionInfo, TuiStatusLine},
@@ -32,6 +32,7 @@ use crate::{
 };
 
 mod commands;
+mod external_editor;
 mod history;
 mod image;
 mod input;
@@ -127,6 +128,9 @@ pub(super) struct TuiState {
     model_overlay: Option<OverlayInstanceToken>,
     pending_model_selection: Option<yo_core::ModelPickerTarget>,
     reserved_model_selection: Option<yo_core::ModelPickerTarget>,
+    external_editor_requested: bool,
+    external_editor_snapshot: Option<ExternalEditorSnapshot>,
+    external_editor_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

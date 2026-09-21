@@ -517,6 +517,10 @@ impl TuiState {
             },
         }
 
+        if let Some(effect) = self.handle_external_editor_key(&input)? {
+            return Ok(effect);
+        }
+
         if let Some(effect) = self.handle_recall_query(&input, now)? {
             return Ok(effect);
         }

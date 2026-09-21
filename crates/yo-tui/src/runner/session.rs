@@ -1,9 +1,11 @@
 mod bridges;
 mod construction;
 mod continuation;
+mod external_editor;
 mod generation;
 mod metadata;
 
+pub use external_editor::{ExternalEditorImportError, ExternalEditorSnapshot};
 pub(in crate::runner) use generation::SessionParts;
 pub use generation::{PublicationRecoveryEvidence, PublicationRecoveryKind};
 pub use metadata::{
