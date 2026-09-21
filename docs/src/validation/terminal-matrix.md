@@ -137,6 +137,26 @@ now waits for the observable idle state with a two-second bound before checking
 reserved-Turn admission. Its production behavior is unchanged, and the exact
 test passed 100 consecutive runs before the package interview suites.
 
+## v4 contextual interview drafts on the saved Mac
+
+On 2026-09-21, accepted `develop` commit `1534e7b1` built in a disposable
+checkout on the pinned macOS 26.6.2 arm64 host. Core interview tests (24),
+contextual TUI tests (4), all-target TUI tests (947 unit and 4 integration),
+Codex adapter tests (149), and all-target TUI Clippy passed. The tested tree
+stayed clean.
+
+An isolated 120×42 tmux session started the built Yo with `host:codex` and
+Codex 0.155.1. Two real `gpt-5.6-sol` Turns attempted to request a nonsecret
+answer. The first asked in ordinary chat text; the second replied
+`TOOL_UNAVAILABLE` when explicitly asked to call a user-input tool. The two
+isolated Session Journals contained no `UserInputRequest`, and the interview
+repository contained no draft file. Therefore this run verifies Mac build,
+terminal startup, and the automated boundaries, but does not verify live
+`/interview continue`, finished `view`/`discard`, or final-seal deletion. Repeat
+that journey only after a delegated host emits a genuine nonsecret user-input
+request in a Yo Session. The normal Mac Codex authentication remained unchanged;
+the isolated checkout, authentication copy, state, and tmux server were removed.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`

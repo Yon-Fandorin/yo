@@ -121,6 +121,24 @@ state lock을 잠깐 보유하는 동안 busy로 관찰될 수 있었다. 해당
 제품 동작은 바뀌지 않았고, 정확한 test는 package 인터뷰 suite 전에 100회
 연속 통과했다.
 
+## 저장된 Mac의 v4 문맥 인터뷰 초안
+
+2026-09-21에 승인된 `develop` 커밋 `1534e7b1`을 고정된 macOS 26.6.2 arm64
+호스트의 일회용 체크아웃에서 빌드했다. Core 인터뷰 test 24개, 문맥 TUI test 4개,
+TUI 전체 대상 test 947개와 통합 test 4개, Codex 어댑터 test 149개, TUI 전체
+대상 Clippy가 통과했다. 검사한 tree는 깨끗하게 유지되었다.
+
+격리된 120×42 tmux 세션에서 빌드한 Yo를 `host:codex`와 Codex 0.155.1로
+시작했다. 실제 `gpt-5.6-sol` Turn 두 번에서 비밀이 아닌 답변 요청을 시도했다.
+첫 번째는 일반 채팅 문장으로 질문했고, 두 번째는 사용자 입력 도구를 명시적으로
+요청하자 `TOOL_UNAVAILABLE`로 답했다. 격리된 Session Journal 두 개에
+`UserInputRequest`가 없고 인터뷰 저장소에도 초안 파일이 없었다. 따라서 이번 실행은
+Mac 빌드, 터미널 시작과 자동 검사 경계만 검증한다. 살아 있는 요청의
+`/interview continue`, 종료된 초안의 `view`/`discard`, 최종 봉인 후 삭제는
+검증하지 못했다. 위임 호스트가 Yo Session에 실제 비밀이 아닌 사용자 입력 요청을
+발행할 수 있을 때 이 경로를 다시 검사한다. Mac의 일반 Codex 인증은 변경되지
+않았고, 격리된 체크아웃·인증 사본·상태·tmux 서버는 삭제했다.
+
 ## 저장된 Mac의 큰 본문 페이지 검증
 
 2026-09-13에 clean 후보 `af16336de8836475af39022d08bf612d13955110`이
