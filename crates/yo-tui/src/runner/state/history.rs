@@ -3,7 +3,7 @@
 use std::{collections::VecDeque, mem, sync::Arc, time::Duration};
 
 use unicode_segmentation::UnicodeSegmentation;
-use yo_core::{InputReference, UserInput};
+use yo_core::{AgentCommand, InputReference, SessionId, TranscriptRecord, UserInput};
 
 use crate::{
     input::{
@@ -22,6 +22,15 @@ use crate::{
 const ENTRY_LIMIT: usize = 32;
 const BYTE_LIMIT: usize = 32 * 1024 * 1024;
 
+/// 재개한 같은 Session의 확정된 일반 입력에서 만든 제한된 prompt history seed입니다.
+///
+/// 생성 시점에 대상 Session의 `StartTurn`과 `SteerTurn`만 검사하고 기존 history 한도를 적용하므로,
+/// 호출자가 저장 기록 전체를 복사하지 않아도 됩니다.
+#[derive(Debug, Default)]
+pub struct RestoredPromptHistory {
+    history: PromptHistory,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct PromptHistory {
     entries: VecDeque<(Arc<UserInput>, usize)>,
@@ -38,31 +47,26 @@ pub(super) struct RecallPicker {
 
 impl PromptHistory {
     pub(super) fn retain(&mut self, input: UserInput) {
-        // PNG 원본은 UserInput이 소유한다. 전체 항목을 함께 제거해야 marker와 payload가 분리되지
-        // 않는다.
-        let bytes = input.as_str().len()
-            + input
-                .references()
-                .iter()
-                .map(reference_bytes)
-                .sum::<usize>()
-            + input
-                .images()
-                .iter()
-                .map(|image| {
-                    image.snapshot().png().len()
-                        + image.snapshot().sha256().len()
-                        + image.display().map_or(0, |display| {
-                            display.filename.as_ref().map_or(0, String::len)
-                                + display.source_mime_type.as_ref().map_or(0, String::len)
-                                + display.source_sha256.as_ref().map_or(0, String::len)
-                        })
-                        + 1024
-                })
-                .sum::<usize>();
+        let bytes = input_bytes(&input);
         if bytes > BYTE_LIMIT {
             return;
         }
+        self.make_room(bytes);
+        self.bytes += bytes;
+        self.entries.push_back((Arc::new(input), bytes));
+    }
+
+    fn retain_clone(&mut self, input: &UserInput) {
+        let bytes = input_bytes(input);
+        if bytes > BYTE_LIMIT {
+            return;
+        }
+        self.make_room(bytes);
+        self.bytes += bytes;
+        self.entries.push_back((Arc::new(input.clone()), bytes));
+    }
+
+    fn make_room(&mut self, bytes: usize) {
         while self.entries.len() >= ENTRY_LIMIT || bytes > BYTE_LIMIT - self.bytes {
             let (_, removed) = self
                 .entries
@@ -70,8 +74,6 @@ impl PromptHistory {
                 .expect("a full history has an entry");
             self.bytes -= removed;
         }
-        self.bytes += bytes;
-        self.entries.push_back((Arc::new(input), bytes));
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -85,6 +87,66 @@ impl PromptHistory {
             .map(|(input, _)| Arc::clone(input))
             .collect()
     }
+}
+
+impl RestoredPromptHistory {
+    /// 재개 Session의 확정 transcript에서 회수 가능한 일반 입력만 bounded seed로 복사합니다.
+    #[must_use]
+    pub fn from_transcript_records(session_id: SessionId, records: &[TranscriptRecord]) -> Self {
+        let mut selected = Vec::with_capacity(ENTRY_LIMIT);
+        let mut bytes = 0;
+        for record in records.iter().rev() {
+            let (turn, input) = match record {
+                TranscriptRecord::CommandCommitted(
+                    AgentCommand::StartTurn { turn, input }
+                    | AgentCommand::SteerTurn { turn, input },
+                ) => (turn, input),
+                _ => continue,
+            };
+            if turn.session_id() != session_id {
+                continue;
+            }
+            let input_bytes = input_bytes(input);
+            if input_bytes > BYTE_LIMIT {
+                continue;
+            }
+            if selected.len() >= ENTRY_LIMIT || input_bytes > BYTE_LIMIT - bytes {
+                break;
+            }
+            bytes += input_bytes;
+            selected.push(input);
+        }
+        let mut history = PromptHistory::default();
+        for input in selected.into_iter().rev() {
+            history.retain_clone(input);
+        }
+        Self { history }
+    }
+}
+
+fn input_bytes(input: &UserInput) -> usize {
+    // PNG 원본은 UserInput이 소유한다. 전체 항목을 함께 제거해야 marker와 payload가 분리되지
+    // 않는다.
+    input.as_str().len()
+        + input
+            .references()
+            .iter()
+            .map(reference_bytes)
+            .sum::<usize>()
+        + input
+            .images()
+            .iter()
+            .map(|image| {
+                image.snapshot().png().len()
+                    + image.snapshot().sha256().len()
+                    + image.display().map_or(0, |display| {
+                        display.filename.as_ref().map_or(0, String::len)
+                            + display.source_mime_type.as_ref().map_or(0, String::len)
+                            + display.source_sha256.as_ref().map_or(0, String::len)
+                    })
+                    + 1024
+            })
+            .sum::<usize>()
 }
 
 fn reference_bytes(reference: &InputReference) -> usize {
@@ -156,6 +218,13 @@ impl RecallPicker {
 }
 
 impl TuiState {
+    pub(in crate::runner) fn install_restored_prompt_history(
+        &mut self,
+        restored: RestoredPromptHistory,
+    ) {
+        self.prompt_history = restored.history;
+    }
+
     pub(super) fn open_recall_picker(&mut self) -> Result<StateEffect, StateError> {
         if self.prompt_history.is_empty() {
             self.chat

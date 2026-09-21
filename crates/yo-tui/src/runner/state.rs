@@ -44,6 +44,7 @@ mod presentation;
 mod preview;
 mod requests;
 
+pub use history::RestoredPromptHistory;
 pub(super) use presentation::{FrameError, MotionDemand, PreparedFrame};
 
 const FOLLOW_UP_LIMIT: usize = 16;

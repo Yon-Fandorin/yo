@@ -1,19 +1,21 @@
 use std::{num::NonZeroU64, time::Duration};
 
 use yo_core::{
-    ActivityId, ActivityKind, ActivityRef, AgentEvent, InputImage, InputImageSnapshot,
-    InputReference, RequestId, SkillReference, SkillReferenceScope, SubmissionOutcome, TurnId,
-    TurnRef, UserInput,
+    ActivityId, ActivityKind, ActivityRef, ActivityRequestRef, ActivityResponse, AgentCommand,
+    AgentEvent, InputImage, InputImageSnapshot, InputReference, RequestId, SessionId,
+    SkillReference, SkillReferenceScope, SubmissionOutcome, TranscriptRecord, TurnId, TurnRef,
+    UserInput,
 };
 
 use super::{
     BYTE_LIMIT, ENTRY_LIMIT, InputEvent, KeyAction, KeyCode, KeyModifiers, PromptHistory,
-    StateEffect, TuiState,
+    RestoredPromptHistory, StateEffect, TuiState,
 };
 use crate::{
+    ColorCapability, MotionPreference,
     appearance::AppearanceState,
     input::event::{KeyEvent, KeyState},
-    runner::AgentAction,
+    runner::{AgentAction, session::TuiSession},
     surface::Size,
 };
 
@@ -51,6 +53,21 @@ fn submit_and_accept(state: &mut TuiState, text: &str) {
     state.starting_submission = None;
 }
 
+fn seed_resumed_history(state: &mut TuiState, input: UserInput) {
+    state.install_restored_prompt_history(resumed_history(input));
+}
+
+fn resumed_history(input: UserInput) -> RestoredPromptHistory {
+    let session_id: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
+    RestoredPromptHistory::from_transcript_records(
+        session_id,
+        &[TranscriptRecord::CommandCommitted(
+            AgentCommand::StartTurn { turn, input },
+        )],
+    )
+}
+
 // 33번째 입력은 가장 오래된 항목만 제거하고 최신 항목을 유지한다.
 #[test]
 fn evicts_oldest_after_entry_limit() {
@@ -71,6 +88,113 @@ fn oversize_input_does_not_replace_history() {
     history.retain(UserInput::new("x".repeat(BYTE_LIMIT + 1)));
     assert_eq!(history.entries.len(), 1);
     assert_eq!(history.recent()[0].as_str(), "kept");
+}
+
+// 재개 seed는 현재 Session의 확정 StartTurn/SteerTurn만 복사하고, 다른 Session·질문 답변·비명령
+// 기록과 oversized 입력은 기존 bounded history에 들어가지 않는다.
+#[test]
+fn resumed_seed_filters_records_before_copying_and_keeps_recent_bound() {
+    let session_id: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+    let parent_id: SessionId = "01890f00-0000-7000-8000-000000000002".parse().unwrap();
+    let current_turn = |id| TurnRef::new(session_id, TurnId::new(NonZeroU64::new(id).unwrap()));
+    let parent_turn = TurnRef::new(parent_id, TurnId::new(NonZeroU64::new(99).unwrap()));
+    let records = [
+        TranscriptRecord::CommandCommitted(AgentCommand::StartTurn {
+            turn: current_turn(1),
+            input: UserInput::new("ordinary start"),
+        }),
+        TranscriptRecord::CommandCommitted(AgentCommand::SteerTurn {
+            turn: current_turn(2),
+            input: UserInput::new("ordinary steer"),
+        }),
+        TranscriptRecord::CommandCommitted(AgentCommand::RespondToActivity {
+            request: ActivityRequestRef::new(
+                ActivityRef::new(parent_turn, ActivityId::new(NonZeroU64::new(1).unwrap())),
+                RequestId::new(NonZeroU64::new(1).unwrap()),
+            ),
+            response: ActivityResponse::UserInput(UserInput::new("activity answer")),
+        }),
+        TranscriptRecord::CommandCommitted(AgentCommand::StartTurn {
+            turn: parent_turn,
+            input: UserInput::new("parent prompt"),
+        }),
+        TranscriptRecord::CommandCommitted(AgentCommand::StartTurn {
+            turn: current_turn(3),
+            input: UserInput::new("ordinary start"),
+        }),
+        TranscriptRecord::CommandCommitted(AgentCommand::StartTurn {
+            turn: current_turn(4),
+            input: UserInput::new("x".repeat(BYTE_LIMIT + 1)),
+        }),
+    ];
+    let seed = RestoredPromptHistory::from_transcript_records(session_id, &records);
+    let mut state = TuiState::new();
+    state.install_restored_prompt_history(seed);
+
+    assert_eq!(state.prompt_history.entries.len(), 3);
+    let recent = state.prompt_history.recent();
+    assert_eq!(recent[0].as_str(), "ordinary start");
+    assert_eq!(recent[1].as_str(), "ordinary steer");
+    assert_eq!(recent[2].as_str(), "ordinary start");
+
+    // 재개 seed와 같은 입력을 live로 다시 승인해도 기존 반복 항목은 보존되고 새 승인 한 건만
+    // 뒤에 추가된다.
+    submit_and_accept(&mut state, "ordinary start");
+    assert_eq!(state.prompt_history.entries.len(), 4);
+    assert_eq!(state.prompt_history.recent()[0].as_str(), "ordinary start");
+    assert_eq!(state.prompt_history.recent()[1].as_str(), "ordinary start");
+}
+
+// 재개 seed도 33번째 항목과 byte 한도를 한 단위 넘기는 입력에서 최신 항목을 남긴다.
+#[test]
+fn resumed_seed_keeps_newest_entries_at_both_capacity_boundaries() {
+    let session_id: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+    let records: Vec<_> = (1..=ENTRY_LIMIT + 1)
+        .map(|id| {
+            let turn = TurnRef::new(
+                session_id,
+                TurnId::new(NonZeroU64::new(u64::try_from(id).unwrap()).unwrap()),
+            );
+            TranscriptRecord::CommandCommitted(AgentCommand::StartTurn {
+                turn,
+                input: UserInput::new(id.to_string()),
+            })
+        })
+        .collect();
+    let seed = RestoredPromptHistory::from_transcript_records(session_id, &records);
+    assert_eq!(seed.history.entries.len(), ENTRY_LIMIT);
+    assert_eq!(
+        seed.history.recent()[0].as_str(),
+        (ENTRY_LIMIT + 1).to_string()
+    );
+    assert_eq!(seed.history.recent()[ENTRY_LIMIT - 1].as_str(), "2");
+
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
+    let records = [BYTE_LIMIT - 1, 1, 1].map(|len| {
+        TranscriptRecord::CommandCommitted(AgentCommand::StartTurn {
+            turn,
+            input: UserInput::new("x".repeat(len)),
+        })
+    });
+    let seed = RestoredPromptHistory::from_transcript_records(session_id, &records);
+    assert_eq!(seed.history.entries.len(), 2);
+    assert_eq!(seed.history.bytes, 2);
+    assert!(
+        seed.history
+            .recent()
+            .iter()
+            .all(|input| input.as_str() == "x")
+    );
+}
+
+// public TuiSession builder는 live observation 전에 bounded resume seed를 상태에 설치한다.
+#[test]
+fn tui_session_builder_installs_resumed_prompt_history() {
+    let mut session = TuiSession::new(ColorCapability::Unknown, MotionPreference::Reduced)
+        .with_restored_prompt_history(resumed_history(UserInput::new("resumed")));
+    let state = session.parts_mut().state;
+    assert_eq!(state.prompt_history.entries.len(), 1);
+    assert_eq!(state.prompt_history.recent()[0].as_str(), "resumed");
 }
 
 // 승인 전에는 이력이 없고, 선택 화면의 Enter는 복원만 수행한다. 다음 Enter만 재전송한다.
@@ -156,7 +280,7 @@ fn image_prompt_recall_preserves_attachment_snapshot() {
         .with_images(vec![InputImage::new(0..7, 512, snapshot).unwrap()])
         .unwrap();
     let mut state = TuiState::new();
-    state.prompt_history.retain(input.clone());
+    seed_resumed_history(&mut state, input.clone());
     state
         .handle(
             key(KeyCode::Character('r'), KeyModifiers::CONTROL),
@@ -189,7 +313,7 @@ fn skill_prompt_recall_preserves_reference_identity() {
         UserInput::with_references("$review inspect", vec![InputReference::skill(0..7, skill)])
             .unwrap();
     let mut state = TuiState::new();
-    state.prompt_history.retain(input.clone());
+    seed_resumed_history(&mut state, input.clone());
     state.open_recall_picker().unwrap();
     present(&mut state);
     state

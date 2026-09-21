@@ -27,11 +27,12 @@ pub use runner::{
     AgentAction, AgentConnection, AgentPoll, ArchivedContentPolicy, ArchivedProjectionError,
     ArchivedProjectionOptions, ArchivedSessionView, DispatchOutcome, ExitReason, ForkPickerToken,
     FrameRateLimit, InterviewHistoryHost, PendingDispatch, PresentationMode,
-    PublicationRecoveryEvidence, PublicationRecoveryKind, ResumeSessionEntry, RunError, RunOutcome,
-    TerminalOutcome, TerminationEvent, TerminationSource, TuiDocument, TuiSession, TuiSessionInfo,
-    TuiStatusError, TuiStatusLine, WorkspaceReferenceConnection, WorkspaceReferencePoll,
-    project_archived_session, project_archived_session_with_options, project_archived_usage, run,
-    run_session_with_mode, run_with_mode,
+    PublicationRecoveryEvidence, PublicationRecoveryKind, RestoredPromptHistory,
+    ResumeSessionEntry, RunError, RunOutcome, TerminalOutcome, TerminationEvent, TerminationSource,
+    TuiDocument, TuiSession, TuiSessionInfo, TuiStatusError, TuiStatusLine,
+    WorkspaceReferenceConnection, WorkspaceReferencePoll, project_archived_session,
+    project_archived_session_with_options, project_archived_usage, run, run_session_with_mode,
+    run_with_mode,
 };
 pub use transcript::{
     AssistantRenderInput, AssistantRenderer, DocumentRenderInput, DocumentRenderer, LinkResolver,

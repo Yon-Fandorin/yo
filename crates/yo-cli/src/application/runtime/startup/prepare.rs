@@ -26,6 +26,15 @@ use crate::{
     state::storage,
 };
 
+pub(in crate::application::runtime) fn resume_prompt_history(
+    frontend: StartupFrontend,
+    session_id: yo_core::SessionId,
+    records: &[yo_core::TranscriptRecord],
+) -> Option<yo_tui::RestoredPromptHistory> {
+    matches!(frontend, StartupFrontend::Terminal)
+        .then(|| yo_tui::RestoredPromptHistory::from_transcript_records(session_id, records))
+}
+
 pub(in crate::application::runtime) fn prepare_agent(
     termination: &mut impl yo_tui::TerminationSource,
     cwd: &Path,
@@ -491,6 +500,10 @@ fn prepare_agent_with_target(
             .as_ref()
             .map_or(&[][..], StoredSessionContinuation::transcript_records),
     };
+    let restored_prompt_history = match &launch {
+        Launch::Resume(_) => resume_prompt_history(frontend, session_id, restored_records),
+        Launch::New(_) | Launch::Fork { .. } => None,
+    };
     let (input_admission, image_preparation) = image::bind(
         input_admission,
         &session_cwd,
@@ -570,6 +583,7 @@ fn prepare_agent_with_target(
         is_resume,
         session_id,
         inherited_history,
+        restored_prompt_history,
         agent,
         workspace: session_cwd,
         workspace_references,

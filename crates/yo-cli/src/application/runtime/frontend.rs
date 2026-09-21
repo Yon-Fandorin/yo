@@ -27,6 +27,7 @@ pub(super) fn build_live_session(
         is_resume,
         session_id,
         inherited_history,
+        restored_prompt_history,
         mut agent,
         workspace,
         workspace_references,
@@ -60,6 +61,9 @@ pub(super) fn build_live_session(
     .with_workspace_references(
         workspace_references.expect("the terminal frontend started workspace references"),
     );
+    if let Some(history) = restored_prompt_history {
+        tui = tui.with_restored_prompt_history(history);
+    }
     if let Some(skill_references) = skill_references {
         tui = tui.with_skill_references(skill_references);
     }

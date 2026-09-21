@@ -9,6 +9,7 @@ pub(super) use model::{PreparedAgent, StartupFrontend, StartupOutcome, StartupSn
 #[cfg(test)]
 pub(super) use prepare::{
     fork_descriptor, require_exact_fork_selection, require_supported_fork_binding,
+    resume_prompt_history,
 };
 pub(super) use prepare::{prepare_agent, prepare_fork_agent, prepare_new_agent};
 #[cfg(test)]

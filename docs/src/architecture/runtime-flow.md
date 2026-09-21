@@ -362,12 +362,19 @@ live TUI session, survive terminal suspension, and are not durable journal recor
 The nested offline preview uses the same queue and admission state.
 
 The TUI separately retains up to 32 accepted ordinary prompts and 32 MiB of their
-text, reference metadata, and image snapshots in memory for the current session.
+text, reference metadata, and image snapshots in memory for the current Session.
 Ctrl+R opens a filterable recall panel. Enter restores the selected complete input
 for editing; a later Enter submits it through normal admission and revalidation.
-Esc restores the draft and cursor from before the picker opened. Rejected inputs,
-activity answers, and secrets do not enter this history. It survives terminal
-suspension but does not cross a session change or process exit.
+On terminal resume, startup seeds this same bounded structure from only the resumed
+Session's committed `StartTurn` and `SteerTurn` ordinary inputs, preserving their
+typed references and image snapshots. It bounds and filters records before cloning,
+so a large stored transcript does not create an unbounded history copy. Fork parent
+records, activity answers, rejected or uncommitted inputs, and secrets are excluded;
+the seed is installed before live observations, so accepted outcomes do not duplicate
+it. New sessions, fork children, print runs, and process exit have no seed. Esc
+restores the draft and cursor from before the picker opened. The history survives
+terminal suspension but does not cross a Session change or process exit, and it has
+no separate global history file.
 
 The ordinary draft editor uses Ctrl+- to undo the last text edit; terminals
 that decode legacy `0x1f` as Ctrl+7 use that alias. Consecutive word characters

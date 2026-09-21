@@ -12,9 +12,19 @@ use super::{
     TuiSession,
     metadata::ResumeSessionEntry,
 };
-use crate::overlay::{PanelSnapshot, SelectionEntry};
+use crate::{
+    overlay::{PanelSnapshot, SelectionEntry},
+    runner::RestoredPromptHistory,
+};
 
 impl TuiSession {
+    /// 재개한 같은 Session의 확정 일반 입력을 bounded Ctrl+R history로 설치합니다.
+    #[must_use]
+    pub fn with_restored_prompt_history(mut self, history: RestoredPromptHistory) -> Self {
+        self.state.install_restored_prompt_history(history);
+        self
+    }
+
     /// 부모 실행 상태를 복원하지 않고 자식이 소유한 상속 프레젠테이션을 설치합니다.
     /// 자식 Session 레코드를 관찰하기 전 생성 과정에서 한 번 호출합니다.
     /// 원본 프레젠테이션이 끝나지 않았거나 이미 설치했다면 오류를 반환합니다.

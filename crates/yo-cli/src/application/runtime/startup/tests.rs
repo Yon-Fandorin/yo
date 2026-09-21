@@ -1,20 +1,39 @@
 use std::{
     env, fs,
+    num::NonZeroU64,
     path::PathBuf,
     thread,
     time::{Duration, Instant},
 };
 
 use yo_core::{
-    InputReference, SessionId, SkillReferenceProviderPoll, SkillReferenceSearchRequest, UserInput,
+    AgentCommand, InputReference, SessionId, SkillReferenceProviderPoll,
+    SkillReferenceSearchRequest, TranscriptRecord, TurnId, TurnRef, UserInput,
 };
 
 use super::{
     PreparedLocalSkills, StartupFrontend, fork_descriptor, prepare_local_skills,
     require_exact_fork_selection, require_exact_print_resume_binding,
-    require_supported_fork_binding,
+    require_supported_fork_binding, resume_prompt_history,
 };
 use crate::state::config;
+
+// terminal resume만 같은 Session의 bounded prompt history seed를 준비하고, print 경로는
+// 저장 기록을 TUI 입력 이력으로 노출하지 않는다.
+#[test]
+fn resume_prompt_history_is_scoped_to_terminal_startup() {
+    let session_id: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
+    let records = [TranscriptRecord::CommandCommitted(
+        AgentCommand::StartTurn {
+            turn,
+            input: UserInput::new("restored prompt"),
+        },
+    )];
+
+    assert!(resume_prompt_history(StartupFrontend::Terminal, session_id, &records).is_some());
+    assert!(resume_prompt_history(StartupFrontend::Print, session_id, &records).is_none());
+}
 
 // 저장된 native profile과 현재 catalog가 달라 replacement가 필요해도 print resume은
 // Backend를 시작하지 않으며, 같은 상태의 TUI resume이나 새 print Session 의미는

@@ -318,12 +318,16 @@ worker가 이미 해당 Turn을 끝냈다면 core는 같은 text를 새 Turn으�
 메모리에 속해 터미널 일시중단 동안 유지되지만 Journal에 영속 기록하지 않는다.
 중첩된 오프라인 preview도 같은 queue와 접수 상태를 사용한다.
 
-TUI는 별도로 승인된 일반 prompt의 text·참조 metadata·이미지 snapshot을 현재 세션 메모리에
+TUI는 별도로 승인된 일반 prompt의 text·참조 metadata·이미지 snapshot을 현재 Session 메모리에
 최대 32개·총 32 MiB까지 보관한다. Ctrl+R은 검색 가능한 이력 panel을 연다. Enter는 선택한
 입력 전체를 편집 초안으로 복원하고, 이후 별도 Enter가 일반 접수·재검증 경로로 제출한다.
-Esc는 panel을 열기 전 초안과 커서를 복원한다. 거절된 입력·Activity 답변·비밀은 이 이력에
-들어가지 않는다. 터미널 일시중단을 지나도 유지되지만 세션을 바꾸거나 프로세스를 종료하면
-사라진다.
+터미널 resume에서는 같은 bounded 구조에 재개한 Session의 확정 `StartTurn`·`SteerTurn` 일반
+입력만 seed로 넣고 typed 참조·이미지 snapshot을 보존한다. 저장 기록은 복사 전에 필터와 한도를
+적용하므로 큰 transcript를 제한 없이 복사하지 않는다. fork 부모 기록·Activity 답변·거절되거나
+확정되지 않은 입력·비밀은 제외하며, seed를 live observation보다 먼저 설치해 Accepted 결과가
+중복되지 않는다. 새 Session·fork 자식·print 실행·프로세스 종료에는 seed가 없다. Esc는 panel을
+열기 전 초안과 커서를 복원한다. 이력은 터미널 일시중단을 지나도 유지되지만 Session을 바꾸거나
+프로세스를 종료하면 사라지며 별도 전역 history 파일을 사용하지 않는다.
 
 일반 초안 편집기에서 Ctrl+-는 마지막 텍스트 편집을 취소한다. legacy `0x1f`를 Ctrl+7로
 해석하는 터미널에서는 그 키도 동작한다. 연속 단어 입력은 묶이고 공백은 새 취소 단위를
