@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use yo_core::JournalDurability;
+use yo_core::{ActivityRequestRef, JournalDurability};
 
 use super::{PendingRequest, TuiState};
 use crate::{
@@ -44,6 +44,7 @@ pub(in crate::runner) struct PreparedFrame {
     pub(in crate::runner) motion_demand: Option<MotionDemand>,
     pub(in crate::runner) overlay_presented: bool,
     pub(in crate::runner) overlay_presentation: Option<OverlayPresentation>,
+    pub(in crate::runner) secret_request_presented: Option<ActivityRequestRef>,
     pub(in crate::runner) reprepare_for_publication: bool,
     pub(super) view_state: ObservabilityViewState,
 }
@@ -211,6 +212,14 @@ impl TuiState {
             view_state: frame.state,
             overlay_presented: frame.overlay_presented,
             overlay_presentation,
+            secret_request_presented: (frame_size.width > 0
+                && frame_size.height > 0
+                && self.views.active() == super::super::view::ObservabilityView::Chat)
+                .then(|| match self.pending_requests.front() {
+                    Some(PendingRequest::SecretInput(request)) => Some(*request),
+                    _ => None,
+                })
+                .flatten(),
             reprepare_for_publication: publication_enabled
                 && self.presentation_mode == PresentationMode::Inline
                 && !publication_eligible

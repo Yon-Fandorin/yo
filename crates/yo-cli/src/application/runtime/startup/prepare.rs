@@ -35,6 +35,25 @@ pub(in crate::application::runtime) fn resume_prompt_history(
         .then(|| yo_tui::RestoredPromptHistory::from_transcript_records(session_id, records))
 }
 
+pub(in crate::application::runtime) fn restored_notification_cutoff(
+    records: &[yo_core::TranscriptRecord],
+) -> Option<yo_core::TurnRef> {
+    records
+        .iter()
+        .filter_map(|record| match record {
+            yo_core::TranscriptRecord::EventCommitted(event) => match event {
+                yo_core::AgentEvent::TurnStarted { turn }
+                | yo_core::AgentEvent::TurnFinished { turn, .. } => Some(*turn),
+                yo_core::AgentEvent::ActivityStarted { activity, .. }
+                | yo_core::AgentEvent::ActivityUpdated { activity, .. }
+                | yo_core::AgentEvent::ActivityFinished { activity, .. } => Some(activity.turn()),
+                yo_core::AgentEvent::SessionCreated { .. } => None,
+            },
+            _ => None,
+        })
+        .max()
+}
+
 pub(in crate::application::runtime) fn prepare_agent(
     termination: &mut impl yo_tui::TerminationSource,
     cwd: &Path,
@@ -500,6 +519,7 @@ fn prepare_agent_with_target(
             .as_ref()
             .map_or(&[][..], StoredSessionContinuation::transcript_records),
     };
+    let notification_history_cutoff = restored_notification_cutoff(restored_records);
     let restored_prompt_history = match &launch {
         Launch::Resume(_) => resume_prompt_history(frontend, session_id, restored_records),
         Launch::New(_) | Launch::Fork { .. } => None,
@@ -584,6 +604,7 @@ fn prepare_agent_with_target(
         session_id,
         inherited_history,
         restored_prompt_history,
+        notification_history_cutoff,
         agent,
         workspace: session_cwd,
         workspace_references,

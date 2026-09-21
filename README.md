@@ -290,9 +290,16 @@ SSH·tmux에서는 연결된 터미널의 OSC 52 지원과 tmux의 `set-clipboar
 ```yaml
 tui:
   theme: light
+  notifications: true
 ```
 
-`theme`를 생략하면 `default`가 적용된다. 실행 중 설정 파일을 다시 읽지는 않는다.
+`theme`를 생략하면 `default`가 적용된다. `notifications: true`를 지정하면 live
+Turn이 후속 작업 없이 유휴 상태로 돌아오거나 새 approval/question이 실제로 답할 수
+있는 상태가 될 때 terminal BEL을 한 번 보낸다. 중간 completion, startup·저장 이력·
+`/preview`에는 보내지 않으며 설정 기본값은 `false`다. BEL 표시나 소리를 사용하려면
+터미널과 tmux가 bell을 허용해야 한다. tmux에서는 예를 들어 `set -g bell-action any`를
+설정하고, SSH에서는 접속에 사용하는 터미널의 bell 설정을 확인한다. Yo는 포커스를
+감지하거나 OSC 알림을 보내지 않는다. 실행 중 설정 파일을 다시 읽지는 않는다.
 
 ```bash
 yo -p "이 저장소의 테스트 명령을 알려줘"

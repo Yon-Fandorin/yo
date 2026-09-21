@@ -158,6 +158,21 @@ fn general_configuration_remains_supported() {
     .unwrap();
     assert!(matches!(config.frame_rate_limit(), FrameRateLimit::Fps60));
     assert!(config.model_catalog().entries().is_empty());
+    assert!(!config.notifications_enabled());
+}
+
+// TUI 알림은 명시적으로 켠 경우에만 terminal BEL 경로를 활성화하고 기본값은 조용히 둡니다.
+#[test]
+fn tui_notifications_are_opt_in() {
+    let enabled = parse(
+        Path::new("/tmp/config.yaml"),
+        "tui:\n  notifications: true\n",
+    )
+    .unwrap();
+    assert!(enabled.notifications_enabled());
+
+    let defaulted = parse(Path::new("/tmp/config.yaml"), "tui: {}\n").unwrap();
+    assert!(!defaulted.notifications_enabled());
 }
 
 // 모델 정의의 durable owner는 하나뿐이므로 config.yaml의 model field를 변환하지 않고 거절합니다.

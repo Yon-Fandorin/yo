@@ -33,6 +33,7 @@ pub(in crate::application::runtime) struct PreparedAgent {
     pub(in crate::application::runtime) inherited_history: Option<InheritedSessionHistory>,
     pub(in crate::application::runtime) restored_prompt_history:
         Option<yo_tui::RestoredPromptHistory>,
+    pub(in crate::application::runtime) notification_history_cutoff: Option<yo_core::TurnRef>,
     pub(in crate::application::runtime) agent: agent::TuiAgentConnection,
     pub(in crate::application::runtime) workspace: PathBuf,
     pub(in crate::application::runtime) workspace_references:

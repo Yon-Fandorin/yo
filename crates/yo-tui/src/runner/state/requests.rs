@@ -549,4 +549,13 @@ impl PendingRequest {
             | Self::SecretInput(request) => request.activity(),
         }
     }
+
+    pub(super) const fn attention_request(self) -> Option<ActivityRequestRef> {
+        match self {
+            Self::Approval(request) | Self::UserInput(request) | Self::SecretInput(request) => {
+                Some(request)
+            },
+            Self::PresentationPending(_) | Self::PresentationInvalid(_) => None,
+        }
+    }
 }

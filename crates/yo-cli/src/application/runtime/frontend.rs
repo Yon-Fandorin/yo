@@ -28,6 +28,7 @@ pub(super) fn build_live_session(
         session_id,
         inherited_history,
         restored_prompt_history,
+        notification_history_cutoff,
         mut agent,
         workspace,
         workspace_references,
@@ -55,6 +56,8 @@ pub(super) fn build_live_session(
     .with_theme(options.theme.unwrap_or_else(|| config.theme()))
     .with_theme_overrides(config.theme_overrides().clone())
     .with_output_preferences(config.output_preferences())
+    .with_notifications(config.notifications_enabled())
+    .with_notification_history_cutoff(notification_history_cutoff)
     .with_prompt_templates(config.prompts().clone())
     .with_image_preparation(image_preparation)
     .with_frame_rate_limit(config.frame_rate_limit())

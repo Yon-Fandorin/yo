@@ -14,7 +14,7 @@ use yo_core::{
 use super::{
     PreparedLocalSkills, StartupFrontend, fork_descriptor, prepare_local_skills,
     require_exact_fork_selection, require_exact_print_resume_binding,
-    require_supported_fork_binding, resume_prompt_history,
+    require_supported_fork_binding, restored_notification_cutoff, resume_prompt_history,
 };
 use crate::state::config;
 
@@ -33,6 +33,23 @@ fn resume_prompt_history_is_scoped_to_terminal_startup() {
 
     assert!(resume_prompt_history(StartupFrontend::Terminal, session_id, &records).is_some());
     assert!(resume_prompt_history(StartupFrontend::Print, session_id, &records).is_none());
+}
+
+// 재개 시 남은 마지막 Turn ID를 찾아서 지연 전달되는 저장 기록과 새 Turn을 구별합니다.
+#[test]
+fn restored_notification_cutoff_uses_latest_saved_event_turn() {
+    let session_id: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+    let first = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
+    let second = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
+    let records = [
+        TranscriptRecord::EventCommitted(yo_core::AgentEvent::TurnStarted { turn: second }),
+        TranscriptRecord::EventCommitted(yo_core::AgentEvent::TurnFinished {
+            turn: first,
+            outcome: yo_core::TurnOutcome::Completed,
+        }),
+    ];
+    assert_eq!(restored_notification_cutoff(&records), Some(second));
+    assert_eq!(restored_notification_cutoff(&[]), None);
 }
 
 // 저장된 native profile과 현재 catalog가 달라 replacement가 필요해도 print resume은

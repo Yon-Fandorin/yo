@@ -22,6 +22,7 @@ use crate::{
     prompt::{self, assist::PromptAssistController},
     runner::{
         AgentAction, ExternalEditorSnapshot, ForkPickerToken, PresentationMode,
+        attention::{AttentionKind, AttentionState},
         chat::ChatProjection,
         model::ModelSelectionState,
         session::{TuiSessionInfo, TuiStatusLine},
@@ -132,6 +133,8 @@ pub(super) struct TuiState {
     external_editor_requested: bool,
     external_editor_snapshot: Option<ExternalEditorSnapshot>,
     external_editor_generation: u64,
+    attention: AttentionState,
+    presented_secret_request: Option<ActivityRequestRef>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -182,6 +185,60 @@ impl TuiState {
 
     pub(super) fn set_presentation_mode(&mut self, mode: PresentationMode) {
         self.presentation_mode = mode;
+    }
+
+    pub(super) fn set_notifications_enabled(&mut self, enabled: bool) {
+        self.attention.set_enabled(enabled);
+    }
+
+    pub(super) fn set_notification_history_cutoff(&mut self, turn: Option<TurnRef>) {
+        self.attention.set_history_cutoff(turn);
+    }
+
+    pub(super) fn arm_notifications(&mut self) {
+        if self.preview.is_none() {
+            self.attention.arm();
+        }
+    }
+
+    pub(super) fn take_attention_bell(&mut self, continuation_dispatched: bool) -> bool {
+        if continuation_dispatched || self.preview.is_some() {
+            return false;
+        }
+        match self.attention.pending() {
+            Some(AttentionKind::Request(request)) => {
+                let request_is_front = self
+                    .pending_requests
+                    .front()
+                    .and_then(|pending| pending.attention_request())
+                    .is_some_and(|front| front == request);
+                let request_is_presented = (self.presented_secret_request == Some(request)
+                    && self.views.active() == super::view::ObservabilityView::Chat)
+                    || self.request_overlay.is_some_and(|(pending, token)| {
+                        pending.attention_request() == Some(request)
+                            && self.overlay.is_current(token)
+                            && self.overlay.can_submit_current()
+                    });
+                if request_is_front && request_is_presented {
+                    return self.attention.take_request().is_some();
+                }
+                if !request_is_front {
+                    self.attention.observe_request_finished(request.activity());
+                }
+                false
+            },
+            Some(AttentionKind::Turn(turn)) if self.pending_requests.is_empty() => {
+                if self.active_turn.is_some()
+                    || (!self.follow_ups.is_empty() && !self.follow_ups_paused)
+                    || !self.pending_submissions.is_empty()
+                    || self.starting_submission.is_some()
+                {
+                    return false;
+                }
+                self.attention.take_turn(turn)
+            },
+            _ => false,
+        }
     }
 
     pub(super) fn clear_editor(&mut self) {
@@ -252,6 +309,12 @@ impl TuiState {
             self.editor.set_layout_width(width);
         }
         self.views.commit(frame.view_state);
+        self.presented_secret_request = frame.secret_request_presented.filter(|request| {
+            self.pending_requests
+                .front()
+                .and_then(|pending| pending.attention_request())
+                == Some(*request)
+        });
         if let Some(presentation) = frame.overlay_presentation
             && self
                 .overlay

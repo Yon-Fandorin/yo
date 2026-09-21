@@ -1216,7 +1216,18 @@ session:
 tui:
   max_fps: 120
   theme: default
+  notifications: false
 ```
+
+`tui.notifications` defaults to `false`. When enabled, a live terminal session emits one
+BEL through the owner thread after a Turn reaches stable idle without an immediately
+continuing follow-up, or when a new approval or typed question becomes actionable. Repeated
+request updates and repeated Turn identities are deduplicated. Historical replay, startup,
+offline preview, intermediate completion before a queued follow-up, focus detection, and OSC
+notifications are outside this path. The terminal emulator and tmux must allow BEL handling;
+for example, tmux users can set `set -g bell-action any`, while SSH users must check the bell
+policy of the SSH client terminal. A BEL write failure is ignored so it cannot replace the live
+session failure path.
 
 `config.yaml` owns only general Session and TUI settings. A top-level `model`
 field is unknown. Model definitions, catalog seeds, and the startup preference

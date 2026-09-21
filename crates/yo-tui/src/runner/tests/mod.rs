@@ -13,6 +13,7 @@ use crate::{
 mod activity_projection;
 mod admission;
 mod appearance;
+mod attention;
 mod backpressure;
 mod chat_preview;
 mod command_palette;

@@ -14,6 +14,11 @@ pub use ansi::{AnsiEncodeError, AnsiEncoder};
 use crossterm::terminal::size;
 pub use ops::{TerminalOp, TerminalOps};
 
+pub(crate) fn write_attention_bell(output: &mut impl io::Write) -> io::Result<()> {
+    output.write_all(b"\x07")?;
+    output.flush()
+}
+
 #[cfg(unix)]
 pub fn current_width() -> io::Result<num::NonZeroU16> {
     let (width, _) = size()?;

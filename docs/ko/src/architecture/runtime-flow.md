@@ -1095,7 +1095,17 @@ session:
 tui:
   max_fps: 120
   theme: default
+  notifications: false
 ```
+
+`tui.notifications`의 기본값은 `false`다. 켜면 live terminal session이 즉시 이어지는
+후속 작업 없이 Turn을 안정적인 유휴 상태로 마친 뒤, 또는 새 approval·typed question이
+실제로 답할 수 있는 상태가 된 뒤 owner thread를 통해 BEL을 한 번 보낸다. 같은 request
+update와 같은 Turn identity는 중복 제거한다. historical replay, startup, offline preview,
+queue가 이어지기 전의 중간 completion, focus 감지와 OSC notification은 이 경로에 포함하지
+않는다. Terminal emulator와 tmux가 BEL을 허용해야 하며, 예를 들어 tmux 사용자는
+`set -g bell-action any`를 설정하고 SSH 사용자는 접속에 쓰는 terminal의 bell 정책을 확인해야
+한다. BEL 쓰기 실패는 live session의 기존 실패 경로를 바꾸지 않도록 무시한다.
 
 `config.yaml`은 일반 Session·TUI 설정만 소유한다. 최상위 `model` field는 알 수 없는
 field다. 모델 정의, catalog seed, startup preference의 durable owner는

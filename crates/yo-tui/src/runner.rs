@@ -2,6 +2,7 @@
 
 mod agent;
 mod archival;
+mod attention;
 mod chat;
 mod error;
 mod frame;

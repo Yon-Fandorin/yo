@@ -147,6 +147,13 @@ impl TuiState {
             self.question_notes = None;
         }
         self.sync_request_overlay()?;
+        if let Some(request) = self
+            .pending_requests
+            .front()
+            .and_then(|request| request.attention_request())
+        {
+            self.attention.observe_request(request);
+        }
         if let TranscriptRecord::EventCommitted(
             AgentEvent::ActivityUpdated { activity, .. }
             | AgentEvent::ActivityFinished { activity, .. },
@@ -338,6 +345,7 @@ impl TuiState {
             AgentEvent::TurnStarted { turn } => {
                 self.active_turn = Some(*turn);
                 self.starting_submission = None;
+                self.attention.observe_turn_started();
             },
             AgentEvent::ActivityStarted { activity, kind } => {
                 let request = match kind {
@@ -362,7 +370,14 @@ impl TuiState {
                 }
             },
             AgentEvent::ActivityFinished { activity, .. } => {
+                if self
+                    .presented_secret_request
+                    .is_some_and(|request| request.activity() == *activity)
+                {
+                    self.presented_secret_request = None;
+                }
                 self.request_presentations_seen.remove(activity);
+                self.attention.observe_request_finished(*activity);
                 if self
                     .pending_requests
                     .front()
@@ -375,6 +390,7 @@ impl TuiState {
             },
             AgentEvent::TurnFinished { turn, outcome } if self.active_turn == Some(*turn) => {
                 self.active_turn = None;
+                self.attention.observe_turn_finished(*turn);
                 self.request_presentations_seen.clear();
                 self.clear_secret_editor();
                 if *outcome != TurnOutcome::Completed {
@@ -393,7 +409,15 @@ impl TuiState {
                 }
             },
             AgentEvent::TurnFinished { .. } => {},
-            AgentEvent::SessionCreated { .. } | AgentEvent::ActivityUpdated { .. } => {},
+            AgentEvent::ActivityUpdated { activity, .. } => {
+                if self
+                    .presented_secret_request
+                    .is_some_and(|request| request.activity() == *activity)
+                {
+                    self.presented_secret_request = None;
+                }
+            },
+            AgentEvent::SessionCreated { .. } => {},
         }
         Ok(StateEffect::Unchanged)
     }

@@ -79,6 +79,20 @@ impl TuiSession {
             .expect("output preferences are valid and startup revision must be available");
         self
     }
+
+    /// 터미널 bell을 사용할지 선택합니다. 기본값은 꺼져 있습니다.
+    #[must_use]
+    pub fn with_notifications(mut self, enabled: bool) -> Self {
+        self.state.set_notifications_enabled(enabled);
+        self
+    }
+
+    /// 복원된 Session 이력의 마지막 Turn은 실행 중 입력과 교차 도착해도 알리지 않습니다.
+    #[must_use]
+    pub fn with_notification_history_cutoff(mut self, turn: Option<yo_core::TurnRef>) -> Self {
+        self.state.set_notification_history_cutoff(turn);
+        self
+    }
     /// 명시된 호스트 외관 정보로 비어 있는 Rich 글리프 TUI 세션을 만듭니다.
     #[must_use]
     pub fn new(color_capability: ColorCapability, motion_preference: MotionPreference) -> Self {

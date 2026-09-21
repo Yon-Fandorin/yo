@@ -39,6 +39,7 @@ pub(crate) struct Config {
     theme: Theme,
     theme_overrides: ThemeOverrides,
     output_preferences: OutputPreferences,
+    notifications: bool,
     source_path: PathBuf,
     snapshot: ConfigSnapshot,
     // Runtime model state is injected from one ConnectionRepository snapshot. It is never
@@ -58,6 +59,7 @@ impl Default for Config {
             theme: Theme::Default,
             theme_overrides: ThemeOverrides::default(),
             output_preferences: OutputPreferences::default(),
+            notifications: false,
             source_path: PathBuf::new(),
             snapshot: ConfigSnapshot::absent(),
             model_catalog: ModelCatalog::default(),
@@ -89,6 +91,10 @@ impl Config {
     }
     pub(crate) fn output_preferences(&self) -> OutputPreferences {
         self.output_preferences
+    }
+
+    pub(crate) fn notifications_enabled(&self) -> bool {
+        self.notifications
     }
     pub(crate) fn date_formatter(&self) -> Result<DateFormatter, ConfigError> {
         DateFormatter::new(&self.date_format)

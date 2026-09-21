@@ -67,6 +67,7 @@ struct SessionListConfig {
 #[serde(deny_unknown_fields)]
 struct TuiConfig {
     max_fps: Option<u16>,
+    notifications: Option<bool>,
     theme: Option<String>,
     #[serde(default)]
     colors: BTreeMap<String, String>,
@@ -226,6 +227,7 @@ pub(super) fn parse_snapshot(
             .unwrap_or_else(|| super::date::DEFAULT_DATE_FORMAT.to_owned()),
         frame_rate_limit,
         theme,
+        notifications: decoded.tui.notifications.unwrap_or(false),
         source_path: path.to_owned(),
         snapshot,
         model_catalog: yo_core::ModelCatalog::default(),

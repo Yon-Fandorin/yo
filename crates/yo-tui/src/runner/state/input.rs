@@ -137,6 +137,9 @@ impl TuiState {
         ) {
             self.context_compaction_pending = true;
         }
+        if matches!(&effect, StateEffect::Dispatch(_)) {
+            self.arm_notifications();
+        }
         if matches!(effect, StateEffect::Dispatch(AgentAction::Interrupt)) {
             self.follow_ups_paused = true;
         }
@@ -1200,6 +1203,7 @@ impl TuiState {
         self.follow_up_submission = Some(id);
         self.starting_submission = Some(id);
         self.pending_submissions.push_back(submission.clone());
+        self.arm_notifications();
         Ok(Some(AgentAction::Submit(submission)))
     }
 }

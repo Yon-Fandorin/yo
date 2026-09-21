@@ -501,10 +501,12 @@ where
                 return Ok(LoopExit::User);
             }
         }
+        let mut continuation_dispatched = false;
         if pending_control.is_none()
             && pending_dispatch.is_none()
             && let Some(action) = state.next_follow_up().map_err(LoopError::State)?
         {
+            continuation_dispatched = true;
             let admission = agent
                 .dispatch(action)
                 .map_err(|error| LoopError::Agent(error.to_string()))?;
@@ -513,6 +515,12 @@ where
                 return Ok(LoopExit::User);
             }
             frames.request(FrameRequest::Coalesced);
+        }
+        if pending_control.is_none()
+            && pending_dispatch.is_none()
+            && state.take_attention_bell(continuation_dispatched)
+        {
+            let _ = terminal::write_attention_bell(session.output());
         }
         let backpressured = pending_control.is_some() || pending_dispatch.is_some();
         let base = backpressured.then_some(WORKER_RETRY_INTERVAL);
