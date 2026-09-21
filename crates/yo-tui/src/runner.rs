@@ -34,7 +34,6 @@ pub use session::{
 pub use skill::{SkillReferenceConnection, SkillReferencePoll};
 pub use unix::{run, run_session_with_mode, run_with_mode};
 pub use workspace::{WorkspaceReferenceConnection, WorkspaceReferencePoll};
-use yo_core::interview::NewConversation;
 
 use crate::overlay::OverlayInstanceToken;
 
@@ -108,8 +107,6 @@ pub enum TerminalOutcome {
     ModelSelectionRequested(yo_core::ModelPickerTarget),
     /// The idle frontend requested a new independent session after terminal restoration.
     NewSessionRequested,
-    /// Explicit immutable interview preview for the first Turn of a new Session.
-    InterviewConversationRequested(NewConversation),
     /// Requests an exact branch of the current durable conversation after terminal restoration.
     ForkSessionRequested,
     /// Requests a frozen catalog of historical boundaries for the current idle Session.

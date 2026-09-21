@@ -156,24 +156,12 @@ impl TuiState {
             }
             return self.handle_secret_input(input);
         }
-        if self.is_editing_secret_interview() {
-            // A recovered v2 marker is display-only. There is no live request to
-            // correlate, so never route bytes through the ordinary editor or turn
-            // cancellation path. Only fixed navigation and close keys remain available.
-            return self.handle_recovered_secret_input(input);
-        }
         if let InputEvent::Key(key) = &input
             && key.modifiers == KeyModifiers::CONTROL
             && matches!(key.code, KeyCode::Character('v' | 'V'))
         {
             if key.action != KeyAction::Press {
                 return Ok(StateEffect::Unchanged);
-            }
-            if self.is_editing_interview() {
-                self.chat.push_notice(
-                    "Interview copies accept plain text; paste text into the editor.".into(),
-                )?;
-                return Ok(StateEffect::Redraw);
             }
             if self.views.active() == ObservabilityView::Chat {
                 return self.prepare_clipboard_image();
@@ -205,8 +193,7 @@ impl TuiState {
             },
         }
 
-        if !self.is_editing_interview()
-            && self.question_notes_refresh.is_some()
+        if self.question_notes_refresh.is_some()
             && matches!(&input, InputEvent::Key(key) if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::NONE)
         {
             return Ok(StateEffect::Unchanged);
@@ -217,8 +204,7 @@ impl TuiState {
             .command_palette
             .exact_submission(self.editor.text(), self.editor.cursor_byte_index())
             .is_some_and(|command| command.effect() == CommandEffect::ReviewChanges);
-        if !self.is_editing_interview()
-            && !reviewing_changes
+        if !reviewing_changes
             && self.pending_requests.front().is_some_and(|request| {
                 matches!(request, PendingRequest::Approval(_))
                     && self.chat.approval(request.activity()).is_some()
@@ -232,8 +218,7 @@ impl TuiState {
         {
             return Ok(StateEffect::Unchanged);
         }
-        if !self.is_editing_interview()
-            && self.views.active() == ObservabilityView::Chat
+        if self.views.active() == ObservabilityView::Chat
             && matches!(&input, InputEvent::Key(key) if key.code == KeyCode::BackTab
                 && key.action == KeyAction::Press
                 && (key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT))
@@ -506,8 +491,7 @@ impl TuiState {
             ViewInputEffect::Redraw => return Ok(StateEffect::Redraw),
         }
 
-        if !self.is_editing_interview()
-            && !self.has_pending_request()
+        if !self.has_pending_request()
             && let InputEvent::Key(key) = &input
             && key.action == KeyAction::Press
             && key.modifiers == KeyModifiers::ALT
@@ -521,20 +505,6 @@ impl TuiState {
                 _ => {},
             }
         }
-        if self.is_editing_interview()
-            && self.editor.text().is_empty()
-            && matches!(&input, InputEvent::Key(key)
-                if key.code == KeyCode::Enter
-                    && key.modifiers == KeyModifiers::NONE
-                    && key.action == KeyAction::Press)
-        {
-            let result = self
-                .interview
-                .as_mut()
-                .expect("editing interview controller")
-                .local_enter("");
-            return self.apply_interview_command(result, "");
-        }
         let previous_text = self.editor.text().to_owned();
         let previous_cursor = self.editor.cursor_byte_index();
         let effect = self.editor.handle(input, self.active_turn.is_some(), now);
@@ -546,11 +516,9 @@ impl TuiState {
                     self.editor.text(),
                     self.editor.cursor_byte_index(),
                 );
-                let assist_eligible = self.views.active() == ObservabilityView::Chat
-                    && !self.has_pending_request()
-                    && !self.is_editing_interview();
+                let assist_eligible =
+                    self.views.active() == ObservabilityView::Chat && !self.has_pending_request();
                 let command_eligible = self.views.active() == ObservabilityView::Chat
-                    && !self.is_editing_interview()
                     && self.question_notes.is_none()
                     && !(self.restored_question_draft.is_some()
                         && self.restored_question_draft == self.pending_requests.front().copied());
@@ -576,12 +544,10 @@ impl TuiState {
                 )
             },
             EditorEffect::Submitted(text) => {
-                let local_literal = self.is_editing_interview() && text.starts_with("//");
                 let escaped_palette = self.command_palette.take_escape(&text);
                 let restored_answer = self.restored_question_draft.is_some()
                     && self.restored_question_draft == self.pending_requests.front().copied();
-                if !local_literal
-                    && !escaped_palette
+                if !escaped_palette
                     && !restored_answer
                     && self.question_notes.is_none()
                     && let Some(argument) = text
@@ -590,14 +556,6 @@ impl TuiState {
                 {
                     self.command_palette.close(&mut self.overlay);
                     return self.handle_interview_command(argument, &text);
-                }
-                if self.is_editing_interview() {
-                    let result = self
-                        .interview
-                        .as_mut()
-                        .expect("editing controller")
-                        .local_enter(if local_literal { &text[1..] } else { &text });
-                    return self.apply_interview_command(result, &text);
                 }
                 if !escaped_palette && attachment_argument(&text).is_some() {
                     self.command_palette.close(&mut self.overlay);
@@ -916,48 +874,10 @@ impl TuiState {
         Ok(StateEffect::Unchanged)
     }
 
-    fn handle_recovered_secret_input(
-        &mut self,
-        input: InputEvent,
-    ) -> Result<StateEffect, StateError> {
-        // The editor is intentionally not an input surface for a recovered secret.
-        // Fixed navigation keys remain available without admitting value bytes.
-        match input {
-            InputEvent::Key(key)
-                if key.action == KeyAction::Press
-                    && key.code == KeyCode::Escape
-                    && key.modifiers == KeyModifiers::NONE =>
-            {
-                self.handle_interview_command("close", "")
-            },
-            InputEvent::Key(key)
-                if key.action == KeyAction::Press
-                    && key.code == KeyCode::Tab
-                    && key.modifiers == KeyModifiers::NONE =>
-            {
-                self.handle_interview_command("next", "")
-            },
-            InputEvent::Key(key)
-                if key.action == KeyAction::Press
-                    && key.code == KeyCode::BackTab
-                    && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT) =>
-            {
-                self.handle_interview_command("previous", "")
-            },
-            _ => Ok(StateEffect::Unchanged),
-        }
-    }
-
     pub(in crate::runner) fn observe_submission_outcome(
         &mut self,
         outcome: SubmissionOutcome,
     ) -> Result<StateEffect, StateError> {
-        if let Some(controller) = &mut self.interview
-            && let Some(notice) = controller.observe_submission(&outcome)
-        {
-            self.chat.push_notice(notice)?;
-            return Ok(StateEffect::Redraw);
-        }
         let Some(index) = self
             .pending_submissions
             .iter()
@@ -1070,7 +990,6 @@ impl TuiState {
     /// 유휴 상태이고 일시 중지되지 않은 queue snapshot 하나만 기존 admission lane으로 옮긴다.
     pub(in crate::runner) fn next_follow_up(&mut self) -> Result<Option<AgentAction>, StateError> {
         if self.preview.is_some()
-            || self.is_editing_interview()
             || self.follow_ups_paused
             || self.active_turn.is_some()
             || self.has_pending_request()

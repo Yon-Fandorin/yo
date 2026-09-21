@@ -3,10 +3,10 @@ use std::{collections::HashSet, mem};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Answer, COPY_LIMIT, CapturedInterview, InterviewCatalog, InterviewError, PREVIEW_LIMIT,
-    SecretAnswerState, invalid, recovery::SecretRecoveryReference, refs,
+    Answer, COPY_LIMIT, CapturedInterview, InterviewCatalog, InterviewError, SecretAnswerState,
+    invalid, recovery::SecretRecoveryReference, refs,
 };
-use crate::{ActivityRef, ActivityRequestRef, InputSubmission, SubmissionId, TurnRef, UserInput};
+use crate::{ActivityRef, ActivityRequestRef, SubmissionId, TurnRef};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,13 +44,6 @@ pub struct WorkingCopy {
     pub submission: Option<Submission>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) secret_recovery: Vec<SecretRecoveryReference>,
-}
-/// Immutable explicit first-Turn intent; callers retain it across backpressure.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NewConversation {
-    pub copy_id: String,
-    pub preview: String,
-    pub submission: InputSubmission,
 }
 impl WorkingCopy {
     pub const SCHEMA: &'static str = "yo.interview-working-copy/v1";
@@ -112,20 +105,6 @@ impl WorkingCopy {
             self.schema.as_str(),
             Self::DRAFT_SCHEMA | Self::LEGACY_CONTEXTUAL_SCHEMA
         )
-    }
-    pub fn reopen(&self) -> Result<Self, InterviewError> {
-        if self.has_contextual_schema() {
-            return Err(invalid("contextual interview drafts cannot be reopened"));
-        }
-        let mut copy = self.clone();
-        copy.copy_id = new_id()?;
-        copy.generation = 1;
-        copy.submission = None;
-        copy.secret_recovery.clear();
-        if copy.schema == Self::SCHEMA_V3 {
-            copy.schema = Self::SCHEMA_V2.into();
-        }
-        Ok(copy)
     }
     pub fn source(&self) -> (ActivityRequestRef, &str) {
         (self.source.interview, &self.source.revision)
@@ -271,71 +250,6 @@ impl WorkingCopy {
         }
         Ok(copy)
     }
-    pub fn preview(&self, catalog: &InterviewCatalog) -> Result<String, InterviewError> {
-        let capture = self.validate(catalog)?;
-        let mut text = String::from("Interview questions and editable answers\n\n");
-        for (q, a) in capture.questions.iter().zip(&self.answers) {
-            text.push_str(&q.prompt);
-            text.push('\n');
-            if q.is_secret {
-                text.push_str("Answer: [secret re-entry required]\n");
-            } else if let Some(id) = &a.option_id {
-                let option = q
-                    .options
-                    .iter()
-                    .find(|o| &o.id == id)
-                    .expect("validated option");
-                text.push_str(&format!("Answer: {}\n", option.label));
-            } else {
-                text.push_str(&format!("Answer: {}\n", a.text));
-            }
-            if !a.notes.is_empty() {
-                text.push_str(&format!("Notes: {}\n", a.notes));
-            }
-            text.push('\n');
-            if text.len() > PREVIEW_LIMIT {
-                return Err(invalid(
-                    "interview preview exceeds 64 KiB; no text was truncated",
-                ));
-            }
-        }
-        if !self.context.is_empty() {
-            text.push_str("Additional context:\n");
-            text.push_str(&self.context);
-        }
-        if text.len() > PREVIEW_LIMIT {
-            return Err(invalid(
-                "interview preview exceeds 64 KiB; no text was truncated",
-            ));
-        }
-        Ok(text)
-    }
-    pub fn new_conversation(
-        &self,
-        catalog: &InterviewCatalog,
-    ) -> Result<NewConversation, InterviewError> {
-        if self.submission.is_some() {
-            return Err(invalid(
-                "reopen the submitted interview as a separate editable copy first",
-            ));
-        }
-        if matches!(
-            self.schema.as_str(),
-            Self::SCHEMA_V2 | Self::SCHEMA_V3 | Self::LEGACY_CONTEXTUAL_SCHEMA | Self::DRAFT_SCHEMA
-        ) {
-            return Err(invalid(
-                "this interview copy cannot start a new conversation",
-            ));
-        }
-        let preview = self.preview(catalog)?;
-        let id = SubmissionId::new().map_err(|e| invalid(e.to_string()))?;
-        Ok(NewConversation {
-            copy_id: self.copy_id.clone(),
-            submission: InputSubmission::new(id, UserInput::new(preview.clone())),
-            preview,
-        })
-    }
-
     pub(super) fn recovery_reference(&self, question_id: &str) -> Option<&SecretRecoveryReference> {
         self.secret_recovery
             .iter()

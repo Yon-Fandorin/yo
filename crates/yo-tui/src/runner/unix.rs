@@ -213,16 +213,6 @@ where
             reason: ExitReason::UserRequested,
             ..
         })
-    ) && let Some(intent) = session.take_interview_conversation()
-    {
-        return Ok(TerminalOutcome::InterviewConversationRequested(intent));
-    }
-    if matches!(
-        outcome,
-        TerminalOutcome::Exited(RunOutcome {
-            reason: ExitReason::UserRequested,
-            ..
-        })
     ) && let Some((picker, index)) = session.take_fork_boundary_request()
     {
         return Ok(TerminalOutcome::ForkBoundaryRequested { picker, index });

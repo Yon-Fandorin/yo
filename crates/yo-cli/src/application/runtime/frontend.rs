@@ -158,9 +158,6 @@ pub(super) fn run_terminal_generation(
     match terminal {
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
         Ok(yo_tui::TerminalOutcome::NewSessionRequested) => return Ok(SessionStep::New),
-        Ok(yo_tui::TerminalOutcome::InterviewConversationRequested(intent)) => {
-            return Ok(SessionStep::Interview(intent));
-        },
         Ok(yo_tui::TerminalOutcome::ForkSessionRequested) => return Ok(SessionStep::Fork),
         Ok(yo_tui::TerminalOutcome::ForkPickerRequested) => return Ok(SessionStep::ForkPicker),
         Ok(yo_tui::TerminalOutcome::ForkBoundaryRequested { picker, index }) => {

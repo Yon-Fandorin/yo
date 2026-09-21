@@ -368,7 +368,7 @@ fn cas_conflict_preserves_winner_and_editable_loser() {
     );
 }
 
-// 새 초안 형식은 왕복 직렬화되지만 새 대화 전송과 재개는 허용하지 않는다.
+// 새 초안 형식은 왕복 직렬화되고 종전 작업 사본으로 오인되지 않는다.
 #[test]
 fn contextual_draft_is_canonical_and_cannot_be_sent_as_new_conversation() {
     let (catalog, _) = batch();
@@ -377,8 +377,6 @@ fn contextual_draft_is_canonical_and_cannot_be_sent_as_new_conversation() {
     let encoded = copy.encode().unwrap();
     assert!(encoded.starts_with(b"{\"schema\":\"yo.interview-draft/v1\""));
     assert_eq!(WorkingCopy::decode(&encoded).unwrap(), copy);
-    assert!(copy.reopen().is_err());
-    assert!(copy.new_conversation(&catalog).is_err());
     assert!(
         !WorkingCopy::new(&catalog.interviews()[0])
             .unwrap()
@@ -399,8 +397,6 @@ fn old_contextual_draft_remains_readable_but_is_not_current() {
     let old = WorkingCopy::decode(old_bytes.as_bytes()).unwrap();
     assert!(!old.is_contextual_draft());
     assert!(old.validate(&catalog).is_ok());
-    assert!(old.reopen().is_err());
-    assert!(old.new_conversation(&catalog).is_err());
 }
 
 // 종전 문맥 초안의 비밀 질문을 옛 복구 경로로 보내도 파일과 vault를 바꾸지 않는다.
@@ -494,9 +490,9 @@ fn unsafe_storage_and_unknown_records_are_preserved() {
     assert!(repo.load(&id).is_err());
 }
 
-// 제출본 다시 열기는 새 UUID와 첫 generation을 만들고 원본의 제출 표시는 그대로 남긴다.
+// 종전 제출 증거는 판독되지만 새 작업 사본으로 바뀌지 않는다.
 #[test]
-fn reopen_retains_original_and_preview_limits_use_utf8_bytes() {
+fn legacy_submission_remains_canonical_and_copy_limit_is_enforced() {
     let (catalog, _) = batch();
     let mut original = WorkingCopy::new(&catalog.interviews()[0]).unwrap();
     original.generation = 4;
@@ -505,63 +501,13 @@ fn reopen_retains_original_and_preview_limits_use_utf8_bytes() {
         submission_id: working_copy::new_id().unwrap(),
         accepted_request_sequence: 1,
     });
-    let reopened = original.reopen().unwrap();
-    assert_ne!(original.copy_id, reopened.copy_id);
-    assert_eq!(reopened.generation, 1);
-    assert!(reopened.submission.is_none());
-    assert!(original.submission.is_some());
-    let mut copy = reopened;
-    let overhead = copy.preview(&catalog).unwrap().len();
-    copy.context = "가".repeat((PREVIEW_LIMIT - overhead - 20) / 3);
-    assert!(copy.preview(&catalog).is_ok());
-    copy.context.push_str(&"가".repeat(20));
-    assert!(copy.preview(&catalog).is_err());
-    copy.context = "x".repeat(COPY_LIMIT);
-    assert!(copy.encode().is_err());
-}
-
-// 캡처된 원문 prompt가 질문과 선택지를 이미 포함하므로 복구 preview는 원문과
-// 편집 답안을 각각 한 번만 보여 준다.
-#[test]
-fn preview_does_not_duplicate_the_captured_question() {
-    let question = InterviewQuestion {
-        id: "q1".into(),
-        prompt: "제목\n\n어떤 답인가요?\n1. 선택 — 설명".into(),
-        question: "어떤 답인가요?".into(),
-        options: vec![InterviewOption {
-            id: "1".into(),
-            label: "선택".into(),
-            description: "설명".into(),
-        }],
-        allow_free_text: true,
-        allow_notes: true,
-        is_secret: false,
-    };
-    let capture = Capture::batch(request(1), vec![question]).unwrap();
-    let mut catalog = InterviewCatalog::default();
-    event(
-        &mut catalog,
-        AgentEvent::ActivityStarted {
-            activity: request(1).activity(),
-            kind: ActivityKind::UserInputRequest {
-                request_id: request(1).request_id(),
-            },
-        },
-    );
-    event(
-        &mut catalog,
-        AgentEvent::ActivityUpdated {
-            activity: request(1).activity(),
-            update: ActivityUpdate::TextSnapshot(capture.to_snapshot().unwrap()),
-        },
-    );
-    let mut copy = WorkingCopy::new(&catalog.interviews()[0]).unwrap();
-    copy.answers[0].option_id = Some("1".into());
-
     assert_eq!(
-        copy.preview(&catalog).unwrap(),
-        "Interview questions and editable answers\n\n제목\n\n어떤 답인가요?\n1. 선택 — 설명\nAnswer: 선택\n\n"
+        WorkingCopy::decode(&original.encode().unwrap()).unwrap(),
+        original
     );
+    assert!(original.submission.is_some());
+    original.context = "x".repeat(COPY_LIMIT);
+    assert!(original.encode().is_err());
 }
 
 // 동시에 같은 generation을 쓰는 두 저장소 중 한 게시만 성공하며 파일은 완전한 정본이다.
@@ -1072,12 +1018,6 @@ fn secret_answers_are_fixed_markers_and_working_copies_cannot_start_turns() {
         String::from_utf8_lossy(&encoded).contains("\"schema\":\"yo.interview-working-copy/v2\"")
     );
     assert!(!String::from_utf8_lossy(&encoded).contains("value-that-must-not-be-serialized"));
-    assert!(copy.new_conversation(&catalog).is_err());
-    assert!(
-        copy.preview(&catalog)
-            .unwrap()
-            .contains("[secret re-entry required]")
-    );
 
     let submission_id = working_copy::new_id().unwrap();
     let turn = request(1).activity().turn();

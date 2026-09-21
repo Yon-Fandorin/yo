@@ -25,11 +25,10 @@ pub use recovery::SecretRecoveryDestination;
 pub use repository::{
     InterviewCopyEntry, InterviewRepository, SecretRecoveryMaintenance, SecretRecoveryUpdate,
 };
-pub use working_copy::{NewConversation, Submission, WorkingCopy};
+pub use working_copy::{Submission, WorkingCopy};
 
 pub const CAPTURE_LIMIT: usize = 1024 * 1024;
 pub const COPY_LIMIT: usize = 256 * 1024;
-pub const PREVIEW_LIMIT: usize = 64 * 1024;
 
 /// Storage conflicts and invalid evidence never turn an editable copy into a saved answer.
 #[derive(Debug)]

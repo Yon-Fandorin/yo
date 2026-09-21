@@ -3,7 +3,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use yo_core::{AgentSessionError, interview, session_repository::StoredSessionForkCatalog};
+use yo_core::{AgentSessionError, session_repository::StoredSessionForkCatalog};
 use yo_tui::{AgentPoll, ForkPickerToken, TerminationEvent, TerminationSource};
 
 use crate::{
@@ -33,7 +33,6 @@ pub(super) enum SessionStep {
     Suspend,
     Continue,
     New,
-    Interview(interview::NewConversation),
     Fork,
     ForkPicker,
     ForkBoundary {

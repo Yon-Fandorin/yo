@@ -1,6 +1,6 @@
 use yo_core::{ImagePreparationHost, interview};
 
-use super::{super::PendingDispatch, TuiSession, metadata::TuiStatusLine};
+use super::{TuiSession, metadata::TuiStatusLine};
 #[cfg(test)]
 use crate::appearance::{AppearancePin, GlyphProfile};
 use crate::{
@@ -47,30 +47,9 @@ impl TuiSession {
             controller.set_recovery_destination(destination);
         }
     }
-    /// 편집 가능한 사본과 변경할 수 없는 미리 보기를 새로 독립 준비한 Session으로 전달합니다.
-    pub fn transfer_interview_to(
-        &mut self,
-        candidate: &mut Self,
-        intent: interview::NewConversation,
-        reader: yo_core::TranscriptReader,
-    ) {
-        if let Some(mut controller) = self.state.interview.take() {
-            controller.accepted_pending(intent, reader);
-            candidate.state.interview = Some(controller);
-        }
-    }
-    /// 인터뷰 처리 중 보류된 명령을 세션에 보존하여 후속 실행에서 재시도할 수 있게 합니다.
-    pub fn retain_interview_backpressure(&mut self, pending: PendingDispatch) {
-        self.pending_dispatch = Some(pending);
-    }
     /// 인터뷰 처리 실패 내용을 대화 알림으로 남깁니다.
     pub fn report_interview_failure(&mut self, detail: impl Into<String>) {
         let _ = self.state.chat_notice(detail.into());
-    }
-    pub(in crate::runner) fn take_interview_conversation(
-        &mut self,
-    ) -> Option<interview::NewConversation> {
-        self.state.interview_conversation.take()
     }
     pub(in crate::runner) fn flush_interview(&mut self) {
         if let Some(controller) = &mut self.state.interview

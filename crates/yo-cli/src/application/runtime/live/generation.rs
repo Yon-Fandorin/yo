@@ -51,12 +51,7 @@ pub(super) fn run_generation(
         options.clone(),
     )?;
     match step {
-        SessionStep::New => {
-            new_session::start_new_session(termination, live, options, snapshots, None)
-        },
-        SessionStep::Interview(intent) => {
-            new_session::start_new_session(termination, live, options, snapshots, Some(intent))
-        },
+        SessionStep::New => new_session::start_new_session(termination, live, options, snapshots),
         SessionStep::Fork => fork::fork_session(termination, live, options, snapshots, None),
         SessionStep::ForkPicker => {
             let current = live

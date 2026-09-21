@@ -7,22 +7,20 @@ use std::{
 
 use yo_core::{
     ActivityKind, ActivityRequestRef, ActivityResponse, AgentEvent, SecretInput, SessionId,
-    SubmissionOutcome, TranscriptReader, TranscriptRecord,
+    TranscriptRecord,
     interview::{
         Answer, CapturedInterview, InterviewCatalog, InterviewError, InterviewQuestion,
-        InterviewRepository, NewConversation, PREVIEW_LIMIT, SecretRecoveryDestination, Submission,
-        WorkingCopy,
+        InterviewRepository, SecretRecoveryDestination, Submission, WorkingCopy,
     },
 };
 
-/// Read-only host access to genuine stored captures and accepted first-Turn receipts.
+/// Read-only host access to genuine stored captures.
 pub trait InterviewHistoryHost: Send {
     fn resolve(&mut self, source: ActivityRequestRef) -> Result<InterviewCatalog, InterviewError>;
     fn historical_interviews(
         &mut self,
         session: SessionId,
     ) -> Result<InterviewCatalog, InterviewError>;
-    fn validate_submission(&mut self, copy: &WorkingCopy) -> Result<(), InterviewError>;
 }
 
 pub(super) struct InterviewController {
@@ -40,44 +38,23 @@ pub(super) struct InterviewController {
     source: InterviewCatalog,
     copy: Option<WorkingCopy>,
     expected: Option<u64>,
-    editing: bool,
-    preview: Option<String>,
     dirty: bool,
     next_save: Option<Instant>,
     automatic_save: bool,
     status: String,
-    pending: Option<PendingInterview>,
-    unconfirmed: Option<NewConversation>,
     recovery_destination: Option<SecretRecoveryDestination>,
     next_recovery_maintenance: Instant,
-}
-struct PendingInterview {
-    intent: NewConversation,
-    reader: TranscriptReader,
-    copy: WorkingCopy,
-    source: InterviewCatalog,
-    expected: Option<u64>,
-    receipt_seen: bool,
 }
 impl fmt::Debug for InterviewController {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InterviewController")
-            .field("editing", &self.editing)
             .field("dirty", &self.dirty)
-            .field(
-                "unconfirmed",
-                &self
-                    .unconfirmed
-                    .as_ref()
-                    .map(|intent| intent.submission.id()),
-            )
             .finish_non_exhaustive()
     }
 }
 pub(super) struct InterviewCommand {
     pub document: String,
     pub editor: Option<String>,
-    pub conversation: Option<NewConversation>,
 }
 fn error(message: &str) -> InterviewError {
     InterviewError::Invalid(message.into())
@@ -87,9 +64,6 @@ impl InterviewController {
         &self,
         activity: yo_core::ActivityRef,
     ) -> Option<(Option<u32>, String)> {
-        if self.editing {
-            return None;
-        }
         let capture = self.live.interviews().iter().find(|capture| {
             capture.interview.activity().turn() == activity.turn()
                 && self
@@ -157,14 +131,10 @@ impl InterviewController {
             source: InterviewCatalog::default(),
             copy: None,
             expected: None,
-            editing: false,
-            preview: None,
             dirty: false,
             next_save: None,
             automatic_save: true,
             status: "No interview copy selected".into(),
-            pending: None,
-            unconfirmed: None,
             recovery_destination: None,
             next_recovery_maintenance: Instant::now() + Duration::from_secs(60),
         };
@@ -355,29 +325,6 @@ impl InterviewController {
         self.status = "Saved · secret recovery forgotten".into();
         Ok(update.cleanup_warning)
     }
-    pub(super) fn editing_text(&self) -> String {
-        self.preview.clone().unwrap_or_else(|| self.answer_text())
-    }
-    pub(super) fn is_editing(&self) -> bool {
-        self.editing
-    }
-    pub(super) fn is_editing_secret(&self) -> bool {
-        if !self.editing {
-            return false;
-        }
-        let Some(copy) = &self.copy else {
-            return false;
-        };
-        self.source
-            .find(copy.source().0, copy.source().1)
-            .and_then(|capture| {
-                capture
-                    .questions
-                    .iter()
-                    .find(|question| question.id == copy.current_question_id)
-            })
-            .is_some_and(|question| question.is_secret)
-    }
     pub(super) fn observe(&mut self, record: &TranscriptRecord) -> Option<String> {
         self.live.observe_committed(record);
         match record {
@@ -427,7 +374,7 @@ impl InterviewController {
             ) => self.live.is_interview_activity(*activity),
             _ => false,
         };
-        if !relevant || self.editing {
+        if !relevant {
             return None;
         }
         let visible = self.live.interviews().last()?.clone();
@@ -456,13 +403,6 @@ impl InterviewController {
             return None;
         }
         if self.discarded_interviews.contains(&latest.interview) {
-            return None;
-        }
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.copy.source().0 == latest.interview)
-        {
             return None;
         }
         if self
@@ -569,8 +509,6 @@ impl InterviewController {
                 self.expected = None;
                 self.dirty = false;
                 self.next_save = None;
-                self.editing = false;
-                self.preview = None;
                 self.status = "Submitted interview draft removed".into();
                 None
             },
@@ -616,7 +554,7 @@ impl InterviewController {
     }
 
     fn maintain_recovery(&mut self) -> Option<String> {
-        if self.dirty || self.pending.is_some() {
+        if self.dirty {
             return None;
         }
         let mut notices = Vec::new();
@@ -681,7 +619,6 @@ impl InterviewController {
                         self.expected = Some(update.copy.generation);
                         self.copy = Some(update.copy.clone());
                         self.source = source;
-                        self.editing = false;
                     }
                     notices.push("Final response seal removed secret recovery".to_owned());
                     if let Some(warning) = update.cleanup_warning {
@@ -711,9 +648,6 @@ impl InterviewController {
         request: ActivityRequestRef,
         response: ActivityResponse,
     ) -> Option<String> {
-        if self.editing {
-            return None;
-        }
         let (capture, index) = self.live.question_for_request(request)?;
         if self.copy.as_ref()?.source().0 != capture.interview {
             return None;
@@ -745,28 +679,7 @@ impl InterviewController {
         live_request: Option<ActivityRequestRef>,
         choice: Option<u32>,
     ) {
-        if self.is_editing_secret() {
-            return;
-        }
-        let literal = self.editing && text.starts_with("//");
-        let text = if literal { &text[1..] } else { text };
-        // Clearing the editor is also how users make room for an interview
-        // command. Keep the last committed answer or preview during that
-        // transition; explicit interview commands own deliberate resets.
-        if self.editing && text.is_empty() {
-            return;
-        }
-        if (!literal && text.starts_with('/'))
-            || self.pending.as_ref().is_some_and(|pending| {
-                self.copy
-                    .as_ref()
-                    .is_some_and(|copy| copy.copy_id == pending.copy.copy_id)
-            })
-        {
-            return;
-        }
-        if self.editing && self.preview.is_some() {
-            self.preview = Some(text.into());
+        if text.starts_with('/') {
             return;
         }
         let Some(copy) = self.copy.as_mut() else {
@@ -775,16 +688,10 @@ impl InterviewController {
         if copy.submission.is_some() {
             return;
         }
-        let index = if self.editing {
-            copy.answers
-                .iter()
-                .position(|a| a.question_id == copy.current_question_id)
-        } else {
-            live_request
-                .and_then(|request| self.live.question_for_request(request))
-                .filter(|(capture, _)| capture.interview == copy.source().0)
-                .map(|(_, index)| index)
-        };
+        let index = live_request
+            .and_then(|request| self.live.question_for_request(request))
+            .filter(|(capture, _)| capture.interview == copy.source().0)
+            .map(|(_, index)| index);
         let Some(index) = index else {
             return;
         };
@@ -796,14 +703,6 @@ impl InterviewController {
         } else {
             answer.option_id = None;
             answer.text = text.into();
-            if self.editing
-                && let Some(capture) = self.source.find(copy.source().0, copy.source().1)
-                && let Ok(mut projected) = capture.questions[index]
-                    .project_response(&ActivityResponse::UserInput(yo_core::UserInput::new(text)))
-            {
-                projected.notes = answer.notes;
-                answer = projected;
-            }
         }
         if copy.answers[index] != answer {
             copy.answers[index] = answer;
@@ -919,61 +818,6 @@ impl InterviewController {
         }) {
             return self.cleanup_sealed_selected();
         }
-        if let Some(pending) = &mut self.pending
-            && !pending.receipt_seen
-            && let Some((turn, sequence)) = pending
-                .reader
-                .accepted_initial_submission(pending.intent.submission.id())
-            && turn.session_id() != pending.copy.source().0.activity().turn().session_id()
-        {
-            pending.copy.submission = Some(Submission::NewConversation {
-                turn,
-                submission_id: pending.intent.submission.id().to_string(),
-                accepted_request_sequence: sequence.get(),
-            });
-            pending.receipt_seen = true;
-            return Some(match self.save_pending() {
-                Ok(()) => {
-                    "Interview sent as a new conversation; accepted first Turn confirmed. Saved."
-                        .into()
-                },
-                Err(error) => {
-                    self.status = format!("Unsaved accepted first-Turn record: {error}");
-                    self.status.clone()
-                },
-            });
-        }
-        if self.pending.as_ref().is_some_and(|pending| {
-            !pending.receipt_seen
-                && (pending
-                    .reader
-                    .initial_submission_terminated(pending.intent.submission.id())
-                    || !matches!(
-                        pending.reader.durability(),
-                        yo_core::JournalDurability::Durable { .. }
-                    ))
-        }) {
-            let pending = self.pending.take().expect("unconfirmed pending interview");
-            if self
-                .copy
-                .as_ref()
-                .is_none_or(|copy| copy.copy_id == pending.copy.copy_id)
-            {
-                self.preview = Some(pending.intent.preview.clone());
-                self.copy = Some(pending.copy);
-                self.source = pending.source;
-                self.expected = pending.expected;
-                self.dirty = false;
-                self.next_save = None;
-            } else {
-                // A following live copy may contain unsaved edits; keep it selected and editable.
-                self.preview = None;
-            }
-            self.unconfirmed = Some(pending.intent);
-            self.editing = true;
-            self.status = "Submission unconfirmed; immutable intent retained and preview editable. No automatic retry.".into();
-            return Some(self.status.clone());
-        }
         if Instant::now() >= self.next_recovery_maintenance {
             self.next_recovery_maintenance = Instant::now() + Duration::from_secs(60);
             if let Some(notice) = self.maintain_recovery() {
@@ -990,65 +834,8 @@ impl InterviewController {
         }
         None
     }
-    fn save_pending(&mut self) -> Result<(), InterviewError> {
-        let Some(pending) = &mut self.pending else {
-            return Ok(());
-        };
-        if !pending.receipt_seen {
-            return Ok(());
-        }
-        let generation = self
-            .repository
-            .save(&pending.copy, pending.expected, &pending.source)?;
-        pending.copy.generation = generation;
-        if self
-            .copy
-            .as_ref()
-            .is_some_and(|copy| copy.copy_id == pending.copy.copy_id)
-        {
-            self.copy = Some(pending.copy.clone());
-            self.expected = Some(generation);
-            self.dirty = false;
-            self.next_save = None;
-            self.status = "Saved".into();
-        }
-        self.pending = None;
-        Ok(())
-    }
     pub(super) fn flush(&mut self) -> Option<String> {
-        if let Err(error) = self.save_pending() {
-            return Some(error.to_string());
-        }
-        self.save().err().map(|e| e.to_string())
-    }
-    pub(super) fn accepted_pending(&mut self, intent: NewConversation, reader: TranscriptReader) {
-        if let Some(copy) = &self.copy {
-            self.pending = Some(PendingInterview {
-                intent,
-                reader,
-                copy: copy.clone(),
-                source: self.source.clone(),
-                expected: self.expected,
-                receipt_seen: false,
-            });
-        }
-        self.unconfirmed = None;
-        self.live = InterviewCatalog::default();
-        self.editing = false;
-        self.status = "Submission unconfirmed; editable copy retained".into();
-    }
-    pub(super) fn observe_submission(&mut self, outcome: &SubmissionOutcome) -> Option<String> {
-        if let SubmissionOutcome::Rejected { id, rejection } = outcome
-            && self.pending.as_ref().is_some_and(|pending| {
-                !pending.receipt_seen && pending.intent.submission.id() == *id
-            })
-        {
-            self.pending = None;
-            self.editing = true;
-            self.status = "Submission unconfirmed; editable copy retained".into();
-            return Some(format!("Interview not submitted: {}", rejection.message()));
-        }
-        None
+        self.save().err().map(|error| error.to_string())
     }
     fn select_contextual(&mut self) -> Result<Option<WorkingCopy>, InterviewError> {
         self.cleanup_sealed_selected();
@@ -1077,26 +864,17 @@ impl InterviewController {
             let source = self.host.resolve(copy.source().0)?;
             let capture = copy.validate(&source)?;
             let sealed = capture.submitted.is_some();
-            if sealed || copy.submission.is_some() {
-                if !sealed {
-                    // A legacy new-conversation copy requires its separate durable
-                    // acceptance evidence before it can be discarded.
-                    self.host.validate_submission(&copy)?;
-                }
+            if sealed {
                 self.delete_copy(&copy)?;
                 continue;
             }
             self.expected = Some(copy.generation);
             self.source = source;
             self.copy = Some(copy.clone());
-            self.editing = false;
-            self.preview = None;
             return Ok(Some(copy));
         }
         self.copy = None;
         self.expected = None;
-        self.editing = false;
-        self.preview = None;
         Ok(None)
     }
 
@@ -1112,19 +890,13 @@ impl InterviewController {
         })
     }
 
-    pub(super) fn command(
-        &mut self,
-        argument: &str,
-        _busy: bool,
-    ) -> Result<InterviewCommand, InterviewError> {
+    pub(super) fn command(&mut self, argument: &str) -> Result<InterviewCommand, InterviewError> {
         let verb = argument.trim();
         if verb == "close" {
             self.save()?;
-            self.editing = false;
             return Ok(InterviewCommand {
                 document: "Interview draft closed".into(),
                 editor: Some(String::new()),
-                conversation: None,
             });
         }
         if !matches!(verb, "" | "continue" | "view" | "discard") {
@@ -1134,7 +906,6 @@ impl InterviewController {
             return Ok(InterviewCommand {
                 document: "No unfinished interview draft in this Session".into(),
                 editor: None,
-                conversation: None,
             });
         };
         let live = self.current_request_is_live(&copy);
@@ -1144,7 +915,6 @@ impl InterviewController {
                 Ok(InterviewCommand {
                     document: self.document()?,
                     editor: Some(self.answer_text()),
-                    conversation: None,
                 })
             },
             "view" if !live => {
@@ -1152,7 +922,6 @@ impl InterviewController {
                 Ok(InterviewCommand {
                     document: self.document()?,
                     editor: None,
-                    conversation: None,
                 })
             },
             "discard" => {
@@ -1167,7 +936,6 @@ impl InterviewController {
                 Ok(InterviewCommand {
                     document: self.status.clone(),
                     editor: Some(String::new()),
-                    conversation: None,
                 })
             },
             "" => Ok(InterviewCommand {
@@ -1181,7 +949,6 @@ impl InterviewController {
                     },
                 ),
                 editor: None,
-                conversation: None,
             }),
             _ => Err(error(if live {
                 "The request is still live; use /interview continue or discard"
@@ -1189,49 +956,6 @@ impl InterviewController {
                 "The request has ended; use /interview view or discard"
             })),
         }
-    }
-    fn require_editing(&self) -> Result<(), InterviewError> {
-        if !self.editing || self.pending.is_some() {
-            Err(error("recover or reopen an interview copy first"))
-        } else {
-            Ok(())
-        }
-    }
-    pub(super) fn local_enter(&mut self, text: &str) -> Result<InterviewCommand, InterviewError> {
-        self.require_editing()?;
-        if self.is_editing_secret() {
-            return Err(error(
-                "secret interview answers require a new live request; local editing is unavailable",
-            ));
-        }
-        if self.preview.is_some() {
-            if text.len() > PREVIEW_LIMIT {
-                return Err(error("editable preview exceeds 64 KiB"));
-            }
-            self.preview = Some(text.into());
-            return Ok(InterviewCommand {
-                document: "Preview edited. Use /interview send to send it as a new conversation."
-                    .into(),
-                editor: Some(text.into()),
-                conversation: None,
-            });
-        }
-        let copy = self.copy.as_mut().expect("editable copy");
-        let capture = copy.validate(&self.source)?;
-        let index = capture
-            .questions
-            .iter()
-            .position(|q| q.id == copy.current_question_id)
-            .expect("validated question");
-        let mut answer = capture.questions[index]
-            .project_response(&ActivityResponse::UserInput(yo_core::UserInput::new(text)))?;
-        if answer.option_id == copy.answers[index].option_id {
-            answer.notes = copy.answers[index].notes.clone();
-        }
-        copy.answers[index] = answer;
-        self.mark_dirty();
-        self.save()?;
-        self.command("next", false)
     }
     fn answer_text(&self) -> String {
         self.copy

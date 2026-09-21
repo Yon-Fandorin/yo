@@ -3,7 +3,6 @@ use std::collections::{HashSet, VecDeque};
 use yo_core::{
     ActivityRef, ActivityRequestRef, ImagePreparationRequest, InputSubmission, JournalDurability,
     SkillReferenceSearchRequest, SubmissionId, TurnRef, UserInput, WorkspaceReferenceSearchRequest,
-    interview::NewConversation,
 };
 
 #[cfg(test)]
@@ -74,7 +73,6 @@ pub(super) enum StateError {
 #[derive(Debug, Default)]
 pub(super) struct TuiState {
     pub(super) interview: Option<super::interview::InterviewController>,
-    pub(super) interview_conversation: Option<NewConversation>,
     preview: Option<Box<preview::Preview>>,
     preview_mode: bool,
     chat: ChatProjection,
@@ -208,12 +206,6 @@ impl TuiState {
     }
 
     pub(super) fn prompt_input(&self) -> PromptInputView<'_> {
-        if self.is_editing_secret_interview() {
-            return self.secret_editor.as_ref().map_or(
-                PromptInputView::Waiting("Re-entry required"),
-                PromptInputView::Secret,
-            );
-        }
         match self.pending_requests.front() {
             Some(PendingRequest::PresentationPending(_)) => {
                 PromptInputView::Waiting("Waiting for question")

@@ -24,10 +24,6 @@ impl crate::InterviewHistoryHost for Host {
     ) -> Result<InterviewCatalog, interview::InterviewError> {
         Ok(self.0.clone())
     }
-
-    fn validate_submission(&mut self, _: &WorkingCopy) -> Result<(), interview::InterviewError> {
-        Ok(())
-    }
 }
 
 struct Fixture {
@@ -173,17 +169,17 @@ fn dead_draft_is_contextual_read_only_and_has_no_archive_commands() {
     let fixture = Fixture::new(false);
     let mut controller = fixture.controller(turn().session_id());
     assert!(controller.tick().unwrap().contains("/interview view"));
-    let offer = controller.command("", false).unwrap().document;
+    let offer = controller.command("").unwrap().document;
     assert!(offer.contains("/interview view"));
     assert!(offer.contains("/interview discard"));
     assert!(!offer.contains(&fixture.copy.copy_id));
     assert!(!offer.contains("/interview send"));
-    let view = controller.command("view", false).unwrap();
+    let view = controller.command("view").unwrap();
     assert!(!view.document.contains("sealed"));
     assert!(view.editor.is_none());
-    assert!(controller.command("continue", false).is_err());
+    assert!(controller.command("continue").is_err());
     for obsolete in ["list", "recover", "reopen", "preview", "send"] {
-        assert!(controller.command(obsolete, false).is_err());
+        assert!(controller.command(obsolete).is_err());
     }
 }
 
@@ -195,7 +191,7 @@ fn other_session_cannot_discover_draft() {
     let mut controller = fixture.controller(other);
     assert!(
         controller
-            .command("", false)
+            .command("")
             .unwrap()
             .document
             .contains("No unfinished")
@@ -228,8 +224,8 @@ fn replayed_request_after_resume_remains_read_only() {
     ] {
         controller.observe(&TranscriptRecord::EventCommitted(event));
     }
-    assert!(controller.command("continue", false).is_err());
-    assert!(controller.command("view", false).is_ok());
+    assert!(controller.command("continue").is_err());
+    assert!(controller.command("view").is_ok());
 }
 
 // 손상된 보관 파일이 있으면 다른 초안을 선택하거나 새로 만들지 않고 진단한다.
@@ -242,7 +238,7 @@ fn malformed_record_blocks_contextual_selection_without_mutation() {
     fs::write(&malformed, b"{broken").unwrap();
     fs::set_permissions(&malformed, fs::Permissions::from_mode(0o600)).unwrap();
     let mut controller = fixture.controller(turn().session_id());
-    assert!(controller.command("", false).is_err());
+    assert!(controller.command("").is_err());
     for event in [
         AgentEvent::ActivityStarted {
             activity: fixture.request.activity(),
@@ -257,7 +253,7 @@ fn malformed_record_blocks_contextual_selection_without_mutation() {
     ] {
         controller.observe(&TranscriptRecord::EventCommitted(event));
     }
-    assert!(controller.command("continue", false).is_err());
+    assert!(controller.command("continue").is_err());
     assert_eq!(fs::read(&malformed).unwrap(), b"{broken");
     assert!(
         InterviewRepository::open(&fixture.root)
@@ -274,11 +270,11 @@ fn explicit_discard_deletes_the_contextual_draft() {
     let fixture = Fixture::new(false);
     let repository = InterviewRepository::open(&fixture.root).unwrap();
     let mut controller = fixture.controller(turn().session_id());
-    controller.command("discard", false).unwrap();
+    controller.command("discard").unwrap();
     assert!(repository.load(&fixture.copy.copy_id).unwrap().is_none());
     assert!(
         controller
-            .command("", false)
+            .command("")
             .unwrap()
             .document
             .contains("No unfinished")
@@ -293,8 +289,8 @@ fn duplicate_contextual_drafts_fail_closed_without_deleting_either() {
     let repository = InterviewRepository::open(&fixture.root).unwrap();
     repository.save(&second, None, &fixture.catalog).unwrap();
     let mut controller = fixture.controller(turn().session_id());
-    assert!(controller.command("continue", false).is_err());
-    assert!(controller.command("discard", false).is_err());
+    assert!(controller.command("continue").is_err());
+    assert!(controller.command("discard").is_err());
     assert!(repository.load(&fixture.copy.copy_id).unwrap().is_some());
     assert!(repository.load(&second.copy_id).unwrap().is_some());
 }
@@ -316,10 +312,11 @@ fn older_working_copies_are_left_untouched_and_unlisted() {
     repository.save(&old, None, &fixture.catalog).unwrap();
     repository.save(&old_v4, None, &fixture.catalog).unwrap();
     let mut controller = fixture.controller(turn().session_id());
-    controller.command("discard", false).unwrap();
+    controller.command("discard").unwrap();
+    assert!(controller.command("send").is_err());
     assert!(
         controller
-            .command("", false)
+            .command("")
             .unwrap()
             .document
             .contains("No unfinished")
@@ -335,7 +332,7 @@ fn durable_final_seal_removes_leftover_draft_before_presentation() {
     let mut controller = fixture.controller(turn().session_id());
     assert!(
         controller
-            .command("", false)
+            .command("")
             .unwrap()
             .document
             .contains("No unfinished")
@@ -377,7 +374,7 @@ fn submitted_capture_does_not_recreate_draft_after_cleanup() {
     assert!(repository.list().unwrap().is_empty());
     assert!(
         controller
-            .command("", false)
+            .command("")
             .unwrap()
             .document
             .contains("No unfinished")
@@ -406,21 +403,19 @@ fn live_request_can_restore_draft_only_for_its_exact_activity() {
             assert!(notice.contains("/interview continue"));
         }
     }
-    let offer = controller.command("", false).unwrap().document;
+    let offer = controller.command("").unwrap().document;
     assert!(offer.contains("/interview continue"));
     assert!(!offer.contains("/interview view"));
-    let continuation = controller.command("continue", false).unwrap();
+    let continuation = controller.command("continue").unwrap();
     assert!(continuation.editor.is_some());
-    assert!(continuation.conversation.is_none());
-    assert!(!controller.is_editing());
     controller.observe(&TranscriptRecord::EventCommitted(
         AgentEvent::ActivityFinished {
             activity: fixture.request.activity(),
             outcome: ActivityOutcome::Interrupted,
         },
     ));
-    assert!(controller.command("continue", false).is_err());
-    assert!(controller.command("view", false).is_ok());
+    assert!(controller.command("continue").is_err());
+    assert!(controller.command("view").is_ok());
 }
 
 // 같은 세션에 종료된 초안이 남아 있어도 현재 살아 있는 요청을 먼저 이어 쓴다.
@@ -479,7 +474,7 @@ fn live_draft_takes_priority_over_an_older_dead_draft() {
     for event in [started, updated] {
         controller.observe(&TranscriptRecord::EventCommitted(event));
     }
-    let continuation = controller.command("continue", false).unwrap();
+    let continuation = controller.command("continue").unwrap();
     assert!(continuation.editor.is_some());
     assert!(continuation.document.contains("Public question"));
 }
@@ -503,7 +498,7 @@ fn discarding_a_live_draft_does_not_recreate_it_on_later_activity() {
     ] {
         controller.observe(&TranscriptRecord::EventCommitted(event));
     }
-    controller.command("discard", false).unwrap();
+    controller.command("discard").unwrap();
     controller.observe(&TranscriptRecord::EventCommitted(
         AgentEvent::ActivityUpdated {
             activity: fixture.request.activity(),
@@ -519,7 +514,7 @@ fn discarding_a_live_draft_does_not_recreate_it_on_later_activity() {
     );
     assert!(
         controller
-            .command("", false)
+            .command("")
             .unwrap()
             .document
             .contains("No unfinished")
@@ -545,5 +540,18 @@ fn tui_command_stays_in_session_and_never_starts_new_conversation() {
         )
         .unwrap();
     assert_eq!(effect, StateEffect::Redraw);
-    assert!(state.interview_conversation.is_none());
+    state.restore_draft("/interview send");
+    let send_effect = state
+        .handle(
+            InputEvent::Key(KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                action: KeyAction::Press,
+                state: KeyState::NONE,
+            }),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(send_effect, StateEffect::Redraw);
+    assert!(state.pending_submissions.is_empty());
 }

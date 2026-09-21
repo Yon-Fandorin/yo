@@ -67,10 +67,6 @@ impl TuiState {
     }
 
     pub(super) fn sync_request_overlay(&mut self) -> Result<(), StateError> {
-        if self.is_editing_interview() {
-            self.close_request_overlay();
-            return Ok(());
-        }
         self.normalize_secret_request();
         let pending = self.pending_requests.front().copied();
         if self.question_notes_refresh != pending {

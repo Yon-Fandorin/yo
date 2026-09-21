@@ -118,7 +118,6 @@ pub(in crate::application) fn run_live_session(
             Ok(Ok(SessionStep::Continue)) => {},
             Ok(Ok(
                 SessionStep::New
-                | SessionStep::Interview(_)
                 | SessionStep::Fork
                 | SessionStep::ForkPicker
                 | SessionStep::ForkBoundary { .. }
