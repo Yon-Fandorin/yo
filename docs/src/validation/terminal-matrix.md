@@ -762,6 +762,17 @@ opens `/status` in an isolated Inline tmux session. It checks visible Session
 identity without a model request and exits through the same shell-restoration
 route.
 
+On 2026-09-22, commit `5134078e` also passed a manual fresh-process resume in
+an isolated 100×35 Linux Fullscreen tmux session. The current `yo` binary resumed
+an existing completed Session, and synthetic `Ctrl+R` opened a picker containing
+its committed ordinary prompt. One Enter restored all three prompt lines to the
+unsent composer; no second Enter was sent. `Ctrl+C` cleared that draft, then
+empty `Ctrl+D` exited and the isolated tmux server stopped. The Session's
+Journal cutoff stayed at 122 before and after, so no new submission was
+committed. The resumed binding was `host:grok`/`grok-4.6`; this check made no
+model inference request. It proves the Linux TUI handoff, not physical key
+mapping or the pending Mac resume check.
+
 Each route checks both the empty-`Ctrl+D` exit path and two consecutive
 `Ctrl+Z` → stopped job → `fg` generations. The job-control checks compare the
 terminal with the route's actual interactive-shell termios at every stopped

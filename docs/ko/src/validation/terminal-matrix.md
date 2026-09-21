@@ -693,6 +693,16 @@ Yo 프로세스 신원 유지, 추론 요청 없음,
 Inline tmux에서 `/status`를 열어 Session 식별자를 모델 요청 없이 표시하고
 같은 shell 복원 경로로 종료하는지 확인한다.
 
+2026-09-22에는 커밋 `5134078e`로 격리된 100×35 Linux Fullscreen tmux에서
+새 프로세스 resume도 수동 확인했다. 현재 `yo` 바이너리로 완료된 기존 Session을
+재개한 뒤 합성 `Ctrl+R`을 누르자 확정된 일반 prompt가 picker에 나타났다.
+Enter 한 번으로 세 줄이 전송되지 않은 composer 초안에 복원되었고 두 번째 Enter는
+누르지 않았다. `Ctrl+C`로 초안을 지운 뒤 빈 `Ctrl+D`로 종료하자 격리된 tmux
+서버도 종료되었다. 전후 Session Journal cutoff는 122로 같아 새 제출은 확정되지
+않았다. 재개한 binding은 `host:grok`/`grok-4.6`이었지만 이 검사는 모델 추론
+요청을 보내지 않았다. 이는 Linux TUI 인계를 확인한 결과이며 실제 키 매핑이나
+남은 Mac resume 검증의 증거는 아니다.
+
 각 경로는 빈 입력 `Ctrl+D` 종료와 두 번 연속
 `Ctrl+Z` → job 정지 → `fg` terminal generation을 모두 검사한다.
 job-control 검사는 매 정지 구간의 터미널을 해당 경로의 실제 interactive shell
