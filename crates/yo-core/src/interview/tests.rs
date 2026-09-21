@@ -368,6 +368,53 @@ fn cas_conflict_preserves_winner_and_editable_loser() {
     );
 }
 
+// 새 초안 형식은 왕복 직렬화되지만 새 대화 전송과 재개는 허용하지 않는다.
+#[test]
+fn contextual_draft_is_canonical_and_cannot_be_sent_as_new_conversation() {
+    let (catalog, _) = batch();
+    let copy = WorkingCopy::new_contextual(&catalog.interviews()[0]).unwrap();
+    assert!(copy.is_contextual_draft());
+    assert_eq!(WorkingCopy::decode(&copy.encode().unwrap()).unwrap(), copy);
+    assert!(copy.reopen().is_err());
+    assert!(copy.new_conversation(&catalog).is_err());
+    assert!(
+        !WorkingCopy::new(&catalog.interviews()[0])
+            .unwrap()
+            .is_contextual_draft()
+    );
+}
+
+// 삭제는 저장된 최신 세대만 허용해 동시 편집 결과를 보존한다.
+#[test]
+fn contextual_draft_delete_requires_the_exact_persisted_generation() {
+    let temp = Temp::new();
+    let repo = InterviewRepository::open(&temp.0).unwrap();
+    let (catalog, _) = batch();
+    let mut copy = WorkingCopy::new_contextual(&catalog.interviews()[0]).unwrap();
+    repo.save(&copy, None, &catalog).unwrap();
+    copy.answers[0].text = "updated".into();
+    repo.save(&copy, Some(1), &catalog).unwrap();
+    assert!(matches!(repo.delete(&copy), Err(InterviewError::Conflict)));
+    let latest = repo.load(&copy.copy_id).unwrap().unwrap();
+    repo.delete(&latest).unwrap();
+    assert!(repo.load(&copy.copy_id).unwrap().is_none());
+}
+
+// 새 초안 형식에 이전 비밀 복구 참조가 끼어들면 저장과 복원을 모두 거부한다.
+#[test]
+fn contextual_draft_rejects_legacy_secret_recovery_references() {
+    let (catalog, _) = batch();
+    let mut copy = WorkingCopy::new_contextual(&catalog.interviews()[0]).unwrap();
+    copy.secret_recovery
+        .push(recovery::SecretRecoveryReference::new(
+            copy.current_question_id.clone(),
+            crate::SubmissionId::new().unwrap().to_string(),
+        ));
+    assert!(copy.validate(&catalog).is_err());
+    assert!(copy.encode().is_err());
+    assert!(WorkingCopy::decode(&serde_json::to_vec(&copy).unwrap()).is_err());
+}
+
 // 심볼릭 링크, 느슨한 권한, 알 수 없는 형식의 데이터는 수정하거나 삭제하지 않고 거부한다.
 #[test]
 fn unsafe_storage_and_unknown_records_are_preserved() {

@@ -1,12 +1,13 @@
 //! The TuiSession-owned working-copy controller. The runtime remains the sole Journal writer.
 use std::{
+    collections::HashSet,
     fmt,
     time::{Duration, Instant},
 };
 
 use yo_core::{
-    ActivityRequestRef, ActivityResponse, SecretInput, SubmissionOutcome, TranscriptReader,
-    TranscriptRecord,
+    ActivityKind, ActivityRequestRef, ActivityResponse, AgentEvent, SecretInput, SessionId,
+    SubmissionOutcome, TranscriptReader, TranscriptRecord,
     interview::{
         Answer, CapturedInterview, InterviewCatalog, InterviewError, InterviewQuestion,
         InterviewRepository, NewConversation, PREVIEW_LIMIT, SecretRecoveryDestination, Submission,
@@ -17,12 +18,24 @@ use yo_core::{
 /// Read-only host access to genuine stored captures and accepted first-Turn receipts.
 pub trait InterviewHistoryHost: Send {
     fn resolve(&mut self, source: ActivityRequestRef) -> Result<InterviewCatalog, InterviewError>;
+    fn historical_interviews(
+        &mut self,
+        session: SessionId,
+    ) -> Result<InterviewCatalog, InterviewError>;
     fn validate_submission(&mut self, copy: &WorkingCopy) -> Result<(), InterviewError>;
 }
 
 pub(super) struct InterviewController {
     repository: InterviewRepository,
     host: Box<dyn InterviewHistoryHost>,
+    selected_session: SessionId,
+    historical_requests: HashSet<ActivityRequestRef>,
+    resume_liveness_unavailable: bool,
+    startup_warning: Option<String>,
+    live_requests: HashSet<ActivityRequestRef>,
+    offered_live: HashSet<ActivityRequestRef>,
+    discarded_interviews: HashSet<ActivityRequestRef>,
+    startup_checked: bool,
     live: InterviewCatalog,
     source: InterviewCatalog,
     copy: Option<WorkingCopy>,
@@ -103,11 +116,43 @@ impl InterviewController {
     }
     pub(super) fn new(
         repository: InterviewRepository,
-        host: Box<dyn InterviewHistoryHost>,
+        mut host: Box<dyn InterviewHistoryHost>,
+        selected_session: SessionId,
+        is_resume: bool,
     ) -> Self {
+        let (historical_requests, startup_warning, resume_liveness_unavailable) = if is_resume {
+            match host.historical_interviews(selected_session) {
+                Ok(catalog) => (
+                    catalog
+                        .interviews()
+                        .iter()
+                        .map(|capture| capture.interview)
+                        .collect(),
+                    None,
+                    false,
+                ),
+                Err(error) => (
+                    HashSet::new(),
+                    Some(format!(
+                        "Interview draft liveness unavailable after resume: {error}"
+                    )),
+                    true,
+                ),
+            }
+        } else {
+            (HashSet::new(), None, false)
+        };
         let mut controller = Self {
             repository,
             host,
+            selected_session,
+            historical_requests,
+            resume_liveness_unavailable,
+            startup_warning,
+            live_requests: HashSet::new(),
+            offered_live: HashSet::new(),
+            discarded_interviews: HashSet::new(),
+            startup_checked: false,
             live: InterviewCatalog::default(),
             source: InterviewCatalog::default(),
             copy: None,
@@ -134,6 +179,15 @@ impl InterviewController {
     }
 
     pub(super) fn recovery_boundary(&self) -> Result<String, InterviewError> {
+        if self
+            .copy
+            .as_ref()
+            .is_some_and(WorkingCopy::is_contextual_draft)
+        {
+            return Err(error(
+                "saved secret recovery is not available for the current contextual draft",
+            ));
+        }
         if self.recovery_destination.is_none() {
             return Err(error(
                 "secret recovery is unsupported because the live destination lacks complete authenticated account evidence",
@@ -326,13 +380,50 @@ impl InterviewController {
     }
     pub(super) fn observe(&mut self, record: &TranscriptRecord) -> Option<String> {
         self.live.observe_committed(record);
-        if let Some(notice) = self.clear_recovery_after_final_seal() {
-            return Some(notice);
+        match record {
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::UserInputRequest { request_id },
+            }) if activity.turn().session_id() == self.selected_session => {
+                let request = ActivityRequestRef::new(*activity, *request_id);
+                if !self.resume_liveness_unavailable && !self.historical_requests.contains(&request)
+                {
+                    self.live_requests.insert(request);
+                }
+            },
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished { activity, .. }) => {
+                self.live_requests
+                    .retain(|request| request.activity() != *activity);
+                self.offered_live
+                    .retain(|request| request.activity() != *activity);
+            },
+            TranscriptRecord::EventCommitted(AgentEvent::TurnFinished { turn, .. }) => {
+                self.live_requests
+                    .retain(|request| request.activity().turn() != *turn);
+                self.offered_live
+                    .retain(|request| request.activity().turn() != *turn);
+                self.discarded_interviews
+                    .retain(|interview| interview.activity().turn() != *turn);
+            },
+            _ => {},
+        }
+        if self.live.interviews().iter().any(|capture| {
+            capture.submitted.is_some()
+                && self
+                    .copy
+                    .as_ref()
+                    .is_some_and(|copy| copy.source().0 == capture.interview)
+        }) {
+            return self.cleanup_sealed_selected().or_else(|| {
+                self.copy
+                    .is_some()
+                    .then(|| "Submitted interview draft cleanup is pending".into())
+            });
         }
         let relevant = match record {
             TranscriptRecord::EventCommitted(
-                yo_core::AgentEvent::ActivityUpdated { activity, .. }
-                | yo_core::AgentEvent::ActivityFinished { activity, .. },
+                AgentEvent::ActivityUpdated { activity, .. }
+                | AgentEvent::ActivityFinished { activity, .. },
             ) => self.live.is_interview_activity(*activity),
             _ => false,
         };
@@ -359,6 +450,9 @@ impl InterviewController {
                 return Some(status);
             },
         };
+        if self.discarded_interviews.contains(&latest.interview) {
+            return None;
+        }
         if self
             .pending
             .as_ref()
@@ -371,20 +465,27 @@ impl InterviewController {
             .as_ref()
             .is_none_or(|copy| copy.source().0 != latest.interview)
         {
-            let copy = match WorkingCopy::new(&latest) {
+            let existing = match self.existing_copy_for(&latest, &source) {
                 Ok(copy) => copy,
                 Err(error) => return Some(error.to_string()),
             };
+            let expected = existing.as_ref().map(|copy| copy.generation);
+            let copy = match existing.map_or_else(|| WorkingCopy::new_contextual(&latest), Ok) {
+                Ok(copy) => copy,
+                Err(error) => return Some(error.to_string()),
+            };
+            self.expected = expected;
             self.copy = Some(copy);
-            self.expected = None;
             self.source = source;
-            self.mark_dirty();
+            if self.expected.is_none() {
+                self.mark_dirty();
+            }
         } else {
             self.source = source;
             let copy = self.copy.as_mut().expect("selected copy");
             let before = copy.clone();
             copy.current_question_id = latest.current_question_id.clone();
-            if let TranscriptRecord::EventCommitted(yo_core::AgentEvent::ActivityFinished {
+            if let TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
                 outcome: yo_core::ActivityOutcome::Completed,
                 activity,
             }) = record
@@ -420,47 +521,93 @@ impl InterviewController {
             self.status = format!("Submission sealing unconfirmed; {reason}");
             return Some(self.status.clone());
         }
-        if self.automatic_save {
-            self.save().err().map(|error| error.to_string())
-        } else {
-            None
+        if self.automatic_save
+            && let Err(error) = self.save()
+        {
+            return Some(error.to_string());
+        }
+        let live_request = self.live_requests.iter().find(|request| {
+            self.live
+                .question_for_request(**request)
+                .is_some_and(|(capture, _)| {
+                    self.copy
+                        .as_ref()
+                        .is_some_and(|copy| copy.source().0 == capture.interview)
+                })
+        });
+        if let Some(request) = live_request.copied()
+            && self.offered_live.insert(request)
+        {
+            return Some(
+                "Interview draft available here: /interview continue or /interview discard".into(),
+            );
+        }
+        None
+    }
+
+    fn cleanup_sealed_selected(&mut self) -> Option<String> {
+        let copy = self.copy.as_ref()?;
+        let source = self.host.resolve(copy.source().0).ok()?;
+        let capture = copy.validate(&source).ok()?;
+        capture.submitted?;
+        let persisted = self.repository.load(&copy.copy_id);
+        let cleanup = persisted.and_then(|stored| {
+            if let Some(stored) = stored {
+                stored.validate(&source)?;
+                self.delete_copy(&stored)?;
+            }
+            Ok(())
+        });
+        match cleanup {
+            Ok(()) => {
+                self.copy = None;
+                self.expected = None;
+                self.dirty = false;
+                self.next_save = None;
+                self.editing = false;
+                self.preview = None;
+                self.status = "Submitted interview draft removed".into();
+                None
+            },
+            Err(error) => Some(format!(
+                "Submitted interview draft cleanup is pending: {error}"
+            )),
         }
     }
 
-    fn clear_recovery_after_final_seal(&mut self) -> Option<String> {
-        let copy = self.copy.as_ref()?;
-        if !copy.has_any_secret_recovery() {
-            return None;
+    fn delete_copy(&self, copy: &WorkingCopy) -> Result<(), InterviewError> {
+        self.repository.delete(copy)
+    }
+
+    fn stored_copies(&self) -> Result<Vec<WorkingCopy>, InterviewError> {
+        self.repository
+            .list()?
+            .into_iter()
+            .map(|(_, result)| {
+                result
+                    .map_err(|_| error("Stored interview copy is unreadable; no draft was changed"))
+            })
+            .collect()
+    }
+
+    fn existing_copy_for(
+        &self,
+        capture: &CapturedInterview,
+        source: &InterviewCatalog,
+    ) -> Result<Option<WorkingCopy>, InterviewError> {
+        let mut matches = self
+            .stored_copies()?
+            .into_iter()
+            .filter(|copy| copy.is_contextual_draft() && copy.source().0 == capture.interview)
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(error("multiple contextual drafts match one request"));
         }
-        let source_fingerprint = copy
-            .validate(&self.source)
-            .and_then(CapturedInterview::public_batch_fingerprint)
-            .ok()?;
-        let sealed = self.live.interviews().iter().any(|capture| {
-            capture.submitted.is_some()
-                && capture
-                    .public_batch_fingerprint()
-                    .is_ok_and(|fingerprint| fingerprint == source_fingerprint)
-        });
-        if !sealed {
-            return None;
+        let copy = matches.pop();
+        if let Some(copy) = &copy {
+            copy.validate(source)?;
         }
-        match self
-            .repository
-            .forget_all_secret_recovery(copy, self.expected, &self.source)
-        {
-            Ok(update) => {
-                self.expected = Some(update.copy.generation);
-                self.copy = Some(update.copy);
-                self.dirty = false;
-                self.next_save = None;
-                self.status = "Saved · final response sealed; secret recovery removed".into();
-                update.cleanup_warning
-            },
-            Err(error) => Some(format!(
-                "Final response sealed, but secret recovery cleanup is pending: {error}"
-            )),
-        }
+        Ok(copy)
     }
 
     fn maintain_recovery(&mut self) -> Option<String> {
@@ -743,6 +890,30 @@ impl InterviewController {
         }
     }
     pub(super) fn tick(&mut self) -> Option<String> {
+        if let Some(warning) = self.startup_warning.take() {
+            return Some(warning);
+        }
+        if !self.startup_checked {
+            self.startup_checked = true;
+            if self.live_requests.is_empty() {
+                match self.select_contextual() {
+                    Ok(Some(_)) => {
+                        return Some("Saved interview draft in this Session: /interview view or /interview discard".into());
+                    },
+                    Ok(None) => {},
+                    Err(error) => return Some(format!("Interview draft unavailable: {error}")),
+                }
+            }
+        }
+        if self.live.interviews().iter().any(|capture| {
+            capture.submitted.is_some()
+                && self
+                    .copy
+                    .as_ref()
+                    .is_some_and(|copy| copy.source().0 == capture.interview)
+        }) {
+            return self.cleanup_sealed_selected();
+        }
         if let Some(pending) = &mut self.pending
             && !pending.receipt_seen
             && let Some((turn, sequence)) = pending
@@ -874,231 +1045,145 @@ impl InterviewController {
         }
         None
     }
+    fn select_contextual(&mut self) -> Result<Option<WorkingCopy>, InterviewError> {
+        self.cleanup_sealed_selected();
+        if let Some(copy) = &self.copy {
+            let source = self.host.resolve(copy.source().0)?;
+            if copy.validate(&source)?.submitted.is_some() {
+                return Err(error("submitted draft cleanup is pending"));
+            }
+        }
+        self.save()?;
+        let mut copies = self
+            .stored_copies()?
+            .into_iter()
+            .filter(|copy| {
+                copy.is_contextual_draft()
+                    && copy.source().0.activity().turn().session_id() == self.selected_session
+            })
+            .collect::<Vec<_>>();
+        copies.sort_by(|left, right| left.copy_id.cmp(&right.copy_id));
+        copies.sort_by_key(|copy| !self.current_request_is_live(copy));
+        let mut sources = HashSet::new();
+        if copies.iter().any(|copy| !sources.insert(copy.source().0)) {
+            return Err(error("multiple contextual drafts match one request"));
+        }
+        for copy in copies {
+            let source = self.host.resolve(copy.source().0)?;
+            let capture = copy.validate(&source)?;
+            let sealed = capture.submitted.is_some();
+            if sealed || copy.submission.is_some() {
+                if !sealed {
+                    // A legacy new-conversation copy requires its separate durable
+                    // acceptance evidence before it can be discarded.
+                    self.host.validate_submission(&copy)?;
+                }
+                self.delete_copy(&copy)?;
+                continue;
+            }
+            self.expected = Some(copy.generation);
+            self.source = source;
+            self.copy = Some(copy.clone());
+            self.editing = false;
+            self.preview = None;
+            return Ok(Some(copy));
+        }
+        self.copy = None;
+        self.expected = None;
+        self.editing = false;
+        self.preview = None;
+        Ok(None)
+    }
+
+    fn current_request_is_live(&self, copy: &WorkingCopy) -> bool {
+        self.live_requests.iter().any(|request| {
+            self.live
+                .question_for_request(*request)
+                .is_some_and(|(capture, _)| {
+                    capture.interview == copy.source().0
+                        && capture.revision == copy.source().1
+                        && capture.submitted.is_none()
+                })
+        })
+    }
+
     pub(super) fn command(
         &mut self,
         argument: &str,
-        busy: bool,
+        _busy: bool,
     ) -> Result<InterviewCommand, InterviewError> {
-        let (verb, rest) = argument
-            .trim()
-            .split_once(' ')
-            .unwrap_or((argument.trim(), ""));
-        if self.is_editing_secret() && matches!(verb, "option" | "notes" | "send") {
-            return Err(error(
-                "secret interview answers require a new live request; this edit is unavailable",
-            ));
+        let verb = argument.trim();
+        if verb == "close" {
+            self.save()?;
+            self.editing = false;
+            return Ok(InterviewCommand {
+                document: "Interview draft closed".into(),
+                editor: Some(String::new()),
+                conversation: None,
+            });
         }
-        let mut editor = None;
-        let mut conversation = None;
+        if !matches!(verb, "" | "continue" | "view" | "discard") {
+            return Err(error("Use /interview to view this Session's draft options"));
+        }
+        let Some(copy) = self.select_contextual()? else {
+            return Ok(InterviewCommand {
+                document: "No unfinished interview draft in this Session".into(),
+                editor: None,
+                conversation: None,
+            });
+        };
+        let live = self.current_request_is_live(&copy);
         match verb {
-            "" | "list" => {
-                let mut document = String::from("Interview copies\n\n");
-                for (id, value) in self.repository.list()? {
-                    document.push_str(&format!(
-                        "{id}: {}\n",
-                        match value {
-                            Ok(copy) => {
-                                let valid = self.host.resolve(copy.source().0).and_then(|source| {
-                                    copy.validate(&source)?;
-                                    self.host.validate_submission(&copy)
-                                });
-                                match valid {
-                                    Ok(()) if copy.submission.is_some() => {
-                                        "submitted; use reopen".into()
-                                    },
-                                    Ok(()) => "saved editable copy; use recover".into(),
-                                    Err(error) => format!("unavailable: {error}"),
-                                }
-                            },
-                            Err(e) => format!("unavailable: {e}"),
-                        }
-                    ));
-                }
-                document.push_str("\n/interview recover <copy UUID> · /interview reopen <copy UUID>\n/interview next · previous · option <number> · notes <text> · context <text> · preview · send · save · forget · close\nType an answer and press Enter to keep it locally. Sending requires /interview send.\nSecret recovery: Ctrl-R shows the local boundary; press Ctrl-R again to opt in. Ctrl-F or /interview forget removes it.\n");
-                return Ok(InterviewCommand {
-                    document,
+            "continue" if live => {
+                self.status = "Live interview draft; Enter responds to the current request".into();
+                Ok(InterviewCommand {
+                    document: self.document()?,
+                    editor: Some(self.answer_text()),
+                    conversation: None,
+                })
+            },
+            "view" if !live => {
+                self.status = "Original request ended; this draft is read-only".into();
+                Ok(InterviewCommand {
+                    document: self.document()?,
                     editor: None,
                     conversation: None,
-                });
+                })
             },
-            "recover" | "reopen" => {
-                if self.pending.is_some() {
-                    return Err(error(
-                        "New-conversation confirmation is pending; the exact copy and preview are retained.",
-                    ));
+            "discard" => {
+                self.delete_copy(&copy)?;
+                if live {
+                    self.discarded_interviews.insert(copy.source().0);
                 }
-                self.save()?;
-                if let Some(notice) = self.maintain_recovery() {
-                    self.status = notice;
-                }
-                let mut stored = self
-                    .repository
-                    .load(rest.trim())?
-                    .ok_or_else(|| error("interview copy not found"))?;
-                let source = self.host.resolve(stored.source().0)?;
-                stored.validate(&source)?;
-                let expired = self.repository.expire_secret_recovery(
-                    &stored,
-                    Some(stored.generation),
-                    &source,
-                )?;
-                let expiry_notice = expired.as_ref().map(|_| {
-                    "Expired secret recovery was removed before opening this copy".to_owned()
-                });
-                if let Some(update) = expired {
-                    stored = update.copy;
-                }
-                self.host.validate_submission(&stored)?;
-                if verb == "recover" && stored.submission.is_some() {
-                    return Err(error(
-                        "submitted copies must be deliberately reopened with /interview reopen <UUID>",
-                    ));
-                }
-                let copy = if verb == "reopen" {
-                    stored.reopen()?
-                } else {
-                    stored.clone()
-                };
-                self.expected = if verb == "reopen" {
-                    None
-                } else {
-                    Some(copy.generation)
-                };
-                self.source = source;
-                self.copy = Some(copy);
-                self.editing = true;
-                self.preview = None;
-                self.pending = None;
-                if verb == "reopen" {
-                    self.mark_dirty();
-                    self.save()?;
-                } else {
-                    self.status = expiry_notice.unwrap_or_else(|| {
-                        "Saved · recovered editable copy; submission unconfirmed".into()
-                    });
-                }
-                editor = Some(self.answer_text());
+                self.copy = None;
+                self.expected = None;
+                self.source = InterviewCatalog::default();
+                self.status = "Unsubmitted interview draft discarded".into();
+                Ok(InterviewCommand {
+                    document: self.status.clone(),
+                    editor: Some(String::new()),
+                    conversation: None,
+                })
             },
-            "next" | "previous" => {
-                self.require_editing()?;
-                self.save()?;
-                let copy = self.copy.as_mut().expect("editable copy");
-                let current = copy
-                    .answers
-                    .iter()
-                    .position(|a| a.question_id == copy.current_question_id)
-                    .ok_or_else(|| error("invalid current question"))?;
-                let next = if verb == "next" {
-                    (current + 1).min(copy.answers.len() - 1)
-                } else {
-                    current.saturating_sub(1)
-                };
-                copy.current_question_id = copy.answers[next].question_id.clone();
-                self.preview = None;
-                self.mark_dirty();
-                self.save()?;
-                editor = Some(self.answer_text());
-            },
-            "option" | "notes" | "context" => {
-                self.require_editing()?;
-                let copy = self.copy.as_mut().expect("editable copy");
-                let answer = copy
-                    .answers
-                    .iter_mut()
-                    .find(|a| a.question_id == copy.current_question_id)
-                    .expect("validated current question");
-                match verb {
-                    "option" => {
-                        answer.option_id = if rest.trim() == "none" {
-                            None
-                        } else {
-                            Some(rest.trim().into())
-                        };
-                        answer.text.clear();
+            "" => Ok(InterviewCommand {
+                document: format!(
+                    "{}\n\n{}\n/interview discard",
+                    self.document()?,
+                    if live {
+                        "/interview continue"
+                    } else {
+                        "/interview view"
                     },
-                    "notes" => answer.notes = rest.into(),
-                    _ => copy.context = rest.into(),
-                }
-                self.preview = None;
-                self.mark_dirty();
-                self.save()?;
-                editor = Some(self.answer_text());
-            },
-            "preview" => {
-                self.require_editing()?;
-                self.save()?;
-                let text = self
-                    .copy
-                    .as_ref()
-                    .expect("editable copy")
-                    .preview(&self.source)?;
-                self.preview = Some(text.clone());
-                editor = Some(text);
-            },
-            "send" => {
-                self.require_editing()?;
-                if busy {
-                    return Err(error(
-                        "Session is busy; the interview copy is retained. Send after the active Turn finishes.",
-                    ));
-                }
-                self.save()?;
-                let mut intent = self
-                    .copy
-                    .as_ref()
-                    .expect("editable copy")
-                    .new_conversation(&self.source)?;
-                if let Some(preview) = &self.preview {
-                    if preview.len() > PREVIEW_LIMIT {
-                        return Err(error(
-                            "editable preview exceeds 64 KiB; no text was truncated",
-                        ));
-                    }
-                    intent.preview = preview.clone();
-                    intent.submission = yo_core::InputSubmission::new(
-                        intent.submission.id(),
-                        yo_core::UserInput::new(preview.clone()),
-                    );
-                }
-                conversation = Some(intent);
-            },
-            "save" => {
-                self.save_pending()?;
-                self.save()?;
-                if self.editing {
-                    editor = Some(self.preview.clone().unwrap_or_else(|| self.answer_text()));
-                }
-            },
-            "forget" => {
-                self.require_editing()?;
-                let cleanup = self.forget_secret_recovery(None)?;
-                if let Some(cleanup) = cleanup {
-                    self.status = format!("Saved · secret recovery forgotten; {cleanup}");
-                }
-                editor = Some(self.answer_text());
-            },
-            "close" => {
-                self.save()?;
-                self.editing = false;
-                self.preview = None;
-                editor = Some(String::new());
-            },
-            _ => return Err(error("Unknown interview command; use /interview list")),
+                ),
+                editor: None,
+                conversation: None,
+            }),
+            _ => Err(error(if live {
+                "The request is still live; use /interview continue or discard"
+            } else {
+                "The request has ended; use /interview view or discard"
+            })),
         }
-        let document = if self.preview.is_some() {
-            format!(
-                "Interview preview · {}\n\nEdit the plain text. /interview send explicitly sends it as a new conversation.\n\n{}",
-                self.status,
-                self.preview.as_deref().unwrap_or_default()
-            )
-        } else {
-            self.document()?
-        };
-        Ok(InterviewCommand {
-            document,
-            editor,
-            conversation,
-        })
     }
     fn require_editing(&self) -> Result<(), InterviewError> {
         if !self.editing || self.pending.is_some() {
@@ -1178,8 +1263,7 @@ impl InterviewController {
         let q = &capture.questions[index];
         let a = &copy.answers[index];
         let mut text = format!(
-            "Interview copy {} · {}\n\nQuestion {} of {}\n{}\n",
-            copy.copy_id,
+            "Interview draft · {}\n\nQuestion {} of {}\n{}\n",
             self.status,
             index + 1,
             capture.questions.len(),
@@ -1192,9 +1276,9 @@ impl InterviewController {
                 Err(_) => "secret recovery unavailable",
                 Ok(false) => "secret re-entry required",
             };
-            text.push_str(&format!("\nAnswer: [{state}]\nNotes: \n\nSecret answers require a matching new live request. Ctrl-R recovers only into that hidden editor; /interview forget removes local recovery. Tab: next · Shift-Tab: previous · Esc: close."));
+            text.push_str(&format!("\nAnswer: [{state}]\nNotes: \n\nSecret answers require a matching live request. Esc: close."));
         } else {
-            text.push_str(&format!("\nAnswer: {}\nNotes: {}\n\nEdit locally; /interview preview then /interview send starts a new conversation.",a.option_id.as_deref().unwrap_or(&a.text),a.notes));
+            text.push_str(&format!("\nAnswer: {}\nNotes: {}\n\nThis draft belongs only to its original Session and request.",a.option_id.as_deref().unwrap_or(&a.text),a.notes));
         }
         Ok(text)
     }

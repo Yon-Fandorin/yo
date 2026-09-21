@@ -60,8 +60,12 @@ pub(super) fn build_live_session(
     }
     match storage::open_interviews() {
         Ok(repository) => {
-            tui =
-                tui.with_interview_repository(repository, Box::new(super::interview::HistoryHost));
+            tui = tui.with_interview_repository(
+                repository,
+                Box::new(super::interview::HistoryHost),
+                session_id,
+                is_resume,
+            );
             if let Some(active) = active_host_model.as_ref()
                 && let Some(provider) = active.provider()
             {

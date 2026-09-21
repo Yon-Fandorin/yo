@@ -1880,6 +1880,13 @@ RequestStillUnanswered 검증에서 계속 실패한다. 표시를 위해 답변
 
 ### 인터뷰 답안 복사본과 비밀 재입력
 
+아래 검증 기록은 이전 v1~v3 사본 흐름에 관한 이력이다. 현재 TUI는 새 요청에 v4
+문맥 초안을 만들고, `/interview`에서 정확한 요청이 살아 있으면 `continue`·`discard`,
+종료되었으면 읽기 전용 `view`·`discard`를 제공한다. 사본 UUID 목록·다시 열기·미리보기·
+새 대화 전송은 노출하지 않는다. 내구성 있는 최종 답변 봉인을 확인하면 별도 초안을 삭제한다.
+기존 v1~v3 파일은 이번 단계에서 이행하거나 목록에 표시하지 않는다. 기존의 7일 비밀
+복구 참조 정리는 계속 적용된다. 이행과 새 재사용 비밀 저장소는 후속 작업이다.
+
 Codex는 처음 실제 UserInputRequest snapshot에 허용된 전체 질문 묶음을 저장한다. 비밀 질문이 전혀 없는 묶음은 `yo.interview-capture/v1`, 비밀 질문이 포함된 묶음은 v2를 사용한다. 이후 질문은 같은 원본과 revision을 고정한다. core는 모든 수락 답안을 실제 committed response와 완료된 UserInputResponse에 대조한다. 최종 묶음 seal은 백엔드 응답 쓰기 성공 뒤에만 공개한다. ModelWork나 도구 출력의 같은 표지는 그대로 문자열로 남는다. 기존 Journal envelope와 Activity 종류는 유지한다. 최초 요청과 전체 캡처는 함께 게시하며 canonical 캡처는 envelope escaping 전1MiB까지다. 미지원·초과 묶음은 전체 복구 불가를 명시한다. v2 캡처는 공개 질문 정보와 값 없는 답변 증거만 보존하고 비밀 값·해시·길이는 보존하지 않는다.
 
 TuiSession controller는 플랫폼 Yo state 디렉터리의 `interviews` 아래에 별도 답안 복사본

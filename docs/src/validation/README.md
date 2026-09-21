@@ -2144,6 +2144,15 @@ The real `/help` command now emits an initially expanded TuiDocument. Command en
 
 ### Interview copies and secret re-entry
 
+The validation narrative below records the earlier v1–v3 copy workflow. The
+current TUI creates v4 contextual drafts for new requests: `/interview` offers
+`continue`/`discard` while the exact request is live and read-only `view`/`discard`
+after it ends. It no longer exposes copy UUIDs, reopen, preview or send. A verified
+durable final answer seal removes the separate draft. Earlier v1–v3 files are not
+migrated or listed in this stage; their existing seven-day secret-reference
+maintenance still applies. Their migration and the new reusable secret store
+remain follow-up work.
+
 Codex captures the complete admitted question batch in the first genuine UserInputRequest snapshot. A wholly nonsecret batch uses `yo.interview-capture/v1`; a batch containing a secret question uses `yo.interview-capture/v2`. Later question snapshots pin the same source and revision. The core checks every accepted answer against the actual committed response and completed UserInputResponse. The final aggregate seal is emitted only after the backend response write succeeds. ModelWork or tool-output lookalikes remain literal. Existing Journal envelopes and Activity kinds are unchanged. The initial request and complete capture publish together; the canonical capture limit is1MiB before envelope escaping. Unsupported or excessive batches explicitly lack complete recovery. A v2 capture preserves public question data and payload-free answer evidence, never the secret value, hash or length.
 
 The TuiSession controller saves a separate working-copy file under the platform Yo state directory's `interviews` directory. Nonsecret copies use `yo.interview-working-copy/v1`; a copy containing a secret question without encrypted recovery uses v2. V3 adds only a random opaque recovery-entry identity and the public `Recovery available` state. All three store public question source/revision, ordered public answers, notes, navigation, user context and confirmed submission bookkeeping. V2 and v3 represent every secret answer without a recovery reference as `Re-entry required`; neither contains backend wire IDs, credentials, secret values, hashes, plaintext lengths, nonces, keys or ciphertext. Storage requires user-owned0700 directories and regular0600 files, rejects symlinks and unknown schemas, and uses an exclusive lease, generation CAS, an exclusive same-directory temporary file, file fsync, atomic rename and directory fsync. Conflict or failure preserves both published data and editable changes without claiming Saved. Edits schedule publication within one second; navigation, submission and graceful exit flush. Recovery reads the last durable publication, excluding crash-lost keystrokes.

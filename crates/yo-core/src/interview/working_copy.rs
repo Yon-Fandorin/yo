@@ -56,6 +56,7 @@ impl WorkingCopy {
     pub const SCHEMA: &'static str = "yo.interview-working-copy/v1";
     pub const SCHEMA_V2: &'static str = "yo.interview-working-copy/v2";
     pub const SCHEMA_V3: &'static str = "yo.interview-working-copy/v3";
+    pub const SCHEMA_V4: &'static str = "yo.interview-working-copy/v4";
     pub fn new(capture: &CapturedInterview) -> Result<Self, InterviewError> {
         let answers = capture
             .questions
@@ -93,7 +94,21 @@ impl WorkingCopy {
             secret_recovery: Vec::new(),
         })
     }
+    pub fn new_contextual(capture: &CapturedInterview) -> Result<Self, InterviewError> {
+        let mut copy = Self::new(capture)?;
+        if copy.submission.is_some() {
+            return Err(invalid("a submitted interview cannot become a new draft"));
+        }
+        copy.schema = Self::SCHEMA_V4.into();
+        Ok(copy)
+    }
+    pub fn is_contextual_draft(&self) -> bool {
+        self.schema == Self::SCHEMA_V4
+    }
     pub fn reopen(&self) -> Result<Self, InterviewError> {
+        if self.is_contextual_draft() {
+            return Err(invalid("contextual interview drafts cannot be reopened"));
+        }
         let mut copy = self.clone();
         copy.copy_id = new_id()?;
         copy.generation = 1;
@@ -124,7 +139,9 @@ impl WorkingCopy {
         for (q, a) in capture.questions.iter().zip(&self.answers) {
             q.validate_answer(a, true)?;
         }
-        let expected_schema = if !self.secret_recovery.is_empty() {
+        let expected_schema = if self.is_contextual_draft() {
+            Self::SCHEMA_V4
+        } else if !self.secret_recovery.is_empty() {
             Self::SCHEMA_V3
         } else if capture.questions.iter().any(|q| q.is_secret) {
             Self::SCHEMA_V2
@@ -151,30 +168,40 @@ impl WorkingCopy {
     fn validate_shape(&self) -> Result<(), InterviewError> {
         if (self.schema != Self::SCHEMA
             && self.schema != Self::SCHEMA_V2
-            && self.schema != Self::SCHEMA_V3)
+            && self.schema != Self::SCHEMA_V3
+            && self.schema != Self::SCHEMA_V4)
             || !valid_id(&self.copy_id)
             || self.generation == 0
             || !super::profile::valid_revision(&self.source.revision)
         {
             return Err(invalid("unsupported or invalid interview working copy"));
         }
+        if self.is_contextual_draft() && !self.secret_recovery.is_empty() {
+            return Err(invalid(
+                "contextual interview drafts cannot contain secret recovery references",
+            ));
+        }
         if self.schema == Self::SCHEMA && self.answers.iter().any(Answer::is_secret) {
             return Err(invalid(
                 "v1 interview working copies cannot contain secret answers",
             ));
         }
-        if matches!(self.schema.as_str(), Self::SCHEMA_V2 | Self::SCHEMA_V3)
-            && self
-                .answers
-                .iter()
-                .any(|answer| answer.secret_state() == Some(SecretAnswerState::Submitted))
+        if matches!(
+            self.schema.as_str(),
+            Self::SCHEMA_V2 | Self::SCHEMA_V3 | Self::SCHEMA_V4
+        ) && self
+            .answers
+            .iter()
+            .any(|answer| answer.secret_state() == Some(SecretAnswerState::Submitted))
         {
             return Err(invalid(
                 "working copies retain only the secret re-entry marker",
             ));
         }
-        if matches!(self.schema.as_str(), Self::SCHEMA_V2 | Self::SCHEMA_V3)
-            && matches!(self.submission, Some(Submission::NewConversation { .. }))
+        if matches!(
+            self.schema.as_str(),
+            Self::SCHEMA_V2 | Self::SCHEMA_V3 | Self::SCHEMA_V4
+        ) && matches!(self.submission, Some(Submission::NewConversation { .. }))
         {
             return Err(invalid(
                 "secret interview working copies cannot contain a new-conversation submission",
@@ -283,9 +310,12 @@ impl WorkingCopy {
                 "reopen the submitted interview as a separate editable copy first",
             ));
         }
-        if matches!(self.schema.as_str(), Self::SCHEMA_V2 | Self::SCHEMA_V3) {
+        if matches!(
+            self.schema.as_str(),
+            Self::SCHEMA_V2 | Self::SCHEMA_V3 | Self::SCHEMA_V4
+        ) {
             return Err(invalid(
-                "secret interview working copies cannot start a new conversation",
+                "this interview copy cannot start a new conversation",
             ));
         }
         let preview = self.preview(catalog)?;

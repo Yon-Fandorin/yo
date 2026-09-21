@@ -254,6 +254,36 @@ impl InterviewRepository {
         self.save_unlocked(copy, expected_generation, catalog)
     }
 
+    /// Removes only the exact persisted generation. Callers must first verify a
+    /// durable answer seal or obtain an explicit discard decision.
+    pub fn delete(&self, copy: &WorkingCopy) -> Result<(), InterviewError> {
+        if !copy.is_contextual_draft() {
+            return Err(invalid(
+                "older interview copies are not part of contextual drafts",
+            ));
+        }
+        if copy.has_any_secret_recovery() {
+            return Err(invalid(
+                "secret recovery references must be removed before draft deletion",
+            ));
+        }
+        let _lease = self.lease()?;
+        let current = self
+            .read_unlocked(&copy.copy_id)?
+            .ok_or(InterviewError::Conflict)?;
+        if &current != copy {
+            return Err(InterviewError::Conflict);
+        }
+        fs::unlinkat(
+            &self.root,
+            format!("{}.json", copy.copy_id),
+            fs::AtFlags::empty(),
+        )
+        .map_err(Error::from)?;
+        self.root.sync_all()?;
+        Ok(())
+    }
+
     fn save_unlocked(
         &self,
         copy: &WorkingCopy,
@@ -335,6 +365,11 @@ impl InterviewRepository {
         destination: &SecretRecoveryDestination,
         secret: &SecretInput,
     ) -> Result<WorkingCopy, InterviewError> {
+        if copy.is_contextual_draft() {
+            return Err(invalid(
+                "legacy secret recovery is unavailable for contextual drafts",
+            ));
+        }
         let recovery = self
             .recovery
             .as_ref()

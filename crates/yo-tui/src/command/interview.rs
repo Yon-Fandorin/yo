@@ -3,6 +3,6 @@ pub(super) static DEFINITION: CommandDefinition = CommandDefinition::new(
     CommandId::Interview,
     "command.interview",
     "/interview",
-    "recover, reopen and edit a saved interview; send explicitly as a new conversation",
+    "continue or discard this Session's live interview draft; view a finished draft read-only",
     CommandEffect::Interview,
 );

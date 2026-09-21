@@ -15,9 +15,14 @@ impl TuiSession {
         mut self,
         repository: interview::InterviewRepository,
         host: Box<dyn super::super::InterviewHistoryHost>,
+        selected_session: yo_core::SessionId,
+        is_resume: bool,
     ) -> Self {
         self.state.interview = Some(super::super::interview::InterviewController::new(
-            repository, host,
+            repository,
+            host,
+            selected_session,
+            is_resume,
         ));
         self
     }
