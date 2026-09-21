@@ -6,12 +6,13 @@ use yo_core::ActivityDocument;
 
 use super::{
     CommandDefinition, attach, changes, compact, copy, exit, fork, help, interview, model, new,
-    output, preview, prompt, resume, secrets, tree,
+    output, preview, prompt, resume, secrets, status, tree,
 };
 
 const ORDERED_DEFINITIONS: &[&CommandDefinition] = &[
     &help::DEFINITION,
     &model::DEFINITION,
+    &status::DEFINITION,
     &compact::DEFINITION,
     &copy::DEFINITION,
     &changes::DEFINITION,

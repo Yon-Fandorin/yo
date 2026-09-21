@@ -5,7 +5,29 @@ use yo_core::{
     AgentEvent, RequestId, SessionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef,
 };
 
-use super::{CommandEffect, CopyAnswer, MAX_TEXT_BYTES, PendingRequest, StateEffect, TuiState};
+use super::{
+    CommandEffect, CopyAnswer, MAX_TEXT_BYTES, PendingRequest, StateEffect, TuiSessionInfo,
+    TuiState, status_document,
+};
+
+// 상태 문서는 호스트 문자열을 Markdown으로 해석하지 않고 표시 길이를 제한한다.
+#[test]
+fn status_document_bounds_and_escapes_host_labels() {
+    let session: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+    let info = TuiSessionInfo::new(format!("*{}*", "x".repeat(300)), "`~~workspace~~ &copy;`")
+        .with_session_id(session);
+    let document = status_document(&info, "Idle", Some("Last: 3 in / 2 out"));
+
+    assert!(document.markdown.contains(&session.to_string()));
+    assert!(document.markdown.contains("\\*"));
+    assert!(document.markdown.contains('…'));
+    assert!(
+        document
+            .markdown
+            .contains("\\`\\~\\~workspace\\~\\~ \\&copy;\\`")
+    );
+    assert!(document.markdown.contains("Last: 3 in / 2 out"));
+}
 
 fn completed_answer(state: &mut TuiState, number: u64, text: String) {
     let session: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();

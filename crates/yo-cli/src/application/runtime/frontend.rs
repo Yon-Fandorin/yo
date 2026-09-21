@@ -46,7 +46,8 @@ pub(super) fn build_live_session(
             selection.label(active_host_model.as_ref()),
             compact_workspace_label(&workspace),
         )
-        .with_startup_notice(is_resume),
+        .with_startup_notice(is_resume)
+        .with_session_id(session_id),
         terminal_color_capability(),
         yo_tui::MotionPreference::Standard,
     )

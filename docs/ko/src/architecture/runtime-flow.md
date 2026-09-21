@@ -269,7 +269,7 @@ tool definition과 tool choice를 생략하며, Session을 flag 없이 재개해
 
 편집 가능한 Chat에서 유일한 prompt token의 slash를 입력하고 cursor가 draft 끝에 있으면
 prompt에 인접한 command palette가 열린다. 이어지는 문자는 순서가 정해진 `/help`,
-`/model`, `/compact`, `/exit` catalog를 filtering한다. `command/`의 각 child는 command 하나의 ID,
+`/model`, `/status`, `/compact`, `/exit` catalog를 filtering한다. `command/`의 각 child는 command 하나의 ID,
 invocation, description, typed effect를 소유한다. 얕은 registry는 uniqueness 검증,
 순서 합성, 항목 filtering, help Projection만 담당한다. 공용 overlay slot은 위·아래 이동,
 Enter 또는 Tab acceptance, Esc 닫기를 소유한다. open됐지만 아직 표시되지 않은 panel은
@@ -288,6 +288,14 @@ Activity 응답 처리보다 먼저 selection flow에 들어가므로 둘 다 �
 암묵적으로 답하거나 취소하지 않는다. `/exit`는 명시적인 process-lifecycle 예외이며 기존
 runner 종료 경계를 사용한다. 읽기 전용 view에서는 palette가 비활성화되지만 pending
 Activity는 이 로컬 command를 숨기지 않는다.
+
+`/status`는 현재 Yo Session ID, 관측된 backend/model label, 작업 폴더 label과 입력
+상태를 펼쳐진 로컬 문서로 보여준다. CLI가 새로 시작하거나 재개하거나 분기한 live
+Session을 만들 때 정확한 ID를 전달하고, 모델 전환에 성공하면 유지 중인 TUI 상태의
+backend label을 갱신한다. 사용량은 마지막으로 완료된 관측일 뿐 현재 모델보다 이전
+것일 수 있다. 관측이 없으면 0으로 추정하지 않고 사용할 수 없다고 표시한다. 이
+문서는 Turn을 시작하거나 승인을 소비하지 않으며 Turn 실행 중이나 승인 대기 중에도
+열 수 있다. 호스트 label은 길이를 제한하고 Markdown을 이스케이프해 표시한다.
 
 `/compact`는 idle Yo-managed control command다. 선택적인 suffix는 일반 prompt 제출이 아니라
 summary request를 위한 bounded user guidance다. Active Turn에서는 draft를 보존하고 idle이

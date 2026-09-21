@@ -13,6 +13,7 @@ fn command_filter_preserves_module_declared_order() {
         vec![
             CommandId::Help,
             CommandId::Model,
+            CommandId::Status,
             CommandId::Compact,
             CommandId::Copy,
             CommandId::Changes,

@@ -21,6 +21,7 @@ pub struct ResumeSessionEntry {
 /// 호스트가 알고 있어 TUI 상태 줄에 표시할 수 있는 레이블입니다.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TuiSessionInfo {
+    session_id: Option<SessionId>,
     backend: Option<String>,
     workspace: String,
     startup_resumed: Option<bool>,
@@ -152,10 +153,22 @@ impl TuiSessionInfo {
     #[must_use]
     pub fn new(backend: impl Into<String>, workspace: impl Into<String>) -> Self {
         Self {
+            session_id: None,
             backend: non_empty_label(backend.into()),
             workspace: single_line_label(workspace.into()),
             startup_resumed: None,
         }
+    }
+
+    /// 호스트가 시작하거나 재개한 현재 Yo Session의 정확한 식별자를 표시용으로 보관합니다.
+    #[must_use]
+    pub fn with_session_id(mut self, session_id: SessionId) -> Self {
+        self.session_id = Some(session_id);
+        self
+    }
+
+    pub(in crate::runner) const fn session_id(&self) -> Option<SessionId> {
+        self.session_id
     }
 
     /// 호스트가 확인한 세션 시작점을 사용해 임시 시작 안내를 한 번 표시하도록 요청합니다.

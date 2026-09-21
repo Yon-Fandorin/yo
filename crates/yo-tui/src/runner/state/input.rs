@@ -220,7 +220,9 @@ impl TuiState {
             .is_some_and(|command| {
                 matches!(
                     command.effect(),
-                    CommandEffect::ReviewChanges | CommandEffect::CopyAnswer
+                    CommandEffect::ReviewChanges
+                        | CommandEffect::CopyAnswer
+                        | CommandEffect::ShowStatus
                 )
             });
         if !safe_local_command

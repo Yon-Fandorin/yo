@@ -19,6 +19,7 @@ mod prompt;
 mod registry;
 mod resume;
 mod secrets;
+mod status;
 mod tree;
 
 pub(crate) use definition::{CommandDefinition, CommandEffect, CommandId};

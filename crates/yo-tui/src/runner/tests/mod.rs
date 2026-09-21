@@ -29,6 +29,7 @@ mod request_responses;
 mod session_lifecycle;
 mod source_scheduling;
 mod state_edges;
+mod status;
 mod viewport;
 mod views;
 

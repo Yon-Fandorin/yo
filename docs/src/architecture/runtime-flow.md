@@ -302,7 +302,7 @@ live native model replacement retains the Session's frozen empty registry.
 
 In editable Chat, a slash in the only prompt token opens the prompt-adjacent
 command palette while the cursor is at the end of the draft. Further characters
-filter the ordered `/help`, `/model`, `/compact`, and `/exit` catalog. Each child under
+filter the ordered `/help`, `/model`, `/status`, `/compact`, and `/exit` catalog. Each child under
 `command/` owns one command's ID, invocation, description, and typed effect; the
 shallow registry only validates uniqueness, composes order, filters entries,
 and projects help. The shared overlay slot owns Up/Down navigation, Enter or Tab
@@ -324,6 +324,16 @@ implicitly answers or cancels an outstanding Activity. `/exit` is the explicit
 process-lifecycle exception and uses the existing runner exit boundary. A
 read-only view makes the palette ineligible; a pending Activity does not hide
 these local commands.
+
+`/status` adds an expanded local document with the current Yo Session ID,
+observed backend/model label, workspace label, and input state. The CLI supplies
+the exact ID when it builds each new, resumed, or forked live Session; a
+successful model switch updates the backend label on the retained TUI state.
+The usage row is only the latest completed observation, which may predate the
+current model. Missing usage is shown as unavailable rather than zero. The
+document neither dispatches a Turn nor consumes an approval; it is available
+while a Turn is running or an approval is pending. Host labels are bounded and
+Markdown-escaped before display.
 
 `/compact` is an idle Yo-managed control command. Its optional suffix is bounded
 user guidance for the summary request, not an ordinary prompt submission. The

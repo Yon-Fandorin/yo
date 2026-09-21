@@ -15,8 +15,10 @@ use crate::{
     },
     overlay::{PanelSnapshot, SlotError},
     runner::{
-        AgentAction, ForkPickerToken, chat::CopyAnswer, model::ModelSelectionState,
-        session::TuiDocument,
+        AgentAction, ForkPickerToken,
+        chat::CopyAnswer,
+        model::ModelSelectionState,
+        session::{TuiDocument, TuiSessionInfo},
     },
     terminal::clipboard::MAX_TEXT_BYTES,
 };
@@ -390,6 +392,30 @@ impl TuiState {
                 self.clear_editor();
                 Ok(StateEffect::Redraw)
             },
+            CommandEffect::ShowStatus => {
+                let state = if self.has_pending_request() {
+                    "Waiting for input"
+                } else if self.starting_submission.is_some() {
+                    "Starting turn"
+                } else if self.active_turn.is_some() {
+                    "Running"
+                } else if self.context_compaction_pending {
+                    "Compacting context"
+                } else {
+                    "Idle"
+                };
+                let document = TuiDocument::new(status_document(
+                    &self.session_info,
+                    state,
+                    self.chat.latest_usage(),
+                ))
+                .expect("bounded status values produce a bounded document")
+                .with_expanded(true);
+                self.observe_document(document)?;
+                self.clear_editor();
+                self.sync_request_overlay()?;
+                Ok(StateEffect::Redraw)
+            },
             CommandEffect::ReviewChanges => {
                 self.clear_editor();
                 if let Some(PendingRequest::Approval(request)) = self.pending_requests.front()
@@ -655,6 +681,43 @@ impl TuiState {
 #[cfg(test)]
 mod tests;
 
+fn status_document(info: &TuiSessionInfo, state: &str, usage: Option<&str>) -> ActivityDocument {
+    let session = info.session_id().map_or_else(
+        || "unavailable".to_owned(),
+        |session_id| format!("`{session_id}`"),
+    );
+    let backend = info
+        .backend()
+        .map_or_else(|| "unavailable".to_owned(), bounded_status_label);
+    let workspace = if info.workspace().is_empty() {
+        "unavailable".to_owned()
+    } else {
+        bounded_status_label(info.workspace())
+    };
+    let usage = usage.map_or_else(
+        || "No completed usage observation available.".to_owned(),
+        bounded_status_label,
+    );
+    let usage_command = info.session_id().map_or_else(String::new, |session_id| {
+        format!("\nRun `yo usage {session_id}` in a shell for recorded Session usage.\n")
+    });
+    ActivityDocument {
+        title: "Session status".to_owned(),
+        markdown: format!(
+            "Session ID: {session}\n\n- Backend: {backend}\n- Workspace: {workspace}\n- State: {state}\n\n## Latest completed usage observation\n{usage}\n\nThis observation may predate the current model.{usage_command}"
+        ),
+    }
+}
+
+fn bounded_status_label(value: &str) -> String {
+    let mut characters = value.chars();
+    let mut bounded = characters.by_ref().take(256).collect::<String>();
+    if characters.next().is_some() {
+        bounded.push('…');
+    }
+    escape_public_markdown(&bounded)
+}
+
 fn parse_secret_delete_id(argument: &str) -> Option<&str> {
     let mut parts = argument.split_whitespace();
     let (Some("delete"), Some(id), None) = (parts.next(), parts.next(), parts.next()) else {
@@ -725,6 +788,8 @@ fn escape_public_markdown(value: &str) -> String {
                 | '|'
                 | '<'
                 | '>'
+                | '~'
+                | '&'
         ) {
             escaped.push('\\');
         }

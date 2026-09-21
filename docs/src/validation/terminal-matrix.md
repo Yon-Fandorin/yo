@@ -757,6 +757,11 @@ immediately checks the foreground handoff race. The fixture also checks removal 
 the temporary draft file, retained Yo process identity, no inference request,
 and clean shell terminal restoration after exit.
 
+The ignored `local_tmux_inline_status_shows_session_without_inference` case
+opens `/status` in an isolated Inline tmux session. It checks visible Session
+identity without a model request and exits through the same shell-restoration
+route.
+
 Each route checks both the empty-`Ctrl+D` exit path and two consecutive
 `Ctrl+Z` → stopped job → `fg` generations. The job-control checks compare the
 terminal with the route's actual interactive-shell termios at every stopped

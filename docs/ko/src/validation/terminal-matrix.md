@@ -689,6 +689,10 @@ Inline과 Fullscreen에서 편집된 여러 줄을 전송하지 않은 초안으
 Yo 프로세스 신원 유지, 추론 요청 없음,
 종료 후 shell terminal 복원도 검사한다.
 
+무시된 `local_tmux_inline_status_shows_session_without_inference` 검사는 격리된
+Inline tmux에서 `/status`를 열어 Session 식별자를 모델 요청 없이 표시하고
+같은 shell 복원 경로로 종료하는지 확인한다.
+
 각 경로는 빈 입력 `Ctrl+D` 종료와 두 번 연속
 `Ctrl+Z` → job 정지 → `fg` terminal generation을 모두 검사한다.
 job-control 검사는 매 정지 구간의 터미널을 해당 경로의 실제 interactive shell

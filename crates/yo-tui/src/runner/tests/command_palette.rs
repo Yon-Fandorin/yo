@@ -44,6 +44,7 @@ fn slash_opens_the_local_command_palette() {
     assert!(rendered.contains("Commands"), "{rendered}");
     assert!(rendered.contains("/help"), "{rendered}");
     assert!(rendered.contains("/model"), "{rendered}");
+    assert!(rendered.contains("/status"), "{rendered}");
     assert!(rendered.contains("/compact"), "{rendered}");
     assert!(rendered.contains("/copy"), "{rendered}");
     assert_eq!(state.editor().text(), "/");

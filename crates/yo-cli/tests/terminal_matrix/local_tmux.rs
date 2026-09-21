@@ -14,8 +14,7 @@ use crate::support::{
     repository_path, require_command, shell_quote,
 };
 
-const COMMAND_READY_TIMEOUT: Duration = Duration::from_secs(5);
-const EDITOR_READY_TIMEOUT: Duration = Duration::from_secs(15);
+const COMMAND_READY_TIMEOUT: Duration = Duration::from_secs(15);
 const CLEAN_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 const EXIT_MARKER: &str = "YO_TMUX_EXIT";
 const SHELL_READY: &str = "YO_TMUX_READY>";
@@ -155,14 +154,7 @@ impl TmuxSession {
         let command = format!("{yo} {option} --model host:codex");
         self.send_literal(&command);
         self.send_enter();
-        self.wait_for_mode_with_timeout(
-            alternate_screen,
-            if visual.is_some() {
-                EDITOR_READY_TIMEOUT
-            } else {
-                COMMAND_READY_TIMEOUT
-            },
-        );
+        self.wait_for_mode(alternate_screen);
         ShellJob {
             baseline,
             yo_pid: self.shell_child().expect("read the only yo shell child"),
@@ -170,11 +162,7 @@ impl TmuxSession {
     }
 
     fn wait_for_mode(&self, alternate_screen: bool) {
-        self.wait_for_mode_with_timeout(alternate_screen, COMMAND_READY_TIMEOUT);
-    }
-
-    fn wait_for_mode_with_timeout(&self, alternate_screen: bool, timeout: Duration) {
-        self.wait_until(timeout, |state| {
+        self.wait_until(COMMAND_READY_TIMEOUT, |state| {
             !state.dead
                 && state.alternate_screen == alternate_screen
                 && self
@@ -661,4 +649,46 @@ fn local_tmux_inline_draft_input_and_bracketed_paste() {
 #[ignore = "requires local tmux and a compatible installed Codex"]
 fn local_tmux_fullscreen_draft_input_and_bracketed_paste() {
     assert_draft_input_and_paste("--fullscreen", true);
+}
+
+// 실제 tmux의 /status는 현재 세션 식별자와 관측 상태를 모델 요청 없이 보여주고
+// 명령 초안만 소비한 뒤 기존 Yo 프로세스에서 정상 종료할 수 있어야 한다.
+#[test]
+#[ignore = "requires local tmux and a compatible installed Codex"]
+fn local_tmux_inline_status_shows_session_without_inference() {
+    let session = TmuxSession::create();
+    let job = session.run_mode_under_shell("--inline", false);
+    session.send_literal("/status");
+    session.wait_until(COMMAND_READY_TIMEOUT, |state| {
+        !state.dead
+            && session
+                .captured_text()
+                .contains("/status  show the current Session identity")
+    });
+    thread::sleep(Duration::from_millis(100));
+    session.send_enter();
+    session.wait_until(COMMAND_READY_TIMEOUT, |state| {
+        !state.dead
+            && session.captured_text().contains("Session status")
+            && session.captured_text().contains("Session ID")
+    });
+    let journals = fs::read_dir(&session.session_repository)
+        .expect("read isolated Session repository")
+        .map(|entry| entry.expect("read isolated Session entry").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .collect::<Vec<_>>();
+    let [journal] = journals.as_slice() else {
+        panic!("expected one isolated Session journal, found {journals:?}");
+    };
+    let session_id = journal.file_stem().unwrap().to_string_lossy();
+    let captured = session.captured_text();
+    assert!(
+        captured.contains(&format!("Session ID: {session_id}")),
+        "status must show the exact persisted Session ID: {captured}"
+    );
+    session.assert_no_inference();
+    assert_draft_exit_and_cleanup(session, job);
 }
