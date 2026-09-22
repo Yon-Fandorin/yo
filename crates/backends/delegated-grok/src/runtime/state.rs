@@ -10,6 +10,7 @@ use yo_core::{
     interview::{Answer, AnswerResponse, Capture},
 };
 
+use super::secret_probe::{PendingProbe, SecretProbeBridge};
 use crate::{client::AcpClient, protocol, transport::JsonPeer};
 
 pub(super) const MAX_ACP_IDENTIFIER_BYTES: usize = 4096;
@@ -122,6 +123,8 @@ pub(super) struct Backend<P> {
     pub(super) wire_inputs: HashMap<String, ActivityRequestRef>,
     pub(super) input_tool_turns: HashMap<String, TurnRef>,
     pub(super) pending_events: VecDeque<BackendEvent>,
+    pub(super) secret_probe: Option<SecretProbeBridge>,
+    pub(super) pending_probe: Option<PendingProbe>,
     pub(super) next_activity_id: u64,
     pub(super) next_request_id: u64,
 }
@@ -153,6 +156,8 @@ impl<P: JsonPeer> Backend<P> {
             wire_inputs: HashMap::new(),
             input_tool_turns: HashMap::new(),
             pending_events: VecDeque::new(),
+            secret_probe: None,
+            pending_probe: None,
             next_activity_id: 1,
             next_request_id: 1,
         }
@@ -188,6 +193,7 @@ impl<P: JsonPeer> Backend<P> {
             )
             .and_then(|count| count.checked_add(self.approvals.len()))
             .and_then(|count| count.checked_add(self.inputs.len()))
+            .and_then(|count| count.checked_add(usize::from(self.pending_probe.is_some())))
             .ok_or_else(|| protocol::protocol_failure("Grok active activity count overflowed"))?;
         if active >= Self::MAX_ACTIVE_ACTIVITIES {
             return Err(protocol::protocol_failure(format!(

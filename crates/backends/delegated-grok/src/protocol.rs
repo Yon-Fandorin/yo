@@ -37,6 +37,7 @@ pub(super) struct InitializeResult {
     pub(super) agent_version: String,
     pub(super) auth_methods: Vec<String>,
     pub(super) load_session: bool,
+    pub(super) mcp_http: bool,
     pub(super) current_model_id: Option<String>,
     pub(super) available_models: Vec<(String, String)>,
 }
@@ -217,6 +218,10 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
         .pointer("/agentCapabilities/loadSession")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let mcp_http = result
+        .pointer("/agentCapabilities/mcpCapabilities/http")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let model_state = result.pointer("/_meta/modelState");
     let current_model_id = model_state
         .and_then(|state| state.get("currentModelId"))
@@ -263,6 +268,7 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
         agent_version,
         auth_methods,
         load_session,
+        mcp_http,
         current_model_id,
         available_models,
     })

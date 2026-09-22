@@ -20,6 +20,9 @@ impl<P: JsonPeer> Backend<P> {
         if let Some(event) = self.pending_events.pop_front() {
             return Ok(BackendPoll::Event(event));
         }
+        if let Some(event) = self.poll_secret_probe()? {
+            return Ok(BackendPoll::Event(event));
+        }
         self.poll_client_message()
     }
 

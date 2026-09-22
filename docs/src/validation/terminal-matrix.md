@@ -276,12 +276,30 @@ probe call only while the opt-in is enabled and the wire version is still
 exactly 0.155.1.
 Recheck free entitlement before attempting any actual model request.
 
+The Grok adapter also has a separate opt-in diagnostic:
+`YO_GROK_SECRET_ENTRY_PROBE=1` on an ordinary Session. It requires Grok ACP to
+advertise HTTP MCP and attaches a loopback-only, randomly addressed MCP server
+to `session/new` and `session/load`. The server exposes the same no-argument
+`yo_secret_entry_probe` tool. A call opens a fixed Yo-authored hidden question
+for a **made-up sample only**; Yo drops the value and returns only a fixed
+status. Calls with arguments, calls outside an active Turn, concurrent calls,
+and calls in read-only review cannot open the editor. This does not add a
+secret flag to Grok's ordinary `_x.ai/ask_user_question` route or permit real
+credential delivery. Leave the opt-in off for ordinary work. Local adapter
+tests cover the MCP-to-hidden-input handoff and absence of the sample from the
+MCP and ACP responses; model selection of the tool is a separate live check.
+
 The saved Apple Silicon Mac passed pinned-host-key and read-only tool preflight
 on 2026-09-22. It had the same Codex 0.155.1 and Grok 1.0.40 versions.
+Without a model prompt, Grok 1.0.40 advertised HTTP MCP and connected to a
+temporary loopback test server during ACP `session/new` (`server/discover`,
+`initialize`, and `tools/list`). This establishes the transport used by the
+diagnostic, not a model-invoked secret question.
 `grok models` listed `grok-4.7`, `grok-4.7-build-fast`, `grok-4.6` (default),
 and `grok-4.5`; this inventory alone supplies no free-entitlement evidence.
-No repository bundle, model prompt, or secret value was sent to the Mac. Host
-reachability therefore did not change the delegated live result: unverified.
+No model prompt or secret value was sent to the Mac in that preflight. Host
+reachability therefore did not change the delegated model-invoked result:
+unverified.
 
 ## QwenCloud free text summary and continuation
 

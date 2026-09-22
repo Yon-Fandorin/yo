@@ -5,6 +5,7 @@ use std::num::NonZeroU64;
 
 mod events;
 mod lifecycle;
+mod secret_probe;
 mod session;
 
 use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Duration};
@@ -74,7 +75,7 @@ fn initialize_response(id: u64, auth_methods: &[&str], load_session: bool) -> Va
         "id": id,
         "result": {
             "protocolVersion": 1,
-            "agentCapabilities": { "loadSession": load_session },
+            "agentCapabilities": { "loadSession": load_session, "mcpCapabilities": { "http": true } },
             "authMethods": auth_methods
                 .iter()
                 .map(|method| json!({ "id": method, "name": method }))

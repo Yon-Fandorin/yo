@@ -111,6 +111,7 @@ impl<P: JsonPeer> Backend<P> {
                     outcome: ActivityOutcome::Interrupted,
                 });
         }
+        self.cancel_secret_probe();
         Ok(BackendCommandEvidence::None)
     }
 
@@ -119,6 +120,13 @@ impl<P: JsonPeer> Backend<P> {
         request: ActivityRequestRef,
         response: ActivityResponse,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
+        if self
+            .pending_probe
+            .as_ref()
+            .is_some_and(|probe| probe.request == request)
+        {
+            return self.respond_to_secret_probe(response);
+        }
         if self.inputs.contains_key(&request) {
             return self.respond_to_question(request, response);
         }

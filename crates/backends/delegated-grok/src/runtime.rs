@@ -1,14 +1,18 @@
+use std::{env, ffi::OsStr};
+
 use crate::admission;
 
 mod command;
 mod events;
 mod input;
 mod lifecycle;
+mod secret_probe;
 mod state;
 
 #[cfg(test)]
 mod tests;
 
+use secret_probe::SecretProbeBridge;
 use state::Backend;
 use yo_backend::BackendAdapter;
 use yo_core::{
@@ -44,9 +48,13 @@ impl GrokBackend {
             .to_owned();
         let peer = StdioPeer::spawn(&config)?;
         let client = AcpClient::new(peer, config.request_timeout());
-        Ok(Self {
-            inner: Backend::new_uninitialized(client, cwd, config.read_only_review()),
-        })
+        let mut inner = Backend::new_uninitialized(client, cwd, config.read_only_review());
+        if !config.read_only_review()
+            && env::var_os("YO_GROK_SECRET_ENTRY_PROBE").as_deref() == Some(OsStr::new("1"))
+        {
+            inner.secret_probe = Some(SecretProbeBridge::start()?);
+        }
+        Ok(Self { inner })
     }
 
     /// Verifies ACP compatibility and the cached Grok login without creating a Session.

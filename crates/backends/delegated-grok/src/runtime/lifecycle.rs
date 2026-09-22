@@ -17,6 +17,12 @@ impl<P: JsonPeer> Backend<P> {
         }
         let authenticated = initialize_and_authenticate(&mut self.client)?;
         let initialized = authenticated.initialized;
+        if self.secret_probe.is_some() && !initialized.mcp_http {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "this Grok ACP agent does not advertise local HTTP MCP support for the secret-entry probe",
+            ));
+        }
         self.backend_version = Some(format!(
             "{}/{}",
             initialized.agent_name, initialized.agent_version
@@ -31,6 +37,8 @@ impl<P: JsonPeer> Backend<P> {
     }
 
     pub(super) fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        self.cancel_secret_probe();
+        self.secret_probe = None;
         self.client.shutdown()
     }
 
@@ -41,7 +49,10 @@ impl<P: JsonPeer> Backend<P> {
         self.initialize()?;
         let result = self
             .client
-            .call("session/new", json!({ "cwd": self.cwd, "mcpServers": [] }))?
+            .call(
+                "session/new",
+                json!({ "cwd": self.cwd, "mcpServers": self.secret_probe_servers() }),
+            )?
             .result;
         let grok_session = protocol::string_at(&result, &["sessionId"])?;
         validate_session_id(grok_session)?;
@@ -95,7 +106,7 @@ impl<P: JsonPeer> Backend<P> {
             json!({
                 "sessionId": locator.value(),
                 "cwd": self.cwd,
-                "mcpServers": [],
+                "mcpServers": self.secret_probe_servers(),
             }),
         )?;
         self.client.discard_session_updates(locator.value());

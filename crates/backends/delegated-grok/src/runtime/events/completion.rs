@@ -41,6 +41,12 @@ impl<P: JsonPeer> Backend<P> {
                 "Grok ACP completed a prompt with an unresolved user question request",
             ));
         }
+        if self.pending_probe.is_some() {
+            self.cancel_secret_probe();
+            return Err(protocol::protocol_failure(
+                "Grok ACP completed a prompt with an unresolved secret-entry probe",
+            ));
+        }
         let stop_reason = protocol::string_at(result, &["stopReason"])?;
         if prompt.interrupt_requested && stop_reason != "cancelled" {
             return Err(protocol::protocol_failure(format!(
