@@ -514,14 +514,18 @@ fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
                 .then_some(LiveToolResult::Search)
         },
         "use_tool" => {
-            let exact_arguments = json!({
-                "tool_name": LIVE_PROBE_TOOL,
-                "tool_input": {}
-            });
+            let arguments = output.arguments.as_ref()?.as_object()?;
+            let exact_shape = arguments
+                .keys()
+                .all(|field| matches!(field.as_str(), "tool_name" | "tool_input" | "variant"));
+            let exact_target = arguments.get("tool_name")?.as_str()? == LIVE_PROBE_TOOL;
+            let empty_input = arguments.get("tool_input")? == &json!({});
+            let valid_variant = arguments.get("variant").is_none_or(Value::is_string);
             let exact_content = json!([{"type":"text", "text":LIVE_PROBE_RESULT}]);
-            (output.arguments.as_ref() == Some(&exact_arguments)
-                && output.content_items.as_ref() == Some(&exact_content))
-            .then_some(LiveToolResult::Probe)
+            let fixed_result = output.content_items.as_ref() == Some(&exact_content)
+                || result.get("rawOutput") == Some(&json!({"content":exact_content}));
+            (exact_shape && exact_target && empty_input && valid_variant && fixed_result)
+                .then_some(LiveToolResult::Probe)
         },
         _ => None,
     }
@@ -561,6 +565,9 @@ fn describe_live_tool_result(snapshot: &str) -> String {
         .map_or(0, Vec::len);
     let fixed_result_matches =
         output.content_items.as_ref() == Some(&json!([{"type":"text", "text":LIVE_PROBE_RESULT}]));
+    let exact_content = json!([{"type":"text", "text":LIVE_PROBE_RESULT}]);
+    let fixed_raw_output_matches = result.and_then(|result| result.get("rawOutput"))
+        == Some(&json!({"content":exact_content}));
     let catalog_contains_probe = output
         .content_items
         .as_ref()
@@ -569,7 +576,7 @@ fn describe_live_tool_result(snapshot: &str) -> String {
             .and_then(|result| result.get("rawOutput"))
             .is_some_and(contains_probe_tool);
     format!(
-        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} catalog_contains_probe={catalog_contains_probe} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} server_present={} error_present={}",
+        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} catalog_contains_probe={catalog_contains_probe} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} fixed_raw_output_matches={fixed_raw_output_matches} server_present={} error_present={}",
         arguments
             .and_then(|arguments| arguments.get("tool_name"))
             .and_then(Value::as_str)
@@ -601,6 +608,24 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
     };
     assert_eq!(
         classify_live_tool_result(&probe.to_snapshot().unwrap()),
+        Some(LiveToolResult::Probe)
+    );
+    let raw_output_probe = yo_core::ToolOutput {
+        arguments: Some(json!({
+            "tool_name": LIVE_PROBE_TOOL,
+            "tool_input": {},
+            "variant":"full"
+        })),
+        result: Some(json!({
+            "locations":[],
+            "rawOutput":{"content":[{"type":"text","text":LIVE_PROBE_RESULT}]},
+            "_meta":{"x.ai/tool":{"name":"use_tool"}}
+        })),
+        content_items: None,
+        ..probe.clone()
+    };
+    assert_eq!(
+        classify_live_tool_result(&raw_output_probe.to_snapshot().unwrap()),
         Some(LiveToolResult::Probe)
     );
 
@@ -649,6 +674,52 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
         classify_live_tool_result(&unrelated_target.to_snapshot().unwrap()),
         None
     );
+
+    for invalid_probe in [
+        yo_core::ToolOutput {
+            arguments: Some(json!({
+                "tool_name": LIVE_PROBE_TOOL,
+                "tool_input": {},
+                "unexpected":true
+            })),
+            ..probe.clone()
+        },
+        yo_core::ToolOutput {
+            result: Some(json!({
+                "rawOutput":{"content":[{"text":format!("{LIVE_PROBE_RESULT} extra")}]},
+                "_meta":{"x.ai/tool":{"name":"use_tool"}}
+            })),
+            content_items: None,
+            ..probe.clone()
+        },
+        yo_core::ToolOutput {
+            result: Some(json!({
+                "rawOutput":{
+                    "isError":true,
+                    "content":[{"type":"text","text":LIVE_PROBE_RESULT}]
+                },
+                "_meta":{"x.ai/tool":{"name":"use_tool"}}
+            })),
+            content_items: None,
+            ..probe.clone()
+        },
+        yo_core::ToolOutput {
+            result: Some(json!({
+                "rawOutput":{
+                    "content":[{"type":"text","text":LIVE_PROBE_RESULT}],
+                    "metadata":LIVE_PROBE_RESULT
+                },
+                "_meta":{"x.ai/tool":{"name":"use_tool"}}
+            })),
+            content_items: None,
+            ..probe.clone()
+        },
+    ] {
+        assert_eq!(
+            classify_live_tool_result(&invalid_probe.to_snapshot().unwrap()),
+            None
+        );
+    }
 
     for invalid in [
         yo_core::ToolOutput {
