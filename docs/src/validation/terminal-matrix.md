@@ -341,8 +341,9 @@ Both modes restored all PTY settings except the kernel's `PENDIN` state bit;
 Fullscreen emitted exactly one alternate-screen enter/leave pair, and Inline
 emitted none. Each isolated state root and the temporary checkout were removed.
 Ordinary config/credential hashes remained unchanged. This closes Mac coverage
-of the shared pre-acceptance failure diagnostic; live OpenRouter inference and
-the earlier live exit's specific cause remain unverified.
+of the shared pre-acceptance failure diagnostic. This fixture did not send an
+OpenRouter inference request; the earlier live exit's specific cause remains
+unverified. The separate live image journey above passed its bounded scenario.
 
 `BackendRequestAccepted` counts requests whose connector start succeeded. The
 [transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)

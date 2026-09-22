@@ -312,8 +312,9 @@ stderr, 저장된 `transport` failure를 수집했다. HTTP 요청·수락된 �
 복원했다. Fullscreen은 alternate-screen 진입·종료 쌍을 정확히 한 번 출력했고
 Inline은 출력하지 않았다. 각 격리된 상태 root와 임시 checkout을 제거했으며 일반
 설정·credential hash는 바뀌지 않았다. 이로써 공통 요청 수락 전 실패 진단의 Mac
-검증은 완료됐다. 실제 OpenRouter inference와 이전 실제 서비스 종료의 구체적인
-원인은 미검증으로 남는다.
+검증은 완료됐다. 이 fixture는 OpenRouter inference 요청을 보내지 않았다. 이전
+실제 서비스 종료의 구체적인 원인은 미검증이며, 위의 별도 이미지 실제 서비스
+여정은 제한된 시나리오에서 통과했다.
 
 `BackendRequestAccepted`는 connector 시작이 성공한 요청 수다.
 [Transport worker](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/worker.rs)는
