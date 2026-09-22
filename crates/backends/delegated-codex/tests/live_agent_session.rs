@@ -6,12 +6,13 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use serde_json::json;
 use yo_backend_delegated_codex::{CodexBackend, CodexBackendConfig};
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityQuestion, ActivityRequestRef, ActivityUpdate,
     AgentEvent, AgentIntent, AgentSession, AgentSessionPoll, CommandAdmission, HostWorkspacePath,
-    JournalDurability, SecretInput, SessionDescriptor, SubmissionOutcome, TranscriptEntry,
-    TranscriptReader, TranscriptRecord, TurnOutcome, TurnRef, WorkspaceHostId,
+    JournalDurability, SecretInput, SessionDescriptor, SubmissionOutcome, ToolOutput,
+    TranscriptEntry, TranscriptReader, TranscriptRecord, TurnOutcome, TurnRef, WorkspaceHostId,
     session_repository::{
         LocalSessionReader, LocalSessionRepository, SessionRepository, SessionWriterRepository,
         read_stored_session, recover_stored_session_continuation,
@@ -146,7 +147,7 @@ fn run_local_secret_probe(root: &Path) -> Result<(), String> {
                                 Ok(text) => text,
                                 Err(error) => break 'turn Err(error),
                             };
-                            if probe.ready_to_submit(*activity, &text) {
+                            if probe.ready_to_submit(*activity, update, &text)? {
                                 let response = app
                                     .dispatch(AgentIntent::RespondToSecretInput {
                                         request: probe
@@ -311,12 +312,7 @@ impl SecretProbeRun {
             return Err("model-facing activity text retained the sample value".to_owned());
         }
         if self.activities.get(&activity) == Some(&ActivityKind::ToolCall) {
-            if !text.contains("yo_secret_entry_probe") {
-                return Err(format!(
-                    "secret-probe Turn started an unexpected tool: {}",
-                    text.chars().take(240).collect::<String>()
-                ));
-            }
+            Self::validate_probe_tool_snapshot(text)?;
             if self
                 .probe_tool
                 .replace(activity)
@@ -328,21 +324,34 @@ impl SecretProbeRun {
         Ok(text.clone())
     }
 
-    fn ready_to_submit(&mut self, activity: yo_core::ActivityRef, text: &str) -> bool {
+    fn ready_to_submit(
+        &mut self,
+        activity: yo_core::ActivityRef,
+        update: &ActivityUpdate,
+        text: &str,
+    ) -> Result<bool, String> {
         if self.submitted || Some(activity) != self.input_request.map(|request| request.activity())
         {
-            return false;
+            return Ok(false);
+        }
+        if !matches!(update, ActivityUpdate::TextSnapshot(_)) {
+            return Ok(false);
         }
         let Some(question) = ActivityQuestion::from_snapshot(text) else {
-            return false;
+            return Err(
+                "secret-probe input did not publish its exact question snapshot".to_owned(),
+            );
         };
-        self.input_snapshot = question.is_secret;
-        self.input_snapshot
+        self.input_snapshot = Self::is_probe_question(&question);
+        if !self.input_snapshot {
+            return Err("secret-probe input published an unexpected question".to_owned());
+        }
+        Ok(self.input_snapshot
             && self.probe_tool.is_some_and(|tool| {
                 self.texts
                     .get(&tool)
-                    .is_some_and(|snapshot| snapshot.contains("yo_secret_entry_probe"))
-            })
+                    .is_some_and(|snapshot| Self::validate_probe_tool_snapshot(snapshot).is_ok())
+            }))
     }
 
     fn finished(
@@ -384,20 +393,20 @@ impl SecretProbeRun {
         {
             return Err("secret-probe tool/input lifecycle did not complete".to_owned());
         }
-        if !self
+        let output = self
             .texts
             .get(&tool)
-            .is_some_and(|text| text.contains("yo_secret_entry_probe"))
-        {
-            return Err("Codex probe tool call did not expose its exact tool identity".to_owned());
-        }
-        if !self
-            .texts
-            .get(&tool)
-            .is_some_and(|text| text.contains(result))
+            .and_then(|text| ToolOutput::from_snapshot(text))
+            .ok_or_else(|| "Codex probe tool call omitted its structured output".to_owned())?;
+        Self::validate_probe_tool_output(&output)?;
+        let expected_content = json!([{"type": "inputText", "text": result}]);
+        if !output
+            .content_blocks()
+            .eq(expected_content.as_array().unwrap().iter())
         {
             return Err(
-                "Codex did not report the fixed probe result on the completed tool".to_owned(),
+                "Codex did not report the exact fixed probe result on the completed tool"
+                    .to_owned(),
             );
         }
         let replies = self
@@ -410,6 +419,35 @@ impl SecretProbeRun {
             return Err("Codex did not finish after the completed probe tool result".to_owned());
         }
         Ok(())
+    }
+
+    fn validate_probe_tool_snapshot(text: &str) -> Result<(), String> {
+        let output = ToolOutput::from_snapshot(text)
+            .ok_or_else(|| "secret-probe tool call omitted its structured output".to_owned())?;
+        Self::validate_probe_tool_output(&output)
+    }
+
+    fn validate_probe_tool_output(output: &ToolOutput) -> Result<(), String> {
+        if output.tool != "yo_secret_entry_probe"
+            || output.server.is_some()
+            || output.arguments.as_ref() != Some(&json!({}))
+            || output.error.is_some()
+        {
+            return Err("secret-probe Turn started an unexpected tool".to_owned());
+        }
+        Ok(())
+    }
+
+    fn is_probe_question(question: &ActivityQuestion) -> bool {
+        question.is_secret
+            && question.plain_text
+                == "Question 1 of 1 · Sample input test\n\nEnter a made-up sample value only. Never enter a real password, token, or credential. Yo will discard the sample without sending it to Codex or the model.\n\nEnter your secret answer.\nYo discards this sample value and sends only a fixed completion status to Codex.\nEsc interrupts the turn."
+            && question.choices.is_empty()
+            && !question.allow_notes
+            && question.storage_offer.is_none()
+            && !question.previous_question
+            && question.draft.is_none()
+            && question.draft_choice.is_none()
     }
 }
 
