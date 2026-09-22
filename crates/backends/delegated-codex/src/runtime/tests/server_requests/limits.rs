@@ -185,6 +185,7 @@ fn answer_receipt_bounds_and_literal_fields_do_not_change_response_authority() {
         answers: Map::new(),
         drafts: Default::default(),
         secret_delivery_blocked: false,
+        probe_only: false,
     };
     let literal = questions.receipt(
         "user_note: a literal option",
@@ -284,6 +285,7 @@ fn failed_answer_transport_does_not_publish_a_sent_receipt() {
                         })
                         .collect::<Map<_, _>>(),
                     secret_delivery_blocked: false,
+                    probe_only: false,
                     questions: (0..=recorded)
                         .map(|index| InputQuestion {
                             id: if index == recorded {
@@ -406,6 +408,7 @@ fn mixed_secret_transport_failure_is_static_and_non_retryable() {
                 answers: Map::from_iter([("secret".into(), json!({"answers":["wire-secret"]}))]),
                 drafts: Default::default(),
                 secret_delivery_blocked: false,
+                probe_only: false,
             }),
         },
     );
@@ -493,6 +496,7 @@ fn secret_response_taints_later_warning_observer_after_request_removal() {
                 answers: Default::default(),
                 drafts: Default::default(),
                 secret_delivery_blocked: false,
+                probe_only: false,
             }),
         },
     );
@@ -612,6 +616,7 @@ fn shutdown_discards_staged_secret_values_before_transport_shutdown() {
                         (None, "staged-secret-draft".into()),
                     )]),
                     secret_delivery_blocked: false,
+                    probe_only: false,
                 }),
             },
         );
@@ -657,6 +662,7 @@ fn incomplete_interview_summary_preserves_counts_at_exact_output_limit() {
         answers: Map::new(),
         drafts: Default::default(),
         secret_delivery_blocked: false,
+        probe_only: false,
     };
     let base = questions.incomplete_notice("Turn interrupted.");
     questions.questions[0].question = "x".repeat(ToolOutput::MAX_SNAPSHOT_BYTES - base.len());
@@ -978,6 +984,7 @@ fn previous_question_availability_respects_restored_profile_limit() {
         answers: Default::default(),
         drafts: Default::default(),
         secret_delivery_blocked: false,
+        probe_only: false,
     };
     questions.current = 1;
     questions.drafts.insert("one".into(), (None, String::new()));
@@ -1025,6 +1032,7 @@ fn retained_secret_batch_limit_rejects_without_mutation() {
         answers: Map::new(),
         drafts: Default::default(),
         secret_delivery_blocked: false,
+        probe_only: false,
     };
     let exact = "x".repeat(SecretInput::MAX_BYTES);
     for index in 0..4 {
@@ -1089,6 +1097,7 @@ fn secret_question_navigation_rejects_ordinary_draft_bytes() {
                 )]),
                 drafts: Default::default(),
                 secret_delivery_blocked: false,
+                probe_only: false,
             }),
         },
     );

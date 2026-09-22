@@ -30,6 +30,7 @@ pub(super) struct AppServerClient<P> {
     warning_observer: Option<CodexWarningObserver>,
     notice_thread: Option<String>,
     secret_diagnostics_tainted: bool,
+    experimental_api: bool,
 }
 
 pub(super) struct CallResult {
@@ -46,6 +47,7 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             warning_observer: None,
             notice_thread: None,
             secret_diagnostics_tainted: false,
+            experimental_api: false,
         }
     }
 
@@ -54,6 +56,11 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
         warning_observer: Option<CodexWarningObserver>,
     ) -> Self {
         self.warning_observer = warning_observer;
+        self
+    }
+
+    pub(super) fn with_experimental_api(mut self, enabled: bool) -> Self {
+        self.experimental_api = enabled;
         self
     }
 
@@ -98,18 +105,17 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
     }
 
     pub(super) fn initialize(&mut self) -> Result<protocol::InitializeResult, BackendFailure> {
-        let result = self
-            .call(
-                "initialize",
-                json!({
-                    "clientInfo": {
-                        "name": "yo",
-                        "title": "yo",
-                        "version": env!("CARGO_PKG_VERSION"),
-                    }
-                }),
-            )?
-            .result;
+        let mut params = json!({
+            "clientInfo": {
+                "name": "yo",
+                "title": "yo",
+                "version": env!("CARGO_PKG_VERSION"),
+            }
+        });
+        if self.experimental_api {
+            params["capabilities"] = json!({"experimentalApi": true});
+        }
+        let result = self.call("initialize", params)?.result;
         let initialize = protocol::decode_initialize(result)?;
         if let (Some(observer), Some(warning)) = (
             self.warning_observer.as_ref(),

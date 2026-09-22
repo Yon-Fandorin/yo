@@ -27,9 +27,15 @@ pub(super) struct SessionBinding {
 
 pub(super) struct ItemBinding {
     pub(super) activity: ActivityRef,
+    pub(super) dynamic_tool_call: Option<DynamicToolCall>,
     pub(super) public_summary: Option<BTreeMap<u64, String>>,
     pub(super) proposed_plan: Option<String>,
     pub(super) command: Option<Value>,
+}
+
+pub(super) struct DynamicToolCall {
+    pub(super) tool: String,
+    pub(super) arguments: Value,
 }
 
 pub(super) struct RequestBinding {
@@ -61,6 +67,8 @@ pub(super) struct InputQuestions {
     /// A failed final secret write has an unknown delivery outcome. Keep the
     /// request bound, but make another response for that request impossible.
     pub(super) secret_delivery_blocked: bool,
+    /// Diagnostic tool result never includes the entered value.
+    pub(super) probe_only: bool,
 }
 
 #[derive(Clone)]
@@ -91,6 +99,7 @@ pub(super) struct Backend<P> {
     pub(super) selected_model: Option<String>,
     pub(super) cwd: String,
     pub(super) read_only_review: bool,
+    pub(super) secret_probe_enabled: bool,
     pub(super) model_rebind_target: Option<(AccountId, ModelId)>,
     pub(super) new_session_target: Option<(AccountId, ModelId)>,
     pub(super) session: Option<SessionBinding>,
@@ -134,6 +143,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             selected_model: None,
             cwd,
             read_only_review,
+            secret_probe_enabled: false,
             model_rebind_target,
             new_session_target: None,
             session: None,

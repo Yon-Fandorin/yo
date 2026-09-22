@@ -1,5 +1,162 @@
 use super::{super::support::*, *};
 
+// 재개된 스레드에서도 서버 버전과 시작된 도구의 이름·인자가 요청과 정확히 맞아야 한다.
+#[test]
+fn secret_entry_probe_rejects_unreviewed_wire_and_mismatched_tool_call() {
+    use crate::runtime::secret_probe;
+
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let arguments = json!({});
+    let (mut backend, _) = backend([
+        thread_start_response(2, "thread-a"),
+        json!({"id":3,"result":{"turn":{"id":"turn-a"}}}),
+        json!({"method":"item/started","params":{
+            "threadId":"thread-a", "turnId":"turn-a",
+            "item":{"id":"probe-call","type":"dynamicToolCall","tool":secret_probe::TOOL_NAME,
+                "arguments":arguments,"status":"inProgress"}
+        }}),
+        json!({"method":"item/started","params":{
+            "threadId":"thread-a", "turnId":"turn-a",
+            "item":{"id":"other-call","type":"dynamicToolCall","tool":"another_tool",
+                "arguments":arguments,"status":"inProgress"}
+        }}),
+        json!({"method":"item/started","params":{
+            "threadId":"thread-a", "turnId":"turn-a",
+            "item":{"id":"completed-call","type":"dynamicToolCall","tool":secret_probe::TOOL_NAME,
+                "arguments":arguments,"status":"inProgress"}
+        }}),
+        json!({"method":"item/completed","params":{
+            "threadId":"thread-a", "turnId":"turn-a",
+            "item":{"id":"completed-call","type":"dynamicToolCall","tool":secret_probe::TOOL_NAME,
+                "arguments":arguments,"status":"completed"}
+        }}),
+    ]);
+    backend.secret_probe_enabled = true;
+    backend.backend_version = Some("yo/0.155.1 (test)".into());
+    backend.create_session(session_id).unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("test hidden input"),
+        })
+        .unwrap();
+    for _ in 0..8 {
+        if backend.items.len() == 2 {
+            break;
+        }
+        backend.poll_event().unwrap();
+    }
+    assert_eq!(backend.items.len(), 2);
+    let mut request = json!({
+        "callId":"probe-call", "turnId":"turn-a", "tool":secret_probe::TOOL_NAME,
+        "arguments":arguments
+    });
+    backend.backend_version = Some("other_cli/0.155.1 (test)".into());
+    assert!(secret_probe::parse_request(&mut backend, &request).is_err());
+    backend.backend_version = Some("yo/0.156.0 (test)".into());
+    assert!(secret_probe::parse_request(&mut backend, &request).is_err());
+    backend.backend_version = Some("yo/0.155.1 (test)".into());
+
+    request["callId"] = json!("other-call");
+    assert!(secret_probe::parse_request(&mut backend, &request).is_err());
+    request["callId"] = json!("probe-call");
+
+    request["arguments"]["question"] = json!("Ask for a real credential");
+    assert!(secret_probe::parse_request(&mut backend, &request).is_err());
+    request["arguments"] = json!({});
+    assert!(secret_probe::parse_request(&mut backend, &request).is_ok());
+    assert!(secret_probe::parse_request(&mut backend, &request).is_err());
+
+    let mut saw_completed_call_start = false;
+    for _ in 0..12 {
+        backend.poll_event().unwrap();
+        saw_completed_call_start |= backend.items.contains_key("completed-call");
+        if saw_completed_call_start && !backend.items.contains_key("completed-call") {
+            break;
+        }
+    }
+    assert!(saw_completed_call_start);
+    assert!(!backend.items.contains_key("completed-call"));
+    request["callId"] = json!("completed-call");
+    assert!(secret_probe::parse_request(&mut backend, &request).is_err());
+}
+
+// 동적 진단 도구는 기존 숨김 입력 화면을 열지만, 입력값 대신 고정된 공개 상태만
+// Codex에 돌려줍니다. 모의값은 질문 캡처나 도구 결과에도 나타나지 않아야 합니다.
+#[test]
+fn secret_entry_probe_omits_sample_from_dynamic_tool_result() {
+    use yo_core::SecretInput;
+
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let (mut backend, sent) = backend([
+        thread_start_response(2, "thread-a"),
+        json!({"id":3,"result":{"turn":{"id":"turn-a"}}}),
+        json!({"method":"item/started","params":{
+            "threadId":"thread-a","turnId":"turn-a",
+            "item":{"id":"probe-call","type":"dynamicToolCall","tool":"yo_secret_entry_probe",
+                "arguments":{},"status":"inProgress"}
+        }}),
+        json!({"id":"probe-request","method":"item/tool/call","params":{
+            "threadId":"thread-a","turnId":"turn-a","callId":"probe-call",
+            "tool":"yo_secret_entry_probe",
+            "arguments":{}
+        }}),
+    ]);
+    backend.secret_probe_enabled = true;
+    backend.backend_version = Some("yo/0.155.1 (test)".into());
+    let mut runtime = AgentRuntime::new(backend);
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("test hidden input"),
+            },
+            submission(1),
+        )
+        .unwrap();
+    let mut request = None;
+    let mut prompt = None;
+    for _ in 0..6 {
+        match runtime.poll_event().unwrap() {
+            RuntimePoll::Event(AgentEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::UserInputRequest { request_id },
+            }) => request = Some(ActivityRequestRef::new(activity, request_id)),
+            RuntimePoll::Event(AgentEvent::ActivityUpdated {
+                update: ActivityUpdate::TextSnapshot(value),
+                ..
+            }) if display_question(&value).is_some() => prompt = Some(value),
+            _ => {},
+        }
+        if request.is_some() && prompt.is_some() {
+            break;
+        }
+    }
+    let question = display_question(&prompt.expect("hidden question")).unwrap();
+    assert!(question.is_secret);
+    assert!(question.plain_text.contains("discard"));
+    assert!(question.plain_text.contains("Never enter a real password"));
+    assert!(question.plain_text.contains("fixed completion status"));
+    let sample = "sample-canary-한글-123";
+    runtime
+        .execute_command(AgentCommand::RespondToActivity {
+            request: request.expect("probe request"),
+            response: ActivityResponse::SecretInput(SecretInput::new(sample).unwrap()),
+        })
+        .unwrap();
+    let sent = sent.0.borrow();
+    let result = sent.last().unwrap();
+    assert_eq!(result["id"], "probe-request");
+    assert_eq!(result["result"]["success"], true);
+    assert_eq!(result["result"]["contentItems"][0]["type"], "inputText");
+    assert!(!serde_json::to_string(&*sent).unwrap().contains(sample));
+}
+
 // 여러 질문을 순서대로 표시하고 선택 번호·직접 답변을 원래 질문 ID에 묶어 한 번만 응답한다.
 #[test]
 fn answers_codex_questions_sequentially_with_exact_wire_ids() {

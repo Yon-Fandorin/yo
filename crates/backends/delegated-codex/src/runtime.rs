@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{env, ffi::OsStr, sync::Arc};
 
 #[cfg(test)]
 use serde_json::Value;
@@ -21,6 +21,7 @@ use crate::{
 mod events;
 mod input;
 mod lifecycle;
+mod secret_probe;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -67,15 +68,21 @@ impl CodexBackend {
                 )
             })?
             .to_owned();
+        // This opt-in is only a diagnostic for the hidden-input route. It never
+        // returns the entered value to Codex and is unavailable for review.
+        let secret_probe_enabled = !config.read_only_review()
+            && env::var_os("YO_CODEX_SECRET_ENTRY_PROBE").as_deref() == Some(OsStr::new("1"));
         let peer = StdioPeer::spawn(&config)?;
         let client = AppServerClient::new(peer, config.request_timeout())
-            .with_warning_observer(warning_observer);
+            .with_warning_observer(warning_observer)
+            .with_experimental_api(secret_probe_enabled);
         let model_rebind_target = config
             .model_rebind_target()
             .map(|(account, model)| (account.clone(), model.clone()));
         let mut inner =
             Backend::new_uninitialized(client, cwd, config.read_only_review(), model_rebind_target);
         inner.new_session_target = config.new_session_target().cloned();
+        inner.secret_probe_enabled = secret_probe_enabled;
         Ok(Self { inner })
     }
 

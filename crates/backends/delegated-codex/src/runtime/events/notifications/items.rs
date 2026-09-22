@@ -5,7 +5,10 @@ use yo_core::{
 };
 
 use super::super::{
-    super::state::{Backend, ItemBinding},
+    super::{
+        secret_probe::TOOL_NAME,
+        state::{Backend, DynamicToolCall, ItemBinding},
+    },
     snapshots::{
         activity_kind, checked_command_snapshot, command_plain_text, compaction_snapshot,
         file_change_snapshot, item_text_snapshot, proposed_plan_snapshot,
@@ -43,6 +46,19 @@ impl<P: JsonMessagePeer> Backend<P> {
         if let Some(command) = &command {
             checked_command_snapshot(command)?;
         }
+        let dynamic_tool_call = (item_type == "dynamicToolCall"
+            && params.pointer("/item/tool").and_then(Value::as_str) == Some(TOOL_NAME))
+        .then(|| {
+            Some(DynamicToolCall {
+                tool: params.pointer("/item/tool")?.as_str()?.to_owned(),
+                arguments: params
+                    .pointer("/item/arguments")?
+                    .as_object()?
+                    .clone()
+                    .into(),
+            })
+        })
+        .flatten();
         let activity = self.next_activity(turn)?;
         if self
             .items
@@ -50,6 +66,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                 item_id.clone(),
                 ItemBinding {
                     activity,
+                    dynamic_tool_call,
                     proposed_plan,
                     command,
                     public_summary: (item_type == "reasoning").then(|| {

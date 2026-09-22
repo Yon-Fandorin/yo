@@ -187,6 +187,66 @@ fn initializes_before_starting_a_thread() {
     assert!(sent[3]["params"].get("ephemeral").is_none());
 }
 
+// 실험 도구는 정확히 검토한 빌드의 일반 새 Session에만 등록하고,
+// initialize에서 필요한 capability를 선언합니다.
+#[test]
+fn secret_entry_probe_registers_only_on_reviewed_wire() {
+    let mut initialize = initialize_response(1, "0.155.1");
+    initialize["result"]["userAgent"] = json!("yo/0.155.1 (test)");
+    let (peer, sent) = FakePeer::new([
+        initialize,
+        json!({"id":2,"result":{"account":null}}),
+        thread_start_response(3, "thread-a"),
+    ]);
+    let client = AppServerClient::new(peer, Duration::from_secs(1)).with_experimental_api(true);
+    let mut backend = Backend::new_uninitialized(client, "/workspace".into(), false, None);
+    backend.secret_probe_enabled = true;
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: session(1),
+        })
+        .unwrap();
+    let sent = sent.0.borrow();
+    assert_eq!(sent[0]["params"]["capabilities"]["experimentalApi"], true);
+    assert_eq!(
+        sent[3]["params"]["dynamicTools"][0]["name"],
+        "yo_secret_entry_probe"
+    );
+    assert!(
+        sent[3]["params"]["dynamicTools"][0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("discards the value")
+    );
+    assert_eq!(
+        sent[3]["params"]["dynamicTools"][0]["inputSchema"]["properties"],
+        json!({})
+    );
+    assert!(super::super::secret_probe::wire_version_supported(
+        "yo/0.155.1 (test)"
+    ));
+    assert!(!super::super::secret_probe::wire_version_supported(
+        "yo/0.155.2 (test)"
+    ));
+    assert!(!super::super::secret_probe::wire_version_supported(
+        "codex_cli_rs/0.155.1 (test)"
+    ));
+}
+
+// 읽기 전용 리뷰 결합에는 진단 도구가 수동으로 켜져 있어도 등록되지 않습니다.
+#[test]
+fn secret_entry_probe_is_absent_from_read_only_review() {
+    let (mut backend, sent) = backend_with_profile([thread_start_response(2, "thread-a")], true);
+    backend.secret_probe_enabled = true;
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: session(1),
+        })
+        .unwrap();
+    let sent = sent.0.borrow();
+    assert!(sent[2]["params"].get("dynamicTools").is_none());
+}
+
 // 검토된 두 버전 모두 실제 초기화와 선택 모델 관찰을 거쳐야 이미지를 허용하며,
 // 다른 모델의 image 표시는 선택 모델의 누락 또는 text-only 선언을 덮어쓰지 않습니다.
 #[test]

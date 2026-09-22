@@ -104,7 +104,10 @@ impl InputQuestions {
         } else {
             "Enter a number or write your answer."
         };
-        let submission = if self.questions.len() == 1 {
+        let submission = if self.probe_only {
+            "Yo discards this sample value and sends only a fixed completion status to Codex."
+                .to_owned()
+        } else if self.questions.len() == 1 {
             "Submitting this answer sends your response.".to_owned()
         } else if index + 1 == self.questions.len() {
             format!(
@@ -146,6 +149,10 @@ impl InputQuestions {
     }
 
     pub(in crate::runtime) fn prompt(&self) -> String {
+        if self.probe_only {
+            let profile = self.question_profile(self.current);
+            return profile.to_snapshot().unwrap_or(profile.plain_text);
+        }
         if let Some(Capture::Batch {
             interview,
             revision,

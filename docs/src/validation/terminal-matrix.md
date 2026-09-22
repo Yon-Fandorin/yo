@@ -251,10 +251,30 @@ coverage for that wire shape, but installed Codex 0.155.1 does not expose
 nonempty choices. Its async question tool produces an ordinary message rather
 than this request. Installed Grok 1.0.40's user-question path has no supported
 secret flag, and the authenticated Grok model route previously observed used
-subscription capacity. Neither host can originate this exact free-model live
-journey. The managed QwenCloud result above does not establish delegated-host
-behavior. Recheck host capability and free entitlement before claiming that
-coverage; the external host prerequisite is currently absent.
+subscription capacity. Neither built-in question path can originate this exact
+free-model live journey. The managed QwenCloud result above does not establish
+delegated-host behavior.
+
+An opt-in Codex diagnostic registers `yo_secret_entry_probe` when creating an
+ordinary Session with `YO_CODEX_SECRET_ENTRY_PROBE=1` and app-server version
+0.155.1. It uses experimental `dynamicTools` and opens Yo's existing
+hidden input with a fixed Yo-authored prompt for a **sample value only**. The
+tool takes no model-supplied prompt arguments, and each started call can open
+only one editor. Yo discards the entered value and returns a fixed public
+completion status; the model cannot use the entered value.
+The local app-server 0.155.1 accepted the empty-argument dynamic-tool
+registration without a model Turn; its initialize response used the actual
+`yo/0.155.1` user-agent form. Deterministic adapter tests used a synthetic
+`item/tool/call` to verify the hidden question and that the sample bytes never
+enter the Codex response. Registration alone cannot open the prompt: an actual
+model Turn selecting this model-visible tool, or a trusted mock host injecting
+the matching call, is still required. Leave this opt-in off for ordinary work;
+while enabled, the tool is available to model Turns in the Session. This is a
+protocol and adapter check, not a Mac live Turn or a usable credential tool.
+Codex may retain the tool definition when resuming that thread; Yo accepts a
+probe call only while the opt-in is enabled and the wire version is still
+exactly 0.155.1.
+Recheck free entitlement before attempting any actual model request.
 
 The saved Apple Silicon Mac passed pinned-host-key and read-only tool preflight
 on 2026-09-22. It had the same Codex 0.155.1 and Grok 1.0.40 versions.

@@ -34,6 +34,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             "item/commandExecution/requestApproval"
                 | "item/fileChange/requestApproval"
                 | "item/tool/requestUserInput"
+                | "item/tool/call"
         ) {
             self.client
                 .reject(wire_id, -32601, "server request is unsupported by yo")?;
@@ -51,7 +52,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             .ok_or_else(|| {
                 protocol::protocol_failure(format!("request targets unknown Turn `{wire_turn}`"))
             })?;
-        let is_approval = method != "item/tool/requestUserInput";
+        let is_approval = !matches!(method, "item/tool/requestUserInput" | "item/tool/call");
         let approval = if is_approval {
             match approval_summary(method, &params) {
                 Ok(text) => Some(text),
@@ -68,14 +69,20 @@ impl<P: JsonMessagePeer> Backend<P> {
             None
         };
         let mut kind = if !is_approval {
-            match InputQuestions::parse(&params) {
+            let parsed = if method == "item/tool/call" {
+                super::super::super::secret_probe::parse_request(self, &params)
+            } else {
+                InputQuestions::parse(&params)
+            };
+            match parsed {
                 Ok(questions) => RequestKind::Input(questions),
                 Err(error) => {
-                    self.client.reject(
-                        wire_id,
-                        -32602,
-                        "user-input questions are invalid or require unsupported secret input",
-                    )?;
+                    let message = if method == "item/tool/call" {
+                        "dynamic tool request is invalid or unavailable"
+                    } else {
+                        "user-input questions are invalid or require unsupported secret input"
+                    };
+                    self.client.reject(wire_id, -32602, message)?;
                     return Err(error);
                 },
             }

@@ -34,6 +34,63 @@ pub(super) fn respond_to_activity<P: JsonMessagePeer>(
             "secret input delivery was attempted and this request cannot be retried",
         ));
     }
+    if matches!(&kind, RequestKind::Input(questions) if questions.probe_only) {
+        let ActivityResponse::SecretInput(sample) = response else {
+            return Err(protocol::protocol_failure(
+                "secret-entry probe requires hidden secret input",
+            ));
+        };
+        // Never project this value into InputQuestions, a capture, or the host result.
+        drop(sample);
+        let payload = json!({
+            "success": true,
+            "contentItems": [{
+                "type": "inputText",
+                "text": "Sample secret entry verified locally and discarded by Yo. No value was sent to Codex or the model."
+            }]
+        });
+        if let Err(failure) = backend.client.respond(wire_id, payload) {
+            if let Some(RequestBinding {
+                kind: RequestKind::Input(questions),
+                ..
+            }) = backend.requests.get_mut(&request)
+            {
+                questions.secret_delivery_blocked = true;
+            }
+            return Err(BackendFailure::new(
+                failure.kind(),
+                "secret-entry probe result delivery failed with an unknown outcome",
+            ));
+        }
+        backend
+            .requests
+            .get_mut(&request)
+            .expect("validated probe request")
+            .responded = true;
+        backend
+            .pending_events
+            .push_back(BackendEvent::ActivityStarted {
+                activity: response_activity,
+                kind: ActivityKind::UserInputResponse {
+                    request_id: request.request_id(),
+                },
+            });
+        backend
+            .pending_events
+            .push_back(BackendEvent::ActivityUpdated {
+                activity: response_activity,
+                update: ActivityUpdate::TextSnapshot(
+                    "Sample secret entry verified locally and discarded.".into(),
+                ),
+            });
+        backend
+            .pending_events
+            .push_back(BackendEvent::ActivityFinished {
+                activity: response_activity,
+                outcome: ActivityOutcome::Completed,
+            });
+        return Ok(BackendCommandEvidence::None);
+    }
     let mut next = None;
     let mut response_text;
     let mut answer_seal = None;
