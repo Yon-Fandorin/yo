@@ -256,6 +256,13 @@ journey. The managed QwenCloud result above does not establish delegated-host
 behavior. Recheck host capability and free entitlement before claiming that
 coverage; the external host prerequisite is currently absent.
 
+The saved Apple Silicon Mac passed pinned-host-key and read-only tool preflight
+on 2026-09-22. It had the same Codex 0.155.1 and Grok 1.0.40 versions.
+`grok models` listed `grok-4.7`, `grok-4.7-build-fast`, `grok-4.6` (default),
+and `grok-4.5`; this inventory alone supplies no free-entitlement evidence.
+No repository bundle, model prompt, or secret value was sent to the Mac. Host
+reachability therefore did not change the delegated live result: unverified.
+
 ## QwenCloud free text summary and continuation
 
 On 2026-09-13, an authenticated, read-only quota lookup selected
