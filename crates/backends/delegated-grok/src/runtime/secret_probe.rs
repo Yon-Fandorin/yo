@@ -1,7 +1,7 @@
 //! Opt-in, mock-only hidden input diagnostic exposed to Grok through local MCP.
 
 use std::{
-    io::{ErrorKind, Read, Write},
+    io::{self, ErrorKind, Read, Write},
     net::{TcpListener, TcpStream},
     sync::{
         Arc, Mutex,
@@ -120,8 +120,8 @@ impl SecretProbeBridge {
                         index += 1;
                     }
                 }
-                match listener.accept() {
-                    Ok((stream, _)) => {
+                match accept_with_ingress(&listener, &worker_gate) {
+                    Ok((stream, accepted_ingress)) => {
                         if workers.len() >= MAX_CONNECTIONS {
                             continue;
                         }
@@ -130,7 +130,7 @@ impl SecretProbeBridge {
                         let gate = Arc::clone(&worker_gate);
                         let stop = Arc::clone(&worker_stop);
                         workers.push(thread::spawn(move || {
-                            serve_connection(stream, &path, &sender, &gate, &stop)
+                            serve_connection(stream, &path, &sender, &gate, accepted_ingress, &stop)
                         }));
                     },
                     Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -214,13 +214,11 @@ fn serve_connection(
     path: &str,
     sender: &Sender<ProbeInvocation>,
     gate: &Arc<Mutex<GateState>>,
+    accepted_ingress: Ingress,
     stop: &AtomicBool,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
-    // 요청 본문을 기다리는 동안 다음 Turn이 시작되어도, 이 연결은 처음 관찰한 Turn에만
-    // 귀속됩니다.
-    let ingress = ingress(gate);
     let result = read_request(&stream, path, stop);
     let (status, response) = match result {
         Ok(Some(message)) => {
@@ -254,7 +252,11 @@ fn serve_connection(
                                 arguments.as_object().is_some_and(serde_json::Map::is_empty)
                             });
                     let completed = if valid {
-                        let permit = admit(gate, id.as_ref().expect("validated call id"), ingress);
+                        let permit = admit(
+                            gate,
+                            id.as_ref().expect("validated call id"),
+                            accepted_ingress,
+                        );
                         if let Some(permit) = permit {
                             let cancelled = Arc::clone(&permit.cancelled);
                             let (response, receiver) = mpsc::channel();
@@ -304,12 +306,19 @@ fn serve_connection(
     let _ = stream.write_all(payload.as_bytes());
 }
 
-fn ingress(gate: &Mutex<GateState>) -> Ingress {
+fn accept_with_ingress(
+    listener: &TcpListener,
+    gate: &Mutex<GateState>,
+) -> io::Result<(TcpStream, Ingress)> {
+    // accept와 세대 관찰을 같은 gate 임계 구역에 두어 Turn 전환이 둘 사이에 끼지 못합니다.
     let state = gate.lock().expect("probe gate");
-    Ingress {
+    let (stream, _) = listener.accept()?;
+    let accepted_ingress = Ingress {
         generation: state.generation,
         active: state.active,
-    }
+    };
+    drop(state);
+    Ok((stream, accepted_ingress))
 }
 
 fn admit(gate: &Arc<Mutex<GateState>>, call_id: &Value, ingress: Ingress) -> Option<ProbePermit> {
@@ -691,7 +700,15 @@ mod tests {
             active: true,
             ..GateState::default()
         }));
-        let permit = admit(&gate, &json!(1), ingress(&gate)).unwrap();
+        let permit = admit(
+            &gate,
+            &json!(1),
+            Ingress {
+                generation: 0,
+                active: true,
+            },
+        )
+        .unwrap();
         let cancelled = Arc::clone(&permit.cancelled);
         let (sender, receiver) = mpsc::channel();
         {
@@ -710,19 +727,51 @@ mod tests {
         ));
     }
 
-    // Turn A에서 시작한 요청은 Turn B가 활성화된 뒤 본문을 끝내도 B의 입력창을 열 수 없다.
+    // Turn A에서 accept한 연결은 worker가 Turn B에서 실행되어도 B의 입력창을 열 수 없다.
     #[test]
-    fn stale_ingress_cannot_admit_after_a_new_generation() {
+    fn accepted_connection_cannot_admit_after_a_new_generation() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let gate = Arc::new(Mutex::new(GateState {
             active: true,
             generation: 7,
             ..GateState::default()
         }));
-        let observed = ingress(&gate);
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let (server, accepted_ingress) = accept_with_ingress(&listener, &gate).unwrap();
         {
             let mut state = gate.lock().unwrap();
             state.generation = 8;
         }
-        assert!(admit(&gate, &json!(1), observed).is_none());
+        let (sender, receiver) = mpsc::channel();
+        let worker_gate = Arc::clone(&gate);
+        let worker = thread::spawn(move || {
+            serve_connection(
+                server,
+                "/mcp/test",
+                &sender,
+                &worker_gate,
+                accepted_ingress,
+                &AtomicBool::new(false),
+            )
+        });
+        let body = json!({
+            "jsonrpc":"2.0", "id":1, "method":"tools/call",
+            "params":{"name":TOOL_NAME}
+        })
+        .to_string();
+        write!(
+            client,
+            "POST /mcp/test HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        worker.join().unwrap();
+        assert!(response.contains("isError"));
+        assert!(receiver.try_recv().is_err());
     }
 }
