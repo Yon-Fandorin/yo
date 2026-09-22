@@ -1,5 +1,5 @@
 use std::{
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     net::TcpStream,
     thread,
     time::{Duration, Instant},
@@ -169,8 +169,8 @@ fn mcp_probe_uses_hidden_input_and_discards_the_sample() {
 // 도구 호출에 값이 실려 오면 입력 UI를 열지 않고 고정 오류만 반환한다.
 #[test]
 fn mcp_probe_rejects_value_bearing_arguments() {
-    let bridge = SecretProbeBridge::start().unwrap();
-    let url = bridge.server_spec()["url"].as_str().unwrap().to_owned();
+    let (mut backend, url) = prepared_backend();
+    start_turn(&mut backend);
     let response = post(
         &url,
         json!({
@@ -180,6 +180,7 @@ fn mcp_probe_rejects_value_bearing_arguments() {
     );
     assert!(response.contains("isError"));
     assert!(!response.contains("must-not-be-used"));
+    assert_eq!(backend.poll_event().unwrap(), BackendPoll::Pending);
 }
 
 // Turn 밖에서 온 호출은 뒤의 Turn에 넘어가 숨김 입력을 열 수 없다.
@@ -274,6 +275,55 @@ fn mcp_cancellation_closes_hidden_input() {
     assert!(caller.join().unwrap().contains("isError"));
 }
 
+// 취소된 호출 하나를 정리해도 같은 Turn에서 다음 MCP 호출을 받을 수 있다.
+#[test]
+fn cancelled_probe_does_not_disable_the_rest_of_its_turn() {
+    let (mut backend, url) = prepared_backend();
+    start_turn(&mut backend);
+    let call_url = url.clone();
+    let cancelled_call = thread::spawn(move || {
+        post(
+            &call_url,
+            json!({
+                "jsonrpc":"2.0", "id":15, "method":"tools/call",
+                "params":{"name":"yo_secret_entry_probe"}
+            }),
+        )
+    });
+    let cancelled_request = await_secret_request(&mut backend);
+    let _ = post(
+        &url,
+        json!({
+            "jsonrpc":"2.0", "method":"notifications/cancelled", "params":{"requestId":15}
+        }),
+    );
+    assert!(matches!(backend.poll_event().unwrap(),
+        BackendPoll::Event(BackendEvent::ActivityFinished { activity, outcome: yo_core::ActivityOutcome::Interrupted })
+            if activity == cancelled_request.activity()));
+    assert!(cancelled_call.join().unwrap().contains("isError"));
+
+    let call_url = url.clone();
+    let retry = thread::spawn(move || {
+        post(
+            &call_url,
+            json!({
+                "jsonrpc":"2.0", "id":16, "method":"tools/call",
+                "params":{"name":"yo_secret_entry_probe"}
+            }),
+        )
+    });
+    let retry_request = await_secret_request(&mut backend);
+    backend
+        .execute_command(AgentCommand::RespondToActivity {
+            request: retry_request,
+            response: ActivityResponse::SecretInput(
+                SecretInput::new("sample-after-cancel").unwrap(),
+            ),
+        })
+        .unwrap();
+    assert!(retry.join().unwrap().contains("verified locally"));
+}
+
 // 취소 알림 직후 사용자가 제출해도 취소가 고정 완료 상태보다 먼저 확정된다.
 #[test]
 fn cancellation_before_submission_cannot_report_success() {
@@ -344,6 +394,40 @@ fn http_disconnect_closes_hidden_input() {
     assert!(
         matches!(event, BackendEvent::ActivityFinished { activity, outcome: yo_core::ActivityOutcome::Interrupted } if activity == request.activity())
     );
+}
+
+// Content-Length를 넘긴 바이트나 파이프라인 요청은 입력 대기 상태로 들어가지 않는다.
+#[test]
+fn extra_http_bytes_are_rejected_before_opening_hidden_input() {
+    let (mut backend, url) = prepared_backend();
+    start_turn(&mut backend);
+    let address = url.strip_prefix("http://").unwrap();
+    let (host, path) = address.split_once('/').unwrap();
+    let mut stream = TcpStream::connect(host).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let body = json!({
+        "jsonrpc":"2.0", "id":17, "method":"tools/call",
+        "params":{"name":"yo_secret_entry_probe"}
+    })
+    .to_string();
+    write!(
+        stream,
+        "POST /{path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\n\r\n{body}x",
+        body.len()
+    )
+    .unwrap();
+    let mut response = String::new();
+    match stream.read_to_string(&mut response) {
+        Ok(_) => assert!(response.starts_with("HTTP/1.1 400")),
+        // 소켓에 남은 파이프라인 바이트 때문에 운영체제가 RST를 보내도 호출은 거부된다.
+        Err(error) => assert!(matches!(
+            error.kind(),
+            ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+        )),
+    }
+    assert_eq!(backend.poll_event().unwrap(), BackendPoll::Pending);
 }
 
 // 느리게 헤더를 보내는 연결도 백엔드 종료를 붙잡지 못한다.

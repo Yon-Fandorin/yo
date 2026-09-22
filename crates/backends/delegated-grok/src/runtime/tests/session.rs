@@ -465,12 +465,15 @@ fn local_grok_probe_opens_session_without_model_turn() {
 #[ignore = "uses a paid Grok model Turn; requires cached login and YO_GROK_SECRET_ENTRY_PROBE=1"]
 fn local_grok_probe_completes_model_turn_with_discarded_sample() {
     use std::{
+        collections::{HashMap, HashSet},
         thread,
         time::{Duration, Instant},
     };
 
-    use yo_core::{ActivityApproval, ActivityQuestion, ActivityResponse, SecretInput};
+    use yo_core::{ActivityQuestion, ActivityResponse, SecretInput, TurnOutcome};
 
+    const PROBE_TOOL: &str = "yo_secret_entry_probe__yo_secret_entry_probe";
+    const RESULT_MARKER: &str = "YO_SECRET_PROBE_RESULT_ACK";
     assert_eq!(env::var("YO_GROK_SECRET_ENTRY_PROBE").as_deref(), Ok("1"));
     let cwd = env::current_dir().unwrap();
     let session_id = session(100);
@@ -485,16 +488,18 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
         &mut backend,
         AgentCommand::StartTurn {
             turn: active_turn,
-            input: UserInput::new("Diagnostic only: first use search_tool to find the fully qualified MCP tool name for yo_secret_entry_probe, then call that tool once with empty arguments. After its result, state whether the diagnostic completed. Do not use unrelated tools, inspect files, or ask another question."),
+            input: UserInput::new("Diagnostic only: first use search_tool to find the fully qualified MCP tool name for yo_secret_entry_probe, then call that tool once with empty arguments. After the tool result, reply with exactly YO_SECRET_PROBE_RESULT_ACK and no other text. Do not use unrelated tools, inspect files, or ask another question."),
         },
     )
     .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut secret_request = None;
-    let mut approval_request = None;
     let mut secret_submitted = false;
-    let mut fixed_result_seen = false;
+    let mut probe_tool_calls = HashSet::new();
+    let mut probe_tool_identity_seen = false;
+    let mut agent_messages = HashMap::new();
+    let mut observed_stream = String::new();
     let mut finished = false;
     while Instant::now() < deadline {
         match yo_backend::BackendAdapter::poll_event(&mut backend).unwrap() {
@@ -503,12 +508,14 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
                     assert!(secret_request.is_none(), "unexpected second user question");
                     secret_request = Some(yo_core::ActivityRequestRef::new(activity, request_id));
                 },
-                ActivityKind::ApprovalRequest { request_id } => {
-                    assert!(
-                        approval_request.is_none(),
-                        "unexpected second permission request"
-                    );
-                    approval_request = Some(yo_core::ActivityRequestRef::new(activity, request_id));
+                ActivityKind::ToolCall => {
+                    probe_tool_calls.insert(activity);
+                },
+                ActivityKind::AgentMessage => {
+                    agent_messages.insert(activity, String::new());
+                },
+                ActivityKind::ApprovalRequest { .. } => {
+                    panic!("the MCP probe must not auto-accept an unexpected permission request");
                 },
                 _ => {},
             },
@@ -517,18 +524,30 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
                     yo_core::ActivityUpdate::TextDelta(text)
                     | yo_core::ActivityUpdate::TextSnapshot(text) => text,
                 };
+                observed_stream.push_str(text);
                 assert!(
-                    !text.contains("yo-mock-only-4382"),
-                    "sample leaked into backend event"
+                    !observed_stream.contains("yo-mock-only-4382"),
+                    "sample leaked into a backend event stream"
                 );
-                let yo_core::ActivityUpdate::TextSnapshot(snapshot) = update else {
+                if let Some(message) = agent_messages.get_mut(&activity) {
+                    match &update {
+                        yo_core::ActivityUpdate::TextDelta(text) => message.push_str(text),
+                        yo_core::ActivityUpdate::TextSnapshot(text) => *message = text.clone(),
+                    }
+                }
+                if probe_tool_calls.contains(&activity)
+                    && text.starts_with(&format!("{PROBE_TOOL} · "))
+                {
+                    probe_tool_identity_seen = true;
+                }
+                let yo_core::ActivityUpdate::TextSnapshot(snapshot) = &update else {
                     continue;
                 };
                 if let Some(request) =
                     secret_request.filter(|request| request.activity() == activity)
                 {
                     let question =
-                        ActivityQuestion::from_snapshot(&snapshot).expect("probe question");
+                        ActivityQuestion::from_snapshot(snapshot).expect("probe question");
                     assert!(question.is_secret);
                     assert!(question.plain_text.contains("made-up sample"));
                     yo_backend::BackendAdapter::execute_command(
@@ -542,30 +561,16 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
                     )
                     .unwrap();
                     secret_submitted = true;
-                } else if let Some(request) =
-                    approval_request.filter(|request| request.activity() == activity)
-                {
-                    let approval =
-                        ActivityApproval::from_snapshot(&snapshot).expect("permission profile");
-                    assert!(
-                        approval.plain_text.contains("yo_secret_entry_probe"),
-                        "unexpected tool permission"
-                    );
-                    yo_backend::BackendAdapter::execute_command(
-                        &mut backend,
-                        AgentCommand::RespondToActivity {
-                            request,
-                            response: ActivityResponse::Approval(ApprovalDecision::Approved),
-                        },
-                    )
-                    .unwrap();
-                } else if snapshot.contains("Sample secret entry verified locally and discarded.") {
-                    fixed_result_seen = true;
                 }
             },
-            BackendPoll::Event(BackendEvent::ResumableTurnFinished { turn, .. })
-            | BackendPoll::Event(BackendEvent::TurnFinished { turn, .. }) => {
+            BackendPoll::Event(BackendEvent::ResumableTurnFinished { turn, .. }) => {
                 assert_eq!(turn, active_turn);
+                finished = true;
+                break;
+            },
+            BackendPoll::Event(BackendEvent::TurnFinished { turn, outcome }) => {
+                assert_eq!(turn, active_turn);
+                assert_eq!(outcome, TurnOutcome::Completed);
                 finished = true;
                 break;
             },
@@ -580,8 +585,14 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
         "model did not invoke the secret-entry probe"
     );
     assert!(
-        fixed_result_seen,
-        "Yo did not publish the fixed, sample-free result"
+        probe_tool_identity_seen,
+        "Grok did not publish the exact MCP probe ToolCall identity"
+    );
+    assert!(
+        agent_messages
+            .values()
+            .any(|message| message.trim() == RESULT_MARKER),
+        "the final model answer did not acknowledge the MCP result with the required marker"
     );
     assert!(
         finished,

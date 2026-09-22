@@ -300,8 +300,16 @@ status. Calls with nonempty arguments, calls outside an active Turn, concurrent 
 and calls in read-only review cannot open the editor. This does not add a
 secret flag to Grok's ordinary `_x.ai/ask_user_question` route or permit real
 credential delivery. Leave the opt-in off for ordinary work. Local adapter
-tests cover the MCP-to-hidden-input handoff and absence of the sample from the
-MCP and ACP responses; the paid Mac live check below covers model selection.
+tests cover the MCP-to-hidden-input handoff, Turn-generation capture at HTTP
+ingress, retry after an individual cancellation, immediate rejection of excess
+request bytes, and absence of the sample from MCP and ACP output. The ignored
+paid test requires an ACP ToolCall whose exact identity is
+`yo_secret_entry_probe__yo_secret_entry_probe` and a separate final model
+answer marker after the tool sequence. It deliberately does not treat Yo's
+local `UserInputResponse` receipt as proof that the model received the MCP
+result: ACP exposes no separate model-receipt event for that HTTP response.
+The fixed MCP response remains covered by the loopback adapter test and the
+manual Mac TUI evidence below.
 
 The saved Apple Silicon Mac passed pinned-host-key preflight with Grok 1.0.40
 on 2026-09-22. Earlier no-model checks established HTTP MCP discovery and
@@ -311,9 +319,12 @@ Session creation. After subscription-backed model use was authorized, its
 test, a paid model-Turn test, package Clippy, and Yo CLI check. In the live
 test, Grok selected `yo_secret_entry_probe`, Yo opened a hidden question,
 discarded a made-up sample, published only the fixed status, and completed the
-Turn. No backend event contained the sample. The exact 29,100-byte incremental
-Git bundle had SHA-256 `b066cbab4b55fd763fc122da5af20f6ac919bffc2b6298c5168ff387da2d83f9`;
-the validation runner removed the checkout and bundle.
+Turn. No backend event contained the sample. The current source adds the exact
+ToolCall-identity and final-answer-marker assertions described above; they
+require a fresh Mac run before they become live-test evidence. The exact
+29,100-byte incremental Git bundle had SHA-256
+`b066cbab4b55fd763fc122da5af20f6ac919bffc2b6298c5168ff387da2d83f9`; the validation
+runner removed the checkout and bundle.
 
 The same binary then ran in an isolated 140×44 Mac tmux Fullscreen Yo Session
 with temporary Yo configuration and Session storage. An initial prompt barred

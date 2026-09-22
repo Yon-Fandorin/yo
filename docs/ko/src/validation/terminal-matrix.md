@@ -273,17 +273,25 @@ MCP 서버를 연결한다. 이 서버는 인자 없는 `yo_secret_entry_probe` 
 동시 호출, 읽기 전용 검토에서는 입력창을 열지 않는다. Grok의 일반
 `_x.ai/ask_user_question` 경로에 비밀 표시를 추가하거나 실제 자격증명을
 전달하는 기능은 아니다. 일반 작업에서는 선택 설정을 끈다. 로컬 어댑터
-테스트는 MCP에서 숨김 입력으로 이어지는 경로와 MCP·ACP 응답에 모의값이
-없는 것을 확인한다. 아래 유료 Mac 실서비스 검사는 모델의 도구 선택을 확인한다.
+테스트는 MCP에서 숨김 입력으로 이어지는 경로, HTTP ingress에서 Turn 세대를
+고정하는 경로, 개별 취소 뒤 같은 Turn의 재호출, 초과 요청 바이트의 즉시 거부,
+MCP·ACP 출력에 모의값이 없는 것을 확인한다. ignore된 유료 테스트는 정확히
+`yo_secret_entry_probe__yo_secret_entry_probe`인 ACP ToolCall과 도구 순서 뒤의
+별도 최종 모델 답변 marker를 요구한다. Yo의 로컬 `UserInputResponse` 영수증은
+모델이 MCP 결과를 받았다는 증거로 세지 않는다. ACP에는 이 HTTP 응답의 별도
+모델 수신 이벤트가 없기 때문이다. 고정 MCP 응답은 loopback 어댑터 테스트와
+아래 수동 Mac TUI 증거로 확인한다.
 
 2026-09-22 저장된 Apple Silicon Mac에서 고정 호스트 키 사전 점검이 통과했고,
 Grok 1.0.40이 설치되어 있었다. 이전의 모델 미사용 검사는 HTTP MCP 검색과
 Session 생성을 확인했다. 구독 쿼터 사용이 승인된 뒤 `grok models`의 기본값은
 `grok-4.7`이었다. 커밋 `588a0586`은 Mac의 `grok-live` 검사에서 일반 어댑터
 테스트 92개, 설치 호스트 MCP Session 테스트, 유료 모델 Turn 테스트, 패키지
-Clippy와 Yo CLI 검사를 통과했다. 실제 Turn에서 Grok이
+Clippy와 Yo CLI 검사를 통과했다. 그 당시 실제 Turn에서 Grok이
 `yo_secret_entry_probe`를 선택했고 Yo가 숨김 질문을 열어 모의값을 폐기한 뒤
 고정 상태만 게시했으며 Turn이 완료됐다. 어댑터 이벤트 어디에도 모의값이 없었다.
+현재 소스에는 위에서 설명한 정확한 ToolCall identity와 최종 답변 marker 검사가
+추가되어 있으므로, 새 Mac 실행 전에는 이를 실서비스 증거로 간주하지 않는다.
 29,100바이트 증분 Git 번들의 SHA-256은
 `b066cbab4b55fd763fc122da5af20f6ac919bffc2b6298c5168ff387da2d83f9`였고,
 검증 실행기는 체크아웃과 번들을 제거했다.

@@ -48,6 +48,12 @@ struct GateState {
     cancelled: Option<Arc<AtomicBool>>,
 }
 
+#[derive(Clone, Copy)]
+struct Ingress {
+    generation: u64,
+    active: bool,
+}
+
 struct ProbePermit {
     gate: Arc<Mutex<GateState>>,
     generation: u64,
@@ -212,6 +218,9 @@ fn serve_connection(
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+    // 요청 본문을 기다리는 동안 다음 Turn이 시작되어도, 이 연결은 처음 관찰한 Turn에만
+    // 귀속됩니다.
+    let ingress = ingress(gate);
     let result = read_request(&stream, path, stop);
     let (status, response) = match result {
         Ok(Some(message)) => {
@@ -245,7 +254,7 @@ fn serve_connection(
                                 arguments.as_object().is_some_and(serde_json::Map::is_empty)
                             });
                     let completed = if valid {
-                        let permit = admit(gate, id.as_ref().expect("validated call id"));
+                        let permit = admit(gate, id.as_ref().expect("validated call id"), ingress);
                         if let Some(permit) = permit {
                             let cancelled = Arc::clone(&permit.cancelled);
                             let (response, receiver) = mpsc::channel();
@@ -295,9 +304,18 @@ fn serve_connection(
     let _ = stream.write_all(payload.as_bytes());
 }
 
-fn admit(gate: &Arc<Mutex<GateState>>, call_id: &Value) -> Option<ProbePermit> {
+fn ingress(gate: &Mutex<GateState>) -> Ingress {
+    let state = gate.lock().expect("probe gate");
+    Ingress {
+        generation: state.generation,
+        active: state.active,
+    }
+}
+
+fn admit(gate: &Arc<Mutex<GateState>>, call_id: &Value, ingress: Ingress) -> Option<ProbePermit> {
     let mut state = gate.lock().expect("probe gate");
-    if !state.active || state.in_flight {
+    if !ingress.active || !state.active || state.generation != ingress.generation || state.in_flight
+    {
         return None;
     }
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -306,7 +324,7 @@ fn admit(gate: &Arc<Mutex<GateState>>, call_id: &Value) -> Option<ProbePermit> {
     state.cancelled = Some(Arc::clone(&cancelled));
     Some(ProbePermit {
         gate: Arc::clone(gate),
-        generation: state.generation,
+        generation: ingress.generation,
         cancelled,
     })
 }
@@ -379,7 +397,9 @@ fn wait_for_result(
             Err(_) => {
                 break cancellation_result(gate, cancelled, &receiver);
             },
-            Ok(_) => {},
+            // HTTP MCP does not permit another request on this one-shot connection. Leaving
+            // the byte unread would make this loop spin until its long response deadline.
+            Ok(_) => break cancellation_result(gate, cancelled, &receiver),
         }
         thread::sleep(Duration::from_millis(50));
     };
@@ -436,7 +456,22 @@ fn read_request(stream: &TcpStream, path: &str, stop: &AtomicBool) -> Result<Opt
             Err(_) => return Err(()),
         }
     }
+    if extra_request_bytes(stream)? {
+        return Err(());
+    }
     serde_json::from_slice(&body).map(Some).map_err(|_| ())
+}
+
+fn extra_request_bytes(stream: &TcpStream) -> Result<bool, ()> {
+    stream.set_nonblocking(true).map_err(|_| ())?;
+    let observed = match stream.peek(&mut [0]) {
+        Ok(0) => Ok(false),
+        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(false),
+        Ok(_) => Ok(true),
+        Err(_) => Err(()),
+    };
+    stream.set_nonblocking(false).map_err(|_| ())?;
+    observed
 }
 
 fn read_bounded_line(
@@ -483,7 +518,7 @@ impl<P: JsonPeer> Backend<P> {
             .as_ref()
             .is_some_and(|probe| probe.permit.cancelled.load(Ordering::Relaxed))
         {
-            self.cancel_secret_probe();
+            self.cancel_pending_secret_probe();
             return Ok(self.pending_events.pop_front());
         }
         let Some(invocation) = self
@@ -564,9 +599,6 @@ impl<P: JsonPeer> Backend<P> {
         if cancelled {
             drop(state);
             let _ = probe.response.send(false);
-            if let Some(bridge) = &self.secret_probe {
-                bridge.deactivate_and_drain();
-            }
             self.pending_events
                 .push_back(BackendEvent::ActivityFinished {
                     activity: probe.activity,
@@ -631,6 +663,17 @@ impl<P: JsonPeer> Backend<P> {
                 });
         }
     }
+
+    fn cancel_pending_secret_probe(&mut self) {
+        if let Some(probe) = self.pending_probe.take() {
+            let _ = probe.response.send(false);
+            self.pending_events
+                .push_back(BackendEvent::ActivityFinished {
+                    activity: probe.activity,
+                    outcome: ActivityOutcome::Interrupted,
+                });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -648,7 +691,7 @@ mod tests {
             active: true,
             ..GateState::default()
         }));
-        let permit = admit(&gate, &json!(1)).unwrap();
+        let permit = admit(&gate, &json!(1), ingress(&gate)).unwrap();
         let cancelled = Arc::clone(&permit.cancelled);
         let (sender, receiver) = mpsc::channel();
         {
@@ -665,5 +708,21 @@ mod tests {
             &cancelled,
             &AtomicBool::new(true),
         ));
+    }
+
+    // Turn A에서 시작한 요청은 Turn B가 활성화된 뒤 본문을 끝내도 B의 입력창을 열 수 없다.
+    #[test]
+    fn stale_ingress_cannot_admit_after_a_new_generation() {
+        let gate = Arc::new(Mutex::new(GateState {
+            active: true,
+            generation: 7,
+            ..GateState::default()
+        }));
+        let observed = ingress(&gate);
+        {
+            let mut state = gate.lock().unwrap();
+            state.generation = 8;
+        }
+        assert!(admit(&gate, &json!(1), observed).is_none());
     }
 }
