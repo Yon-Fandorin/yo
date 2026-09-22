@@ -473,18 +473,23 @@ fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
     if output.server.is_some() || output.error.is_some() {
         return None;
     }
-    match output.tool.as_str() {
+    let result = output.result.as_ref()?;
+    let tool_name = result
+        .get("_meta")?
+        .get("x.ai/tool")?
+        .get("name")?
+        .as_str()?;
+    match tool_name {
         "search_tool" => {
             let arguments = output.arguments.as_ref()?.as_object()?;
             let query = arguments.get("query")?.as_str()?;
             let exact_shape = arguments
                 .keys()
-                .all(|field| matches!(field.as_str(), "query" | "limit"));
+                .all(|field| matches!(field.as_str(), "query" | "limit" | "variant"));
             (exact_shape
                 && query.contains("yo_secret_entry_probe")
-                && output
-                    .content_items
-                    .as_ref()
+                && result
+                    .get("locations")
                     .and_then(Value::as_array)
                     .is_some_and(|items| !items.is_empty()))
             .then_some(LiveToolResult::Search)
@@ -506,40 +511,81 @@ fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
 // Grok의 display title이 아니라 보존된 ToolOutput의 실제 wrapper·target·결과를 판별합니다.
 #[test]
 fn live_probe_result_classifier_requires_exact_structured_output() {
-    let snapshot = yo_core::ToolOutput {
-        tool: "use_tool".into(),
+    let probe = yo_core::ToolOutput {
+        tool: "opaque-call-id".into(),
         server: None,
         arguments: Some(json!({
             "tool_name": LIVE_PROBE_TOOL,
             "tool_input": {}
         })),
-        result: None,
+        result: Some(json!({"_meta":{"x.ai/tool":{"name":"use_tool"}}})),
         content_items: Some(json!([{"type":"text", "text":LIVE_PROBE_RESULT}])),
         error: None,
         plain_text: "presentation is not identity".into(),
-    }
-    .to_snapshot()
-    .unwrap();
+    };
     assert_eq!(
-        classify_live_tool_result(&snapshot),
+        classify_live_tool_result(&probe.to_snapshot().unwrap()),
         Some(LiveToolResult::Probe)
     );
 
-    let unrelated = yo_core::ToolOutput {
-        tool: "use_tool".into(),
-        server: None,
+    let search = yo_core::ToolOutput {
+        tool: "another-opaque-call-id".into(),
+        arguments: Some(json!({
+            "query":"yo_secret_entry_probe",
+            "limit":5,
+            "variant":"full"
+        })),
+        result: Some(json!({
+            "locations":[{"path":"catalog-entry"}],
+            "_meta":{"x.ai/tool":{"name":"search_tool"}}
+        })),
+        content_items: None,
+        plain_text: "presentation remains unrelated".into(),
+        ..probe.clone()
+    };
+    assert_eq!(
+        classify_live_tool_result(&search.to_snapshot().unwrap()),
+        Some(LiveToolResult::Search)
+    );
+
+    let unrelated_target = yo_core::ToolOutput {
         arguments: Some(json!({
             "tool_name": "other__tool",
             "tool_input": {"note": LIVE_PROBE_TOOL}
         })),
-        result: None,
-        content_items: Some(json!([{"type":"text", "text":LIVE_PROBE_RESULT}])),
-        error: None,
         plain_text: LIVE_PROBE_TOOL.into(),
+        ..probe.clone()
+    };
+    assert_eq!(
+        classify_live_tool_result(&unrelated_target.to_snapshot().unwrap()),
+        None
+    );
+
+    for invalid in [
+        yo_core::ToolOutput {
+            result: Some(json!({})),
+            ..probe.clone()
+        },
+        yo_core::ToolOutput {
+            result: Some(json!({
+                "locations":[],
+                "_meta":{"x.ai/tool":{"name":"search_tool"}}
+            })),
+            ..search.clone()
+        },
+        yo_core::ToolOutput {
+            result: Some(json!({
+                "locations":[{"path":"catalog-entry"}],
+                "_meta":{"x.ai/tool":{"name":"other_tool"}}
+            })),
+            ..search.clone()
+        },
+    ] {
+        assert_eq!(
+            classify_live_tool_result(&invalid.to_snapshot().unwrap()),
+            None
+        );
     }
-    .to_snapshot()
-    .unwrap();
-    assert_eq!(classify_live_tool_result(&unrelated), None);
 }
 
 // 유료 Grok 실서비스를 명시적으로 선택한 경우에만 모델의 MCP 도구 선택부터 숨김 입력,
