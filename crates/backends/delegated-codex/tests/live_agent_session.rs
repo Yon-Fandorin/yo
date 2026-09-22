@@ -10,11 +10,11 @@ use yo_backend_delegated_codex::{CodexBackend, CodexBackendConfig};
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityQuestion, ActivityRequestRef, ActivityUpdate,
     AgentEvent, AgentIntent, AgentSession, AgentSessionPoll, CommandAdmission, HostWorkspacePath,
-    SecretInput, SessionDescriptor, SubmissionOutcome, TranscriptRecord, TurnOutcome, TurnRef,
-    WorkspaceHostId,
+    JournalDurability, SecretInput, SessionDescriptor, SubmissionOutcome, TranscriptEntry,
+    TranscriptReader, TranscriptRecord, TurnOutcome, TurnRef, WorkspaceHostId,
     session_repository::{
-        LocalSessionRepository, SessionRepository, SessionWriterRepository,
-        recover_stored_session_continuation,
+        LocalSessionReader, LocalSessionRepository, SessionRepository, SessionWriterRepository,
+        read_stored_session, recover_stored_session_continuation,
     },
 };
 
@@ -58,6 +58,8 @@ fn local_codex_dynamic_probe_discards_sample_secret() {
 }
 
 fn run_local_secret_probe(root: &Path) -> Result<(), String> {
+    const LOCAL_RECEIPT: &str = "Sample secret entry verified locally and discarded.";
+    const PROBE_RESULT: &str = "Sample secret entry verified locally and discarded by Yo. No value was sent to Codex or the model.";
     let workspace = root.join("workspace");
     let storage = root.join("repository");
     fs::create_dir(&workspace).map_err(|error| error.to_string())?;
@@ -90,13 +92,11 @@ fn run_local_secret_probe(root: &Path) -> Result<(), String> {
         WorkspaceHostId::new().map_err(|error| error.to_string())?
     );
     let mut cursor = None;
-    let mut request = None;
-    let mut question_is_secret = false;
-    let mut texts = Vec::new();
+    let mut probe = SecretProbeRun::default();
     let mut admission = app
         .dispatch(
             AgentIntent::submit(
-                "Use yo_secret_entry_probe now with exactly an empty object. Do not call any other tool or ask any other question. After Yo returns its fixed discarded-sample status, reply exactly YO_CODEX_SECRET_PROBE_OK.",
+                "Call yo_secret_entry_probe exactly once now with exactly an empty object. Do not call any other tool or ask any other question. After its one result returns, do not call it again; reply only YO_CODEX_SECRET_PROBE_DONE.",
             )
             .map_err(|error| error.to_string())?,
         )
@@ -131,28 +131,27 @@ fn run_local_secret_probe(root: &Path) -> Result<(), String> {
                 break Err("Codex closed before secret-probe Turn completed".to_owned());
             },
             AgentSessionPoll::Changed => {
-                let slice = transcript.read_after(cursor);
-                if let Some(last) = slice.entries().last() {
-                    cursor = Some(last.sequence());
-                }
-                for entry in slice.entries() {
+                for entry in drain_transcript(&transcript, &mut cursor) {
                     let TranscriptRecord::EventCommitted(event) = entry.record() else {
                         continue;
                     };
                     match event {
-                        AgentEvent::ActivityStarted { activity, kind } => match kind {
-                            ActivityKind::UserInputRequest { request_id } => {
-                                if request
-                                    .replace(ActivityRequestRef::new(*activity, *request_id))
-                                    .is_some()
-                                {
-                                    break 'turn Err(
-                                        "Codex opened more than one secret-probe input".to_owned(),
-                                    );
-                                }
+                        AgentEvent::ActivityStarted { activity, kind } => {
+                            if let Err(error) = probe.started(*activity, *kind) {
+                                break 'turn Err(error);
+                            }
+                        },
+                        AgentEvent::ActivityUpdated { activity, update } => {
+                            let text = match probe.updated(*activity, update, &sample) {
+                                Ok(text) => text,
+                                Err(error) => break 'turn Err(error),
+                            };
+                            if probe.ready_to_submit(*activity, &text) {
                                 let response = app
                                     .dispatch(AgentIntent::RespondToSecretInput {
-                                        request: ActivityRequestRef::new(*activity, *request_id),
+                                        request: probe
+                                            .input_request
+                                            .expect("ready probe input retains its request"),
                                         input: SecretInput::new(sample.clone())
                                             .map_err(|error| error.to_string())?,
                                     })
@@ -163,29 +162,16 @@ fn run_local_secret_probe(root: &Path) -> Result<(), String> {
                                             .to_owned(),
                                     );
                                 }
-                            },
-                            ActivityKind::ApprovalRequest { .. } => {
-                                break 'turn Err(
-                                    "secret-probe Turn requested an unexpected approval".to_owned(),
-                                );
-                            },
-                            _ => {},
+                                probe.submitted = true;
+                            }
                         },
-                        AgentEvent::ActivityUpdated { update, .. } => match update {
-                            ActivityUpdate::TextSnapshot(text) => {
-                                if ActivityQuestion::from_snapshot(text)
-                                    .is_some_and(|question| question.is_secret)
-                                {
-                                    question_is_secret = true;
-                                }
-                                texts.push(text.clone());
-                            },
-                            ActivityUpdate::TextDelta(text) => texts.push(text.clone()),
+                        AgentEvent::ActivityFinished { activity, outcome } => {
+                            if let Err(error) = probe.finished(*activity, outcome) {
+                                break 'turn Err(error);
+                            }
                         },
                         AgentEvent::TurnFinished { outcome, .. } => break 'turn Ok(outcome.clone()),
-                        AgentEvent::SessionCreated { .. }
-                        | AgentEvent::TurnStarted { .. }
-                        | AgentEvent::ActivityFinished { .. } => {},
+                        AgentEvent::SessionCreated { .. } | AgentEvent::TurnStarted { .. } => {},
                     }
                 }
             },
@@ -199,23 +185,13 @@ fn run_local_secret_probe(root: &Path) -> Result<(), String> {
     if outcome != TurnOutcome::Completed {
         return Err(format!("secret-probe Turn ended as {outcome:?}"));
     }
-    if request.is_none() || !question_is_secret {
-        return Err("Codex did not select the hidden secret-entry probe".to_owned());
+    probe.complete(PROBE_RESULT, "YO_CODEX_SECRET_PROBE_DONE")?;
+    if !matches!(transcript.durability(), JournalDurability::Durable { .. }) {
+        return Err("secret-probe Session was not durable after the completed Turn".to_owned());
     }
-    if !texts
-        .iter()
-        .any(|text| text.contains("Sample secret entry verified locally and discarded."))
-    {
-        return Err("Yo did not publish the fixed discarded-sample receipt".to_owned());
-    }
-    if !texts
-        .iter()
-        .any(|text| text.contains("YO_CODEX_SECRET_PROBE_OK"))
-    {
-        return Err("Codex did not finish after the fixed probe receipt".to_owned());
-    }
-    if texts.iter().any(|text| text.contains(&sample)) {
-        return Err("model-facing event text retained the sample value".to_owned());
+    let final_records = drain_transcript(&transcript, &mut cursor);
+    if !final_records.is_empty() {
+        return Err("secret-probe transcript changed after Turn completion".to_owned());
     }
     let durable = fs::read_dir(&storage)
         .map_err(|error| error.to_string())?
@@ -236,11 +212,225 @@ fn run_local_secret_probe(root: &Path) -> Result<(), String> {
     {
         return Err("durable Session storage retained the sample value".to_owned());
     }
-    let transcript_debug = format!("{:?}", transcript.read_after(None));
+    let mut all_records_cursor = None;
+    let transcript_debug = format!(
+        "{:?}",
+        drain_transcript(&transcript, &mut all_records_cursor)
+    );
     if transcript_debug.contains(&sample) {
         return Err("Yo transcript retained the sample value".to_owned());
     }
+    let reader = LocalSessionReader::open(&storage).map_err(|error| error.to_string())?;
+    let history = read_stored_session(&reader, session_id)
+        .map_err(|error| format!("durable secret-probe read failed: {error}"))?;
+    let persisted = history.records();
+    if format!("{persisted:?}").contains(&sample) {
+        return Err("reopened durable Session retained the sample value".to_owned());
+    }
+    if !persisted.iter().any(|record| {
+        matches!(record, TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated { update: ActivityUpdate::TextSnapshot(text), .. }) if text == LOCAL_RECEIPT)
+    }) {
+        return Err("reopened durable Session omitted the payload-free probe receipt".to_owned());
+    }
+    if !persisted.iter().any(|record| {
+        matches!(
+            record,
+            TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+                outcome: TurnOutcome::Completed,
+                ..
+            })
+        )
+    }) {
+        return Err("reopened durable Session omitted the completed probe Turn".to_owned());
+    }
     Ok(())
+}
+
+#[derive(Default)]
+struct SecretProbeRun {
+    activities: HashMap<yo_core::ActivityRef, ActivityKind>,
+    texts: HashMap<yo_core::ActivityRef, String>,
+    tool_calls: Vec<yo_core::ActivityRef>,
+    probe_tool: Option<yo_core::ActivityRef>,
+    input_request: Option<ActivityRequestRef>,
+    input_snapshot: bool,
+    submitted: bool,
+    probe_tool_completed: bool,
+    input_response_completed: bool,
+}
+
+impl SecretProbeRun {
+    fn started(
+        &mut self,
+        activity: yo_core::ActivityRef,
+        kind: ActivityKind,
+    ) -> Result<(), String> {
+        match kind {
+            ActivityKind::ToolCall => self.tool_calls.push(activity),
+            ActivityKind::ToolResult
+            | ActivityKind::FileChange
+            | ActivityKind::ApprovalRequest { .. }
+            | ActivityKind::ApprovalResponse { .. } => {
+                return Err(format!("secret-probe Turn started an unexpected {kind:?}"));
+            },
+            ActivityKind::UserInputRequest { request_id } => {
+                if self.probe_tool.is_none()
+                    || self
+                        .input_request
+                        .replace(ActivityRequestRef::new(activity, request_id))
+                        .is_some()
+                {
+                    return Err(
+                        "secret-probe input was not uniquely preceded by its tool call".to_owned(),
+                    );
+                }
+            },
+            ActivityKind::UserInputResponse { .. } => {
+                if !self.submitted {
+                    return Err("secret-probe input response started before submission".to_owned());
+                }
+            },
+            ActivityKind::ModelWork | ActivityKind::AgentMessage => {},
+        }
+        self.activities.insert(activity, kind);
+        Ok(())
+    }
+
+    fn updated(
+        &mut self,
+        activity: yo_core::ActivityRef,
+        update: &ActivityUpdate,
+        sample: &str,
+    ) -> Result<String, String> {
+        let text = self.texts.entry(activity).or_default();
+        match update {
+            ActivityUpdate::TextSnapshot(snapshot) => *text = snapshot.clone(),
+            ActivityUpdate::TextDelta(delta) => text.push_str(delta),
+        }
+        if text.contains(sample) {
+            return Err("model-facing activity text retained the sample value".to_owned());
+        }
+        if self.activities.get(&activity) == Some(&ActivityKind::ToolCall) {
+            if !text.contains("yo_secret_entry_probe") {
+                return Err(format!(
+                    "secret-probe Turn started an unexpected tool: {}",
+                    text.chars().take(240).collect::<String>()
+                ));
+            }
+            if self
+                .probe_tool
+                .replace(activity)
+                .is_some_and(|tool| tool != activity)
+            {
+                return Err("secret-probe Turn started the probe tool more than once".to_owned());
+            }
+        }
+        Ok(text.clone())
+    }
+
+    fn ready_to_submit(&mut self, activity: yo_core::ActivityRef, text: &str) -> bool {
+        if self.submitted || Some(activity) != self.input_request.map(|request| request.activity())
+        {
+            return false;
+        }
+        let Some(question) = ActivityQuestion::from_snapshot(text) else {
+            return false;
+        };
+        self.input_snapshot = question.is_secret;
+        self.input_snapshot
+            && self.probe_tool.is_some_and(|tool| {
+                self.texts
+                    .get(&tool)
+                    .is_some_and(|snapshot| snapshot.contains("yo_secret_entry_probe"))
+            })
+    }
+
+    fn finished(
+        &mut self,
+        activity: yo_core::ActivityRef,
+        outcome: &ActivityOutcome,
+    ) -> Result<(), String> {
+        if Some(activity) == self.probe_tool {
+            if *outcome != ActivityOutcome::Completed {
+                return Err(format!("secret-probe tool did not complete: {outcome:?}"));
+            }
+            self.probe_tool_completed = true;
+        }
+        if matches!(
+            self.activities.get(&activity),
+            Some(ActivityKind::UserInputResponse { .. })
+        ) {
+            if *outcome != ActivityOutcome::Completed {
+                return Err(format!(
+                    "secret-probe input response did not complete: {outcome:?}"
+                ));
+            }
+            self.input_response_completed = true;
+        }
+        Ok(())
+    }
+
+    fn complete(&self, result: &str, final_reply: &str) -> Result<(), String> {
+        let Some(tool) = self.probe_tool else {
+            return Err("Codex did not start the secret-entry probe tool".to_owned());
+        };
+        if self.tool_calls != [tool] {
+            return Err("secret-probe Turn started an unexpected tool".to_owned());
+        }
+        if !self.input_snapshot
+            || !self.submitted
+            || !self.probe_tool_completed
+            || !self.input_response_completed
+        {
+            return Err("secret-probe tool/input lifecycle did not complete".to_owned());
+        }
+        if !self
+            .texts
+            .get(&tool)
+            .is_some_and(|text| text.contains("yo_secret_entry_probe"))
+        {
+            return Err("Codex probe tool call did not expose its exact tool identity".to_owned());
+        }
+        if !self
+            .texts
+            .get(&tool)
+            .is_some_and(|text| text.contains(result))
+        {
+            return Err(
+                "Codex did not report the fixed probe result on the completed tool".to_owned(),
+            );
+        }
+        let replies = self
+            .activities
+            .iter()
+            .filter(|(_, kind)| **kind == ActivityKind::AgentMessage)
+            .filter_map(|(activity, _)| self.texts.get(activity))
+            .collect::<Vec<_>>();
+        if replies.len() != 1 || replies[0].trim() != final_reply {
+            return Err("Codex did not finish after the completed probe tool result".to_owned());
+        }
+        Ok(())
+    }
+}
+
+fn drain_transcript(
+    transcript: &TranscriptReader,
+    cursor: &mut Option<yo_core::JournalSequence>,
+) -> Vec<TranscriptEntry> {
+    let mut records = Vec::new();
+    loop {
+        let slice = transcript.read_after(*cursor);
+        let head = slice.head();
+        let entries = slice.into_entries();
+        let Some(last) = entries.last() else {
+            return records;
+        };
+        *cursor = Some(last.sequence());
+        records.extend(entries);
+        if *cursor == head {
+            return records;
+        }
+    }
 }
 
 fn run_local_file_change(workspace: &Path) -> Result<(), String> {
