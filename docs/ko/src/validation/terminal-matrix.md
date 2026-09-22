@@ -591,6 +591,58 @@ interview cannot become a new draft” 안내를 표시하거나 파일을 다�
 증거는 아니다. 위의 [Linux Grok 실제 서비스 흐름](#grok-사용자-질문-실제-서비스-흐름)은
 별도 증거다.
 
+### Mac TUI 검색과 외부 편집 검증
+
+2026-09-22 저장된 Apple Silicon 호스트에 커밋
+`0fd2086dff002ef6e5a6156edf13af8a3fd28ece`의 전체 이력 Git 번들
+8,924,259바이트를 한 번 전송했다. SHA-256은
+`679682042ffafd42782178a640d54830a491b26a8bfc67367573ab2490a90e56`였다.
+임시 checkout에서 frame 검사 6개, 크기 0 재진입 검사 2개, `yo-tui` library
+검사 1,028개와 추가 target 검사 4개, TUI Clippy `-D warnings`, 제품 CLI
+빌드가 통과했다.
+
+분리된 100×35 Mac tmux 소켓에서 수정하지 않은 오프라인 `chat_preview`
+바이너리를 실행했다. `Ctrl+F`는 안내 문서의 “Charts” 제목을 결과에서
+제외했고 완료된 Assistant 답변의 “Readable prose”를 1/1 결과로 찾았다.
+Enter는 해당 과거 메시지로 이동하고 End는 최신 화면으로 복귀했다. Esc는
+작성 중인 초안을 복원했다. `Ctrl+R`은 확정된 `markdown` 입력을 보여 주었고,
+Esc는 기존 초안을 복원했으며 Enter는 전송 없이 해당 입력을 초안에 실었다.
+`/find Readable`, `/status`, `/copy`도 예상 결과를 표시했다. `/copy`는
+OSC 52 요청을 보냈다는 안내이며 터미널 클립보드의 실제 변경을 입증하지
+않는다. 입력은 물리 Mac 키보드가 아닌 tmux 합성 키였고 모델 서비스 요청은
+없었다.
+
+프리뷰 실행 파일은 `Ctrl+G`가 외부 편집을 요청하면 정상 종료한다. 편집기
+전환은 바깥쪽 `yo` CLI가 담당하기 때문이다. 이후 첫 Mac CLI test 빌드는
+Linux 전용 `symlink` test import를 모든 Unix에서 가져와 엄격한 미사용 import
+lint에 걸리는 문제를 발견했다. 로컬 소스와 바이트가 같은 조건부 import 수정을
+임시 checkout에 적용한 뒤 외부 편집 focused 검사 4개, CLI library 검사
+543개, CLI 통합 검사 5개, 추가 terminal 검사 2개와 CLI Clippy가 통과했다.
+실제 `yo` 바이너리도 loopback Codex fixture를 쓴 격리 tmux에서 Fullscreen
+검사 1개와 Inline 검사 6개를 통과했다. 여기에는 외부 편집 복귀, 편집 실패
+복구, bracketed paste, 상태, 중단·재개와 정상 종료가 포함된다. 이 수정으로
+Mac test 빌드 문제는 해결됐다.
+
+같은 임시 checkout에서 격리된 Yo/Codex 홈과 Mac 내부 loopback Responses
+fixture를 사용해 실제 `yo --fullscreen --model host:codex` 바이너리를 별도
+tmux 세션에서 실행했다. 외부 모델 endpoint와 인증 정보는 사용하지 않았다.
+fixture Turn이 완료되자 정해진 Assistant 답변과 사용량이 표시됐다. Mac
+Ghostty에 접속한 사용자는 물리 `Ctrl+F` 검색, `Ctrl+G` 외부 편집, 여러 줄
+Command-V 붙여넣기는 정상이라고 보고했으나 완료 소리는 듣지 못했다. 별도의
+Mac tmux pane에서 완료된 fixture Turn의 원시 출력을 기록하니 BEL 바이트가
+정확히 하나 있었다. `TERM=xterm-ghostty`를 설정한 별도의 Mac 가상 터미널
+client도 test pane에서 BEL 하나를 받았다. Ghostty에서 직접 `printf '\a'`를
+실행하면 벨 표시는 떴으나 소리는 나지 않았고 Terminal.app에서는 소리가 났다.
+Ghostty의 유효 설정은 기본값
+`bell-features = no-system,no-audio,attention,title,no-border`를 덮어쓰지 않았다. 따라서
+소리가 나지 않은 원인은 Yo BEL 누락이 아닌 터미널 설정이다. Ghostty는
+macOS 시스템 알림음용
+[`bell-features = system`](https://ghostty.org/docs/config/reference#bell-features)을
+문서화하며 사용자는 시각적 표시를 유지하기로 했다. 이어서 물리 한영 IME
+조합·삭제·방향키 편집과 `/copy` 후 다른 Ghostty 창에서 Command-V로 답변을
+붙여넣는 실제 클립보드 수신도 확인했다. 위의 recall·undo·status 검사는
+합성 키로 확인했다.
+
 ### Grok 큰 문맥 재개
 
 2026-09-11 같은 바이너리와 Grok `1.0.25 (f7e67d6988e2)`를 격리된 Linux 110×40

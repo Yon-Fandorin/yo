@@ -652,6 +652,59 @@ offline peer. No official Grok service or paid model was contacted, so it does
 not establish a live provider request. The earlier [Linux Grok service
 journey](#grok-user-question-live-journey) is separate evidence.
 
+### Mac TUI search and editor validation
+
+On 2026-09-22, the pinned Apple Silicon host received the verified 8,924,259-byte
+complete-history bundle for `0fd2086dff002ef6e5a6156edf13af8a3fd28ece`
+once. Its SHA-256 was
+`679682042ffafd42782178a640d54830a491b26a8bfc67367573ab2490a90e56`.
+The disposable checkout passed the six frame tests, two zero-size reentry
+tests, 1,028 `yo-tui` library tests and four additional target tests, TUI
+Clippy with `-D warnings`, and the production CLI build.
+
+An isolated 100×35 Mac tmux socket ran the unmodified offline `chat_preview`
+binary. `Ctrl+F` excluded the preview document's “Charts” heading, found the
+completed Assistant “Readable prose” answer with a one-of-one count, and Enter
+jumped to its history item; End returned to live output. Esc restored an unsent
+draft. `Ctrl+R` showed the accepted `markdown` prompt, restored the prior draft
+on Esc, and loaded that prompt without sending it on Enter. `/find Readable`,
+`/status`, and `/copy` displayed their expected results; `/copy` reported an
+OSC 52 request, not a confirmed terminal clipboard change. These were
+synthetic tmux keys, not physical Mac keyboard input. No model service was
+contacted.
+
+The preview executable exits normally when `Ctrl+G` requests the external
+editor because only the outer `yo` CLI handles the editor handoff. The first
+Mac CLI test build then exposed a Linux-only `symlink` test import that was
+unconditionally imported under a deny-unused-imports lint. Applying the same
+conditional-import patch as the local source to the disposable checkout made
+four focused editor tests, 543 CLI library tests, five CLI integration tests,
+two additional terminal tests, and CLI Clippy pass. The actual `yo` binary also
+passed one Fullscreen and six Inline isolated-tmux tests using a loopback Codex
+fixture, including external editor return, failed-editor recovery, bracketed
+paste, status, suspend/resume, and clean exit. This fixes the Mac test build.
+
+The same temporary checkout then ran the actual
+`yo --fullscreen --model host:codex` binary in a separate Mac tmux session with an isolated Yo/Codex
+home and a loopback Responses fixture. No external model endpoint or credential
+was used. A completed fixture Turn produced the canned Assistant answer and
+usage receipt. In the attached Mac Ghostty terminal, the operator confirmed
+physical `Ctrl+F` search, `Ctrl+G` editor handoff, and multiline Command-V paste;
+the completion sound was not audible. A second isolated Mac tmux pane
+recorded raw output for a completed fixture Turn and found exactly one BEL byte.
+An independent tmux client with a Mac pseudo-terminal and `TERM=xterm-ghostty`
+also received one BEL from a test pane. Direct `printf '\a'` in Ghostty showed a
+bell indication but made no sound, while Terminal.app sounded. Ghostty's
+effective configuration did not override its default
+`bell-features = no-system,no-audio,attention,title,no-border`, so the missing sound is a
+terminal preference rather than a missing Yo BEL. [Ghostty documents
+`bell-features = system`](https://ghostty.org/docs/config/reference#bell-features)
+for the macOS system alert sound; the operator chose to keep visual alerts.
+The operator also confirmed physical Korean IME composition, deletion and
+cursor edits, then used `/copy` and Command-V in another Ghostty window to
+confirm actual terminal clipboard receipt. The remaining recall, undo, and
+status cases above were exercised with synthetic keys.
+
 ### Grok large-context resume
 
 On 2026-09-11, the same binary and Grok `1.0.25 (f7e67d6988e2)` passed seven

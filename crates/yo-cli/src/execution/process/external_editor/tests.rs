@@ -1,6 +1,8 @@
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::symlink;
 use std::{
     env, fs,
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     process,
     time::{SystemTime, UNIX_EPOCH},
