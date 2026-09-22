@@ -268,9 +268,10 @@ registration without a model Turn; its initialize response used the actual
 `item/tool/call` to verify the hidden question and that the sample bytes never
 enter the Codex response. Registration alone cannot open the prompt: an actual
 model Turn selecting this model-visible tool, or a trusted mock host injecting
-the matching call, is still required. Leave this opt-in off for ordinary work;
-while enabled, the tool is available to model Turns in the Session. This is a
-protocol and adapter check, not a Mac live Turn or a usable credential tool.
+the matching call, is required; the live evidence below covers the
+model-selected path. Leave this opt-in off for ordinary work; while enabled,
+the tool is available to model Turns in the Session. This is a protocol and
+adapter check by itself, not a usable credential tool.
 Codex may retain the tool definition when resuming that thread; Yo accepts a
 probe call only while the opt-in is enabled and the wire version is still
 exactly 0.155.1.
@@ -302,31 +303,37 @@ secret flag to Grok's ordinary `_x.ai/ask_user_question` route or permit real
 credential delivery. Leave the opt-in off for ordinary work. Local adapter
 tests cover the MCP-to-hidden-input handoff, Turn-generation capture at HTTP
 ingress, retry after an individual cancellation, immediate rejection of excess
-request bytes, and absence of the sample from MCP and ACP output. The ignored
-paid test requires an ACP ToolCall whose exact identity is
-`yo_secret_entry_probe__yo_secret_entry_probe` and a separate final model
-answer marker after the tool sequence. It deliberately does not treat Yo's
-local `UserInputResponse` receipt as proof that the model received the MCP
-result: ACP exposes no separate model-receipt event for that HTTP response.
-The fixed MCP response remains covered by the loopback adapter test and the
-manual Mac TUI evidence below.
+request bytes, and absence of the sample from MCP and ACP output. The paid test,
+ignored by default, requires one structured `search_tool` result containing the
+exact qualified name and one structured `use_tool` result with target
+`yo_secret_entry_probe__yo_secret_entry_probe`, empty input, and Yo's exact
+fixed response in either supported structured representation. The Mac run below
+observed Grok's `MCP`/`OkayOutput` representation. The test also requires the
+exact hidden question, rejects file changes, approvals and extra tools, and
+accepts the completed exact final model marker only after the verified result.
+It deliberately does not treat Yo's local `UserInputResponse` receipt or that
+ordering as a direct model receipt: ACP exposes no separate receipt event for
+the HTTP response.
 
 The saved Apple Silicon Mac passed pinned-host-key preflight with Grok 1.0.40
 on 2026-09-22. Earlier no-model checks established HTTP MCP discovery and
-Session creation. After subscription-backed model use was authorized, its
-`grok models` default was `grok-4.7`. Commit `588a0586` passed the Mac
-`grok-live` profile: 92 ordinary adapter tests, the installed-host MCP Session
-test, a paid model-Turn test, package Clippy, and Yo CLI check. In the live
-test, Grok selected `yo_secret_entry_probe`, Yo opened a hidden question,
-discarded a made-up sample, published only the fixed status, and completed the
-Turn. No backend event contained the sample. The current source adds the exact
-ToolCall-identity and final-answer-marker assertions described above; they
-require a fresh Mac run before they become live-test evidence. The exact
-29,100-byte incremental Git bundle had SHA-256
-`b066cbab4b55fd763fc122da5af20f6ac919bffc2b6298c5168ff387da2d83f9`; the validation
-runner removed the checkout and bundle.
+Session creation. After subscription-backed model use was authorized, commit
+`b76978ab` passed the final `grok-live` profile: 96 ordinary adapter tests with
+four environment tests ignored, one installed-host MCP Session test, one paid
+model-Turn test, package Clippy, and the Yo CLI check. The live Turn completed
+exactly two tools: one `search_tool` result contained the qualified probe and
+one invocation used that exact target with empty input. Yo presented the exact
+secret question, accepted and discarded the made-up sample, and published the
+fixed result in the exact structured Grok wrapper. Every accumulated Activity
+snapshot excluded the sample. The fixed result preceded a completed exact
+model marker and the completed Turn; no file-change or approval flow occurred.
+This is behavioral end-to-end evidence, while the ACP limitation above still
+prevents a direct model-receipt claim. The exact 983-byte incremental Git bundle
+had SHA-256
+`2ae5b2105e6cf4b89e0b1c59b84639c504ddffed10074a1daa3a9d4767bae78a`; the validation
+runner removed the disposable checkout and bundle.
 
-The same binary then ran in an isolated 140×44 Mac tmux Fullscreen Yo Session
+The earlier `588a0586` binary also ran in an isolated 140×44 Mac tmux Fullscreen Yo Session
 with temporary Yo configuration and Session storage. An initial prompt barred
 all other tools, including Grok's required `search_tool`, so its unqualified
 tool call failed. The corrected prompt allowed discovery; Grok found

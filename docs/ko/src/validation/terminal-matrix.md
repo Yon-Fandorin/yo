@@ -245,9 +245,10 @@ initialize 응답의 실제 user-agent 형식은 `yo/0.155.1`이었다.
 결정적 어댑터 테스트는 합성 `item/tool/call`로 숨김 질문을 열고 모의값이 Codex
 응답에 없음을 확인했다. 등록만으로는 질문이 열리지 않는다. 실제 모델 Turn이
 모델에 보이는 이 도구를 선택하거나 신뢰할 수 있는 모의 호스트가 일치하는 호출을
-보내야 한다. 일반 작업에서는 선택 설정을 끄고, 설정이 켜진 동안에는 해당
-Session의 모델 Turn에 도구가 제공됨을 유의한다. 이는 프로토콜·어댑터 검사이며
-Mac 실서비스 Turn이나 실제 자격증명 사용 도구의 증거는 아니다. Codex는 해당
+보내야 하며, 아래 실서비스 증거는 모델이 선택한 경로를 검증한다. 일반 작업에서는
+선택 설정을 끄고, 설정이 켜진 동안에는 해당 Session의 모델 Turn에 도구가 제공됨을
+유의한다. 이 검사 자체는 프로토콜·어댑터 검사이며 실제 자격증명 사용 도구의
+증거는 아니다. Codex는 해당
 Thread를 재개할 때 도구 정의를 보존할 수 있으며, Yo는 선택 설정이 켜져 있고
 wire 버전이 여전히 정확히 0.155.1일 때만 호출을 처리한다. 실제 모델 요청 전에는 무료
 사용 자격을 확인해야 한다.
@@ -275,28 +276,32 @@ MCP 서버를 연결한다. 이 서버는 인자 없는 `yo_secret_entry_probe` 
 전달하는 기능은 아니다. 일반 작업에서는 선택 설정을 끈다. 로컬 어댑터
 테스트는 MCP에서 숨김 입력으로 이어지는 경로, HTTP ingress에서 Turn 세대를
 고정하는 경로, 개별 취소 뒤 같은 Turn의 재호출, 초과 요청 바이트의 즉시 거부,
-MCP·ACP 출력에 모의값이 없는 것을 확인한다. ignore된 유료 테스트는 정확히
-`yo_secret_entry_probe__yo_secret_entry_probe`인 ACP ToolCall과 도구 순서 뒤의
-별도 최종 모델 답변 marker를 요구한다. Yo의 로컬 `UserInputResponse` 영수증은
-모델이 MCP 결과를 받았다는 증거로 세지 않는다. ACP에는 이 HTTP 응답의 별도
-모델 수신 이벤트가 없기 때문이다. 고정 MCP 응답은 loopback 어댑터 테스트와
-아래 수동 Mac TUI 증거로 확인한다.
+MCP·ACP 출력에 모의값이 없는 것을 확인한다. 기본으로 ignore되는 유료 테스트는
+구조화된 `search_tool` 결과 하나에서 정규화된 이름을 찾고, 구조화된 `use_tool`
+결과 하나에서 target이 `yo_secret_entry_probe__yo_secret_entry_probe`, 입력이 빈
+객체, 결과가 Yo의 고정 응답을 지원되는 두 구조 표현 중 하나로 정확히 담았는지
+요구한다. 아래 Mac 실행에서는 Grok의 `MCP`/`OkayOutput` 표현을 관측했다. 정확한
+숨김 질문도 확인하며 file change·승인·추가 도구를 거부하고, 검증된 결과 뒤에 온
+완료된 정확한 최종 모델 marker만 수락한다. Yo의 로컬 `UserInputResponse`
+영수증이나 이 순서를 모델의 직접 수신 증거로 세지는 않는다. ACP에는 HTTP 응답의
+별도 모델 수신 이벤트가 없기 때문이다.
 
 2026-09-22 저장된 Apple Silicon Mac에서 고정 호스트 키 사전 점검이 통과했고,
 Grok 1.0.40이 설치되어 있었다. 이전의 모델 미사용 검사는 HTTP MCP 검색과
-Session 생성을 확인했다. 구독 쿼터 사용이 승인된 뒤 `grok models`의 기본값은
-`grok-4.7`이었다. 커밋 `588a0586`은 Mac의 `grok-live` 검사에서 일반 어댑터
-테스트 92개, 설치 호스트 MCP Session 테스트, 유료 모델 Turn 테스트, 패키지
-Clippy와 Yo CLI 검사를 통과했다. 그 당시 실제 Turn에서 Grok이
-`yo_secret_entry_probe`를 선택했고 Yo가 숨김 질문을 열어 모의값을 폐기한 뒤
-고정 상태만 게시했으며 Turn이 완료됐다. 어댑터 이벤트 어디에도 모의값이 없었다.
-현재 소스에는 위에서 설명한 정확한 ToolCall identity와 최종 답변 marker 검사가
-추가되어 있으므로, 새 Mac 실행 전에는 이를 실서비스 증거로 간주하지 않는다.
-29,100바이트 증분 Git 번들의 SHA-256은
-`b066cbab4b55fd763fc122da5af20f6ac919bffc2b6298c5168ff387da2d83f9`였고,
-검증 실행기는 체크아웃과 번들을 제거했다.
+Session 생성을 확인했다. 구독 쿼터 사용이 승인된 뒤 커밋 `b76978ab`은 최종
+`grok-live` 검사에서 일반 어댑터 테스트 96개와 환경 테스트 ignore 4개,
+설치 호스트 MCP Session 테스트 1개, 유료 모델 Turn 테스트 1개, 패키지 Clippy,
+Yo CLI 검사를 모두 통과했다. 실제 Turn에서는 도구가 정확히 두 개 완료됐다.
+`search_tool` 결과 하나에는 정식 이름이 있었고, 호출 하나는 그 정확한 target을
+빈 입력으로 사용했다. Yo는 정확한 비밀 질문을 표시하고 모의값을 받아 폐기한 뒤 고정 결과를
+정확한 Grok 구조 wrapper로 게시했다. 누적한 모든 Activity snapshot에 모의값이
+없었다. 고정 결과 뒤에 완료된 정확한 모델 marker와 완료된 Turn이 왔고 file change나
+승인 흐름은 없었다. 이는 종단 간 동작 증거지만 위의 ACP 제약 때문에 모델의 직접
+수신 영수증이라고 주장하지 않는다. 983바이트 증분 Git 번들의 SHA-256은
+`2ae5b2105e6cf4b89e0b1c59b84639c504ddffed10074a1daa3a9d4767bae78a`였고,
+검증 실행기는 일회용 체크아웃과 번들을 제거했다.
 
-같은 바이너리로 Mac의 격리된 140×44 tmux Fullscreen Yo Session도 실행했다.
+이전 `588a0586` 바이너리로 Mac의 격리된 140×44 tmux Fullscreen Yo Session도 실행했다.
 Yo 설정과 Session 저장소는 임시로 분리했다. 첫 프롬프트는 Grok의 필수
 `search_tool`까지 금지해 정식 이름을 찾지 못한 도구 호출이 실패했다. 수정한
 프롬프트는 도구 검색을 허용했다. Grok은
