@@ -188,6 +188,40 @@ Native Codex 0.154.0이 구현 커밋 `d0a627cc`를 `gpt-5.6-sol`, effort `high`
 자동 재시도·steer·fallback은 없었다. 완료된 검토는 입력 70,502·출력 2,077 token을
 보고했으며 호스트 비용은 보고하지 않았다. Finding-resolution round는 없었다.
 
+## QwenCloud 관리형 비밀 입력
+
+2026-09-22 수정되지 않은 후보 `2eace350`과 Linux 원본 바이너리 SHA-256
+`fec70a33dcdb089c63e371ba6478665a606f7afb6dda08645326f78bdf4b63a4`에서
+기존 `qwencloud:general:qwen3.8-flash` Chat binding으로 격리된 tmux TUI의
+`request_secret_input` Turn 1개를 완료했다. 추론 전 읽기 전용 계정 조회에서 정확한
+Flash 무료 쿼터가 유효하고 `Free quota only`가 켜져 있음을 확인했다. 일반 Yo 인증
+정보는 원래 저장소에서 읽었고, 임시 Session 상태와 전용 tmux 터미널만 생성했다.
+
+초기 프롬프트는 `Please ask me for a pretend word using
+request_secret_input. Use title Test word, question Enter any made-up word,
+and purpose Check the input UI. After the result, reply
+YO_MANAGED_SECRET_OK.`였다. 모델은 비밀 입력을 정확히 한 번 요청했다. Yo는 숨김 입력
+전에 선택된 Provider와 Model을 고지했다. 합성 값을 한 번 입력한 후 보호된 후속 응답은
+그 값을 되풀이하지 않고 정확히 `YO_MANAGED_SECRET_OK`를 반환했다. Request audit에는
+수락된 모델 요청 2개가 기록됐다. 완료된 사용량 영수증은 각각 입력 1,231/출력 57 및
+입력 163/출력 5 token으로 총 1,456 token이었다. 원본 실행 전후 읽기 전용 무료
+쿼터 조회에서 잔여량은 967,478 -> 966,022 token으로 정확히 같은 양만큼 감소했고
+`Free quota only`는 계속 켜져 있었다. Journal에는 값 없는 제출 영수증 한 개와 완료된
+Turn이 남았으며, 합성 값은 Journal·캡처된 TUI·stderr에 없었다. 새 프로세스의
+`--resume`은 이 Session이 보호 입력에서 끝났다는 이유로 추론 전에 거부됐다. TUI와
+전용 tmux 서버는 종료됐고 일반 인증 정보와 설정은 변경되지 않았다. 이 검증은
+tmux로 키 입력 이벤트를 주입한 Linux 검사이며 Mac 실제 키보드 검사는 아니다.
+
+앞선 강한 표현의 테스트 프롬프트는 제출 뒤 Qwen의 `data_inspection_failed` 코드와
+HTTP 400을 받았다. 비밀값을 가려 확인한 Yo 요청에는 서로 일치하는 assistant
+도구 호출과 결과가 한 쌍 있었고, `tools`·`tool_choice`는 빠져 있었으며 승인된
+binding 옵션을 사용했다. 직접 비교에서 결과를 중립 문자열로 바꿔도 같은 요청은
+거부됐지만, 최초 사용자 문구만 중립적으로 바꾸면 수락됐다. 따라서 해당 테스트
+내용에 대한 제공자 입력 검사 거부였으며 Yo의 호출 연결 오류는 아니었다. 다른
+비밀값에 대한 제공자 판단까지 예측하지는 않는다. 성공을 위해 제공자 설정·대체
+경로·재시도·redirect·Yo 계약을 변경하지 않았다. 무료 쿼터 잔여량이나 사용량
+영수증만으로 비용 0을 주장하지 않는다.
+
 ## QwenCloud 무료 텍스트 요약과 재개
 
 2026-09-13 인증된 계정의 쿼터를 읽기 전용으로 조회해 `qwen3.8-max-0902`를

@@ -203,6 +203,45 @@ The chain used two native invocations, no reviewer tool calls, automatic retries
 steer or fallback. The completed review reported 70,502 input and 2,077 output
 tokens; host cost was not reported. No finding-resolution round ran.
 
+## QwenCloud managed secret input
+
+On 2026-09-22, unchanged candidate `2eace350` and stock Linux binary SHA-256
+`fec70a33dcdb089c63e371ba6478665a606f7afb6dda08645326f78bdf4b63a4`
+completed one native `request_secret_input` Turn against the existing
+`qwencloud:general:qwen3.8-flash` Chat binding in an isolated tmux TUI. A
+read-only account check confirmed `Free quota only` was on and the exact Flash
+free quota was valid before inference. The normal Yo credential was read in
+place; only disposable Session state and a dedicated tmux terminal were created.
+
+The initial prompt was `Please ask me for a pretend word using
+request_secret_input. Use title Test word, question Enter any made-up word,
+and purpose Check the input UI. After the result, reply
+YO_MANAGED_SECRET_OK.` The model made exactly one secret request. Yo disclosed the
+selected Provider and Model before hidden entry; the value was entered once,
+and the protected follow-up returned exactly `YO_MANAGED_SECRET_OK` without an
+echo. Request audit recorded two accepted model requests. The two completed
+usage receipts were 1,231 input/57 output and 163 input/5 output tokens, 1,456
+total. Read-only free-quota checks before and after this stock run observed
+967,478 -> 966,022 tokens, exactly the same decrease, with `Free quota only`
+still on. The Journal held one payload-free submission receipt and a completed
+Turn; the synthetic value appeared in neither the Journal, captured TUI nor
+stderr. A fresh-process `--resume` was rejected before inference because the
+Session ended at protected input. The TUI exited, its dedicated tmux server
+closed, and normal credentials and configuration were unchanged. This is a
+Linux tmux test with injected keystrokes, not a Mac physical-key test.
+
+An earlier stress-test prompt for the same tool returned HTTP 400 with Qwen's
+`data_inspection_failed` code after submission. The exact redacted Yo request
+had one correlated assistant tool call and result, omitted `tools` and
+`tool_choice`, and used the admitted binding options. Direct comparisons found
+that the same request with a neutral tool result still failed, while changing
+only the original user prompt to neutral wording succeeded. This establishes
+a provider content-inspection rejection for those test bytes, not a Yo wire
+correlation failure; it does not predict how the provider will treat other
+secret values. No provider setting, fallback, retry, redirect, or Yo contract
+was changed to obtain the successful run. No zero-cost claim is made from the
+free-quota balance or usage receipts.
+
 ## QwenCloud free text summary and continuation
 
 On 2026-09-13, an authenticated, read-only quota lookup selected
