@@ -46,6 +46,7 @@ impl<P: JsonPeer> Backend<P> {
         &mut self,
         session_id: SessionId,
     ) -> Result<yo_core::BackendCommandEvidence, BackendFailure> {
+        self.cancel_secret_probe();
         self.initialize()?;
         let result = self
             .client
@@ -76,6 +77,7 @@ impl<P: JsonPeer> Backend<P> {
         session_id: SessionId,
         binding: &BackendBindingEvidence,
     ) -> Result<BackendBindingEvidence, BackendFailure> {
+        self.cancel_secret_probe();
         if binding.backend_kind() != BACKEND_KIND {
             return Err(BackendFailure::new(
                 BackendFailureKind::Unsupported,

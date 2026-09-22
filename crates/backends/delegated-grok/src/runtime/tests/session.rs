@@ -441,6 +441,24 @@ fn local_grok_authenticates_and_shuts_down_without_a_session() {
     GrokBackend::verify(GrokBackendConfig::new(cwd)).unwrap();
 }
 
+// 실제 Grok에서 모의 비밀 입력 MCP를 붙인 Session을 열되 모델 Turn은 만들지 않는다.
+#[test]
+#[ignore = "requires a logged-in Grok CLI and YO_GROK_SECRET_ENTRY_PROBE=1"]
+fn local_grok_probe_opens_session_without_model_turn() {
+    assert_eq!(env::var("YO_GROK_SECRET_ENTRY_PROBE").as_deref(), Ok("1"));
+    let cwd = env::current_dir().unwrap();
+    let mut backend = GrokBackend::spawn(GrokBackendConfig::new(cwd)).unwrap();
+    let evidence = yo_backend::BackendAdapter::execute_command(
+        &mut backend,
+        AgentCommand::CreateSession {
+            session_id: session(99),
+        },
+    )
+    .unwrap();
+    assert!(matches!(evidence, BackendCommandEvidence::BindingOpened(_)));
+    yo_backend::BackendAdapter::shutdown(&mut backend).unwrap();
+}
+
 // Yo outer sandbox smoke는 실제 mount/write attestation 뒤 native sandbox 대신 exact
 // no-tools ACP argv로 인증까지만 수행하고 Agent Session이나 inference Turn을 만들지 않습니다.
 #[test]

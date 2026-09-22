@@ -1,15 +1,15 @@
 //! Opt-in, mock-only hidden input diagnostic exposed to Grok through local MCP.
 
 use std::{
-    io::{BufReader, ErrorKind, Read, Write},
+    io::{ErrorKind, Read, Write},
     net::{TcpListener, TcpStream},
     sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender, TryRecvError},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
@@ -29,17 +29,51 @@ const RESULT: &str = "Sample secret entry verified locally and discarded by Yo. 
 
 pub(super) struct ProbeInvocation {
     response: Sender<bool>,
+    permit: ProbePermit,
 }
 
 pub(super) struct PendingProbe {
     pub(super) request: ActivityRequestRef,
     activity: ActivityRef,
     response: Sender<bool>,
+    permit: ProbePermit,
+}
+
+#[derive(Default)]
+struct GateState {
+    generation: u64,
+    active: bool,
+    in_flight: bool,
+    call_id: Option<Value>,
+    cancelled: Option<Arc<AtomicBool>>,
+}
+
+struct ProbePermit {
+    gate: Arc<Mutex<GateState>>,
+    generation: u64,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for ProbePermit {
+    fn drop(&mut self) {
+        let mut state = self.gate.lock().expect("probe gate");
+        if state.generation == self.generation
+            && state
+                .cancelled
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &self.cancelled))
+        {
+            state.in_flight = false;
+            state.call_id = None;
+            state.cancelled = None;
+        }
+    }
 }
 
 pub(super) struct SecretProbeBridge {
     url: String,
     incoming: Receiver<ProbeInvocation>,
+    gate: Arc<Mutex<GateState>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -65,24 +99,33 @@ impl SecretProbeBridge {
             listener.local_addr().expect("bound listener").port()
         );
         let (sender, incoming) = mpsc::channel();
+        let gate = Arc::new(Mutex::new(GateState::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
-        let active = Arc::new(AtomicUsize::new(0));
+        let worker_gate = Arc::clone(&gate);
         let worker = thread::spawn(move || {
+            let mut workers: Vec<JoinHandle<()>> = Vec::new();
             while !worker_stop.load(Ordering::Relaxed) {
+                let mut index = 0;
+                while index < workers.len() {
+                    if workers[index].is_finished() {
+                        let _ = workers.swap_remove(index).join();
+                    } else {
+                        index += 1;
+                    }
+                }
                 match listener.accept() {
                     Ok((stream, _)) => {
-                        if active.fetch_add(1, Ordering::Relaxed) >= MAX_CONNECTIONS {
-                            active.fetch_sub(1, Ordering::Relaxed);
+                        if workers.len() >= MAX_CONNECTIONS {
                             continue;
                         }
                         let sender = sender.clone();
                         let path = path.clone();
-                        let active = Arc::clone(&active);
-                        thread::spawn(move || {
-                            serve_connection(stream, &path, &sender);
-                            active.fetch_sub(1, Ordering::Relaxed);
-                        });
+                        let gate = Arc::clone(&worker_gate);
+                        let stop = Arc::clone(&worker_stop);
+                        workers.push(thread::spawn(move || {
+                            serve_connection(stream, &path, &sender, &gate, &stop)
+                        }));
                     },
                     Err(error) if error.kind() == ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(10));
@@ -90,10 +133,14 @@ impl SecretProbeBridge {
                     Err(_) => break,
                 }
             }
+            for worker in workers {
+                let _ = worker.join();
+            }
         });
         Ok(Self {
             url,
             incoming,
+            gate,
             stop,
             worker: Some(worker),
         })
@@ -112,21 +159,60 @@ impl SecretProbeBridge {
             )),
         }
     }
+
+    pub(super) fn activate(&self) {
+        let mut state = self.gate.lock().expect("probe gate");
+        state.generation = state.generation.wrapping_add(1);
+        state.active = true;
+        state.in_flight = false;
+        state.call_id = None;
+        state.cancelled = None;
+    }
+
+    pub(super) fn deactivate_and_drain(&self) {
+        let mut state = self.gate.lock().expect("probe gate");
+        if let Some(cancelled) = state.cancelled.take() {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+        state.generation = state.generation.wrapping_add(1);
+        state.active = false;
+        state.in_flight = false;
+        state.call_id = None;
+        drop(state);
+        while let Ok(invocation) = self.incoming.try_recv() {
+            invocation.permit.cancelled.store(true, Ordering::Relaxed);
+            let _ = invocation.response.send(false);
+        }
+    }
+
+    fn accepts(&self, invocation: &ProbeInvocation) -> bool {
+        let state = self.gate.lock().expect("probe gate");
+        state.active
+            && state.generation == invocation.permit.generation
+            && !invocation.permit.cancelled.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for SecretProbeBridge {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        self.deactivate_and_drain();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
     }
 }
 
-fn serve_connection(mut stream: TcpStream, path: &str, sender: &Sender<ProbeInvocation>) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+fn serve_connection(
+    mut stream: TcpStream,
+    path: &str,
+    sender: &Sender<ProbeInvocation>,
+    gate: &Arc<Mutex<GateState>>,
+    stop: &AtomicBool,
+) {
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
-    let result = read_request(&stream, path);
+    let result = read_request(&stream, path, stop);
     let (status, response) = match result {
         Ok(Some(message)) => {
             let id = message.get("id").cloned();
@@ -155,14 +241,19 @@ fn serve_connection(mut stream: TcpStream, path: &str, sender: &Sender<ProbeInvo
                             == Some(TOOL_NAME)
                         && params
                             .and_then(|params| params.get("arguments"))
-                            .and_then(Value::as_object)
-                            .is_some_and(serde_json::Map::is_empty);
+                            .is_none_or(|arguments| {
+                                arguments.as_object().is_some_and(serde_json::Map::is_empty)
+                            });
                     let completed = if valid {
-                        let (response, receiver) = mpsc::channel();
-                        sender.send(ProbeInvocation { response }).is_ok()
-                            && receiver
-                                .recv_timeout(Duration::from_secs(600))
-                                .unwrap_or(false)
+                        let permit = admit(gate, id.as_ref().expect("validated call id"));
+                        if let Some(permit) = permit {
+                            let cancelled = Arc::clone(&permit.cancelled);
+                            let (response, receiver) = mpsc::channel();
+                            sender.send(ProbeInvocation { response, permit }).is_ok()
+                                && wait_for_result(&stream, receiver, gate, &cancelled, stop)
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     };
@@ -171,6 +262,15 @@ fn serve_connection(mut stream: TcpStream, path: &str, sender: &Sender<ProbeInvo
                     } else {
                         json!({ "isError": true, "content": [{ "type": "text", "text": "Yo secret-entry probe was unavailable or cancelled." }] })
                     }
+                },
+                "notifications/cancelled" => {
+                    if let Some(request_id) = message
+                        .get("params")
+                        .and_then(|params| params.get("requestId"))
+                    {
+                        cancel_call(gate, request_id);
+                    }
+                    json!({})
                 },
                 _ => json!({}),
             };
@@ -195,10 +295,103 @@ fn serve_connection(mut stream: TcpStream, path: &str, sender: &Sender<ProbeInvo
     let _ = stream.write_all(payload.as_bytes());
 }
 
-fn read_request(stream: &TcpStream, path: &str) -> Result<Option<Value>, ()> {
-    let mut reader = BufReader::new(stream);
+fn admit(gate: &Arc<Mutex<GateState>>, call_id: &Value) -> Option<ProbePermit> {
+    let mut state = gate.lock().expect("probe gate");
+    if !state.active || state.in_flight {
+        return None;
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    state.in_flight = true;
+    state.call_id = Some(call_id.clone());
+    state.cancelled = Some(Arc::clone(&cancelled));
+    Some(ProbePermit {
+        gate: Arc::clone(gate),
+        generation: state.generation,
+        cancelled,
+    })
+}
+
+fn cancel_call(gate: &Mutex<GateState>, call_id: &Value) {
+    let state = gate.lock().expect("probe gate");
+    if state.call_id.as_ref() == Some(call_id)
+        && let Some(cancelled) = &state.cancelled
+    {
+        cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
+fn cancel_current(gate: &Mutex<GateState>, cancelled: &Arc<AtomicBool>) -> bool {
+    let state = gate.lock().expect("probe gate");
+    if state
+        .cancelled
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, cancelled))
+    {
+        cancelled.store(true, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+fn cancellation_result(
+    gate: &Mutex<GateState>,
+    cancelled: &Arc<AtomicBool>,
+    receiver: &Receiver<bool>,
+) -> bool {
+    if cancel_current(gate, cancelled) {
+        false
+    } else {
+        // A completed call clears the gate only while delivering its result.
+        // If completion won, keep that result even if the socket closed after it.
+        receiver
+            .recv_timeout(Duration::from_millis(100))
+            .unwrap_or(false)
+    }
+}
+
+fn wait_for_result(
+    stream: &TcpStream,
+    receiver: Receiver<bool>,
+    gate: &Mutex<GateState>,
+    cancelled: &Arc<AtomicBool>,
+    stop: &AtomicBool,
+) -> bool {
+    let _ = stream.set_nonblocking(true);
+    let deadline = Instant::now() + Duration::from_secs(600);
+    let completed = loop {
+        if stop.load(Ordering::Relaxed)
+            || cancelled.load(Ordering::Relaxed)
+            || Instant::now() >= deadline
+        {
+            break cancellation_result(gate, cancelled, &receiver);
+        }
+        match receiver.try_recv() {
+            Ok(result) => break result,
+            Err(TryRecvError::Disconnected) => break false,
+            Err(TryRecvError::Empty) => {},
+        }
+        match stream.peek(&mut [0]) {
+            Ok(0) => {
+                break cancellation_result(gate, cancelled, &receiver);
+            },
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {},
+            Err(_) => {
+                break cancellation_result(gate, cancelled, &receiver);
+            },
+            Ok(_) => {},
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let _ = stream.set_nonblocking(false);
+    completed
+}
+
+fn read_request(stream: &TcpStream, path: &str, stop: &AtomicBool) -> Result<Option<Value>, ()> {
+    let mut reader = stream;
+    let deadline = Instant::now() + Duration::from_secs(5);
     let mut line = String::new();
-    read_bounded_line(&mut reader, &mut line, 8192)?;
+    read_bounded_line(&mut reader, &mut line, 8192, stop, deadline)?;
     if !line.starts_with("POST ") || !line.contains(" HTTP/1.") {
         return Err(());
     }
@@ -209,7 +402,7 @@ fn read_request(stream: &TcpStream, path: &str) -> Result<Option<Value>, ()> {
     let mut header_bytes = line.len();
     loop {
         line.clear();
-        read_bounded_line(&mut reader, &mut line, 8192 - header_bytes)?;
+        read_bounded_line(&mut reader, &mut line, 8192 - header_bytes, stop, deadline)?;
         header_bytes += line.len();
         if header_bytes > 8192 {
             return Err(());
@@ -231,14 +424,40 @@ fn read_request(stream: &TcpStream, path: &str) -> Result<Option<Value>, ()> {
         .filter(|length| *length <= MAX_REQUEST_BYTES)
         .ok_or(())?;
     let mut body = vec![0; length];
-    reader.read_exact(&mut body).map_err(|_| ())?;
+    let mut filled = 0;
+    while filled < length {
+        if stop.load(Ordering::Relaxed) || Instant::now() >= deadline {
+            return Err(());
+        }
+        match reader.read(&mut body[filled..]) {
+            Ok(0) => return Err(()),
+            Ok(read) => filled += read,
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {},
+            Err(_) => return Err(()),
+        }
+    }
     serde_json::from_slice(&body).map(Some).map_err(|_| ())
 }
 
-fn read_bounded_line(reader: &mut impl Read, line: &mut String, limit: usize) -> Result<(), ()> {
+fn read_bounded_line(
+    reader: &mut impl Read,
+    line: &mut String,
+    limit: usize,
+    stop: &AtomicBool,
+    deadline: Instant,
+) -> Result<(), ()> {
     for _ in 0..limit {
+        if stop.load(Ordering::Relaxed) || Instant::now() >= deadline {
+            return Err(());
+        }
         let mut byte = [0];
-        reader.read_exact(&mut byte).map_err(|_| ())?;
+        match reader.read_exact(&mut byte) {
+            Ok(()) => {},
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                continue;
+            },
+            Err(_) => return Err(()),
+        }
         if !byte[0].is_ascii() {
             return Err(());
         }
@@ -259,6 +478,14 @@ impl<P: JsonPeer> Backend<P> {
     }
 
     pub(super) fn poll_secret_probe(&mut self) -> Result<Option<BackendEvent>, BackendFailure> {
+        if self
+            .pending_probe
+            .as_ref()
+            .is_some_and(|probe| probe.permit.cancelled.load(Ordering::Relaxed))
+        {
+            self.cancel_secret_probe();
+            return Ok(self.pending_events.pop_front());
+        }
         let Some(invocation) = self
             .secret_probe
             .as_ref()
@@ -268,6 +495,14 @@ impl<P: JsonPeer> Backend<P> {
         else {
             return Ok(None);
         };
+        if !self
+            .secret_probe
+            .as_ref()
+            .is_some_and(|bridge| bridge.accepts(&invocation))
+        {
+            let _ = invocation.response.send(false);
+            return Ok(None);
+        }
         let turn = match self.prompt.as_ref() {
             Some(prompt) if !prompt.interrupt_requested && self.pending_probe.is_none() => {
                 prompt.turn
@@ -295,6 +530,7 @@ impl<P: JsonPeer> Backend<P> {
             request,
             activity,
             response: invocation.response,
+            permit: invocation.permit,
         });
         self.pending_events
             .push_back(BackendEvent::ActivityStarted {
@@ -321,7 +557,30 @@ impl<P: JsonPeer> Backend<P> {
         };
         drop(sample);
         let probe = self.pending_probe.take().expect("matched pending probe");
+        let mut state = probe.permit.gate.lock().expect("probe gate");
+        let cancelled = !state.active
+            || state.generation != probe.permit.generation
+            || probe.permit.cancelled.load(Ordering::Relaxed);
+        if cancelled {
+            drop(state);
+            let _ = probe.response.send(false);
+            if let Some(bridge) = &self.secret_probe {
+                bridge.deactivate_and_drain();
+            }
+            self.pending_events
+                .push_back(BackendEvent::ActivityFinished {
+                    activity: probe.activity,
+                    outcome: ActivityOutcome::Interrupted,
+                });
+            return Ok(BackendCommandEvidence::None);
+        }
+        state.in_flight = false;
+        state.call_id = None;
+        state.cancelled = None;
+        // Hold the gate through delivery so cancellation cannot win between
+        // the status check and the fixed MCP result handoff.
         let completed = probe.response.send(true).is_ok();
+        drop(state);
         self.pending_events
             .push_back(BackendEvent::ActivityFinished {
                 activity: probe.activity,
@@ -360,6 +619,9 @@ impl<P: JsonPeer> Backend<P> {
     }
 
     pub(super) fn cancel_secret_probe(&mut self) {
+        if let Some(bridge) = &self.secret_probe {
+            bridge.deactivate_and_drain();
+        }
         if let Some(probe) = self.pending_probe.take() {
             let _ = probe.response.send(false);
             self.pending_events
@@ -368,5 +630,40 @@ impl<P: JsonPeer> Backend<P> {
                     outcome: ActivityOutcome::Interrupted,
                 });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 완료 상태가 먼저 전달됐다면 뒤늦은 연결 종료는 그 결과를 취소로 바꾸지 않는다.
+    #[test]
+    fn completed_result_survives_late_shutdown() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        drop(client);
+        let gate = Arc::new(Mutex::new(GateState {
+            active: true,
+            ..GateState::default()
+        }));
+        let permit = admit(&gate, &json!(1)).unwrap();
+        let cancelled = Arc::clone(&permit.cancelled);
+        let (sender, receiver) = mpsc::channel();
+        {
+            let mut state = gate.lock().unwrap();
+            state.in_flight = false;
+            state.call_id = None;
+            state.cancelled = None;
+            sender.send(true).unwrap();
+        }
+        assert!(wait_for_result(
+            &server,
+            receiver,
+            &gate,
+            &cancelled,
+            &AtomicBool::new(true),
+        ));
     }
 }

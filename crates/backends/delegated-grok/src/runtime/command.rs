@@ -53,13 +53,19 @@ impl<P: JsonPeer> Backend<P> {
             ));
         }
         let session_id = self.session_id(turn.session_id())?.to_owned();
-        let request_id = self.client.begin_prompt(
-            json!({
-                "sessionId": session_id,
-                "prompt": [{ "type": "text", "text": input }],
-            }),
-            &session_id,
-        )?;
+        if let Some(bridge) = &self.secret_probe {
+            bridge.activate();
+        }
+        let request_id = self
+            .client
+            .begin_prompt(
+                json!({
+                    "sessionId": session_id,
+                    "prompt": [{ "type": "text", "text": input }],
+                }),
+                &session_id,
+            )
+            .inspect_err(|_| self.cancel_secret_probe())?;
         self.prompt = Some(super::state::PromptBinding {
             request_id,
             turn,
