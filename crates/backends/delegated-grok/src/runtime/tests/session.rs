@@ -505,10 +505,7 @@ fn exact_probe_raw_output() -> Value {
         "type":"MCP",
         "server_name":LIVE_PROBE_SERVER,
         "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
-        "output":{
-            "content":[{"type":"text", "text":LIVE_PROBE_RESULT}],
-            "isError":false
-        }
+        "output":{"OkayOutput":LIVE_PROBE_RESULT}
     })
 }
 
@@ -614,7 +611,8 @@ fn describe_live_tool_result(snapshot: &str) -> String {
         raw_payload == Some(&json!({"content":exact_content.clone(), "isError":false}));
     let fixed_raw_payload_content_matches =
         raw_payload.and_then(|payload| payload.get("content")) == Some(&exact_content);
-    let fixed_raw_okay_matches = raw_okay_output == Some(&exact_content)
+    let fixed_raw_okay_matches = raw_okay_output.and_then(Value::as_str) == Some(LIVE_PROBE_RESULT)
+        || raw_okay_output == Some(&exact_content)
         || raw_okay_output == Some(&json!({"content":exact_content.clone()}))
         || raw_okay_output == Some(&json!({"content":exact_content.clone(), "isError":false}));
     let fixed_raw_okay_content_matches =
@@ -797,13 +795,7 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
                     "type":"MCP",
                     "server_name":LIVE_PROBE_SERVER,
                     "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
-                    "output":{
-                        "content":[{
-                            "type":"text",
-                            "text":format!("{LIVE_PROBE_RESULT} extra")
-                        }],
-                        "isError":false
-                    }
+                    "output":{"OkayOutput":format!("{LIVE_PROBE_RESULT} extra")}
                 },
                 "_meta":{"x.ai/tool":{"name":"use_tool"}}
             })),
@@ -816,10 +808,7 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
                     "type":"MCP",
                     "server_name":LIVE_PROBE_SERVER,
                     "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
-                    "output":{
-                        "isError":true,
-                        "content":[{"type":"text","text":LIVE_PROBE_RESULT}]
-                    }
+                    "output":{"ToolError":LIVE_PROBE_RESULT}
                 },
                 "_meta":{"x.ai/tool":{"name":"use_tool"}}
             })),
@@ -832,10 +821,7 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
                     "type":"MCP",
                     "server_name":LIVE_PROBE_SERVER,
                     "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
-                    "output":{
-                        "content":[{"type":"text","text":LIVE_PROBE_RESULT}],
-                        "isError":false
-                    },
+                    "output":{"OkayOutput":LIVE_PROBE_RESULT},
                     "metadata":LIVE_PROBE_RESULT
                 },
                 "_meta":{"x.ai/tool":{"name":"use_tool"}}
@@ -849,10 +835,7 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
                     "type":"MCP",
                     "server_name":"other_server",
                     "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
-                    "output":{
-                        "content":[{"type":"text","text":LIVE_PROBE_RESULT}],
-                        "isError":false
-                    }
+                    "output":{"OkayOutput":LIVE_PROBE_RESULT}
                 },
                 "_meta":{"x.ai/tool":{"name":"use_tool"}}
             })),
