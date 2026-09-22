@@ -468,6 +468,25 @@ enum LiveToolResult {
     Probe,
 }
 
+fn contains_probe_tool(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.match_indices(LIVE_PROBE_TOOL).any(|(start, _)| {
+            let end = start + LIVE_PROBE_TOOL.len();
+            let is_identifier = |character: char| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+            };
+            text[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_identifier(c))
+                && text[end..].chars().next().is_none_or(|c| !is_identifier(c))
+        }),
+        Value::Array(items) => items.iter().any(contains_probe_tool),
+        Value::Object(fields) => fields.values().any(contains_probe_tool),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
+    }
+}
+
 fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
     let output = yo_core::ToolOutput::from_snapshot(snapshot)?;
     if output.server.is_some() || output.error.is_some() {
@@ -486,13 +505,13 @@ fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
             let exact_shape = arguments
                 .keys()
                 .all(|field| matches!(field.as_str(), "query" | "limit" | "variant"));
-            (exact_shape
-                && query.contains("yo_secret_entry_probe")
-                && result
-                    .get("locations")
-                    .and_then(Value::as_array)
-                    .is_some_and(|items| !items.is_empty()))
-            .then_some(LiveToolResult::Search)
+            let catalog_contains_probe = output
+                .content_items
+                .as_ref()
+                .is_some_and(contains_probe_tool)
+                || result.get("rawOutput").is_some_and(contains_probe_tool);
+            (exact_shape && query.contains("yo_secret_entry_probe") && catalog_contains_probe)
+                .then_some(LiveToolResult::Search)
         },
         "use_tool" => {
             let exact_arguments = json!({
@@ -542,8 +561,15 @@ fn describe_live_tool_result(snapshot: &str) -> String {
         .map_or(0, Vec::len);
     let fixed_result_matches =
         output.content_items.as_ref() == Some(&json!([{"type":"text", "text":LIVE_PROBE_RESULT}]));
+    let catalog_contains_probe = output
+        .content_items
+        .as_ref()
+        .is_some_and(contains_probe_tool)
+        || result
+            .and_then(|result| result.get("rawOutput"))
+            .is_some_and(contains_probe_tool);
     format!(
-        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} server_present={} error_present={}",
+        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} catalog_contains_probe={catalog_contains_probe} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} server_present={} error_present={}",
         arguments
             .and_then(|arguments| arguments.get("tool_name"))
             .and_then(Value::as_str)
@@ -586,15 +612,28 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
             "variant":"full"
         })),
         result: Some(json!({
-            "locations":[{"path":"catalog-entry"}],
+            "locations":[],
             "_meta":{"x.ai/tool":{"name":"search_tool"}}
         })),
-        content_items: None,
+        content_items: Some(json!([{"type":"text","text":LIVE_PROBE_TOOL}])),
         plain_text: "presentation remains unrelated".into(),
         ..probe.clone()
     };
     assert_eq!(
         classify_live_tool_result(&search.to_snapshot().unwrap()),
+        Some(LiveToolResult::Search)
+    );
+    let raw_output_search = yo_core::ToolOutput {
+        result: Some(json!({
+            "locations":[],
+            "rawOutput":{"matches":[LIVE_PROBE_TOOL]},
+            "_meta":{"x.ai/tool":{"name":"search_tool"}}
+        })),
+        content_items: None,
+        ..search.clone()
+    };
+    assert_eq!(
+        classify_live_tool_result(&raw_output_search.to_snapshot().unwrap()),
         Some(LiveToolResult::Search)
     );
 
@@ -619,13 +658,23 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
         yo_core::ToolOutput {
             result: Some(json!({
                 "locations":[],
+                "rawOutput":{"matches":[]},
                 "_meta":{"x.ai/tool":{"name":"search_tool"}}
             })),
+            content_items: Some(json!([])),
+            ..search.clone()
+        },
+        yo_core::ToolOutput {
+            content_items: Some(json!([{
+                "type":"text",
+                "text":format!("{LIVE_PROBE_TOOL}_other")
+            }])),
             ..search.clone()
         },
         yo_core::ToolOutput {
             result: Some(json!({
                 "locations":[{"path":"catalog-entry"}],
+                "rawOutput":{"matches":[LIVE_PROBE_TOOL]},
                 "_meta":{"x.ai/tool":{"name":"other_tool"}}
             })),
             ..search.clone()
