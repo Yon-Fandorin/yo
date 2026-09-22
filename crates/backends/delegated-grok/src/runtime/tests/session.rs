@@ -460,6 +460,8 @@ fn local_grok_probe_opens_session_without_model_turn() {
 }
 
 const LIVE_PROBE_TOOL: &str = "yo_secret_entry_probe__yo_secret_entry_probe";
+const LIVE_PROBE_SERVER: &str = "yo_secret_entry_probe";
+const LIVE_PROBE_UNQUALIFIED_TOOL: &str = "yo_secret_entry_probe";
 const LIVE_PROBE_RESULT: &str = "Sample secret entry verified locally and discarded by Yo. No value was sent to Grok or the model.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -498,6 +500,15 @@ fn contains_exact_text(value: &Value, expected: &str) -> bool {
     }
 }
 
+fn exact_probe_raw_output() -> Value {
+    json!({
+        "type":"mcp",
+        "server_name":LIVE_PROBE_SERVER,
+        "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
+        "output":{"content":[{"type":"text", "text":LIVE_PROBE_RESULT}]}
+    })
+}
+
 fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
     let output = yo_core::ToolOutput::from_snapshot(snapshot)?;
     if output.server.is_some() || output.error.is_some() {
@@ -534,7 +545,7 @@ fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
             let valid_variant = arguments.get("variant").is_none_or(Value::is_string);
             let exact_content = json!([{"type":"text", "text":LIVE_PROBE_RESULT}]);
             let fixed_result = output.content_items.as_ref() == Some(&exact_content)
-                || result.get("rawOutput") == Some(&json!({"content":exact_content}));
+                || result.get("rawOutput") == Some(&exact_probe_raw_output());
             (exact_shape && exact_target && empty_input && valid_variant && fixed_result)
                 .then_some(LiveToolResult::Probe)
         },
@@ -583,8 +594,10 @@ fn describe_live_tool_result(snapshot: &str) -> String {
         .map(|output| output.keys().map(String::as_str).collect::<Vec<_>>())
         .unwrap_or_default();
     let raw_content = raw_output.and_then(|output| output.get("content"));
-    let fixed_raw_output_matches = raw_output == Some(&json!({"content":exact_content}));
+    let raw_payload = raw_output.and_then(|output| output.get("output"));
+    let fixed_raw_output_matches = raw_output == Some(&exact_probe_raw_output());
     let fixed_raw_content_matches = raw_content == Some(&exact_content);
+    let fixed_raw_payload_matches = raw_payload == Some(&json!({"content":exact_content.clone()}));
     let fixed_raw_text_present = raw_output.is_some_and(|output| {
         contains_exact_text(output, LIVE_PROBE_RESULT)
             || output
@@ -606,7 +619,7 @@ fn describe_live_tool_result(snapshot: &str) -> String {
             .and_then(|result| result.get("rawOutput"))
             .is_some_and(contains_probe_tool);
     format!(
-        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} catalog_contains_probe={catalog_contains_probe} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} raw_output_type={} raw_output_keys={raw_output_keys:?} raw_content_type={} raw_content_count={} fixed_raw_output_matches={fixed_raw_output_matches} fixed_raw_content_matches={fixed_raw_content_matches} fixed_raw_text_present={fixed_raw_text_present} raw_error={raw_error_class} server_present={} error_present={}",
+        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} catalog_contains_probe={catalog_contains_probe} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} raw_output_type={} raw_output_keys={raw_output_keys:?} raw_type_matches={} raw_server_matches={} raw_tool_matches={} raw_content_type={} raw_content_count={} raw_payload_type={} fixed_raw_output_matches={fixed_raw_output_matches} fixed_raw_content_matches={fixed_raw_content_matches} fixed_raw_payload_matches={fixed_raw_payload_matches} fixed_raw_text_present={fixed_raw_text_present} raw_error={raw_error_class} server_present={} error_present={}",
         arguments
             .and_then(|arguments| arguments.get("tool_name"))
             .and_then(Value::as_str)
@@ -617,8 +630,21 @@ fn describe_live_tool_result(snapshot: &str) -> String {
             .and_then(Value::as_str)
             .is_some_and(|query| query.contains("yo_secret_entry_probe")),
         raw_output.map_or("absent", json_type_name),
+        raw_output
+            .and_then(|output| output.get("type"))
+            .and_then(Value::as_str)
+            == Some("mcp"),
+        raw_output
+            .and_then(|output| output.get("server_name"))
+            .and_then(Value::as_str)
+            == Some(LIVE_PROBE_SERVER),
+        raw_output
+            .and_then(|output| output.get("tool_name"))
+            .and_then(Value::as_str)
+            == Some(LIVE_PROBE_UNQUALIFIED_TOOL),
         raw_content.map_or("absent", json_type_name),
         raw_content.and_then(Value::as_array).map_or(0, Vec::len),
+        raw_payload.map_or("absent", json_type_name),
         output.server.is_some(),
         output.error.is_some(),
     )
@@ -662,7 +688,7 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
         })),
         result: Some(json!({
             "locations":[],
-            "rawOutput":{"content":[{"type":"text","text":LIVE_PROBE_RESULT}]},
+            "rawOutput":exact_probe_raw_output(),
             "_meta":{"x.ai/tool":{"name":"use_tool"}}
         })),
         content_items: None,
@@ -730,17 +756,14 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
         },
         yo_core::ToolOutput {
             result: Some(json!({
-                "rawOutput":{"content":[{"text":format!("{LIVE_PROBE_RESULT} extra")}]},
-                "_meta":{"x.ai/tool":{"name":"use_tool"}}
-            })),
-            content_items: None,
-            ..probe.clone()
-        },
-        yo_core::ToolOutput {
-            result: Some(json!({
                 "rawOutput":{
-                    "isError":true,
-                    "content":[{"type":"text","text":LIVE_PROBE_RESULT}]
+                    "type":"mcp",
+                    "server_name":LIVE_PROBE_SERVER,
+                    "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
+                    "output":{"content":[{
+                        "type":"text",
+                        "text":format!("{LIVE_PROBE_RESULT} extra")
+                    }]}
                 },
                 "_meta":{"x.ai/tool":{"name":"use_tool"}}
             })),
@@ -750,8 +773,40 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
         yo_core::ToolOutput {
             result: Some(json!({
                 "rawOutput":{
-                    "content":[{"type":"text","text":LIVE_PROBE_RESULT}],
+                    "type":"mcp",
+                    "server_name":LIVE_PROBE_SERVER,
+                    "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
+                    "output":{
+                        "isError":true,
+                        "content":[{"type":"text","text":LIVE_PROBE_RESULT}]
+                    }
+                },
+                "_meta":{"x.ai/tool":{"name":"use_tool"}}
+            })),
+            content_items: None,
+            ..probe.clone()
+        },
+        yo_core::ToolOutput {
+            result: Some(json!({
+                "rawOutput":{
+                    "type":"mcp",
+                    "server_name":LIVE_PROBE_SERVER,
+                    "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
+                    "output":{"content":[{"type":"text","text":LIVE_PROBE_RESULT}]},
                     "metadata":LIVE_PROBE_RESULT
+                },
+                "_meta":{"x.ai/tool":{"name":"use_tool"}}
+            })),
+            content_items: None,
+            ..probe.clone()
+        },
+        yo_core::ToolOutput {
+            result: Some(json!({
+                "rawOutput":{
+                    "type":"mcp",
+                    "server_name":"other_server",
+                    "tool_name":LIVE_PROBE_UNQUALIFIED_TOOL,
+                    "output":{"content":[{"type":"text","text":LIVE_PROBE_RESULT}]}
                 },
                 "_meta":{"x.ai/tool":{"name":"use_tool"}}
             })),
