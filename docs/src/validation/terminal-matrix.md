@@ -301,6 +301,18 @@ No model prompt or secret value was sent to the Mac in that preflight. Host
 reachability therefore did not change the delegated model-invoked result:
 unverified.
 
+The reviewed candidate `e7811016` then passed the Mac temporary-checkout
+Grok profile: 92 adapter tests passed (3 installed-host tests are normally
+ignored), package Clippy and Yo CLI check passed, and the explicit opt-in
+installed-host test authenticated Grok 1.0.40, created an ACP Session with
+Yo's local HTTP MCP server, and shut it down without a model Turn. The same
+installed-host test passed locally on Linux. The Mac checkout and bundle were
+removed by the validation runner; only its reusable object cache remains.
+No real credential was entered into the probe or returned to Grok; the existing
+cached login was used for host authentication. A Grok model selecting the diagnostic
+tool remains unverified because the installed model catalog did not establish
+free Build entitlement, and the service check is constrained to free usage.
+
 ## QwenCloud free text summary and continuation
 
 On 2026-09-13, an authenticated, read-only quota lookup selected
