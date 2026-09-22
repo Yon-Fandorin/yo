@@ -1,6 +1,6 @@
 use yo_core::{ActivityNotice, ActivityQuestion, NoticeLevel, ToolOutput, interview::Capture};
 
-use super::super::state::InputQuestions;
+use super::super::state::{DelegatedSecretTool, InputQuestions};
 
 impl InputQuestions {
     pub(in crate::runtime) fn incomplete_notice(&self, reason: &str) -> String {
@@ -104,8 +104,11 @@ impl InputQuestions {
         } else {
             "Enter a number or write your answer."
         };
-        let submission = if self.probe_only {
+        let submission = if self.secret_tool == Some(DelegatedSecretTool::Probe) {
             "Yo discards this sample value and sends only a fixed completion status to Codex."
+                .to_owned()
+        } else if self.secret_tool == Some(DelegatedSecretTool::Deliver) {
+            "Submitting sends this value once to Codex and its selected model. They may retain or reuse it. Yo does not save this input for reuse."
                 .to_owned()
         } else if self.questions.len() == 1 {
             "Submitting this answer sends your response.".to_owned()
@@ -149,7 +152,7 @@ impl InputQuestions {
     }
 
     pub(in crate::runtime) fn prompt(&self) -> String {
-        if self.probe_only {
+        if self.secret_tool.is_some() {
             let profile = self.question_profile(self.current);
             return profile.to_snapshot().unwrap_or(profile.plain_text);
         }

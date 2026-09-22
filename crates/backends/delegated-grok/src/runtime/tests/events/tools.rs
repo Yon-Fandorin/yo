@@ -118,6 +118,142 @@ fn keeps_tool_call_identity_when_tool_result_follows_an_approval_round_trip() {
     }
 }
 
+// Grok가 generic use_tool 뒤 실제 MCP rawOutput에서야 비밀 도구 identity를 알려도
+// ToolResult는 중간 결과까지 비우고 고정 보호 문구만 공개합니다.
+#[test]
+fn delegated_secret_tool_result_omits_structured_secret_echo() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let canary = "grok-tool-result-secret";
+    let call = tool_call("secret-tool", "in_progress", Some("Use secret input"));
+    let intermediate = session_update(
+        "tool_call_update",
+        json!({
+            "toolCallId":"secret-tool",
+            "content":[{"type":"text","text":canary}],
+            "_meta":{"phase":"pending","echo":canary},
+            "locations":[{"path":canary}],
+            "status":"in_progress"
+        }),
+    );
+    let result = session_update(
+        "tool_call_update",
+        json!({
+            "toolCallId":"secret-tool",
+            "name":"use_tool",
+            "rawOutput":{
+                "type":"MCP",
+                "server_name":"yo_secret_input",
+                "tool_name":"yo_request_secret_input",
+                "output":{"OkayOutput":canary}
+            },
+            "content":[{"type":"text","text":canary}],
+            "_meta":{"x.ai/tool":{"name":"use_tool"},"echo":canary},
+            "status":"completed"
+        }),
+    );
+    let (mut backend, _) = backend([
+        response(3, json!({"sessionId":"grok-session-a"})),
+        call,
+        intermediate,
+        result,
+        response(4, json!({"stopReason":"end_turn"})),
+    ]);
+    create_session(&mut backend, session_id);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("use the supplied token"),
+        })
+        .unwrap();
+
+    let mut protected = false;
+    for _ in 0..12 {
+        let poll = backend.poll_event().unwrap();
+        assert!(!format!("{poll:?}").contains(canary));
+        if let BackendPoll::Event(BackendEvent::ActivityUpdated {
+            update: yo_core::ActivityUpdate::TextSnapshot(snapshot),
+            ..
+        }) = poll
+            && let Some(output) = ToolOutput::from_snapshot(&snapshot)
+            && output.content_items.as_ref().is_some_and(|content| {
+                content
+                    .to_string()
+                    .contains("Protected secret tool result omitted")
+            })
+        {
+            assert!(output.result.is_none());
+            protected = true;
+        }
+        if protected {
+            break;
+        }
+    }
+    assert!(protected);
+}
+
+// unresolved use_tool의 일반 결과도 버리지 않고 보류했다가 공개 MCP 대상이 확인된 뒤
+// 같은 ToolResult에 투영합니다.
+#[test]
+fn unresolved_generic_tool_result_waits_for_ordinary_mcp_identity() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let call = tool_call("generic-tool", "in_progress", Some("Use tool"));
+    let intermediate = session_update(
+        "tool_call_update",
+        json!({
+            "toolCallId":"generic-tool",
+            "content":[{"type":"text","text":"ordinary buffered result"}],
+            "status":"in_progress"
+        }),
+    );
+    let identified = session_update(
+        "tool_call_update",
+        json!({
+            "toolCallId":"generic-tool",
+            "name":"use_tool",
+            "rawInput":{"tool_name":"public_server__lookup","tool_input":{"query":"safe"}},
+            "status":"completed"
+        }),
+    );
+    let (mut backend, _) = backend([
+        response(3, json!({"sessionId":"grok-session-a"})),
+        call,
+        intermediate,
+        identified,
+        response(4, json!({"stopReason":"end_turn"})),
+    ]);
+    create_session(&mut backend, session_id);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("use a public tool"),
+        })
+        .unwrap();
+
+    let mut result_seen = false;
+    for _ in 0..16 {
+        if let BackendPoll::Event(BackendEvent::ActivityUpdated {
+            update: yo_core::ActivityUpdate::TextSnapshot(snapshot),
+            ..
+        }) = backend.poll_event().unwrap()
+            && let Some(output) = ToolOutput::from_snapshot(&snapshot)
+            && output.plain_text.contains("ordinary buffered result")
+        {
+            assert_eq!(
+                output.arguments,
+                Some(json!({
+                    "tool_name":"public_server__lookup",
+                    "tool_input":{"query":"safe"}
+                }))
+            );
+            result_seen = true;
+            break;
+        }
+    }
+    assert!(result_seen);
+}
+
 // name과 rawInput이 어느 순서로 나뉘어 도착해도 기존 field를 잃지 않고 같은 ToolCall
 // Activity의 `name: input` snapshot으로 합쳐 부분 update 순서에 의존하지 않습니다.
 #[test]

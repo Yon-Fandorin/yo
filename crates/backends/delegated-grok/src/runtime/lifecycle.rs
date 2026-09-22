@@ -17,7 +17,9 @@ impl<P: JsonPeer> Backend<P> {
         }
         let authenticated = initialize_and_authenticate(&mut self.client)?;
         let initialized = authenticated.initialized;
-        if self.secret_probe.is_some() && !initialized.mcp_http {
+        if self.secret_tool_mode == Some(super::secret_probe::SecretToolMode::Probe)
+            && !initialized.mcp_http
+        {
             return Err(BackendFailure::new(
                 BackendFailureKind::Unsupported,
                 "this Grok ACP agent does not advertise local HTTP MCP support for the secret-entry probe",
@@ -28,6 +30,7 @@ impl<P: JsonPeer> Backend<P> {
             initialized.agent_name, initialized.agent_version
         ));
         self.load_session = initialized.load_session;
+        self.mcp_http = initialized.mcp_http;
         self.initialized = true;
         Ok(())
     }
@@ -48,6 +51,7 @@ impl<P: JsonPeer> Backend<P> {
     ) -> Result<yo_core::BackendCommandEvidence, BackendFailure> {
         self.cancel_secret_probe();
         self.initialize()?;
+        self.prepare_secret_tool()?;
         let result = self
             .client
             .call(
@@ -97,6 +101,7 @@ impl<P: JsonPeer> Backend<P> {
         }
         validate_session_id(locator.value())?;
         self.initialize()?;
+        self.prepare_secret_tool()?;
         if !self.load_session {
             return Err(BackendFailure::new(
                 BackendFailureKind::Unsupported,

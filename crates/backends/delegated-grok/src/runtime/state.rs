@@ -10,7 +10,7 @@ use yo_core::{
     interview::{Answer, AnswerResponse, Capture},
 };
 
-use super::secret_probe::{PendingProbe, SecretProbeBridge};
+use super::secret_probe::{PendingProbe, SecretProbeBridge, SecretToolMode};
 use crate::{client::AcpClient, protocol, transport::JsonPeer};
 
 pub(super) const MAX_ACP_IDENTIFIER_BYTES: usize = 4096;
@@ -50,7 +50,11 @@ pub(super) struct ToolBinding {
     pub(super) file_change: bool,
     pub(super) result_activity: Option<ActivityRef>,
     pub(super) output: Value,
+    pub(super) deferred_output: Value,
     pub(super) identity: ToolIdentity,
+    pub(super) generic_use_tool: bool,
+    pub(super) generic_target_known: bool,
+    pub(super) protected_result: bool,
     pub(super) finished: bool,
 }
 
@@ -110,6 +114,7 @@ pub(super) struct Backend<P> {
     pub(super) initialized: bool,
     pub(super) backend_version: Option<String>,
     pub(super) load_session: bool,
+    pub(super) mcp_http: bool,
     pub(super) cwd: String,
     pub(super) read_only_review: bool,
     pub(super) session: Option<SessionBinding>,
@@ -124,6 +129,7 @@ pub(super) struct Backend<P> {
     pub(super) input_tool_turns: HashMap<String, TurnRef>,
     pub(super) pending_events: VecDeque<BackendEvent>,
     pub(super) secret_probe: Option<SecretProbeBridge>,
+    pub(super) secret_tool_mode: Option<SecretToolMode>,
     pub(super) pending_probe: Option<PendingProbe>,
     pub(super) next_activity_id: u64,
     pub(super) next_request_id: u64,
@@ -143,6 +149,7 @@ impl<P: JsonPeer> Backend<P> {
             initialized: false,
             backend_version: None,
             load_session: false,
+            mcp_http: false,
             cwd,
             read_only_review,
             session: None,
@@ -157,6 +164,7 @@ impl<P: JsonPeer> Backend<P> {
             input_tool_turns: HashMap::new(),
             pending_events: VecDeque::new(),
             secret_probe: None,
+            secret_tool_mode: None,
             pending_probe: None,
             next_activity_id: 1,
             next_request_id: 1,

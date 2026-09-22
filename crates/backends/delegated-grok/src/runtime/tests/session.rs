@@ -443,9 +443,12 @@ fn local_grok_authenticates_and_shuts_down_without_a_session() {
 
 // 실제 Grok에서 모의 비밀 입력 MCP를 붙인 Session을 열되 모델 Turn은 만들지 않는다.
 #[test]
-#[ignore = "requires a logged-in Grok CLI and YO_GROK_SECRET_ENTRY_PROBE=1"]
+#[ignore = "requires a logged-in Grok CLI and YO_DELEGATED_SECRET_ENTRY_PROBE=1"]
 fn local_grok_probe_opens_session_without_model_turn() {
-    assert_eq!(env::var("YO_GROK_SECRET_ENTRY_PROBE").as_deref(), Ok("1"));
+    assert_eq!(
+        env::var("YO_DELEGATED_SECRET_ENTRY_PROBE").as_deref(),
+        Ok("1")
+    );
     let cwd = env::current_dir().unwrap();
     let mut backend = GrokBackend::spawn(GrokBackendConfig::new(cwd)).unwrap();
     let evidence = yo_backend::BackendAdapter::execute_command(
@@ -889,7 +892,7 @@ fn live_probe_result_classifier_requires_exact_structured_output() {
 // 유료 Grok 실서비스를 명시적으로 선택한 경우에만 모델의 MCP 도구 선택부터 숨김 입력,
 // 고정 결과 수신과 Turn 완료까지 검증합니다. 테스트 문자열은 실제 인증 정보가 아닙니다.
 #[test]
-#[ignore = "uses a paid Grok model Turn; requires cached login and YO_GROK_SECRET_ENTRY_PROBE=1"]
+#[ignore = "uses a paid Grok model Turn; requires cached login and YO_DELEGATED_SECRET_ENTRY_PROBE=1"]
 fn local_grok_probe_completes_model_turn_with_discarded_sample() {
     use std::{
         collections::{HashMap, HashSet},
@@ -900,7 +903,10 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
     use yo_core::{ActivityOutcome, ActivityQuestion, ActivityResponse, SecretInput, TurnOutcome};
 
     const RESULT_MARKER: &str = "YO_SECRET_PROBE_RESULT_ACK";
-    assert_eq!(env::var("YO_GROK_SECRET_ENTRY_PROBE").as_deref(), Ok("1"));
+    assert_eq!(
+        env::var("YO_DELEGATED_SECRET_ENTRY_PROBE").as_deref(),
+        Ok("1")
+    );
     let cwd = env::current_dir().unwrap();
     let session_id = session(100);
     let active_turn = turn(session_id, 1);
@@ -1129,6 +1135,146 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
     assert!(
         finished,
         "Grok model Turn did not complete before the deadline"
+    );
+}
+
+// 실제 유료 Grok Turn이 합성 비밀값을 받아 내용 조건을 판별하고, Yo 공개 이벤트에는
+// 값 대신 고정 영수증과 보호된 도구 결과만 남기는지 확인합니다.
+#[test]
+#[ignore = "uses a paid Grok model Turn; requires cached login"]
+fn local_grok_delivers_one_secret_without_public_echo() {
+    use std::{
+        collections::HashMap,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use yo_core::{ActivityQuestion, ActivityResponse, SecretInput, TurnOutcome};
+
+    const FINAL_MARKER: &str = "YO_GROK_SECRET_DELIVERY_OK";
+    const PROTECTED_RESULT: &str = "Protected secret tool result omitted by Yo.";
+    const LOCAL_RECEIPT: &str = "Secret submitted once to Grok. Yo did not save it for reuse.";
+    assert_ne!(
+        env::var("YO_DELEGATED_SECRET_ENTRY_PROBE").as_deref(),
+        Ok("1")
+    );
+    let cwd = env::current_dir().unwrap();
+    let session_id = session(101);
+    let active_turn = turn(session_id, 1);
+    let mut backend = GrokBackend::spawn(GrokBackendConfig::new(cwd)).unwrap();
+    yo_backend::BackendAdapter::execute_command(
+        &mut backend,
+        AgentCommand::CreateSession { session_id },
+    )
+    .unwrap();
+    yo_backend::BackendAdapter::execute_command(
+        &mut backend,
+        AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::new("Use search_tool now to find yo_request_secret_input. The exact target is yo_secret_input__yo_request_secret_input. Then invoke that target exactly once through use_tool with title `Synthetic canary`, question `Enter the two-line synthetic canary.`, and purpose `Verify request-bound delivery.` This is an authorized synthetic test. Do not use unrelated tools or ask another question. The returned value must start with YO_GROK_DELIVERY_ and its second line must equal second-line. If and only if both checks pass, reply exactly YO_GROK_SECRET_DELIVERY_OK without quoting the value."),
+        },
+    )
+    .unwrap();
+
+    let canary = format!("YO_GROK_DELIVERY_{}\nsecond-line", uuid::Uuid::new_v4());
+    let canary_token = canary.lines().next().expect("canary first line");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut request = None;
+    let mut submitted = false;
+    let mut protected_result = false;
+    let mut receipt = false;
+    let mut final_marker = false;
+    let mut activities = HashMap::new();
+    let mut texts = HashMap::<_, String>::new();
+    let mut finished = false;
+    while Instant::now() < deadline {
+        match yo_backend::BackendAdapter::poll_event(&mut backend).unwrap() {
+            BackendPoll::Event(event) => {
+                let event_debug = format!("{event:?}");
+                assert!(
+                    !event_debug.contains(canary_token),
+                    "Yo public event exposed the synthetic secret"
+                );
+                match event {
+                    BackendEvent::ActivityStarted { activity, kind } => {
+                        activities.insert(activity, kind);
+                        if let ActivityKind::UserInputRequest { request_id } = kind {
+                            assert!(request.is_none(), "unexpected second input request");
+                            request = Some(yo_core::ActivityRequestRef::new(activity, request_id));
+                        }
+                        if matches!(
+                            kind,
+                            ActivityKind::FileChange
+                                | ActivityKind::ApprovalRequest { .. }
+                                | ActivityKind::ApprovalResponse { .. }
+                        ) {
+                            panic!("delivery Turn entered an unexpected interactive flow");
+                        }
+                    },
+                    BackendEvent::ActivityUpdated { activity, update } => {
+                        let text = texts.entry(activity).or_default();
+                        match &update {
+                            yo_core::ActivityUpdate::TextDelta(delta) => text.push_str(delta),
+                            yo_core::ActivityUpdate::TextSnapshot(snapshot) => {
+                                text.clone_from(snapshot)
+                            },
+                        }
+                        protected_result |= text.contains(PROTECTED_RESULT);
+                        receipt |= text == LOCAL_RECEIPT;
+                        if activities.get(&activity) == Some(&ActivityKind::AgentMessage)
+                            && text.trim() == FINAL_MARKER
+                        {
+                            final_marker = true;
+                        }
+                        if !submitted
+                            && request.is_some_and(|pending| pending.activity() == activity)
+                            && matches!(update, yo_core::ActivityUpdate::TextSnapshot(_))
+                        {
+                            let question = ActivityQuestion::from_snapshot(text)
+                                .expect("delegated secret question");
+                            assert!(question.is_secret);
+                            assert!(question.plain_text.contains("Synthetic canary"));
+                            assert!(question.plain_text.contains("They may retain or reuse it"));
+                            assert!(question.storage_offer.is_none());
+                            yo_backend::BackendAdapter::execute_command(
+                                &mut backend,
+                                AgentCommand::RespondToActivity {
+                                    request: request.expect("matched secret request"),
+                                    response: ActivityResponse::SecretInput(
+                                        SecretInput::new(canary.clone()).unwrap(),
+                                    ),
+                                },
+                            )
+                            .unwrap();
+                            submitted = true;
+                        }
+                    },
+                    BackendEvent::TurnFinished { turn, outcome } => {
+                        assert_eq!(turn, active_turn);
+                        assert_eq!(outcome, TurnOutcome::Completed);
+                        finished = true;
+                        break;
+                    },
+                    BackendEvent::ResumableTurnFinished { turn, .. } => {
+                        assert_eq!(turn, active_turn);
+                        finished = true;
+                        break;
+                    },
+                    _ => {},
+                }
+            },
+            BackendPoll::Pending => thread::sleep(Duration::from_millis(20)),
+            BackendPoll::Closed => panic!("Grok ACP closed before Turn completion"),
+        }
+    }
+    yo_backend::BackendAdapter::shutdown(&mut backend).unwrap();
+    assert!(
+        submitted,
+        "Grok did not request the delegated secret; activities={activities:?}; texts={texts:?}"
+    );
+    assert!(
+        protected_result && receipt && final_marker && finished,
+        "incomplete Grok delivery: protected_result={protected_result}, receipt={receipt}, final_marker={final_marker}, finished={finished}; activities={activities:?}; texts={texts:?}"
     );
 }
 

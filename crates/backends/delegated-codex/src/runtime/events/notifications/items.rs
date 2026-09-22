@@ -6,7 +6,7 @@ use yo_core::{
 
 use super::super::{
     super::{
-        secret_probe::TOOL_NAME,
+        secret_probe,
         state::{Backend, DynamicToolCall, ItemBinding},
     },
     snapshots::{
@@ -46,8 +46,10 @@ impl<P: JsonMessagePeer> Backend<P> {
         if let Some(command) = &command {
             checked_command_snapshot(command)?;
         }
+        let dynamic_tool_name = params.pointer("/item/tool").and_then(Value::as_str);
+        let protected_dynamic_result = dynamic_tool_name == Some(secret_probe::DELIVERY_TOOL_NAME);
         let dynamic_tool_call = (item_type == "dynamicToolCall"
-            && params.pointer("/item/tool").and_then(Value::as_str) == Some(TOOL_NAME))
+            && dynamic_tool_name.is_some_and(secret_probe::is_secret_tool_name))
         .then(|| {
             Some(DynamicToolCall {
                 tool: params.pointer("/item/tool")?.as_str()?.to_owned(),
@@ -67,6 +69,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                 ItemBinding {
                     activity,
                     dynamic_tool_call,
+                    protected_dynamic_result,
                     proposed_plan,
                     command,
                     public_summary: (item_type == "reasoning").then(|| {
@@ -113,7 +116,8 @@ impl<P: JsonMessagePeer> Backend<P> {
                 | "exitedReviewMode"
                 | "subAgentActivity"
                 | "hookPrompt"
-        )) && (item_type != "commandExecution" || command_plain_text(&params["item"]).is_some())
+        )) && !protected_dynamic_result
+            && (item_type != "commandExecution" || command_plain_text(&params["item"]).is_some())
             && let Some(mut snapshot) = item_text_snapshot(params)
         {
             if item_type == "contextCompaction" {
@@ -217,6 +221,15 @@ impl<P: JsonMessagePeer> Backend<P> {
             activity: binding.activity,
             outcome,
         };
+        if binding.protected_dynamic_result {
+            self.pending_events.push_back(finished);
+            return Ok(Some(BackendEvent::ActivityUpdated {
+                activity: binding.activity,
+                update: ActivityUpdate::TextSnapshot(
+                    "Protected secret tool result omitted by Yo.".into(),
+                ),
+            }));
+        }
         if let Some(snapshot) = command_snapshot.or_else(|| item_text_snapshot(params)) {
             self.pending_events.push_back(finished);
             if item_type == "fileChange" && file_change_snapshot(&params["item"]).is_some() {
@@ -253,6 +266,9 @@ impl<P: JsonMessagePeer> Backend<P> {
             return Err(protocol::protocol_failure(format!(
                 "Codex item delta `{item_id}` changed Turn"
             )));
+        }
+        if binding.protected_dynamic_result {
+            return Ok(None);
         }
         let delta = protocol::string_at(params, &["delta"])?;
         if let Some(command) = &binding.command {

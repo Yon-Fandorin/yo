@@ -96,7 +96,7 @@ impl InputQuestions {
             drafts: HashMap::new(),
             capture: None,
             secret_delivery_blocked: false,
-            probe_only: false,
+            secret_tool: None,
         })
     }
 

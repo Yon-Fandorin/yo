@@ -8,7 +8,7 @@ use yo_core::{
 
 use super::super::{
     events,
-    state::{Backend, RequestBinding, RequestKind},
+    state::{Backend, DelegatedSecretTool, RequestBinding, RequestKind},
 };
 use crate::protocol;
 
@@ -34,19 +34,36 @@ pub(super) fn respond_to_activity<P: JsonMessagePeer>(
             "secret input delivery was attempted and this request cannot be retried",
         ));
     }
-    if matches!(&kind, RequestKind::Input(questions) if questions.probe_only) {
-        let ActivityResponse::SecretInput(sample) = response else {
+    if let RequestKind::Input(questions) = &kind
+        && let Some(secret_tool) = questions.secret_tool
+    {
+        let ActivityResponse::SecretInput(input) = response else {
             return Err(protocol::protocol_failure(
-                "secret-entry probe requires hidden secret input",
+                "delegated secret interaction requires hidden secret input",
             ));
         };
-        // Never project this value into InputQuestions, a capture, or the host result.
-        drop(sample);
+        let (result, receipt, delivery_failure) = match secret_tool {
+            DelegatedSecretTool::Probe => {
+                // 진단값은 InputQuestions, 캡처, 호스트 결과 어디에도 투영하지 않습니다.
+                drop(input);
+                (
+                    "Sample secret entry verified locally and discarded by Yo. No value was sent to Codex or the model."
+                        .to_owned(),
+                    "Sample secret entry verified locally and discarded.",
+                    "secret-entry probe result delivery failed with an unknown outcome",
+                )
+            },
+            DelegatedSecretTool::Deliver => (
+                input.into_inner(),
+                "Secret submitted once to Codex. Yo did not save it for reuse.",
+                "delegated secret delivery failed with an unknown outcome",
+            ),
+        };
         let payload = json!({
             "success": true,
             "contentItems": [{
                 "type": "inputText",
-                "text": "Sample secret entry verified locally and discarded by Yo. No value was sent to Codex or the model."
+                "text": result
             }]
         });
         if let Err(failure) = backend.client.respond(wire_id, payload) {
@@ -57,15 +74,12 @@ pub(super) fn respond_to_activity<P: JsonMessagePeer>(
             {
                 questions.secret_delivery_blocked = true;
             }
-            return Err(BackendFailure::new(
-                failure.kind(),
-                "secret-entry probe result delivery failed with an unknown outcome",
-            ));
+            return Err(BackendFailure::new(failure.kind(), delivery_failure));
         }
         backend
             .requests
             .get_mut(&request)
-            .expect("validated probe request")
+            .expect("validated delegated secret request")
             .responded = true;
         backend
             .pending_events
@@ -79,9 +93,7 @@ pub(super) fn respond_to_activity<P: JsonMessagePeer>(
             .pending_events
             .push_back(BackendEvent::ActivityUpdated {
                 activity: response_activity,
-                update: ActivityUpdate::TextSnapshot(
-                    "Sample secret entry verified locally and discarded.".into(),
-                ),
+                update: ActivityUpdate::TextSnapshot(receipt.into()),
             });
         backend
             .pending_events

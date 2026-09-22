@@ -1666,6 +1666,45 @@ options_len_for_question/option_label_for_index처럼 isOther는 비어 있지 �
 넓히지 않고 취소하거나 거부한다. 결정론적 Grok adapter test가 이 wire 결과를 검증하며
 추론 Turn은 필요하지 않다.
 
+### 위임형 호스트 비밀 요청
+
+일반 쓰기 가능 위임형 Session은 설치된 host가 검토한 transport를 지원할 때 Yo가
+소유하는 요청 결속형 비밀 도구 하나를 노출한다. Codex는 정확히 검토한 0.155.1
+dynamic-tool wire에서만 `yo_request_secret_input`을 등록한다. Grok은 ACP가 HTTP
+MCP를 advertise할 때만 loopback HTTP MCP server를 연결한다. 읽기 전용 검토와
+지원하지 않는 host 버전·capability에서는 실제 전달 도구를 생략한다. 공통
+`YO_DELEGATED_SECRET_ENTRY_PROBE=1`을 설정하면
+대신 terminal matrix에 기록한 모의값 전용 폐기 진단을 선택한다.
+
+실제 전달 도구는 공개 `title`, `question`, `purpose` 문자열만 받는다. title은 control
+문자 없이 UTF-8 1–80바이트이며 question과 purpose는 1–4096바이트이고 control 문자
+중 tab과 줄바꿈만 허용한다. 숨김 입력 전에 Yo는 제출 시 값을 해당 위임형 host와
+선택한 model에 한 번 보내며, 둘이 값을 보관하거나 다시 사용할 수 있고, Yo는 재사용을
+위해 저장하지 않는다고 알린다. 이 요청에는 저장 제안이나 복구 경로가 없다.
+
+제출 시도 한 번은 정확한 host 호출 하나에 결속된다. Codex는 dynamic-tool 응답을
+한 번 보낸다. Grok은 loopback MCP 결과를 한 번 보내고 제한된 시간 동안 로컬 응답
+쓰기 완료를 기다린다. transport 실패는 전달 여부를 알 수 없으며 같은 요청에서
+재시도할 수 없다. 중복 Grok JSON-RPC call ID도 입력을 다시 열 수 없다. host의 직접
+도구 결과 delta와 완료 payload는 Activity나 Journal에 게시하기 전에 값 없는 고정
+결과로 바뀐다. Grok은 도구 identity가 아직 알려지지 않은 결과 update를 보류하고,
+일반 MCP target으로 확인되면 게시하며 보호 대상 target으로 확인되면 폐기한다. 뒤의
+assistant 답변은 일반 위임형 host 출력이며 비밀 echo 검사를 하지 않으므로 host와
+선택한 model은 고지한 보관 경계 안에 계속 포함된다. 제출 뒤 현재 process는 현재
+native 대화를 이어갈 수 있지만, durable restart resume과 fork는 일반
+`SecretInputSubmitted` 복구 규칙에 따라 차단된다.
+
+schema·연결·취소·중복·실패·redaction은 package test로 결정적으로 검증한다. 기본으로
+ignore되는 실서비스 test는 일회용 합성 canary와 인증된 model Turn 한 번을 사용한다.
+
+```bash
+cargo test -p yo-backend-delegated-codex --test live_agent_session \
+  local_codex_delivers_one_secret_without_public_echo -- --ignored --exact
+cargo test -p yo-backend-delegated-grok \
+  runtime::tests::session::local_grok_delivers_one_secret_without_public_echo \
+  -- --ignored --exact
+```
+
 호스트는 ActivityQuestion.allow_notes로 선택 항목과 메모의 동시 제출을 활성화한다.
 이전 프로필의 기본값은 false이며 Codex와 오프라인 인터뷰는 활성화한다. 표시된 선택지에서
 Tab을 누르면 항목 이름·설명을 유지한 메모 패널을 연다. Enter는 선택 번호와 추가 메모를
@@ -1700,8 +1739,8 @@ runtime이 payload가 없는 `SecretInputSubmitted` 영수증을 먼저 트랜�
 
 OpenAI Responses는 정확한 `function_call_output` 하나를 보내고 OpenAI Chat Completions와
 Kimi Chat Completions는 정확한 tool message 하나를 보낸다. 보호 요청은 tools와
-tool choice를 생략하고 redirect를 끄며 transport의 무재시도 정책을 사용한다. Grok의
-위임형 backend는 이 계약을 노출하지 않는다. 최종 응답은 전부 버퍼링하며 눈에 보이는
+tool choice를 생략하고 redirect를 끄며 transport의 무재시도 정책을 사용한다. 이
+관리형 terminal-response 계약은 위의 위임형 host 흐름과 별개다. 최종 응답은 전부 버퍼링하며 눈에 보이는
 assistant message 하나만 허용하고 함수 호출은 금지한다. 연속 UTF-8 바이트에 제출 값을
 포함하지 않을 때만 공개한다. echo가 있으면 전체 답변을 숨기고 고정된 실패만 표시한다.
 비밀, 응답 delta, replay item, continuation anchor는 세션 저널에 저장하지 않는다.

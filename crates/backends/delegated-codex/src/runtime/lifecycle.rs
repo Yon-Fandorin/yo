@@ -125,16 +125,21 @@ impl<P: JsonMessagePeer> Backend<P> {
             params["model"] = json!(model.as_str());
         }
         self.apply_thread_policy(&mut params);
-        if self.secret_probe_enabled && !self.read_only_review {
-            if !super::secret_probe::wire_version_supported(
+        if let Some(secret_tool) = self.secret_tool
+            && !self.read_only_review
+        {
+            let wire_supported = super::secret_probe::wire_version_supported(
                 self.backend_version.as_deref().unwrap_or_default(),
-            ) {
+            );
+            if !wire_supported && secret_tool == super::state::DelegatedSecretTool::Probe {
                 return Err(BackendFailure::new(
                     BackendFailureKind::Unsupported,
                     "the secret-entry probe requires the reviewed Codex 0.155.1 dynamic-tool wire",
                 ));
             }
-            params["dynamicTools"] = json!([super::secret_probe::tool_spec()]);
+            if wire_supported {
+                params["dynamicTools"] = json!([super::secret_probe::tool_spec(secret_tool)]);
+            }
         }
         let result = self.client.call("thread/start", params)?.result;
         let thread_id = protocol::string_at(&result, &["thread", "id"])?.to_owned();

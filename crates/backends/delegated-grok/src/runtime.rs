@@ -12,7 +12,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-use secret_probe::SecretProbeBridge;
+use secret_probe::SecretToolMode;
 use state::Backend;
 use yo_backend::BackendAdapter;
 use yo_core::{
@@ -49,11 +49,13 @@ impl GrokBackend {
         let peer = StdioPeer::spawn(&config)?;
         let client = AcpClient::new(peer, config.request_timeout());
         let mut inner = Backend::new_uninitialized(client, cwd, config.read_only_review());
-        if !config.read_only_review()
-            && env::var_os("YO_GROK_SECRET_ENTRY_PROBE").as_deref() == Some(OsStr::new("1"))
-        {
-            inner.secret_probe = Some(SecretProbeBridge::start()?);
-        }
+        inner.secret_tool_mode = (!config.read_only_review()).then(|| {
+            if env::var_os("YO_DELEGATED_SECRET_ENTRY_PROBE").as_deref() == Some(OsStr::new("1")) {
+                SecretToolMode::Probe
+            } else {
+                SecretToolMode::Deliver
+            }
+        });
         Ok(Self { inner })
     }
 

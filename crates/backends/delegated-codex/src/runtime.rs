@@ -26,7 +26,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-use state::Backend;
+use state::{Backend, DelegatedSecretTool};
 
 #[cfg(test)]
 pub(super) fn project_input(input: &UserInput) -> Result<Vec<Value>, BackendFailure> {
@@ -68,21 +68,24 @@ impl CodexBackend {
                 )
             })?
             .to_owned();
-        // This opt-in is only a diagnostic for the hidden-input route. It never
-        // returns the entered value to Codex and is unavailable for review.
-        let secret_probe_enabled = !config.read_only_review()
-            && env::var_os("YO_CODEX_SECRET_ENTRY_PROBE").as_deref() == Some(OsStr::new("1"));
+        let secret_tool = (!config.read_only_review()).then(|| {
+            if env::var_os("YO_DELEGATED_SECRET_ENTRY_PROBE").as_deref() == Some(OsStr::new("1")) {
+                DelegatedSecretTool::Probe
+            } else {
+                DelegatedSecretTool::Deliver
+            }
+        });
         let peer = StdioPeer::spawn(&config)?;
         let client = AppServerClient::new(peer, config.request_timeout())
             .with_warning_observer(warning_observer)
-            .with_experimental_api(secret_probe_enabled);
+            .with_experimental_api(secret_tool.is_some());
         let model_rebind_target = config
             .model_rebind_target()
             .map(|(account, model)| (account.clone(), model.clone()));
         let mut inner =
             Backend::new_uninitialized(client, cwd, config.read_only_review(), model_rebind_target);
         inner.new_session_target = config.new_session_target().cloned();
-        inner.secret_probe_enabled = secret_probe_enabled;
+        inner.secret_tool = secret_tool;
         Ok(Self { inner })
     }
 

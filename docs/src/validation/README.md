@@ -1897,6 +1897,48 @@ malformed, oversized, read-only-review, interrupted, and prematurely completed p
 without widening the standard ACP capability advertisement. Deterministic Grok
 adapter tests cover these wire outcomes; no inference Turn is required.
 
+### Delegated host secret requests
+
+Ordinary writable delegated Sessions expose one Yo-owned, request-bound secret tool
+when the installed host supports its reviewed transport. Codex registers
+`yo_request_secret_input` only on the exact reviewed 0.155.1 dynamic-tool wire. Grok
+attaches a loopback HTTP MCP server only when ACP advertises HTTP MCP. Read-only review
+and unsupported host versions or capabilities omit the production tool. Setting the
+shared `YO_DELEGATED_SECRET_ENTRY_PROBE=1` instead
+selects the sample-only discard diagnostic documented in the terminal matrix.
+
+The production tool accepts only public `title`, `question`, and `purpose` strings.
+The title is 1–80 UTF-8 bytes without controls; question and purpose are 1–4096 bytes
+and permit only tab and line endings among control characters. Before hidden entry,
+Yo states that submission sends the value once to the named delegated host and its
+selected model, that they may retain or reuse it, and that Yo does not save it for
+reuse. These requests have no storage offer or recovery path.
+
+One submission attempt is bound to one exact host call. Codex sends one dynamic-tool
+response. Grok sends one loopback MCP result and waits for bounded local response-write
+completion. A transport failure has an unknown outcome and cannot be retried for that
+request; duplicate Grok JSON-RPC call IDs cannot reopen input. Direct host tool-result
+deltas and completion payloads are replaced by a fixed payload-free result before
+Activity or Journal publication. Grok holds result-bearing updates whose tool identity
+is not known yet; it releases them after an ordinary MCP target is identified and
+discards them when the protected target is identified. The later assistant answer is
+ordinary delegated host output and is not scanned for a secret echo, so the host and
+selected model remain inside the disclosed retention boundary. The active process may
+continue the current native conversation after submission, while durable restart resume
+and fork remain blocked by the generic `SecretInputSubmitted` recovery rule.
+
+Use the package tests for deterministic schema, correlation, cancellation, duplicate,
+failure, and redaction coverage. The ignored live tests use disposable synthetic
+canaries and one authenticated model Turn:
+
+```bash
+cargo test -p yo-backend-delegated-codex --test live_agent_session \
+  local_codex_delivers_one_secret_without_public_echo -- --ignored --exact
+cargo test -p yo-backend-delegated-grok \
+  runtime::tests::session::local_grok_delivers_one_secret_without_public_echo \
+  -- --ignored --exact
+```
+
 Hosts opt into choice-plus-notes with ActivityQuestion.allow_notes (default false for
 older profiles). Codex and the offline interview opt in. Tab on a presented choice
 opens a notes panel showing its label/description; Enter submits the selected ordinal
@@ -1937,8 +1979,8 @@ remains unknown.
 
 OpenAI Responses sends one exact `function_call_output`; OpenAI Chat Completions and
 Kimi Chat Completions send one exact tool message. The protected request omits tools
-and tool choice, disables redirects, and uses the transport's no-retry policy. Grok's
-delegated backend does not expose this contract. The final response is fully buffered,
+and tool choice, disables redirects, and uses the transport's no-retry policy. This
+managed terminal-response contract is distinct from the delegated-host flow above. The final response is fully buffered,
 must contain exactly one visible assistant message and no function calls, and is
 published only after its contiguous UTF-8 bytes do not contain the submitted value.
 An echo withholds the entire answer and emits a static failure. No secret, response

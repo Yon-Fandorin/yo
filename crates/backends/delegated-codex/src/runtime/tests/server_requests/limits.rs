@@ -185,7 +185,7 @@ fn answer_receipt_bounds_and_literal_fields_do_not_change_response_authority() {
         answers: Map::new(),
         drafts: Default::default(),
         secret_delivery_blocked: false,
-        probe_only: false,
+        secret_tool: None,
     };
     let literal = questions.receipt(
         "user_note: a literal option",
@@ -285,7 +285,7 @@ fn failed_answer_transport_does_not_publish_a_sent_receipt() {
                         })
                         .collect::<Map<_, _>>(),
                     secret_delivery_blocked: false,
-                    probe_only: false,
+                    secret_tool: None,
                     questions: (0..=recorded)
                         .map(|index| InputQuestion {
                             id: if index == recorded {
@@ -408,7 +408,7 @@ fn mixed_secret_transport_failure_is_static_and_non_retryable() {
                 answers: Map::from_iter([("secret".into(), json!({"answers":["wire-secret"]}))]),
                 drafts: Default::default(),
                 secret_delivery_blocked: false,
-                probe_only: false,
+                secret_tool: None,
             }),
         },
     );
@@ -436,6 +436,119 @@ fn mixed_secret_transport_failure_is_static_and_non_retryable() {
         .unwrap_err();
     assert!(retry.message().contains("cannot be retried"));
     assert!(!retry.message().contains("wire-secret"));
+}
+
+// 위임형 비밀 도구 응답의 wire 결과가 불명확하면 성공 영수증을 만들지 않고 같은
+// request를 다시 보내지 못하게 고정합니다.
+#[test]
+fn delegated_secret_write_failure_is_static_and_non_retryable() {
+    use std::{cell::Cell, rc::Rc, time::Duration};
+
+    use serde_json::Value;
+    use yo_backend::transport::JsonMessagePeer;
+    use yo_core::{BackendFailure, BackendStopHandle, SecretInput};
+
+    use super::super::super::{
+        Backend, DelegatedSecretTool, InputQuestion, InputQuestions, RequestBinding, RequestKind,
+    };
+    use crate::{client::AppServerClient, transport::PeerPoll};
+
+    struct RejectResponse {
+        attempts: Rc<Cell<usize>>,
+    }
+    impl JsonMessagePeer for RejectResponse {
+        fn stop_handle(&self) -> BackendStopHandle {
+            BackendStopHandle::no_op()
+        }
+        fn send(&mut self, message: &Value) -> Result<(), BackendFailure> {
+            self.attempts.set(self.attempts.get() + 1);
+            assert_eq!(message["id"], json!("delegated-secret"));
+            assert_eq!(
+                message["result"]["contentItems"][0]["text"],
+                json!("single-use-secret")
+            );
+            Err(BackendFailure::new(
+                BackendFailureKind::ProcessExit,
+                "transport echoed single-use-secret",
+            ))
+        }
+        fn receive(&mut self, _: Duration) -> Result<PeerPoll, BackendFailure> {
+            Ok(PeerPoll::Pending)
+        }
+        fn try_receive(&mut self) -> Result<PeerPoll, BackendFailure> {
+            Ok(PeerPoll::Pending)
+        }
+        fn shutdown(&mut self) -> Result<(), BackendFailure> {
+            Ok(())
+        }
+    }
+
+    let request = ActivityRequestRef::new(activity(turn(session(1), 1), 1), RequestId::new(id(1)));
+    let attempts = Rc::new(Cell::new(0));
+    let mut backend = Backend::new_uninitialized(
+        AppServerClient::new(
+            RejectResponse {
+                attempts: Rc::clone(&attempts),
+            },
+            Duration::from_secs(1),
+        ),
+        "/workspace".into(),
+        false,
+        None,
+    );
+    backend.requests.insert(
+        request,
+        RequestBinding {
+            file_approval: None,
+            wire_id: json!("delegated-secret"),
+            request_activity: request.activity(),
+            responded: false,
+            kind: RequestKind::Input(InputQuestions {
+                capture: None,
+                captured_answers: Vec::new(),
+                questions: vec![InputQuestion {
+                    id: "secret".into(),
+                    prompt: "Secret".into(),
+                    question: "Token?".into(),
+                    options: Vec::new(),
+                    choices: Vec::new(),
+                    is_secret: true,
+                }],
+                current: 0,
+                answers: Default::default(),
+                drafts: Default::default(),
+                secret_delivery_blocked: false,
+                secret_tool: Some(DelegatedSecretTool::Deliver),
+            }),
+        },
+    );
+
+    let failure = backend
+        .respond_to_activity(
+            request,
+            ActivityResponse::SecretInput(SecretInput::new("single-use-secret").unwrap()),
+        )
+        .unwrap_err();
+    assert_eq!(
+        failure.message(),
+        "delegated secret delivery failed with an unknown outcome"
+    );
+    assert!(!failure.message().contains("single-use-secret"));
+    assert!(backend.pending_events.is_empty());
+    assert!(!backend.requests[&request].responded);
+    let RequestKind::Input(questions) = &backend.requests[&request].kind else {
+        panic!("delegated input binding")
+    };
+    assert!(questions.secret_delivery_blocked);
+
+    let retry = backend
+        .respond_to_activity(
+            request,
+            ActivityResponse::SecretInput(SecretInput::new("retry-secret").unwrap()),
+        )
+        .unwrap_err();
+    assert!(retry.message().contains("cannot be retried"));
+    assert_eq!(attempts.get(), 1);
 }
 
 // 한 번이라도 secret 응답 경로에 들어간 backend는 request binding이 제거된 뒤에도 warning 원문을
@@ -496,7 +609,7 @@ fn secret_response_taints_later_warning_observer_after_request_removal() {
                 answers: Default::default(),
                 drafts: Default::default(),
                 secret_delivery_blocked: false,
-                probe_only: false,
+                secret_tool: None,
             }),
         },
     );
@@ -616,7 +729,7 @@ fn shutdown_discards_staged_secret_values_before_transport_shutdown() {
                         (None, "staged-secret-draft".into()),
                     )]),
                     secret_delivery_blocked: false,
-                    probe_only: false,
+                    secret_tool: None,
                 }),
             },
         );
@@ -662,7 +775,7 @@ fn incomplete_interview_summary_preserves_counts_at_exact_output_limit() {
         answers: Map::new(),
         drafts: Default::default(),
         secret_delivery_blocked: false,
-        probe_only: false,
+        secret_tool: None,
     };
     let base = questions.incomplete_notice("Turn interrupted.");
     questions.questions[0].question = "x".repeat(ToolOutput::MAX_SNAPSHOT_BYTES - base.len());
@@ -984,7 +1097,7 @@ fn previous_question_availability_respects_restored_profile_limit() {
         answers: Default::default(),
         drafts: Default::default(),
         secret_delivery_blocked: false,
-        probe_only: false,
+        secret_tool: None,
     };
     questions.current = 1;
     questions.drafts.insert("one".into(), (None, String::new()));
@@ -1032,7 +1145,7 @@ fn retained_secret_batch_limit_rejects_without_mutation() {
         answers: Map::new(),
         drafts: Default::default(),
         secret_delivery_blocked: false,
-        probe_only: false,
+        secret_tool: None,
     };
     let exact = "x".repeat(SecretInput::MAX_BYTES);
     for index in 0..4 {
@@ -1097,7 +1210,7 @@ fn secret_question_navigation_rejects_ordinary_draft_bytes() {
                 )]),
                 drafts: Default::default(),
                 secret_delivery_blocked: false,
-                probe_only: false,
+                secret_tool: None,
             }),
         },
     );

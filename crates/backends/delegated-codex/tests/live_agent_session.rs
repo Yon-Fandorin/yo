@@ -42,7 +42,7 @@ fn local_codex_completes_a_real_file_change() {
 // 실제 Codex가 동적 진단 도구를 선택한 뒤 입력값을 모델·저장소에 남기지 않고
 // 고정 완료 상태만 받는지, 한 번의 모델 Turn으로 확인한다.
 #[test]
-#[ignore = "requires Codex 0.155.1, authentication, YO_CODEX_SECRET_ENTRY_PROBE=1, and performs one model turn"]
+#[ignore = "requires Codex 0.155.1, authentication, YO_DELEGATED_SECRET_ENTRY_PROBE=1, and performs one model turn"]
 fn local_codex_dynamic_probe_discards_sample_secret() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -56,6 +56,215 @@ fn local_codex_dynamic_probe_discards_sample_secret() {
 
     result.unwrap();
     cleanup.unwrap();
+}
+
+// 실제 Codex가 공개 요청 뒤 받은 합성 비밀값을 현재 Turn에서 사용하고, Yo 공개
+// Activity와 저장소에는 그 값을 남기지 않는지 한 번의 모델 Turn으로 확인합니다.
+#[test]
+#[ignore = "requires Codex 0.155.1, authentication, and performs one model turn"]
+fn local_codex_delivers_one_secret_without_public_echo() {
+    assert_ne!(
+        env::var("YO_DELEGATED_SECRET_ENTRY_PROBE").as_deref(),
+        Ok("1")
+    );
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = env::temp_dir().join(format!(
+        "yo-codex-secret-delivery-{}-{unique}",
+        process::id()
+    ));
+    fs::create_dir(&root).unwrap();
+
+    let result = run_local_secret_delivery(&root);
+    let cleanup = fs::remove_dir_all(&root);
+
+    result.unwrap();
+    cleanup.unwrap();
+}
+
+fn run_local_secret_delivery(root: &Path) -> Result<(), String> {
+    const FINAL_MARKER: &str = "YO_CODEX_SECRET_DELIVERY_OK";
+    const PROTECTED_RESULT: &str = "Protected secret tool result omitted by Yo.";
+    const LOCAL_RECEIPT: &str = "Secret submitted once to Codex. Yo did not save it for reuse.";
+    let workspace = root.join("workspace");
+    let storage = root.join("repository");
+    fs::create_dir(&workspace).map_err(|error| error.to_string())?;
+    let descriptor = SessionDescriptor::new(
+        WorkspaceHostId::new().map_err(|error| error.to_string())?,
+        HostWorkspacePath::normalize_local(&workspace).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let session_id = descriptor.session_id();
+    let mut repository = LocalSessionRepository::open(&storage, 16 * 1024 * 1024)
+        .map_err(|error| error.to_string())?;
+    repository
+        .acquire_session_writer(session_id)
+        .map_err(|error| error.to_string())?;
+    let backend = CodexBackend::spawn(
+        CodexBackendConfig::new(&workspace).with_request_timeout(Duration::from_secs(30)),
+    )
+    .map_err(|error| error.to_string())?;
+    let start_deadline = Instant::now() + Duration::from_secs(45);
+    let mut app =
+        AgentSession::start_cancellable_with_repository(backend, descriptor, repository, || {
+            Instant::now() >= start_deadline
+        })
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "secret-delivery Session startup exceeded 45 seconds".to_owned())?;
+    let transcript = app.transcript_reader();
+    let canary = format!(
+        "YO_CODEX_DELIVERY_{}\nsecond-line",
+        WorkspaceHostId::new().map_err(|error| error.to_string())?
+    );
+    let canary_token = canary.lines().next().expect("canary first line");
+    let mut cursor = None;
+    let mut activities = HashMap::new();
+    let mut texts = HashMap::<_, String>::new();
+    let mut request = None;
+    let mut submitted = false;
+    let mut protected_result = false;
+    let mut receipt = false;
+    let mut final_marker = false;
+    let mut admission = app
+        .dispatch(
+            AgentIntent::submit(
+                "Call yo_request_secret_input exactly once with title `Synthetic canary`, question `Enter the two-line synthetic canary.`, and purpose `Verify request-bound delivery.` Do not call any other tool or ask another question. The returned value must start with YO_CODEX_DELIVERY_ and its second line must equal second-line. If and only if both checks pass, reply exactly YO_CODEX_SECRET_DELIVERY_OK without quoting the value.",
+            )
+            .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    let admission_deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match admission {
+            CommandAdmission::Queued => break,
+            CommandAdmission::Backpressured(pending) if Instant::now() < admission_deadline => {
+                thread::sleep(Duration::from_millis(10));
+                admission = app.retry(pending).map_err(|error| error.to_string())?;
+            },
+            _ => return Err("secret-delivery Turn was not admitted".to_owned()),
+        }
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let outcome = 'turn: loop {
+        if Instant::now() >= deadline {
+            break Err("secret-delivery Codex Turn exceeded 180 seconds".to_owned());
+        }
+        match app.poll().map_err(|error| error.to_string())? {
+            AgentSessionPoll::Pending => thread::sleep(Duration::from_millis(10)),
+            AgentSessionPoll::Closed => {
+                break Err("Codex closed before secret-delivery Turn completed".to_owned());
+            },
+            AgentSessionPoll::Changed => {
+                for entry in drain_transcript(&transcript, &mut cursor) {
+                    let TranscriptRecord::EventCommitted(event) = entry.record() else {
+                        continue;
+                    };
+                    let event_debug = format!("{event:?}");
+                    if event_debug.contains(canary_token) {
+                        break 'turn Err("Yo public transcript exposed the synthetic secret".into());
+                    }
+                    match event {
+                        AgentEvent::ActivityStarted { activity, kind } => {
+                            activities.insert(*activity, *kind);
+                            if let ActivityKind::UserInputRequest { request_id } = kind
+                                && request
+                                    .replace(ActivityRequestRef::new(*activity, *request_id))
+                                    .is_some()
+                            {
+                                break 'turn Err("Codex opened more than one input request".into());
+                            }
+                        },
+                        AgentEvent::ActivityUpdated { activity, update } => {
+                            let text = texts.entry(*activity).or_default();
+                            match update {
+                                ActivityUpdate::TextSnapshot(snapshot) => text.clone_from(snapshot),
+                                ActivityUpdate::TextDelta(delta) => text.push_str(delta),
+                            }
+                            if text == PROTECTED_RESULT {
+                                protected_result = true;
+                            }
+                            if text == LOCAL_RECEIPT {
+                                receipt = true;
+                            }
+                            if activities.get(activity) == Some(&ActivityKind::AgentMessage)
+                                && text.trim() == FINAL_MARKER
+                            {
+                                final_marker = true;
+                            }
+                            if !submitted
+                                && request.is_some_and(|pending| pending.activity() == *activity)
+                                && matches!(update, ActivityUpdate::TextSnapshot(_))
+                            {
+                                let question = ActivityQuestion::from_snapshot(text)
+                                    .ok_or_else(|| "missing secret question snapshot".to_owned())?;
+                                if !question.is_secret
+                                    || !question.plain_text.contains("Synthetic canary")
+                                    || !question.plain_text.contains("They may retain or reuse it")
+                                    || question.storage_offer.is_some()
+                                {
+                                    break 'turn Err(
+                                        "unexpected delegated secret disclosure".into()
+                                    );
+                                }
+                                let response = app
+                                    .dispatch(AgentIntent::RespondToSecretInput {
+                                        request: request.expect("matched secret request"),
+                                        input: SecretInput::new(canary.clone())
+                                            .map_err(|error| error.to_string())?,
+                                    })
+                                    .map_err(|error| error.to_string())?;
+                                if response != CommandAdmission::Queued {
+                                    break 'turn Err("secret response was not queued".into());
+                                }
+                                submitted = true;
+                            }
+                        },
+                        AgentEvent::TurnFinished { outcome, .. } => {
+                            break 'turn Ok(outcome.clone());
+                        },
+                        _ => {},
+                    }
+                }
+            },
+        }
+    };
+    let shutdown = app.shutdown().map_err(|error| error.to_string());
+    let outcome = outcome?;
+    shutdown?;
+    drop(app);
+    if outcome != TurnOutcome::Completed
+        || !submitted
+        || !protected_result
+        || !receipt
+        || !final_marker
+    {
+        return Err(format!(
+            "incomplete secret delivery: outcome={outcome:?}, submitted={submitted}, protected_result={protected_result}, receipt={receipt}, final_marker={final_marker}"
+        ));
+    }
+    let retained = fs::read_dir(&storage)
+        .map_err(|error| error.to_string())?
+        .try_fold(Vec::new(), |mut bytes, entry| {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_file()
+            {
+                bytes.extend(fs::read(entry.path()).map_err(|error| error.to_string())?);
+            }
+            Ok::<_, String>(bytes)
+        })?;
+    if retained
+        .windows(canary_token.len())
+        .any(|window| window == canary_token.as_bytes())
+    {
+        return Err("Yo durable storage retained the synthetic secret".into());
+    }
+    Ok(())
 }
 
 fn run_local_secret_probe(root: &Path) -> Result<(), String> {

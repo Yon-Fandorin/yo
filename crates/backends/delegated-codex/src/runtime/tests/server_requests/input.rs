@@ -1,4 +1,5 @@
 use super::{super::support::*, *};
+use crate::runtime::state::DelegatedSecretTool;
 
 // 재개된 스레드에서도 서버 버전과 시작된 도구의 이름·인자가 요청과 정확히 맞아야 한다.
 #[test]
@@ -32,7 +33,7 @@ fn secret_entry_probe_rejects_unreviewed_wire_and_mismatched_tool_call() {
                 "arguments":arguments,"status":"completed"}
         }}),
     ]);
-    backend.secret_probe_enabled = true;
+    backend.secret_tool = Some(DelegatedSecretTool::Probe);
     backend.backend_version = Some("yo/0.155.1 (test)".into());
     backend.create_session(session_id).unwrap();
     backend
@@ -104,7 +105,7 @@ fn secret_entry_probe_omits_sample_from_dynamic_tool_result() {
             "arguments":{}
         }}),
     ]);
-    backend.secret_probe_enabled = true;
+    backend.secret_tool = Some(DelegatedSecretTool::Probe);
     backend.backend_version = Some("yo/0.155.1 (test)".into());
     let mut runtime = AgentRuntime::new(backend);
     runtime
@@ -155,6 +156,143 @@ fn secret_entry_probe_omits_sample_from_dynamic_tool_result() {
     assert_eq!(result["result"]["success"], true);
     assert_eq!(result["result"]["contentItems"][0]["type"], "inputText");
     assert!(!serde_json::to_string(&*sent).unwrap().contains(sample));
+}
+
+// 위임형 비밀 도구는 숨김 입력값을 정확히 한 번 Codex 응답에 싣고, Codex가 같은
+// 값을 동적 도구 결과로 되돌려 보내도 공개 Activity에는 고정 영수증만 남깁니다.
+#[test]
+fn delegated_secret_is_sent_once_and_omitted_from_public_tool_result() {
+    use yo_core::SecretInput;
+
+    use crate::runtime::secret_probe;
+
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let arguments = json!({
+        "title": "Deployment token",
+        "question": "Enter the temporary token.",
+        "purpose": "Authenticate the requested deployment."
+    });
+    let canary = "delegated-secret-한글\nsecond-line";
+    let (mut backend, sent) = backend([
+        thread_start_response(2, "thread-a"),
+        json!({"id":3,"result":{"turn":{"id":"turn-a"}}}),
+        json!({"method":"item/started","params":{
+            "threadId":"thread-a","turnId":"turn-a",
+            "item":{"id":"secret-call","type":"dynamicToolCall",
+                "tool":secret_probe::DELIVERY_TOOL_NAME,"arguments":arguments,
+                "status":"inProgress"}
+        }}),
+        json!({"id":"secret-request","method":"item/tool/call","params":{
+            "threadId":"thread-a","turnId":"turn-a","callId":"secret-call",
+            "tool":secret_probe::DELIVERY_TOOL_NAME,"arguments":arguments
+        }}),
+        json!({"method":"item/completed","params":{
+            "threadId":"thread-a","turnId":"turn-a",
+            "item":{"id":"secret-call","type":"dynamicToolCall",
+                "tool":secret_probe::DELIVERY_TOOL_NAME,"arguments":arguments,
+                "result":{"success":true,"contentItems":[{"type":"inputText","text":canary}]},
+                "status":"completed"}
+        }}),
+    ]);
+    backend.secret_tool = Some(DelegatedSecretTool::Deliver);
+    backend.backend_version = Some("yo/0.155.1 (test)".into());
+    let mut runtime = AgentRuntime::new(backend);
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("deploy"),
+            },
+            submission(1),
+        )
+        .unwrap();
+
+    let mut request = None;
+    let mut prompt = None;
+    for _ in 0..8 {
+        let RuntimePoll::Event(event) = runtime.poll_event().unwrap() else {
+            continue;
+        };
+        match event {
+            AgentEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::UserInputRequest { request_id },
+            } => request = Some(ActivityRequestRef::new(activity, request_id)),
+            AgentEvent::ActivityUpdated {
+                update: ActivityUpdate::TextSnapshot(value),
+                ..
+            } if display_question(&value).is_some() => prompt = Some(value),
+            _ => {},
+        }
+        if request.is_some() && prompt.is_some() {
+            break;
+        }
+    }
+    let question = display_question(&prompt.expect("hidden question")).unwrap();
+    assert!(question.is_secret);
+    assert!(question.plain_text.contains("Deployment token"));
+    assert!(
+        question
+            .plain_text
+            .contains("Authenticate the requested deployment")
+    );
+    assert!(question.plain_text.contains("They may retain or reuse it"));
+    assert!(question.plain_text.contains("Yo does not save this input"));
+
+    runtime
+        .execute_command(AgentCommand::RespondToActivity {
+            request: request.expect("delegated secret request"),
+            response: ActivityResponse::SecretInput(SecretInput::new(canary).unwrap()),
+        })
+        .unwrap();
+    fn exact_occurrences(value: &Value, expected: &str) -> usize {
+        match value {
+            Value::String(value) => usize::from(value == expected),
+            Value::Array(values) => values
+                .iter()
+                .map(|value| exact_occurrences(value, expected))
+                .sum(),
+            Value::Object(values) => values
+                .values()
+                .map(|value| exact_occurrences(value, expected))
+                .sum(),
+            Value::Null | Value::Bool(_) | Value::Number(_) => 0,
+        }
+    }
+    let sent = sent.0.borrow();
+    assert_eq!(
+        sent.iter()
+            .map(|message| exact_occurrences(message, canary))
+            .sum::<usize>(),
+        1
+    );
+    let response = sent.last().unwrap().clone();
+    assert_eq!(response["id"], "secret-request");
+    assert_eq!(response["result"]["contentItems"][0]["text"], canary);
+    drop(sent);
+
+    let mut protected_result_seen = false;
+    for _ in 0..12 {
+        let RuntimePoll::Event(event) = runtime.poll_event().unwrap() else {
+            continue;
+        };
+        assert!(!format!("{event:?}").contains(canary));
+        if matches!(
+            event,
+            AgentEvent::ActivityUpdated {
+                update: ActivityUpdate::TextSnapshot(ref text),
+                ..
+            } if text == "Protected secret tool result omitted by Yo."
+        ) {
+            protected_result_seen = true;
+            break;
+        }
+    }
+    assert!(protected_result_seen);
 }
 
 // 여러 질문을 순서대로 표시하고 선택 번호·직접 답변을 원래 질문 ID에 묶어 한 번만 응답한다.

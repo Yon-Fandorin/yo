@@ -244,19 +244,54 @@ free-quota balance or usage receipts.
 
 ## Delegated secret-input coverage
 
-As of 2026-09-22, no free-model Mac live Turn has proved a delegated
-`UserInputRequest` with `isSecret: true`. Yo's Codex adapter has deterministic
-coverage for that wire shape, but installed Codex 0.155.1 does not expose
-`isSecret` through its model-facing `request_user_input` tool and requires
-nonempty choices. Its async question tool produces an ordinary message rather
-than this request. Installed Grok 1.0.40's user-question path has no supported
-secret flag, and the authenticated Grok model route previously observed used
-subscription capacity. Neither built-in question path can originate this exact
-free-model live journey. The managed QwenCloud result above does not establish
-delegated-host behavior.
+The installed hosts' built-in question tools still cannot originate a secret
+request. Codex 0.155.1 does not expose `isSecret` through its model-facing
+`request_user_input` tool and requires nonempty choices; its async question tool
+produces an ordinary message. Grok 1.0.40's user-question path has no supported
+secret flag. Yo therefore owns a separate `yo_request_secret_input` tool for
+ordinary writable delegated Sessions. Codex registers it only on the exact
+reviewed 0.155.1 dynamic-tool wire. Grok attaches it only when ACP advertises
+HTTP MCP. Unsupported and read-only Sessions omit it without blocking ordinary
+host use.
+
+The tool accepts bounded public title, question and purpose fields. Yo displays
+a fixed disclosure before hidden entry: submission sends the value once to the
+delegated host and selected model, they may retain or reuse it, and Yo does not
+save it for reuse. One accepted input is sent for one exact host call. A write
+failure has an unknown outcome and is not retryable; Grok also rejects duplicate
+JSON-RPC call IDs. Direct tool-result output is replaced by a payload-free fixed
+result before public Activity and Journal projection. This protection does not
+scan later ordinary assistant output for an echo. Delegated requests have no
+storage offer or restoration path, and restart resume/fork remains blocked after
+the generic payload-free secret-submission receipt.
+
+On 2026-09-23, exact candidate `ec84c90e` and the authenticated local Codex
+0.155.1 passed
+`local_codex_delivers_one_secret_without_public_echo` with a disposable two-line
+canary. The model invoked the production tool, received the value, checked both
+lines and returned only the required marker. Yo published the fixed protected
+tool result and payload-free submission receipt. The canary appeared in neither
+public Activity records nor the disposable durable Session repository. The
+workspace and repository were removed after the run. This proves one bounded
+local Codex route; Codex and its selected model remain inside the disclosed
+retention boundary.
+
+The saved Apple Silicon Mac passed the matching paid Grok test for the same exact
+candidate on 2026-09-23. Pinned-host-key preflight, 103 Grok adapter tests with
+five environment tests ignored, HTTP-MCP Session
+creation, the authenticated model Turn, all-target Grok Clippy and the Yo CLI
+check passed. The model opened the production hidden request, received the
+synthetic two-line canary and returned the exact marker only after checking its
+shape. Every public backend event excluded the canary; Yo published the
+payload-free response receipt and protected structured tool result. The final
+successful run used an exact 115,756-byte incremental Git bundle with SHA-256
+`81b212daef9a4faf8c705e455cf8346f9555eeb7b7932ae160e29c7be58727cd`.
+The validation runner removed the remote checkout and bundle. This run used
+subscription-backed model capacity, as authorized; it makes no free-model or
+host-retention claim.
 
 An opt-in Codex diagnostic registers `yo_secret_entry_probe` when creating an
-ordinary Session with `YO_CODEX_SECRET_ENTRY_PROBE=1` and app-server version
+ordinary Session with `YO_DELEGATED_SECRET_ENTRY_PROBE=1` and app-server version
 0.155.1. It uses experimental `dynamicTools` and opens Yo's existing
 hidden input with a fixed Yo-authored prompt for a **sample value only**. The
 tool takes no model-supplied prompt arguments, and each started call can open
@@ -292,7 +327,7 @@ claimed. These two bounded model Turns verify the sample-only diagnostic; they
 do not validate real credential delivery or persistence.
 
 The Grok adapter also has a separate opt-in diagnostic:
-`YO_GROK_SECRET_ENTRY_PROBE=1` on an ordinary Session. It requires Grok ACP to
+`YO_DELEGATED_SECRET_ENTRY_PROBE=1` on an ordinary Session. It requires Grok ACP to
 advertise HTTP MCP and attaches a loopback-only, randomly addressed MCP server
 to `session/new` and `session/load`. The server exposes the same no-argument
 `yo_secret_entry_probe` tool. A call opens a fixed Yo-authored hidden question
@@ -345,7 +380,8 @@ Session files. The checkout was unchanged, and the isolated tmux server and
 temporary files were removed. The TUI reported 41,762 input/1,269 output
 tokens for the failed first Turn and 66,752 input/457 output tokens for the
 successful retry. This verifies the sample-only diagnostic, not real credential
-delivery or persistence. Ordinary sessions still leave the probe disabled.
+delivery or persistence. Ordinary sessions still leave the diagnostic probe disabled;
+the separate production delivery tool follows the capability gates above.
 
 ## QwenCloud free text summary and continuation
 

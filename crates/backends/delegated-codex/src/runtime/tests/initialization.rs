@@ -19,7 +19,7 @@ use super::{
         thread_start_response, turn,
     },
 };
-use crate::{client::AppServerClient, transport::PeerPoll};
+use crate::{client::AppServerClient, runtime::state::DelegatedSecretTool, transport::PeerPoll};
 
 struct FailsOnInitializedPeer {
     incoming: VecDeque<Value>,
@@ -200,7 +200,7 @@ fn secret_entry_probe_registers_only_on_reviewed_wire() {
     ]);
     let client = AppServerClient::new(peer, Duration::from_secs(1)).with_experimental_api(true);
     let mut backend = Backend::new_uninitialized(client, "/workspace".into(), false, None);
-    backend.secret_probe_enabled = true;
+    backend.secret_tool = Some(DelegatedSecretTool::Probe);
     backend
         .execute_command(AgentCommand::CreateSession {
             session_id: session(1),
@@ -233,11 +233,71 @@ fn secret_entry_probe_registers_only_on_reviewed_wire() {
     ));
 }
 
+// 일반 Session은 검토된 wire에서 저장 제안이 없는 위임형 비밀 도구를 등록합니다.
+#[test]
+fn delegated_secret_tool_registers_closed_public_schema_on_reviewed_wire() {
+    let mut initialize = initialize_response(1, "0.155.1");
+    initialize["result"]["userAgent"] = json!("yo/0.155.1 (test)");
+    let (peer, sent) = FakePeer::new([
+        initialize,
+        json!({"id":2,"result":{"account":null}}),
+        thread_start_response(3, "thread-a"),
+    ]);
+    let client = AppServerClient::new(peer, Duration::from_secs(1)).with_experimental_api(true);
+    let mut backend = Backend::new_uninitialized(client, "/workspace".into(), false, None);
+    backend.secret_tool = Some(DelegatedSecretTool::Deliver);
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: session(1),
+        })
+        .unwrap();
+
+    let sent = sent.0.borrow();
+    let tool = &sent[3]["params"]["dynamicTools"][0];
+    assert_eq!(tool["name"], "yo_request_secret_input");
+    assert_eq!(
+        tool["inputSchema"]["required"],
+        json!(["title", "question", "purpose"])
+    );
+    assert!(
+        tool["inputSchema"]["properties"]
+            .get("storage_offer")
+            .is_none()
+    );
+    assert!(
+        tool["description"]
+            .as_str()
+            .unwrap()
+            .contains("retain or reuse")
+    );
+}
+
+// 검토되지 않은 Codex wire에서는 일반 Session을 막지 않고 위임형 비밀 도구만 생략합니다.
+#[test]
+fn delegated_secret_tool_is_omitted_on_unreviewed_wire() {
+    let mut initialize = initialize_response(1, "0.155.2");
+    initialize["result"]["userAgent"] = json!("yo/0.155.2 (test)");
+    let (peer, sent) = FakePeer::new([
+        initialize,
+        json!({"id":2,"result":{"account":null}}),
+        thread_start_response(3, "thread-a"),
+    ]);
+    let client = AppServerClient::new(peer, Duration::from_secs(1)).with_experimental_api(true);
+    let mut backend = Backend::new_uninitialized(client, "/workspace".into(), false, None);
+    backend.secret_tool = Some(DelegatedSecretTool::Deliver);
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: session(1),
+        })
+        .unwrap();
+    assert!(sent.0.borrow()[3]["params"].get("dynamicTools").is_none());
+}
+
 // 읽기 전용 리뷰 결합에는 진단 도구가 수동으로 켜져 있어도 등록되지 않습니다.
 #[test]
 fn secret_entry_probe_is_absent_from_read_only_review() {
     let (mut backend, sent) = backend_with_profile([thread_start_response(2, "thread-a")], true);
-    backend.secret_probe_enabled = true;
+    backend.secret_tool = Some(DelegatedSecretTool::Probe);
     backend
         .execute_command(AgentCommand::CreateSession {
             session_id: session(1),

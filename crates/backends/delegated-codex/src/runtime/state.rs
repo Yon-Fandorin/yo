@@ -28,9 +28,16 @@ pub(super) struct SessionBinding {
 pub(super) struct ItemBinding {
     pub(super) activity: ActivityRef,
     pub(super) dynamic_tool_call: Option<DynamicToolCall>,
+    pub(super) protected_dynamic_result: bool,
     pub(super) public_summary: Option<BTreeMap<u64, String>>,
     pub(super) proposed_plan: Option<String>,
     pub(super) command: Option<Value>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DelegatedSecretTool {
+    Probe,
+    Deliver,
 }
 
 pub(super) struct DynamicToolCall {
@@ -64,11 +71,11 @@ pub(super) struct InputQuestions {
     pub(super) drafts: HashMap<String, (Option<u32>, String)>,
     pub(super) capture: Option<Arc<Capture>>,
     pub(super) captured_answers: Vec<Option<(Answer, AnswerResponse)>>,
-    /// A failed final secret write has an unknown delivery outcome. Keep the
-    /// request bound, but make another response for that request impossible.
+    /// 마지막 비밀 전송이 실패하면 전달 여부를 알 수 없습니다. 요청 결속은 유지하되
+    /// 같은 요청에 다시 응답하지 못하게 합니다.
     pub(super) secret_delivery_blocked: bool,
-    /// Diagnostic tool result never includes the entered value.
-    pub(super) probe_only: bool,
+    /// 이 요청이 모델이 시작한 위임형 비밀 상호작용이면 그 종류를 보존합니다.
+    pub(super) secret_tool: Option<DelegatedSecretTool>,
 }
 
 #[derive(Clone)]
@@ -99,7 +106,7 @@ pub(super) struct Backend<P> {
     pub(super) selected_model: Option<String>,
     pub(super) cwd: String,
     pub(super) read_only_review: bool,
-    pub(super) secret_probe_enabled: bool,
+    pub(super) secret_tool: Option<DelegatedSecretTool>,
     pub(super) model_rebind_target: Option<(AccountId, ModelId)>,
     pub(super) new_session_target: Option<(AccountId, ModelId)>,
     pub(super) session: Option<SessionBinding>,
@@ -143,7 +150,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             selected_model: None,
             cwd,
             read_only_review,
-            secret_probe_enabled: false,
+            secret_tool: None,
             model_rebind_target,
             new_session_target: None,
             session: None,

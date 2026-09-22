@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{mem, time::Duration};
 
 use serde_json::{Value, json};
 use similar::TextDiff;
@@ -7,9 +7,12 @@ use yo_core::{
     ToolOutput,
 };
 
-use super::super::state::{
-    Backend, ToolBinding, ToolIdentity, format_tool_summary, identifier_at, non_empty_text,
-    raw_input_summary,
+use super::super::{
+    secret_probe,
+    state::{
+        Backend, ToolBinding, ToolIdentity, format_tool_summary, identifier_at, non_empty_text,
+        raw_input_summary,
+    },
 };
 use crate::{protocol, transport::JsonPeer};
 
@@ -57,7 +60,11 @@ impl<P: JsonPeer> Backend<P> {
                     == ActivityKind::FileChange,
                 result_activity: None,
                 output: json!({}),
+                deferred_output: json!({}),
                 identity,
+                generic_use_tool: secret_probe::is_generic_use_tool_update(update),
+                generic_target_known: secret_probe::has_mcp_target_identity(update),
+                protected_result: secret_probe::is_delivery_tool_update(update),
                 finished: false,
             },
         );
@@ -150,12 +157,70 @@ impl<P: JsonPeer> Backend<P> {
             .tools
             .get_mut(tool_id)
             .expect("validated tool binding remains present");
+        binding.generic_use_tool |= secret_probe::is_generic_use_tool_update(update);
+        binding.generic_target_known |= secret_probe::has_mcp_target_identity(update);
+        if secret_probe::is_delivery_tool_update(update) {
+            binding.protected_result = true;
+        }
         let mut output_changed = binding.result_activity.is_some()
             && (update.get("name").is_some() || update.get("title").is_some());
-        for field in ["rawInput", "rawOutput", "content", "locations", "_meta"] {
-            if let Some(value) = update.get(field) {
-                binding.output[field] = value.clone();
-                output_changed |= field != "rawInput" || binding.result_activity.is_some();
+        if binding.protected_result {
+            let discarded_deferred = binding
+                .deferred_output
+                .as_object()
+                .is_some_and(|output| !output.is_empty());
+            binding.deferred_output = json!({});
+            if let Some(output) = binding.output.as_object_mut() {
+                for field in ["rawOutput", "content", "locations", "_meta"] {
+                    output_changed |= output.remove(field).is_some();
+                }
+            }
+            if let Some(value) = update.get("rawInput") {
+                binding.output["rawInput"] = value.clone();
+                output_changed |= binding.result_activity.is_some();
+            }
+            if update.get("rawOutput").is_some()
+                || update.get("content").is_some()
+                || update.get("_meta").is_some()
+                || update.get("locations").is_some()
+                || discarded_deferred
+                || terminal.is_some()
+            {
+                binding.output["content"] =
+                    json!([{ "type": "text", "text": secret_probe::PROTECTED_RESULT }]);
+                output_changed = true;
+            }
+        } else if !binding.file_change
+            && !(binding
+                .deferred_output
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty)
+                && has_only_diff_content(update))
+            && (binding.identity.name.is_none()
+                || (binding.generic_use_tool && !binding.generic_target_known))
+        {
+            if let Some(value) = update.get("rawInput") {
+                binding.output["rawInput"] = value.clone();
+                output_changed |= binding.result_activity.is_some();
+            }
+            for field in ["rawOutput", "content", "locations", "_meta"] {
+                if let Some(value) = update.get(field) {
+                    binding.deferred_output[field] = value.clone();
+                }
+            }
+        } else {
+            let deferred = mem::replace(&mut binding.deferred_output, json!({}));
+            if let Some(fields) = deferred.as_object() {
+                for (field, value) in fields {
+                    binding.output[field] = value.clone();
+                    output_changed = true;
+                }
+            }
+            for field in ["rawInput", "rawOutput", "content", "locations", "_meta"] {
+                if let Some(value) = update.get(field) {
+                    binding.output[field] = value.clone();
+                    output_changed |= field != "rawInput" || binding.result_activity.is_some();
+                }
             }
         }
         let output = output_changed.then(|| tool_result_snapshot(tool_id, binding));
@@ -248,6 +313,7 @@ impl<P: JsonPeer> Backend<P> {
                 .expect("validated tool binding remains present");
             binding.finished = true;
             binding.output = json!({});
+            binding.deferred_output = json!({});
             if let Some(activity) = result_activity {
                 self.pending_events
                     .push_back(BackendEvent::ActivityFinished {
@@ -287,6 +353,9 @@ impl<P: JsonPeer> Backend<P> {
                 .tools
                 .get_mut(&tool_id)
                 .expect("validated tool binding remains present");
+            if secret_probe::is_delivery_tool_update(update) {
+                binding.protected_result = true;
+            }
             merge_tool_identity(&mut binding.identity, update, &tool_id)
         };
         if let Some(snapshot) = identity_snapshot {
@@ -307,6 +376,18 @@ fn activity_kind(kind: Option<&str>) -> ActivityKind {
         Some("think") => ActivityKind::ModelWork,
         _ => ActivityKind::ToolCall,
     }
+}
+
+fn has_only_diff_content(update: &Value) -> bool {
+    update
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|content| {
+            !content.is_empty()
+                && content
+                    .iter()
+                    .all(|item| item.get("type").and_then(Value::as_str) == Some("diff"))
+        })
 }
 
 fn tool_terminal_outcome(update: &Value) -> Result<Option<ActivityOutcome>, BackendFailure> {

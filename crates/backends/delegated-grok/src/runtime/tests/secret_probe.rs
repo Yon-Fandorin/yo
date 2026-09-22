@@ -12,7 +12,7 @@ use yo_core::{
 };
 
 use super::{AcpClient, Backend, FakePeer, backend, response, session, session_update, turn};
-use crate::runtime::secret_probe::SecretProbeBridge;
+use crate::runtime::secret_probe::{SecretProbeBridge, SecretToolMode};
 
 fn post(url: &str, message: Value) -> String {
     let address = url.strip_prefix("http://").unwrap();
@@ -38,7 +38,7 @@ fn prepared_backend() -> (Backend<FakePeer>, String) {
         response(3, json!({"sessionId":"grok-session-a"})),
         session_update("current_mode_update", json!({})),
     ]);
-    backend.secret_probe = Some(SecretProbeBridge::start().unwrap());
+    backend.secret_probe = Some(SecretProbeBridge::start(SecretToolMode::Probe).unwrap());
     let url = backend.secret_probe.as_ref().unwrap().server_spec()["url"]
         .as_str()
         .unwrap()
@@ -96,7 +96,7 @@ fn mcp_probe_uses_hidden_input_and_discards_the_sample() {
         response(3, json!({"sessionId":"grok-session-a"})),
         session_update("current_mode_update", json!({})),
     ]);
-    backend.secret_probe = Some(SecretProbeBridge::start().unwrap());
+    backend.secret_probe = Some(SecretProbeBridge::start(SecretToolMode::Probe).unwrap());
     let url = backend.secret_probe.as_ref().unwrap().server_spec()["url"]
         .as_str()
         .unwrap()
@@ -164,6 +164,93 @@ fn mcp_probe_uses_hidden_input_and_discards_the_sample() {
             .iter()
             .any(|message| message.to_string().contains("sample-only-4382"))
     );
+}
+
+// 위임형 MCP 요청은 숨김 입력을 로컬 HTTP 응답에 한 번만 싣고, 공개 Activity에는
+// 입력값 대신 고정 영수증만 남깁니다. 같은 JSON-RPC id 재전송은 새 입력을 열지 않습니다.
+#[test]
+fn mcp_delivery_sends_secret_once_and_rejects_duplicate_call_id() {
+    let (mut backend, sent) = backend([
+        response(3, json!({"sessionId":"grok-session-a"})),
+        session_update("current_mode_update", json!({})),
+    ]);
+    backend.secret_probe = Some(SecretProbeBridge::start(SecretToolMode::Deliver).unwrap());
+    let url = backend.secret_probe.as_ref().unwrap().server_spec()["url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: session(1),
+        })
+        .unwrap();
+    start_turn(&mut backend);
+
+    let call = json!({
+        "jsonrpc":"2.0", "id":21, "method":"tools/call",
+        "params":{
+            "name":"yo_request_secret_input",
+            "arguments":{
+                "title":"Deployment token",
+                "question":"Enter the temporary token.",
+                "purpose":"Authenticate the requested deployment."
+            }
+        }
+    });
+    let call_url = url.clone();
+    let first_call = call.clone();
+    let caller = thread::spawn(move || post(&call_url, first_call));
+    let started = (0..100)
+        .find_map(|_| match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::UserInputRequest { request_id },
+            }) => Some((activity, request_id)),
+            BackendPoll::Pending => {
+                thread::sleep(Duration::from_millis(10));
+                None
+            },
+            other => panic!("unexpected delivery event: {other:?}"),
+        })
+        .expect("delegated secret prompt");
+    let BackendPoll::Event(BackendEvent::ActivityUpdated {
+        update: yo_core::ActivityUpdate::TextSnapshot(snapshot),
+        ..
+    }) = backend.poll_event().unwrap()
+    else {
+        panic!("missing delegated secret question")
+    };
+    let question = ActivityQuestion::from_snapshot(&snapshot).unwrap();
+    assert!(question.is_secret);
+    assert!(question.plain_text.contains("Deployment token"));
+    assert!(question.plain_text.contains("They may retain or reuse it"));
+    assert!(question.plain_text.contains("Yo does not save this input"));
+
+    let canary = "grok-secret-한글\nsecond-line";
+    backend
+        .execute_command(AgentCommand::RespondToActivity {
+            request: yo_core::ActivityRequestRef::new(started.0, started.1),
+            response: ActivityResponse::SecretInput(SecretInput::new(canary).unwrap()),
+        })
+        .unwrap();
+    let response = caller.join().unwrap();
+    let body: Value = serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(body["result"]["content"][0]["text"], canary);
+    assert!(
+        !sent
+            .0
+            .borrow()
+            .iter()
+            .any(|message| message.to_string().contains(canary))
+    );
+
+    let duplicate = post(&url, call);
+    assert!(duplicate.contains("isError"));
+    for _ in 0..4 {
+        let event = backend.poll_event().unwrap();
+        assert!(!format!("{event:?}").contains(canary));
+    }
+    assert_eq!(backend.poll_event().unwrap(), BackendPoll::Pending);
 }
 
 // 도구 호출에 값이 실려 오면 입력 UI를 열지 않고 고정 오류만 반환한다.
@@ -433,7 +520,7 @@ fn extra_http_bytes_are_rejected_before_opening_hidden_input() {
 // 느리게 헤더를 보내는 연결도 백엔드 종료를 붙잡지 못한다.
 #[test]
 fn slow_http_client_does_not_block_probe_shutdown() {
-    let bridge = SecretProbeBridge::start().unwrap();
+    let bridge = SecretProbeBridge::start(SecretToolMode::Probe).unwrap();
     let url = bridge.server_spec()["url"].as_str().unwrap().to_owned();
     let address = url
         .strip_prefix("http://")
@@ -468,7 +555,8 @@ fn enabled_probe_requires_advertised_http_mcp() {
         "/workspace".into(),
         false,
     );
-    backend.secret_probe = Some(SecretProbeBridge::start().unwrap());
+    backend.secret_probe = Some(SecretProbeBridge::start(SecretToolMode::Probe).unwrap());
+    backend.secret_tool_mode = Some(SecretToolMode::Probe);
     let failure = backend
         .execute_command(AgentCommand::CreateSession {
             session_id: session(1),
@@ -479,4 +567,51 @@ fn enabled_probe_requires_advertised_http_mcp() {
             .message()
             .contains("does not advertise local HTTP MCP")
     );
+}
+
+// 일반 Session은 HTTP MCP를 지원할 때 환경변수 없이 위임형 비밀 도구를 붙입니다.
+#[test]
+fn delegated_secret_tool_starts_on_advertised_http_mcp() {
+    let (mut backend, sent) = backend([response(3, json!({"sessionId":"grok-session-a"}))]);
+    backend.secret_tool_mode = Some(SecretToolMode::Deliver);
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: session(1),
+        })
+        .unwrap();
+    assert_eq!(
+        sent.0.borrow()[2]["params"]["mcpServers"][0]["name"],
+        "yo_secret_input"
+    );
+    backend.shutdown().unwrap();
+}
+
+// HTTP MCP를 광고하지 않는 Grok에서도 일반 Session은 열리고 비밀 도구만 생략됩니다.
+#[test]
+fn delegated_secret_tool_is_omitted_without_http_mcp() {
+    let (peer, sent) = FakePeer::new([
+        response(
+            1,
+            json!({
+                "protocolVersion": 1,
+                "authMethods": [{"id":"cached_token","name":"cached_token"}],
+                "agentInfo": {"name":"grok","version":"1.0.40"},
+                "agentCapabilities": {}
+            }),
+        ),
+        response(2, json!({})),
+        response(3, json!({"sessionId":"grok-session-a"})),
+    ]);
+    let mut backend = Backend::new_uninitialized(
+        AcpClient::new(peer, Duration::from_secs(1)),
+        "/workspace".into(),
+        false,
+    );
+    backend.secret_tool_mode = Some(SecretToolMode::Deliver);
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: session(1),
+        })
+        .unwrap();
+    assert_eq!(sent.0.borrow()[2]["params"]["mcpServers"], json!([]));
 }

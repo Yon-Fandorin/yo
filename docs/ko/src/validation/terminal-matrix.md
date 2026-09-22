@@ -224,17 +224,44 @@ binding 옵션을 사용했다. 직접 비교에서 결과를 중립 문자열�
 
 ## 위임형 비밀 입력 검증 범위
 
-2026-09-22 현재 무료 모델을 사용한 Mac 실서비스 Turn에서 위임형
-`UserInputRequest`의 `isSecret: true`는 입증되지 않았다. Yo의 Codex 어댑터는
-해당 wire 형태를 결정적 테스트로 검증하지만, 설치된 Codex 0.155.1의 모델용
-`request_user_input` 도구에는 `isSecret`이 없고 비어 있지 않은 선택지가
-필요하다. 비동기 질문 도구는 이 요청 대신 일반 메시지를 만든다. 설치된 Grok
-1.0.40의 사용자 질문 경로에는 지원되는 비밀 표시가 없으며, 기존 실서비스 검증에서 확인한
-인증된 Grok 모델 경로는 구독 용량을 사용했다. 따라서 두 호스트의 기본 질문
-경로만으로는 이 정확한 무료 모델 실서비스 여정을 시작할 수 없다. 위의 관리형
-QwenCloud 결과를 위임형 호스트 검증으로 간주하지 않는다.
+설치된 host의 기본 질문 도구는 여전히 비밀 요청을 시작할 수 없다. Codex 0.155.1의
+모델용 `request_user_input`에는 `isSecret`이 없고 비어 있지 않은 선택지가 필요하며,
+비동기 질문 도구는 일반 메시지를 만든다. Grok 1.0.40의 사용자 질문 경로에도 지원되는
+비밀 표시가 없다. 따라서 Yo는 일반 쓰기 가능 위임형 Session에 별도
+`yo_request_secret_input` 도구를 제공한다. Codex는 정확히 검토한 0.155.1
+dynamic-tool wire에서만 등록하고, Grok은 ACP가 HTTP MCP를 advertise할 때만 연결한다.
+지원하지 않는 host와 읽기 전용 Session에서는 일반 host 사용을 막지 않고 생략한다.
 
-Codex의 선택형 진단 도구 `yo_secret_entry_probe`는 `YO_CODEX_SECRET_ENTRY_PROBE=1`이고
+도구는 크기를 제한한 공개 title·question·purpose만 받는다. Yo는 숨김 입력 전에 제출하면
+값을 위임형 host와 선택한 model에 한 번 보내며, 둘이 값을 보관하거나 재사용할 수 있고,
+Yo는 재사용을 위해 저장하지 않는다고 고정 문구로 알린다. 수락한 입력 하나는 정확한 host
+호출 하나에만 보낸다. 쓰기 실패는 전달 여부를 알 수 없고 재시도하지 않는다. Grok은
+중복 JSON-RPC call ID도 거부한다. 직접 도구 결과는 공개 Activity와 Journal에 투영하기
+전에 값 없는 고정 결과로 바꾼다. 뒤의 일반 assistant 출력에는 비밀 echo 검사를 하지
+않는다. 위임형 요청에는 저장 제안이나 복원 경로가 없으며, 일반 payload-free 비밀 제출
+영수증 뒤에는 restart resume과 fork가 계속 차단된다.
+
+2026-09-23 정확한 후보 `ec84c90e`와 인증된 로컬 Codex 0.155.1에서
+`local_codex_delivers_one_secret_without_public_echo`가 일회용 두 줄 canary로 통과했다.
+모델은 실제 전달 도구를 호출해 값을 받고 두 줄을 확인한 뒤 요구한 marker만 반환했다.
+Yo는 고정 보호 도구 결과와 payload-free 제출 영수증만 게시했다. 공개 Activity record와
+일회용 durable Session 저장소 어디에도 canary가 없었다. 실행 뒤 workspace와 저장소를
+제거했다. 이는 제한된 로컬 Codex 경로 하나의 증거이며 Codex와 선택한 model은 고지한
+보관 경계 안에 남는다.
+
+저장된 Apple Silicon Mac도 2026-09-23 같은 정확한 후보로 유료 Grok 검사를 통과했다.
+고정 host key 사전 점검, 일반 Grok adapter test 103개와 환경 test ignore 5개,
+HTTP-MCP Session 생성, 인증된 model Turn,
+Grok all-target Clippy와 Yo CLI 검사가 모두 통과했다. 모델은 실제 숨김 요청을 열고 합성
+두 줄 canary를 받은 뒤 형태를 확인한 경우에만 정확한 marker를 반환했다. 모든 공개 backend
+event에서 canary가 제외됐고 Yo는 payload-free 응답 영수증과 보호된 구조화 도구 결과를
+게시했다. 최종 성공 실행은 SHA-256
+`81b212daef9a4faf8c705e455cf8346f9555eeb7b7932ae160e29c7be58727cd`인 정확한
+115,756바이트 증분 Git bundle을 사용했으며 검증 runner가 원격 checkout과 bundle을
+제거했다. 승인된 구독 기반 model 용량을 사용한 실행이므로 무료 모델이나 host 보관
+동작에 대한 주장은 하지 않는다.
+
+Codex의 선택형 진단 도구 `yo_secret_entry_probe`는 `YO_DELEGATED_SECRET_ENTRY_PROBE=1`이고
 app-server 버전이 정확히 0.155.1일 때 새 일반 Session 생성 시 등록된다. 실험적
 `dynamicTools`를 사용해 Yo가 작성한 고정 질문으로 기존 숨김 입력에서 **모의값만**
 받는다. 도구는 모델이 작성한 질문 인자를 받지 않으며 시작된 호출 하나당 입력창은
@@ -266,7 +293,7 @@ server를 사용했고, 검사 뒤 둘 다 제거했다. 이는 숨김 입력 pr
 검증하지 않는다.
 
 Grok 어댑터에도 별도의 선택형 진단이 있다. 일반 Session에서
-`YO_GROK_SECRET_ENTRY_PROBE=1`을 사용한다. Grok ACP가 HTTP MCP를 지원한다고
+`YO_DELEGATED_SECRET_ENTRY_PROBE=1`을 사용한다. Grok ACP가 HTTP MCP를 지원한다고
 선언해야 하며, Yo는 `session/new`와 `session/load`에 루프백 전용의 임의 주소
 MCP 서버를 연결한다. 이 서버는 인자 없는 `yo_secret_entry_probe` 도구를
 제공한다. 호출하면 Yo가 작성한 고정 숨김 질문에서 **모의값만** 받고, 입력값을
@@ -312,7 +339,8 @@ Session 파일에는 모의값이 없었다. 체크아웃 변경도 없었고 �
 임시 파일은 제거했다. TUI의 첫 실패 Turn은 입력 41,762·출력 1,269 token,
 성공한 재시도는 입력 66,752·출력 457 token을 보고했다. 이 결과는 모의값 전용
 진단의 증거이며 실제 자격증명 전달이나 영구 저장의 증거는 아니다. 일반
-Session에서는 진단 도구가 여전히 비활성화된다.
+Session에서는 진단 도구가 여전히 비활성화되며, 별도 실제 전달 도구는 위 capability
+gate를 따른다.
 
 ## QwenCloud 무료 텍스트 요약과 재개
 
