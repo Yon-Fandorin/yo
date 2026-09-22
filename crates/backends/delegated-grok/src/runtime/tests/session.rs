@@ -459,6 +459,136 @@ fn local_grok_probe_opens_session_without_model_turn() {
     yo_backend::BackendAdapter::shutdown(&mut backend).unwrap();
 }
 
+// 유료 Grok 실서비스를 명시적으로 선택한 경우에만 모델의 MCP 도구 선택부터 숨김 입력,
+// 고정 결과 수신과 Turn 완료까지 검증합니다. 테스트 문자열은 실제 인증 정보가 아닙니다.
+#[test]
+#[ignore = "uses a paid Grok model Turn; requires cached login and YO_GROK_SECRET_ENTRY_PROBE=1"]
+fn local_grok_probe_completes_model_turn_with_discarded_sample() {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use yo_core::{ActivityApproval, ActivityQuestion, ActivityResponse, SecretInput};
+
+    assert_eq!(env::var("YO_GROK_SECRET_ENTRY_PROBE").as_deref(), Ok("1"));
+    let cwd = env::current_dir().unwrap();
+    let session_id = session(100);
+    let active_turn = turn(session_id, 1);
+    let mut backend = GrokBackend::spawn(GrokBackendConfig::new(cwd)).unwrap();
+    yo_backend::BackendAdapter::execute_command(
+        &mut backend,
+        AgentCommand::CreateSession { session_id },
+    )
+    .unwrap();
+    yo_backend::BackendAdapter::execute_command(
+        &mut backend,
+        AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::new("Diagnostic only: call the MCP tool yo_secret_entry_probe exactly once with empty arguments. After its result, state whether the diagnostic completed. Do not use other tools, inspect files, or ask another question."),
+        },
+    )
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut secret_request = None;
+    let mut approval_request = None;
+    let mut secret_submitted = false;
+    let mut fixed_result_seen = false;
+    let mut finished = false;
+    while Instant::now() < deadline {
+        match yo_backend::BackendAdapter::poll_event(&mut backend).unwrap() {
+            BackendPoll::Event(BackendEvent::ActivityStarted { activity, kind }) => match kind {
+                ActivityKind::UserInputRequest { request_id } => {
+                    assert!(secret_request.is_none(), "unexpected second user question");
+                    secret_request = Some(yo_core::ActivityRequestRef::new(activity, request_id));
+                },
+                ActivityKind::ApprovalRequest { request_id } => {
+                    assert!(
+                        approval_request.is_none(),
+                        "unexpected second permission request"
+                    );
+                    approval_request = Some(yo_core::ActivityRequestRef::new(activity, request_id));
+                },
+                _ => {},
+            },
+            BackendPoll::Event(BackendEvent::ActivityUpdated { activity, update }) => {
+                let text = match &update {
+                    yo_core::ActivityUpdate::TextDelta(text)
+                    | yo_core::ActivityUpdate::TextSnapshot(text) => text,
+                };
+                assert!(
+                    !text.contains("yo-mock-only-4382"),
+                    "sample leaked into backend event"
+                );
+                let yo_core::ActivityUpdate::TextSnapshot(snapshot) = update else {
+                    continue;
+                };
+                if let Some(request) =
+                    secret_request.filter(|request| request.activity() == activity)
+                {
+                    let question =
+                        ActivityQuestion::from_snapshot(&snapshot).expect("probe question");
+                    assert!(question.is_secret);
+                    assert!(question.plain_text.contains("made-up sample"));
+                    yo_backend::BackendAdapter::execute_command(
+                        &mut backend,
+                        AgentCommand::RespondToActivity {
+                            request,
+                            response: ActivityResponse::SecretInput(
+                                SecretInput::new("yo-mock-only-4382").unwrap(),
+                            ),
+                        },
+                    )
+                    .unwrap();
+                    secret_submitted = true;
+                } else if let Some(request) =
+                    approval_request.filter(|request| request.activity() == activity)
+                {
+                    let approval =
+                        ActivityApproval::from_snapshot(&snapshot).expect("permission profile");
+                    assert!(
+                        approval.plain_text.contains("yo_secret_entry_probe"),
+                        "unexpected tool permission"
+                    );
+                    yo_backend::BackendAdapter::execute_command(
+                        &mut backend,
+                        AgentCommand::RespondToActivity {
+                            request,
+                            response: ActivityResponse::Approval(ApprovalDecision::Approved),
+                        },
+                    )
+                    .unwrap();
+                } else if snapshot.contains("Sample secret entry verified locally and discarded.") {
+                    fixed_result_seen = true;
+                }
+            },
+            BackendPoll::Event(BackendEvent::ResumableTurnFinished { turn, .. })
+            | BackendPoll::Event(BackendEvent::TurnFinished { turn, .. }) => {
+                assert_eq!(turn, active_turn);
+                finished = true;
+                break;
+            },
+            BackendPoll::Pending => thread::sleep(Duration::from_millis(20)),
+            BackendPoll::Closed => panic!("Grok ACP closed before Turn completion"),
+            BackendPoll::Event(_) => {},
+        }
+    }
+    yo_backend::BackendAdapter::shutdown(&mut backend).unwrap();
+    assert!(
+        secret_submitted,
+        "model did not invoke the secret-entry probe"
+    );
+    assert!(
+        fixed_result_seen,
+        "Yo did not publish the fixed, sample-free result"
+    );
+    assert!(
+        finished,
+        "Grok model Turn did not complete before the deadline"
+    );
+}
+
 // Yo outer sandbox smoke는 실제 mount/write attestation 뒤 native sandbox 대신 exact
 // no-tools ACP argv로 인증까지만 수행하고 Agent Session이나 inference Turn을 만들지 않습니다.
 #[test]
