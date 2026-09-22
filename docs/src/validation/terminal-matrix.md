@@ -287,31 +287,33 @@ and calls in read-only review cannot open the editor. This does not add a
 secret flag to Grok's ordinary `_x.ai/ask_user_question` route or permit real
 credential delivery. Leave the opt-in off for ordinary work. Local adapter
 tests cover the MCP-to-hidden-input handoff and absence of the sample from the
-MCP and ACP responses; model selection of the tool is a separate live check.
+MCP and ACP responses; the paid Mac live check below covers model selection.
 
-The saved Apple Silicon Mac passed pinned-host-key and read-only tool preflight
-on 2026-09-22. It had the same Codex 0.155.1 and Grok 1.0.40 versions.
-Without a model prompt, Grok 1.0.40 advertised HTTP MCP and connected to a
-temporary loopback test server during ACP `session/new` (`server/discover`,
-`initialize`, and `tools/list`). This establishes the transport used by the
-diagnostic, not a model-invoked secret question.
-`grok models` listed `grok-4.7`, `grok-4.7-build-fast`, `grok-4.6` (default),
-and `grok-4.5`; this inventory alone supplies no free-entitlement evidence.
-No model prompt or secret value was sent to the Mac in that preflight. Host
-reachability therefore did not change the delegated model-invoked result:
-unverified.
+The saved Apple Silicon Mac passed pinned-host-key preflight with Grok 1.0.40
+on 2026-09-22. Earlier no-model checks established HTTP MCP discovery and
+Session creation. After subscription-backed model use was authorized, its
+`grok models` default was `grok-4.7`. Commit `588a0586` passed the Mac
+`grok-live` profile: 92 ordinary adapter tests, the installed-host MCP Session
+test, a paid model-Turn test, package Clippy, and Yo CLI check. In the live
+test, Grok selected `yo_secret_entry_probe`, Yo opened a hidden question,
+discarded a made-up sample, published only the fixed status, and completed the
+Turn. No backend event contained the sample. The exact 29,100-byte incremental
+Git bundle had SHA-256 `b066cbab4b55fd763fc122da5af20f6ac919bffc2b6298c5168ff387da2d83f9`;
+the validation runner removed the checkout and bundle.
 
-The reviewed candidate `e7811016` then passed the Mac temporary-checkout
-Grok profile: 92 adapter tests passed (3 installed-host tests are normally
-ignored), package Clippy and Yo CLI check passed, and the explicit opt-in
-installed-host test authenticated Grok 1.0.40, created an ACP Session with
-Yo's local HTTP MCP server, and shut it down without a model Turn. The same
-installed-host test passed locally on Linux. The Mac checkout and bundle were
-removed by the validation runner; only its reusable object cache remains.
-No real credential was entered into the probe or returned to Grok; the existing
-cached login was used for host authentication. A Grok model selecting the diagnostic
-tool remains unverified because the installed model catalog did not establish
-free Build entitlement, and the service check is constrained to free usage.
+The same binary then ran in an isolated 140×44 Mac tmux Fullscreen Yo Session
+with temporary Yo configuration and Session storage. An initial prompt barred
+all other tools, including Grok's required `search_tool`, so its unqualified
+tool call failed. The corrected prompt allowed discovery; Grok found
+`yo_secret_entry_probe__yo_secret_entry_probe`, invoked it with empty arguments,
+and the TUI showed the fixed hidden question. Typing the made-up sample showed
+only `Entered`; submitting it produced the fixed discard receipt and a completed
+Grok answer. The sample was absent from the captured screen and isolated Yo
+Session files. The checkout was unchanged, and the isolated tmux server and
+temporary files were removed. The TUI reported 41,762 input/1,269 output
+tokens for the failed first Turn and 66,752 input/457 output tokens for the
+successful retry. This verifies the sample-only diagnostic, not real credential
+delivery or persistence. Ordinary sessions still leave the probe disabled.
 
 ## QwenCloud free text summary and continuation
 

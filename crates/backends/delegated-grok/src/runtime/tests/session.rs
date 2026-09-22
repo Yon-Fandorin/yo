@@ -485,7 +485,7 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
         &mut backend,
         AgentCommand::StartTurn {
             turn: active_turn,
-            input: UserInput::new("Diagnostic only: call the MCP tool yo_secret_entry_probe exactly once with empty arguments. After its result, state whether the diagnostic completed. Do not use other tools, inspect files, or ask another question."),
+            input: UserInput::new("Diagnostic only: first use search_tool to find the fully qualified MCP tool name for yo_secret_entry_probe, then call that tool once with empty arguments. After its result, state whether the diagnostic completed. Do not use unrelated tools, inspect files, or ask another question."),
         },
     )
     .unwrap();
