@@ -8,9 +8,10 @@ use std::{
 
 use yo_backend_delegated_codex::{CodexBackend, CodexBackendConfig};
 use yo_core::{
-    ActivityKind, ActivityOutcome, ActivityUpdate, AgentEvent, AgentIntent, AgentSession,
-    AgentSessionPoll, CommandAdmission, HostWorkspacePath, SessionDescriptor, SubmissionOutcome,
-    TranscriptRecord, TurnOutcome, TurnRef, WorkspaceHostId,
+    ActivityKind, ActivityOutcome, ActivityQuestion, ActivityRequestRef, ActivityUpdate,
+    AgentEvent, AgentIntent, AgentSession, AgentSessionPoll, CommandAdmission, HostWorkspacePath,
+    SecretInput, SessionDescriptor, SubmissionOutcome, TranscriptRecord, TurnOutcome, TurnRef,
+    WorkspaceHostId,
     session_repository::{
         LocalSessionRepository, SessionRepository, SessionWriterRepository,
         recover_stored_session_continuation,
@@ -35,6 +36,211 @@ fn local_codex_completes_a_real_file_change() {
 
     result.unwrap();
     cleanup.unwrap();
+}
+
+// 실제 Codex가 동적 진단 도구를 선택한 뒤 입력값을 모델·저장소에 남기지 않고
+// 고정 완료 상태만 받는지, 한 번의 모델 Turn으로 확인한다.
+#[test]
+#[ignore = "requires Codex 0.155.1, authentication, YO_CODEX_SECRET_ENTRY_PROBE=1, and performs one model turn"]
+fn local_codex_dynamic_probe_discards_sample_secret() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = env::temp_dir().join(format!("yo-codex-secret-probe-{}-{unique}", process::id()));
+    fs::create_dir(&root).unwrap();
+
+    let result = run_local_secret_probe(&root);
+    let cleanup = fs::remove_dir_all(&root);
+
+    result.unwrap();
+    cleanup.unwrap();
+}
+
+fn run_local_secret_probe(root: &Path) -> Result<(), String> {
+    let workspace = root.join("workspace");
+    let storage = root.join("repository");
+    fs::create_dir(&workspace).map_err(|error| error.to_string())?;
+    let host = WorkspaceHostId::new().map_err(|error| error.to_string())?;
+    let descriptor = SessionDescriptor::new(
+        host,
+        HostWorkspacePath::normalize_local(&workspace).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let session_id = descriptor.session_id();
+    let mut repository = LocalSessionRepository::open(&storage, 16 * 1024 * 1024)
+        .map_err(|error| error.to_string())?;
+    repository
+        .acquire_session_writer(session_id)
+        .map_err(|error| error.to_string())?;
+    let backend = CodexBackend::spawn(
+        CodexBackendConfig::new(&workspace).with_request_timeout(Duration::from_secs(30)),
+    )
+    .map_err(|error| error.to_string())?;
+    let start_deadline = Instant::now() + Duration::from_secs(45);
+    let mut app =
+        AgentSession::start_cancellable_with_repository(backend, descriptor, repository, || {
+            Instant::now() >= start_deadline
+        })
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "secret-probe Session startup exceeded 45 seconds".to_owned())?;
+    let transcript = app.transcript_reader();
+    let sample = format!(
+        "YO_CODEX_SAMPLE_ONLY_{}",
+        WorkspaceHostId::new().map_err(|error| error.to_string())?
+    );
+    let mut cursor = None;
+    let mut request = None;
+    let mut question_is_secret = false;
+    let mut texts = Vec::new();
+    let mut admission = app
+        .dispatch(
+            AgentIntent::submit(
+                "Use yo_secret_entry_probe now with exactly an empty object. Do not call any other tool or ask any other question. After Yo returns its fixed discarded-sample status, reply exactly YO_CODEX_SECRET_PROBE_OK.",
+            )
+            .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    let admission_deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match admission {
+            CommandAdmission::Queued => break,
+            CommandAdmission::Backpressured(pending) if Instant::now() < admission_deadline => {
+                thread::sleep(Duration::from_millis(10));
+                admission = app.retry(pending).map_err(|error| error.to_string())?;
+            },
+            CommandAdmission::Backpressured(_) => {
+                let _ = app.shutdown();
+                return Err("secret-probe Turn was not admitted within 30 seconds".to_owned());
+            },
+            CommandAdmission::Rejected { rejection, .. } => {
+                let _ = app.shutdown();
+                return Err(format!("secret-probe Turn was rejected: {rejection:?}"));
+            },
+        }
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let outcome = 'turn: loop {
+        if Instant::now() >= deadline {
+            break Err("secret-probe Codex Turn exceeded 180 seconds".to_owned());
+        }
+        match app.poll().map_err(|error| error.to_string())? {
+            AgentSessionPoll::Pending => thread::sleep(Duration::from_millis(10)),
+            AgentSessionPoll::Closed => {
+                break Err("Codex closed before secret-probe Turn completed".to_owned());
+            },
+            AgentSessionPoll::Changed => {
+                let slice = transcript.read_after(cursor);
+                if let Some(last) = slice.entries().last() {
+                    cursor = Some(last.sequence());
+                }
+                for entry in slice.entries() {
+                    let TranscriptRecord::EventCommitted(event) = entry.record() else {
+                        continue;
+                    };
+                    match event {
+                        AgentEvent::ActivityStarted { activity, kind } => match kind {
+                            ActivityKind::UserInputRequest { request_id } => {
+                                if request
+                                    .replace(ActivityRequestRef::new(*activity, *request_id))
+                                    .is_some()
+                                {
+                                    break 'turn Err(
+                                        "Codex opened more than one secret-probe input".to_owned(),
+                                    );
+                                }
+                                let response = app
+                                    .dispatch(AgentIntent::RespondToSecretInput {
+                                        request: ActivityRequestRef::new(*activity, *request_id),
+                                        input: SecretInput::new(sample.clone())
+                                            .map_err(|error| error.to_string())?,
+                                    })
+                                    .map_err(|error| error.to_string())?;
+                                if response != CommandAdmission::Queued {
+                                    break 'turn Err(
+                                        "secret-probe input response was not immediately queued"
+                                            .to_owned(),
+                                    );
+                                }
+                            },
+                            ActivityKind::ApprovalRequest { .. } => {
+                                break 'turn Err(
+                                    "secret-probe Turn requested an unexpected approval".to_owned(),
+                                );
+                            },
+                            _ => {},
+                        },
+                        AgentEvent::ActivityUpdated { update, .. } => match update {
+                            ActivityUpdate::TextSnapshot(text) => {
+                                if ActivityQuestion::from_snapshot(text)
+                                    .is_some_and(|question| question.is_secret)
+                                {
+                                    question_is_secret = true;
+                                }
+                                texts.push(text.clone());
+                            },
+                            ActivityUpdate::TextDelta(text) => texts.push(text.clone()),
+                        },
+                        AgentEvent::TurnFinished { outcome, .. } => break 'turn Ok(outcome.clone()),
+                        AgentEvent::SessionCreated { .. }
+                        | AgentEvent::TurnStarted { .. }
+                        | AgentEvent::ActivityFinished { .. } => {},
+                    }
+                }
+            },
+        }
+    };
+    let shutdown = app.shutdown().map_err(|error| error.to_string());
+    let outcome = outcome?;
+    shutdown?;
+    drop(app);
+
+    if outcome != TurnOutcome::Completed {
+        return Err(format!("secret-probe Turn ended as {outcome:?}"));
+    }
+    if request.is_none() || !question_is_secret {
+        return Err("Codex did not select the hidden secret-entry probe".to_owned());
+    }
+    if !texts
+        .iter()
+        .any(|text| text.contains("Sample secret entry verified locally and discarded."))
+    {
+        return Err("Yo did not publish the fixed discarded-sample receipt".to_owned());
+    }
+    if !texts
+        .iter()
+        .any(|text| text.contains("YO_CODEX_SECRET_PROBE_OK"))
+    {
+        return Err("Codex did not finish after the fixed probe receipt".to_owned());
+    }
+    if texts.iter().any(|text| text.contains(&sample)) {
+        return Err("model-facing event text retained the sample value".to_owned());
+    }
+    let durable = fs::read_dir(&storage)
+        .map_err(|error| error.to_string())?
+        .try_fold(Vec::new(), |mut bytes, entry| {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_file()
+            {
+                bytes.extend(fs::read(entry.path()).map_err(|error| error.to_string())?);
+            }
+            Ok::<_, String>(bytes)
+        })?;
+    if durable
+        .windows(sample.len())
+        .any(|window| window == sample.as_bytes())
+    {
+        return Err("durable Session storage retained the sample value".to_owned());
+    }
+    let transcript_debug = format!("{:?}", transcript.read_after(None));
+    if transcript_debug.contains(&sample) {
+        return Err("Yo transcript retained the sample value".to_owned());
+    }
+    Ok(())
 }
 
 fn run_local_file_change(workspace: &Path) -> Result<(), String> {
