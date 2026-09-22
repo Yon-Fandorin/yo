@@ -276,6 +276,20 @@ probe call only while the opt-in is enabled and the wire version is still
 exactly 0.155.1.
 Recheck free entitlement before attempting any actual model request.
 
+On 2026-09-22, the authenticated local Codex 0.155.1 and the saved Apple
+Silicon Mac's Codex 0.155.1 each passed one isolated live model Turn at commit
+`bea7fb92`. The model selected `yo_secret_entry_probe`, Yo published an
+`isSecret: true` hidden-input question, and the test supplied a made-up canary
+only through the secret-input boundary. The fixed discarded-sample receipt and
+the requested final public reply completed the Turn. Neither model-facing
+activity text, the Yo transcript, nor the disposable Session repository
+contained the canary. The Mac run used a disposable checkout and tmux server;
+both were removed after the test. This is an AgentSession integration test of
+the hidden-input profile, not a physical Fullscreen TUI key-entry test. The
+app-server did not publish a usage receipt to either test, so no token count is
+claimed. These two bounded model Turns verify the sample-only diagnostic; they
+do not validate real credential delivery or persistence.
+
 The Grok adapter also has a separate opt-in diagnostic:
 `YO_GROK_SECRET_ENTRY_PROBE=1` on an ordinary Session. It requires Grok ACP to
 advertise HTTP MCP and attaches a loopback-only, randomly addressed MCP server

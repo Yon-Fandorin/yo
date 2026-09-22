@@ -252,6 +252,18 @@ Thread를 재개할 때 도구 정의를 보존할 수 있으며, Yo는 선택 �
 wire 버전이 여전히 정확히 0.155.1일 때만 호출을 처리한다. 실제 모델 요청 전에는 무료
 사용 자격을 확인해야 한다.
 
+2026-09-22 인증된 로컬 Codex 0.155.1과 저장된 Apple Silicon Mac의 Codex
+0.155.1은 커밋 `bea7fb92`에서 각각 격리된 실제 모델 Turn 1회를 통과했다. 모델이
+`yo_secret_entry_probe`를 선택했고 Yo가 `isSecret: true` 숨김 입력 질문을 게시했으며,
+검사는 비밀 입력 경계로 만든 모의 canary만 전달했다. 고정된 모의값 폐기 확인과 요청한
+공개 최종 답변으로 Turn이 완료됐다. 모델에 보이는 activity text, Yo transcript,
+일회용 Session 저장소 어디에도 canary는 없었다. Mac 실행은 일회용 checkout과 tmux
+server를 사용했고, 검사 뒤 둘 다 제거했다. 이는 숨김 입력 profile을 AgentSession에서
+통합 검증한 것이며 실제 Fullscreen TUI 키 입력 검사는 아니다. app-server가 어느
+검사에도 사용량 receipt를 게시하지 않았으므로 token 수를 주장하지 않는다. 이 두
+제한된 모델 Turn은 모의값 전용 진단을 확인할 뿐 실제 자격증명 전달이나 영구 저장을
+검증하지 않는다.
+
 Grok 어댑터에도 별도의 선택형 진단이 있다. 일반 Session에서
 `YO_GROK_SECRET_ENTRY_PROBE=1`을 사용한다. Grok ACP가 HTTP MCP를 지원한다고
 선언해야 하며, Yo는 `session/new`와 `session/load`에 루프백 전용의 임의 주소
