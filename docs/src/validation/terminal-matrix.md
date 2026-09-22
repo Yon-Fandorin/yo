@@ -242,6 +242,20 @@ secret values. No provider setting, fallback, retry, redirect, or Yo contract
 was changed to obtain the successful run. No zero-cost claim is made from the
 free-quota balance or usage receipts.
 
+## Delegated secret-input coverage
+
+As of 2026-09-22, no free-model Mac live Turn has proved a delegated
+`UserInputRequest` with `isSecret: true`. Yo's Codex adapter has deterministic
+coverage for that wire shape, but installed Codex 0.155.1 does not expose
+`isSecret` through its model-facing `request_user_input` tool and requires
+nonempty choices. Its async question tool produces an ordinary message rather
+than this request. Installed Grok 1.0.40's user-question path has no supported
+secret flag, and the authenticated Grok model route previously observed used
+subscription capacity. Neither host can originate this exact free-model live
+journey. The managed QwenCloud result above does not establish delegated-host
+behavior. Recheck host capability and free entitlement before claiming that
+coverage; the external host prerequisite is currently absent.
+
 ## QwenCloud free text summary and continuation
 
 On 2026-09-13, an authenticated, read-only quota lookup selected
