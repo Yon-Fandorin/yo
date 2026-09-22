@@ -508,6 +508,56 @@ fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
     }
 }
 
+fn describe_live_tool_result(snapshot: &str) -> String {
+    let Some(output) = yo_core::ToolOutput::from_snapshot(snapshot) else {
+        return "parsed=false".into();
+    };
+    let arguments = output.arguments.as_ref().and_then(Value::as_object);
+    let result = output.result.as_ref().and_then(Value::as_object);
+    let tool_name = result
+        .and_then(|result| result.get("_meta"))
+        .and_then(|meta| meta.get("x.ai/tool"))
+        .and_then(|tool| tool.get("name"))
+        .and_then(Value::as_str);
+    let name_class = match tool_name {
+        Some("search_tool") => "search_tool",
+        Some("use_tool") => "use_tool",
+        Some(_) => "other",
+        None => "absent",
+    };
+    let argument_keys = arguments
+        .map(|arguments| arguments.keys().map(String::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let result_keys = result
+        .map(|result| result.keys().map(String::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let location_count = result
+        .and_then(|result| result.get("locations"))
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let content_count = output
+        .content_items
+        .as_ref()
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let fixed_result_matches =
+        output.content_items.as_ref() == Some(&json!([{"type":"text", "text":LIVE_PROBE_RESULT}]));
+    format!(
+        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} server_present={} error_present={}",
+        arguments
+            .and_then(|arguments| arguments.get("tool_name"))
+            .and_then(Value::as_str)
+            == Some(LIVE_PROBE_TOOL),
+        arguments.and_then(|arguments| arguments.get("tool_input")) == Some(&json!({})),
+        arguments
+            .and_then(|arguments| arguments.get("query"))
+            .and_then(Value::as_str)
+            .is_some_and(|query| query.contains("yo_secret_entry_probe")),
+        output.server.is_some(),
+        output.error.is_some(),
+    )
+}
+
 // Grok의 display title이 아니라 보존된 ToolOutput의 실제 wrapper·target·결과를 판별합니다.
 #[test]
 fn live_probe_result_classifier_requires_exact_structured_output() {
@@ -757,8 +807,12 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
                     },
                     ActivityKind::ToolResult => {
                         assert_eq!(outcome, ActivityOutcome::Completed);
-                        let classification = classify_live_tool_result(text)
-                            .expect("unexpected or incomplete Grok ToolOutput");
+                        let classification = classify_live_tool_result(text).unwrap_or_else(|| {
+                            panic!(
+                                "unexpected or incomplete Grok ToolOutput: {}",
+                                describe_live_tool_result(text)
+                            )
+                        });
                         assert_eq!(classified_results.get(&activity), Some(&classification));
                         if classification == LiveToolResult::Probe {
                             assert!(!probe_tool_completed, "probe tool ran more than once");
