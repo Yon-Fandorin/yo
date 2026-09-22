@@ -487,6 +487,17 @@ fn contains_probe_tool(value: &Value) -> bool {
     }
 }
 
+fn contains_exact_text(value: &Value, expected: &str) -> bool {
+    match value {
+        Value::String(text) => text == expected,
+        Value::Array(items) => items.iter().any(|item| contains_exact_text(item, expected)),
+        Value::Object(fields) => fields
+            .values()
+            .any(|field| contains_exact_text(field, expected)),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
+    }
+}
+
 fn classify_live_tool_result(snapshot: &str) -> Option<LiveToolResult> {
     let output = yo_core::ToolOutput::from_snapshot(snapshot)?;
     if output.server.is_some() || output.error.is_some() {
@@ -566,8 +577,27 @@ fn describe_live_tool_result(snapshot: &str) -> String {
     let fixed_result_matches =
         output.content_items.as_ref() == Some(&json!([{"type":"text", "text":LIVE_PROBE_RESULT}]));
     let exact_content = json!([{"type":"text", "text":LIVE_PROBE_RESULT}]);
-    let fixed_raw_output_matches = result.and_then(|result| result.get("rawOutput"))
-        == Some(&json!({"content":exact_content}));
+    let raw_output = result.and_then(|result| result.get("rawOutput"));
+    let raw_output_keys = raw_output
+        .and_then(Value::as_object)
+        .map(|output| output.keys().map(String::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let raw_content = raw_output.and_then(|output| output.get("content"));
+    let fixed_raw_output_matches = raw_output == Some(&json!({"content":exact_content}));
+    let fixed_raw_content_matches = raw_content == Some(&exact_content);
+    let fixed_raw_text_present = raw_output.is_some_and(|output| {
+        contains_exact_text(output, LIVE_PROBE_RESULT)
+            || output
+                .as_str()
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .is_some_and(|parsed| contains_exact_text(&parsed, LIVE_PROBE_RESULT))
+    });
+    let raw_error_class = match raw_output.and_then(|output| output.get("isError")) {
+        Some(Value::Bool(false)) => "false",
+        Some(Value::Bool(true)) => "true",
+        Some(_) => "other",
+        None => "absent",
+    };
     let catalog_contains_probe = output
         .content_items
         .as_ref()
@@ -576,7 +606,7 @@ fn describe_live_tool_result(snapshot: &str) -> String {
             .and_then(|result| result.get("rawOutput"))
             .is_some_and(contains_probe_tool);
     format!(
-        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} catalog_contains_probe={catalog_contains_probe} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} fixed_raw_output_matches={fixed_raw_output_matches} server_present={} error_present={}",
+        "parsed=true name={name_class} argument_keys={argument_keys:?} result_keys={result_keys:?} locations={location_count} content_items={content_count} catalog_contains_probe={catalog_contains_probe} target_matches={} input_empty={} query_matches={} fixed_result_matches={fixed_result_matches} raw_output_type={} raw_output_keys={raw_output_keys:?} raw_content_type={} raw_content_count={} fixed_raw_output_matches={fixed_raw_output_matches} fixed_raw_content_matches={fixed_raw_content_matches} fixed_raw_text_present={fixed_raw_text_present} raw_error={raw_error_class} server_present={} error_present={}",
         arguments
             .and_then(|arguments| arguments.get("tool_name"))
             .and_then(Value::as_str)
@@ -586,9 +616,23 @@ fn describe_live_tool_result(snapshot: &str) -> String {
             .and_then(|arguments| arguments.get("query"))
             .and_then(Value::as_str)
             .is_some_and(|query| query.contains("yo_secret_entry_probe")),
+        raw_output.map_or("absent", json_type_name),
+        raw_content.map_or("absent", json_type_name),
+        raw_content.and_then(Value::as_array).map_or(0, Vec::len),
         output.server.is_some(),
         output.error.is_some(),
     )
+}
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 // Grok의 display title이 아니라 보존된 ToolOutput의 실제 wrapper·target·결과를 판별합니다.
