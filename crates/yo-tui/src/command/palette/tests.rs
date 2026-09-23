@@ -1,4 +1,5 @@
 use super::command_query;
+use crate::overlay::{PanelSnapshot, SelectionEntry};
 
 // draft 전체의 첫 slash token만 ASCII case를 정규화한 query가 되고, 앞쪽 공백은
 // command 소유권을 바꾸지 않는다.
@@ -21,5 +22,17 @@ fn embedded_or_completed_slash_tokens_are_not_commands() {
 // no-match snapshot을 만들 수 있어야 한다.
 #[test]
 fn unsafe_query_text_is_not_projected_into_the_panel() {
-    super::panel_snapshot("\u{1b}");
+    let snapshot = super::panel_snapshot("\u{1b}");
+    let expected = PanelSnapshot::new(
+        "Commands",
+        vec![SelectionEntry::disabled(
+            "command-status",
+            "No matching commands",
+            None,
+            "not selectable",
+        )],
+    )
+    .unwrap();
+
+    assert_eq!(snapshot, expected);
 }

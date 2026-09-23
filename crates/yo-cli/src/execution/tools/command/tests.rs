@@ -175,11 +175,12 @@ fn assert_process_disappears(pid: i32) {
 // 별도 test process가 새 Session/process group으로 이동한 뒤 stdout pipe를 계속 쓰며,
 // run_command cleanup이 local read end를 닫았을 때만 marker를 게시합니다.
 #[test]
+#[ignore = "cleanup 테스트가 자식 프로세스로 실행하는 보조 테스트"]
 fn detached_pipe_holder_helper() {
-    let Some(pid_path) = env::var_os("YO_COMMAND_DETACHED_PIPE_PID") else {
-        return;
-    };
-    let closed_path = env::var_os("YO_COMMAND_DETACHED_PIPE_CLOSED").unwrap();
+    let pid_path = env::var_os("YO_COMMAND_DETACHED_PIPE_PID")
+        .expect("the cleanup test must provide the helper PID path");
+    let closed_path = env::var_os("YO_COMMAND_DETACHED_PIPE_CLOSED")
+        .expect("the cleanup test must provide the pipe-close marker path");
     setsid().unwrap();
     fs::write(&pid_path, process::id().to_string()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -296,7 +297,7 @@ fn cleanup_releases_pipe_readers_held_by_an_escaped_writer() {
     let pid_argument = shell_quote(pid_path.to_str().unwrap());
     let closed_argument = shell_quote(closed_path.to_str().unwrap());
     let command = format!(
-        "YO_COMMAND_DETACHED_PIPE_PID={pid_argument} YO_COMMAND_DETACHED_PIPE_CLOSED={closed_argument} {executable} --exact execution::tools::command::tests::detached_pipe_holder_helper --nocapture --test-threads=1 & while [ ! -s {pid_argument} ]; do sleep 0.01; done; exit 0"
+        "YO_COMMAND_DETACHED_PIPE_PID={pid_argument} YO_COMMAND_DETACHED_PIPE_CLOSED={closed_argument} {executable} --exact execution::tools::command::tests::detached_pipe_holder_helper --ignored --nocapture --test-threads=1 & while [ ! -s {pid_argument} ]; do sleep 0.01; done; exit 0"
     );
     let mut execution = spawn(
         &command,

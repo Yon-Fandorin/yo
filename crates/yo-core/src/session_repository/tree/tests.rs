@@ -319,6 +319,7 @@ fn disk_tree_keeps_inline_parent_after_child_work_and_parent_deletion() {
         thread::sleep(Duration::from_millis(1));
         admission = live.retry(pending).unwrap();
     }
+    assert!(matches!(admission, CommandAdmission::Queued));
     let reader = LocalSessionReader::open(&directory.0).unwrap();
     loop {
         live.poll().unwrap();

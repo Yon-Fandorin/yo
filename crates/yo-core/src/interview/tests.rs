@@ -1203,8 +1203,8 @@ fn missing_recovery_key_is_not_regenerated_over_surviving_ciphertext() {
     );
 }
 
-// Expiry is repository-wide and does not wait for the user to reopen the copy.
-// The public reference is published away before its encrypted entry is removed.
+// 만료 처리는 사용자가 working copy를 다시 열 때까지 기다리지 않는다.
+// 암호화 항목을 삭제하기 전에 공개 참조를 먼저 게시 해제한다.
 #[test]
 fn maintenance_expires_unopened_secret_recovery() {
     let temp = Temp::new();

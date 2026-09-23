@@ -39,15 +39,13 @@ fn rejects_an_unanchored_suffix_instead_of_falling_back_to_an_older_anchor() {
     )
     .unwrap()
     .unwrap();
-    let mut admission = session
+    let admission = session
         .dispatch(AgentIntent::Submit(InputSubmission::new(
             SubmissionId::new().unwrap(),
             UserInput::new("unfinished"),
         )))
         .unwrap();
-    while let CommandAdmission::Backpressured(pending) = admission {
-        admission = session.retry(pending).unwrap();
-    }
+    enqueue_submission(&mut session, admission);
     let deadline = Instant::now() + Duration::from_secs(1);
     while repository.entries.lock().unwrap().len() < before + 2 {
         session.poll().unwrap();

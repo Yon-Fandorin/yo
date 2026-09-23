@@ -89,7 +89,7 @@ class PreviewTests(unittest.TestCase):
             finally:
                 if process.poll() is None:
                     process.kill()
-                    process.wait()
+                    process.wait(timeout=5)
         finally:
             os.close(master)
             os.close(slave)

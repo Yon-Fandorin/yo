@@ -66,13 +66,22 @@ if [[ -s "${fixture}/clean.err" ||
     echo "clean state: wrapper artifacts must not dirty the launch snapshot" >&2
     exit 1
 fi
+rm -rf -- "${clean_repository}/run-logs"
+clean_fixture_state=$(git -C "${clean_repository}" status --porcelain=v1 --untracked-files=normal)
+if [[ -n "${clean_fixture_state}" ]]; then
+    echo "clean state: fixture repository was not restored after the snapshot check" >&2
+    exit 1
+fi
+printf '%s\n' 'fixture change' >"${clean_repository}/worktree-dirty"
 
-PATH="${fixture}/bin:${PATH}" \
-SYSTEM_MKTEMP="${system_mktemp}" \
-YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+(
+    cd "${clean_repository}"
+    PATH="${fixture}/bin:${PATH}" \
+    SYSTEM_MKTEMP="${system_mktemp}" \
+    YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
     bash "${checker}" --summary-out "${summary_root}/success.json" success -- bash -c \
     'printf "visible only in the full log\n"; printf "diagnostic\n" >&2' \
-    >"${fixture}/success.out" 2>"${fixture}/success.err"
+) >"${fixture}/success.out" 2>"${fixture}/success.err"
 
 if [[ -s "${fixture}/success.err" ]]; then
     echo "success: wrapper must keep command output out of stderr" >&2
@@ -92,17 +101,19 @@ if [[ "${success_summary}" != *'"schema":"yo.validation-run-summary/v1alpha2"'* 
     "${success_summary}" != *'"status":"passed"'* ||
     "${success_summary}" != *'"exit_code":0'* ||
     "${success_summary}" != *'"log_hash":"sha256:1c1e319bdabcf409b2276fa2cce92da2a75b5d642552bfba278bfe680a2a5789"'* ||
-    "${success_summary}" != *'"head_commit":"'* ||
+    "${success_summary}" != *'"head_commit":"'"${clean_head}"'"'* ||
     "${success_summary}" != *'"command_argv_count":3'* ||
     "${success_summary}" != *'"command_argv_hash":"sha256:b2feeb2dc7a19ae550541f96076627745b156652ed171a1f7bc182cbdee19b74"'* ||
+    "${success_summary}" != *'"worktree_state":"dirty"'* ||
     "${success_summary}" != *'"reused":false'* ||
     "${success_summary}" != *'"reuse_policy":"reviewed-descendant/v1"'* ]]; then
-    echo "success: unexpected summary" >&2
+    echo "success: unexpected summary for the dirty fixture repository" >&2
     exit 1
 fi
-if [[ "${success_summary}" != *'"worktree_state":"clean"'* &&
-    "${success_summary}" != *'"worktree_state":"dirty"'* ]]; then
-    echo "success: missing bounded worktree state" >&2
+rm -f -- "${clean_repository}/worktree-dirty"
+clean_fixture_state=$(git -C "${clean_repository}" status --porcelain=v1 --untracked-files=normal)
+if [[ -n "${clean_fixture_state}" ]]; then
+    echo "success: fixture repository was not restored after the worktree check" >&2
     exit 1
 fi
 success_log=$(find "${log_root}" -type f -name 'success.log.*' -print)

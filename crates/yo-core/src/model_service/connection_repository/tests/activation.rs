@@ -1,8 +1,8 @@
 use super::*;
 
-// enabled omission is the canonical old-readable state. Disabling writes only exact false and
-// clears an exact stored model preference in the same CAS; enabling is idempotent and never
-// recreates that preference.
+// enabled 생략은 이전 형식과 호환되는 기본 상태다. 비활성화는 정확한 false만 기록하고
+// 같은 CAS에서 정확히 일치하는 저장 모델 선호도만 지운다. 활성화는 멱등적이며 선호도를 복원하지
+// 않는다.
 #[test]
 fn model_activation_round_trips_and_clears_only_the_disabled_default() {
     let (_directory, repository) = repository("model-activation-round-trip");
@@ -64,8 +64,8 @@ fn model_activation_round_trips_and_clears_only_the_disabled_default() {
     );
 }
 
-// The durable activation field is a one-value extension: absence and false are valid, while
-// true, null, strings, and other future spellings fail through the ordinary closed decoder.
+// 영속 활성화 필드는 값 하나만 추가하는 확장이다. 생략 또는 false만 유효하고 true, null,
+// 문자열과 이후에 추가될 다른 표기는 닫힌 디코더에서 거부된다.
 #[test]
 fn durable_activation_accepts_only_exact_false_when_present() {
     let (_directory, repository) = repository("closed-activation-wire");
@@ -97,8 +97,8 @@ fn durable_activation_accepts_only_exact_false_when_present() {
     }
 }
 
-// Reimporting or reconnecting an exact complete binding preserves its operator activation state;
-// replacing the complete profile opens a new enabled binding epoch.
+// 완전히 동일한 바인딩을 다시 가져오거나 연결하면 운영자가 정한 활성 상태를 유지한다.
+// 전체 프로필이 달라지면 새 활성 바인딩 epoch가 시작된다.
 #[test]
 fn exact_binding_republication_preserves_activation_but_changed_binding_enables() {
     let (_directory, repository) = repository("activation-republication");

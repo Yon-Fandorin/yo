@@ -164,6 +164,28 @@ fn wait_for_submission_outcome(session: &mut AgentSession) -> SubmissionOutcome 
     }
 }
 
+fn enqueue_submission(session: &mut AgentSession, mut admission: CommandAdmission) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match admission {
+            CommandAdmission::Queued => return,
+            CommandAdmission::Backpressured(pending) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "submission remained backpressured past the test deadline"
+                );
+                thread::sleep(Duration::from_millis(1));
+                admission = session
+                    .retry(pending)
+                    .expect("the submitted command must remain retryable");
+            },
+            CommandAdmission::Rejected { .. } => {
+                panic!("the test submission was rejected instead of queued")
+            },
+        }
+    }
+}
+
 struct TestInputAdmission;
 
 impl InputAdmissionHost for TestInputAdmission {

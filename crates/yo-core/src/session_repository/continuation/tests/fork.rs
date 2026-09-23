@@ -132,15 +132,13 @@ fn failed_idle_replacement_keeps_the_previous_backend_usable() {
     ));
     assert_eq!(repository.entries.lock().unwrap().len(), entries_before);
 
-    let mut admission = session
+    let admission = session
         .dispatch(AgentIntent::Submit(InputSubmission::new(
             SubmissionId::new().unwrap(),
             UserInput::new("still usable"),
         )))
         .unwrap();
-    while let CommandAdmission::Backpressured(pending) = admission {
-        admission = session.retry(pending).unwrap();
-    }
+    enqueue_submission(&mut session, admission);
     let transcript = session.transcript_reader();
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
@@ -225,15 +223,13 @@ fn replacement_resume_publishes_a_new_binding_epoch_from_the_exact_anchor() {
     )
     .unwrap()
     .unwrap();
-    let mut admission = session
+    let admission = session
         .dispatch(AgentIntent::Submit(InputSubmission::new(
             SubmissionId::new().unwrap(),
             UserInput::new("continue on replacement"),
         )))
         .unwrap();
-    while let CommandAdmission::Backpressured(pending) = admission {
-        admission = session.retry(pending).unwrap();
-    }
+    enqueue_submission(&mut session, admission);
     let deadline = Instant::now() + Duration::from_secs(1);
     while repository.entries.lock().unwrap().len() < before + 4 {
         session.poll().unwrap();

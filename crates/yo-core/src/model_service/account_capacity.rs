@@ -305,9 +305,8 @@ mod tests {
         assert!(AccountCapacityWindow::new(101, None, None).is_err());
     }
 
-    // Count-based Providers normalize conservatively: the displayed remaining percentage never
-    // exceeds the exact remaining ratio, and overage saturates instead of wrapping or rejecting a
-    // still meaningful exhausted window.
+    // 사용량 수 기반 제공자의 남은 비율은 실제 남은 비율을 넘지 않도록 보수적으로 계산하고,
+    // 초과 사용량은 유효한 소진 상태를 유지하도록 포화시킨다.
     #[test]
     fn capacity_window_normalizes_provider_usage_counts() {
         let partial = AccountCapacityWindow::from_usage_ratio(1, 3, Some(300), None).unwrap();

@@ -110,8 +110,8 @@ fn durable_profile_whole_field_null_is_rejected() {
     assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
 }
 
-// Optional durable fields distinguish omission from an explicitly authored null. Null is never
-// accepted as an alias for "not present" at the connections.yaml boundary.
+// 선택적 영속 필드는 생략과 명시적 null을 구분한다. connections.yaml 경계에서
+// null은 "값 없음"의 별칭으로 허용하지 않는다.
 #[test]
 fn durable_optional_whole_field_nulls_are_rejected() {
     let replacements = [

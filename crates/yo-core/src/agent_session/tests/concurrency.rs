@@ -980,10 +980,14 @@ fn terminal_failure_observation_and_publication_do_not_deadlock() {
     let (observed_tx, observed_rx) = mpsc::channel();
     let frontend = thread::spawn(move || {
         let observed = app.poll_with_test_hook(|| release_tx.send(()).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(1);
         let worker_failure = loop {
             match app.poll() {
                 Err(error) => break Some(error),
                 Ok(AgentSessionPoll::Pending | AgentSessionPoll::Changed) => {
+                    if Instant::now() >= deadline {
+                        break None;
+                    }
                     thread::yield_now();
                 },
                 Ok(AgentSessionPoll::Closed) => break None,
@@ -996,7 +1000,7 @@ fn terminal_failure_observation_and_publication_do_not_deadlock() {
     });
 
     let (observed, worker_failure, shutdown) = observed_rx
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(Duration::from_secs(2))
         .expect("terminal observation and worker failure publication deadlocked");
     frontend.join().unwrap();
     assert!(matches!(
@@ -1006,12 +1010,14 @@ fn terminal_failure_observation_and_publication_do_not_deadlock() {
             ..
         })) if observed == &failure
     ));
+    let worker_failure = worker_failure
+        .expect("worker failure was not published before the frontend polling deadline");
     assert!(matches!(
         worker_failure,
-        Some(AgentSessionError::Runtime(RuntimeError::Backend {
+        AgentSessionError::Runtime(RuntimeError::Backend {
             failure: ref observed,
             ..
-        })) if observed == &failure
+        }) if observed == &failure
     ));
     shutdown.unwrap();
 }

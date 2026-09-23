@@ -300,7 +300,7 @@ fn accepted_commit_editor_allows_new_commit_but_amend_file_cannot_bypass_guard()
     let executable = env::current_exe().unwrap();
     let script = format!(
         "#!/bin/sh\n\
-         YO_XTASK_TEST_PREPARE_CHILD=1 \\\n         YO_XTASK_TEST_PREPARE_SOURCE=\"${{2-}}\" \\\n         YO_XTASK_TEST_PREPARE_COMMIT=\"${{3-}}\" \\\n         YO_XTASK_TEST_PREPARE_CUTOVER='{cutover}' \\\n         '{}' --exact \
+         YO_XTASK_TEST_PREPARE_CHILD=1 \\\n         YO_XTASK_TEST_PREPARE_SOURCE=\"${{2-}}\" \\\n         YO_XTASK_TEST_PREPARE_COMMIT=\"${{3-}}\" \\\n         YO_XTASK_TEST_PREPARE_CUTOVER='{cutover}' \\\n         '{}' --exact --ignored \
          impact::review_coverage::tests::prepare_commit_message_hook_child --nocapture\n",
         executable.display()
     );
@@ -377,10 +377,10 @@ fn accepted_commit_editor_allows_new_commit_but_amend_file_cannot_bypass_guard()
 // end-to-end Git hook의 자식 test process는 전달받은 실제 source/commit을 같은
 // production guard로 검사하여 테스트 전용 shell 판단이 결과를 대신하지 않는다.
 #[test]
+#[ignore = "상위 통합 테스트가 자식 프로세스로 실행"]
 fn prepare_commit_message_hook_child() {
-    if env::var_os("YO_XTASK_TEST_PREPARE_CHILD").is_none() {
-        return;
-    }
+    env::var_os("YO_XTASK_TEST_PREPARE_CHILD")
+        .expect("상위 hook 테스트가 자식 실행 marker를 전달해야 합니다");
     let optional = |name| env::var(name).ok().filter(|value| !value.is_empty());
     let source = optional("YO_XTASK_TEST_PREPARE_SOURCE");
     let commit = optional("YO_XTASK_TEST_PREPARE_COMMIT");

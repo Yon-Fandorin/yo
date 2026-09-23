@@ -203,16 +203,13 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
         duplicate,
         crate::AgentSessionError::DuplicateSubmissionId(id) if id == stored_submission()
     ));
-    let mut admission = session
+    let admission = session
         .dispatch(AgentIntent::Submit(InputSubmission::new(
             second_submission,
             UserInput::new("continue"),
         )))
         .unwrap();
-    while let CommandAdmission::Backpressured(pending) = admission {
-        thread::sleep(Duration::from_millis(1));
-        admission = session.retry(pending).unwrap();
-    }
+    enqueue_submission(&mut session, admission);
 
     let deadline = Instant::now() + Duration::from_secs(1);
     while repository.entries.lock().unwrap().len() < before + 3 {

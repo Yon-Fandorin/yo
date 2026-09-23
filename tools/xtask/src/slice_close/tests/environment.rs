@@ -19,6 +19,7 @@ fn git_helpers_ignore_poisoned_hook_environment() {
     let result = Command::new(env::current_exe().unwrap())
         .args([
             "--exact",
+            "--ignored",
             "slice_close::tests::environment::poisoned_hook_child",
             "--nocapture",
         ])
@@ -35,11 +36,22 @@ fn git_helpers_ignore_poisoned_hook_environment() {
         .env("GIT_CONFIG_VALUE_0", git_dir.join("poisoned-hooks"))
         .output()
         .unwrap();
+    let child_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
 
     assert!(
         result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
+        "child test failed:\n{child_output}"
+    );
+    assert!(
+        child_output.contains("running 1 test")
+            && child_output
+                .contains("test slice_close::tests::environment::poisoned_hook_child ... ok")
+            && child_output.contains("1 passed; 0 failed; 0 ignored"),
+        "exact ignored child test did not run and pass:\n{child_output}"
     );
     assert_eq!(output(&decoy.path, &["rev-parse", "HEAD"]), head);
     assert!(output(&decoy.path, &["status", "--porcelain"]).is_empty());
@@ -48,10 +60,9 @@ fn git_helpers_ignore_poisoned_hook_environment() {
 // parent test가 주입한 hook 환경 안에서 실제 fixture 생성·commit·plan을 수행해
 // 모든 custom Git 경로가 중앙 격리 helper를 통과하는지 관찰한다.
 #[test]
+#[ignore = "상위 통합 테스트가 자식 프로세스로 실행"]
 fn poisoned_hook_child() {
-    if env::var_os(CHILD_MARKER).is_none() {
-        return;
-    }
+    env::var_os(CHILD_MARKER).expect("상위 테스트가 Git 오염 환경 marker를 전달해야 합니다");
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
     assert_eq!(plan.slice_ref, "refs/heads/slice/direct/sample");

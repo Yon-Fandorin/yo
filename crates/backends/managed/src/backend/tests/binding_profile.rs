@@ -201,6 +201,8 @@ fn resume_through_durable_agent_session(
     resumed_backend: NativeModelBackend,
 ) {
     let (directory, continuation) = durable_continuation(first_backend);
+    let session_id = continuation.descriptor().session_id();
+    let expected_binding_identity = continuation.target().binding().binding_identity().clone();
     let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
     let mut resumed = AgentSession::start_cancellable_with_continuation(
         resumed_backend,
@@ -211,6 +213,14 @@ fn resume_through_durable_agent_session(
     .unwrap()
     .unwrap();
     resumed.shutdown().unwrap();
+    drop(resumed);
+
+    let reader = LocalSessionReader::open(&directory.0).unwrap();
+    let recovered = read_stored_session_continuation(&reader, session_id).unwrap();
+    assert_eq!(
+        recovered.target().binding().binding_identity(),
+        &expected_binding_identity
+    );
 }
 
 fn durable_continuation(

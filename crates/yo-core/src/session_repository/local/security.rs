@@ -300,7 +300,7 @@ pub(super) fn known_cutoff(
 mod tests {
     use super::file_identity_matches;
 
-    // macOS exposes device and inode numbers with different integer types.
+    // macOS에서는 device와 inode 번호의 정수형이 서로 다르다.
     #[test]
     fn file_identity_compares_device_and_inode_types_independently() {
         assert!(file_identity_matches(7_i32, 11_u64, 7_i32, 11_u64));

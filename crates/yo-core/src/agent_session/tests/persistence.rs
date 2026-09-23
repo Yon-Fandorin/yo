@@ -190,6 +190,7 @@ fn live_worker_persists_a_recoverable_session_journal() {
         thread::sleep(Duration::from_millis(1));
         admission = app.retry(pending).unwrap();
     }
+    assert!(matches!(admission, CommandAdmission::Queued));
     app.wait_until_processed(1);
     app.wait_until_no_active_turn();
     app.shutdown().unwrap();
@@ -529,6 +530,7 @@ fn fork_capture_accepts_the_actual_idle_durable_worker_source() {
         thread::sleep(Duration::from_millis(1));
         admission = live.retry(pending).unwrap();
     }
+    assert!(matches!(admission, CommandAdmission::Queued));
     live.wait_until_processed(1);
     live.wait_until_no_active_turn();
     let reader = LocalSessionReader::open(&directory.0).unwrap();
@@ -586,6 +588,7 @@ fn fork_capture_accepts_the_actual_idle_durable_worker_source() {
         thread::sleep(Duration::from_millis(1));
         admission = live.retry(pending).unwrap();
     }
+    assert!(matches!(admission, CommandAdmission::Queued));
     live.wait_until_processed(2);
     live.wait_until_no_active_turn();
     assert!(live.prepare_historical_fork_source(&selected).is_err());

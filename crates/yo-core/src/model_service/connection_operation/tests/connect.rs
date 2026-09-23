@@ -333,8 +333,8 @@ fn direct_connect_mutation(
         .unwrap()
 }
 
-// The public mutation and the credential-changing definition must describe the same exact pair.
-// An empty arbitrary mutation cannot be relabeled as a catalog-only import.
+// 공개 변경과 자격 증명을 바꾸는 정의는 정확히 같은 쌍을 나타내야 한다.
+// 비어 있는 임의의 변경을 카탈로그 전용 가져오기로 바꿔 부를 수 없다.
 #[test]
 fn definition_preparation_rejects_a_public_mutation_without_the_exact_pair() {
     let fixture = Fixture::new("definition-public-mismatch");
@@ -418,9 +418,8 @@ fn definition_preparation_rejects_an_unrelated_group_replacement() {
     assert!(fixture.credentials.capture().unwrap().is_empty());
 }
 
-// Direct-connect admission is bound to prepare_model_connect itself. Group replacement and
-// preference mutations cannot borrow that credential-changing lane merely because their final
-// bytes retain the complete bindings supplied by a caller.
+// 직접 연결 승인은 prepare_model_connect 자체에 묶인다. 그룹 교체와 선호도 변경은
+// 결과가 호출자가 제공한 전체 바인딩을 유지하더라도 자격 증명을 바꾸는 경로를 빌려 쓸 수 없다.
 #[test]
 fn direct_preparation_rejects_non_connect_mutation_intents() {
     let fixture = Fixture::new("direct-connect-intent");

@@ -485,8 +485,8 @@ fn a_secret_receipt_cannot_be_dispatched_as_a_live_response() {
     runtime.shutdown().unwrap();
 }
 
-// Native protected input differs from legacy backend-owned interviews: backend acceptance only
-// prepares transport, so a memory-only Journal cannot authorize it or leave the Session reusable.
+// 네이티브 보호 입력은 구형 백엔드 소유 인터뷰와 다르다. 백엔드 승인은 전송만 준비하므로
+// 메모리 전용 Journal은 이를 승인할 수 없고 Session을 재사용 상태로 남길 수도 없다.
 #[test]
 fn prepared_native_secret_requires_a_durable_receipt_and_terminalizes_the_session() {
     use crate::{BackendCommandEvidence, SecretInput};

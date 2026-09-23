@@ -1,4 +1,9 @@
-use std::{fs, path::PathBuf, str::FromStr};
+use std::{
+    fs::{self, OpenOptions},
+    io::{ErrorKind, Write},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use jiff::Timestamp;
 use yo_core::{
@@ -206,8 +211,22 @@ fn delegated_state_readiness_is_request_free_and_self_cleaning() {
 fn executable_script(label: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
-    let path = test_support::unique_path(label);
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    let mut reserved = None;
+    for _ in 0..16 {
+        let path = test_support::unique_path(label);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => {
+                reserved = Some((path, file));
+                break;
+            },
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("cannot create executable test fixture: {error}"),
+        }
+    }
+    let (path, mut file) = reserved.expect("could not reserve a unique executable test fixture");
+    file.write_all(format!("#!/bin/sh\n{body}\n").as_bytes())
+        .unwrap();
+    drop(file);
     let mut permissions = fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o700);
     fs::set_permissions(&path, permissions).unwrap();

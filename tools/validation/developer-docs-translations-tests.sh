@@ -8,8 +8,8 @@ trap 'rm -rf "${fixture}"' EXIT
 reset_fixture() {
     rm -rf "${fixture}/canonical" "${fixture}/korean"
     mkdir -p "${fixture}/canonical" "${fixture}/korean"
-    printf '# Canonical\n' >"${fixture}/canonical/README.md"
-    printf '# 한국어\n' >"${fixture}/korean/README.md"
+    printf '# Canonical\n[Overview](README.md#canonical)\n' >"${fixture}/canonical/README.md"
+    printf '# 한국어\n[개요](README.md#한국어)\n' >"${fixture}/korean/README.md"
     (
         cd "${fixture}/canonical"
         shasum --algorithm 256 README.md
@@ -39,7 +39,7 @@ expect_fail() {
 }
 
 reset_fixture
-expect_pass "the Korean Projection has the same page set and exact source hash"
+expect_pass "한국어 Projection은 페이지 집합과 링크 경로를 유지하고 원문 해시를 통과한다"
 
 printf '# Changed canonical\n' >"${fixture}/canonical/README.md"
 expect_fail "the canonical source changed after translation review"
@@ -55,3 +55,7 @@ expect_fail "the Korean Projection contains an unowned extra page"
 reset_fixture
 printf '\n## 검토되지 않은 절\n' >>"${fixture}/korean/README.md"
 expect_fail "the Korean Projection structure diverges from its canonical page"
+
+reset_fixture
+printf '# 한국어\n[개요](other.md#한국어)\n' >"${fixture}/korean/README.md"
+expect_fail "한국어 Projection의 링크 대상 경로가 원문과 다르다"

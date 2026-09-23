@@ -149,13 +149,19 @@ class ClipboardBridgeTests(unittest.TestCase):
             listener.close()
 
     def test_exact_limit_succeeds_and_first_excess_byte_reaps_child(self):
-        source = f"import os\nos.write(1, {bridge.PNG_SIGNATURE!r} + b'x' * ({bridge.MAX_PNG_BYTES} - 8))\n"
-        self.assertEqual(len(self.capture(source)), bridge.MAX_PNG_BYTES)
+        signature_length = len(bridge.PNG_SIGNATURE)
+        expected = bridge.PNG_SIGNATURE + b"x" * (bridge.MAX_PNG_BYTES - signature_length)
+        source = (
+            f"import os\nos.write(1, {bridge.PNG_SIGNATURE!r} "
+            f"+ b'x' * ({bridge.MAX_PNG_BYTES} - {signature_length}))\n"
+        )
+        self.assertEqual(self.capture(source), expected)
         pid_path = self.directory / "pid"
         source = (
             "import os,time\n"
             f"open({str(pid_path)!r}, 'w').write(str(os.getpid()))\n"
-            f"data = {bridge.PNG_SIGNATURE!r} + b'x' * ({bridge.MAX_PNG_BYTES} - 7)\n"
+            f"data = {bridge.PNG_SIGNATURE!r} "
+            f"+ b'x' * ({bridge.MAX_PNG_BYTES} - {signature_length} + 1)\n"
             "while data:\n    data = data[os.write(1, data):]\n"
             "time.sleep(30)\n"
         )

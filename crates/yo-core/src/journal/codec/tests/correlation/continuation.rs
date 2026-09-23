@@ -192,7 +192,7 @@ fn replay_profile_and_private_items_must_match_in_both_directions() {
     );
 }
 
-// earlier valid private가 뒤 assistant group의 누락을 가리지 못하도록 group마다 하나를 요구합니다.
+// 먼저 나온 정상 private가 뒤 assistant group의 누락을 가리지 못하도록 group마다 하나씩 요구한다.
 #[test]
 fn private_recovery_requires_one_private_item_after_every_assistant_group() {
     let replay_delta = ModelReplayDelta::new(

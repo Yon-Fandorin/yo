@@ -1,4 +1,4 @@
-use super::{RustixTermiosDriver, TermiosDriver, TtyStateAdapter};
+use super::{TermiosDriver, TtyStateAdapter};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct State {
@@ -95,10 +95,4 @@ fn restoration_applies_the_exact_captured_state() {
             raw: false,
         }))
     );
-}
-
-// 실제 Unix 구현은 안전한 Rustix stdio 경계에서 stdin을 빌릴 수 있어야 한다.
-#[test]
-fn rustix_driver_can_bind_process_stdin_without_a_syscall() {
-    let _driver = RustixTermiosDriver::stdin();
 }

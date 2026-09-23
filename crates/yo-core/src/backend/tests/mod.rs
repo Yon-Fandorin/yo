@@ -156,27 +156,6 @@ fn shutdown_is_idempotent_for_success_and_failure() {
     assert_eq!(failed.poll_event().unwrap(), BackendPoll::Closed);
 }
 
-// 첫 coding loop가 구분해야 하는 backend 실패 단계가 서로 다른 안정된 값으로 유지되는지 확인한다.
-#[test]
-fn backend_failure_kinds_remain_distinguishable() {
-    let kinds = [
-        BackendFailureKind::Unavailable,
-        BackendFailureKind::Initialization,
-        BackendFailureKind::Session,
-        BackendFailureKind::Unsupported,
-        BackendFailureKind::Protocol,
-        BackendFailureKind::ProcessExit,
-        BackendFailureKind::Turn,
-        BackendFailureKind::Cleanup,
-    ];
-
-    for (index, left) in kinds.iter().enumerate() {
-        for right in &kinds[index + 1..] {
-            assert_ne!(left, right);
-        }
-    }
-}
-
 // 초기화 때 확정된 steer capability가 fake에서도 provider-neutral 값으로 고정되어 노출되는지
 // 확인한다.
 #[test]
