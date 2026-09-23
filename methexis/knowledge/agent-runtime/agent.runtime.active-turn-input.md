@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-004
-    revision: sha256:d9c1431677ebc2c94593d92fe99b67a5f405d75f14f2a0cb6274250301500f11
+    revision: sha256:a7e1e03e0f654b5c0aaf3dc97f10ac88a2094fce4751b7c8c9edf791d5c4760f
 relations:
   depends_on:
     - agent.runtime.command-event-boundary
@@ -77,15 +77,16 @@ or ambiguous response write with no verified answer seal MUST preserve the
 unfinished draft and MUST NOT claim successful submission or retry
 automatically.
 
-Existing canonical v1, v2, v3 and v4 working-copy files are unsupported legacy
-data, not contextual drafts. The current UI MUST NOT list, continue, view,
-migrate, reopen or submit them. Yo MAY recognize old schemas to prevent
-misclassification and perform existing exact-bound secret-reference expiry
-cleanup, but MUST NOT promote an old file into the current draft schema.
-Malformed, incomplete or mismatched old records fail closed and remain
-untouched with a bounded diagnostic. Legacy v3 recovery references retain only
-their old exact binding and seven-day cleanup; they are never promoted into
-the new reusable secret store.
+The recognized contextual draft format is exactly
+`yo.interview-draft/v1`. Canonical v1, v2 and v3 working-copy files retain their
+separately contracted non-contextual behavior, but contextual draft discovery
+MUST NOT list, continue, view, migrate, reopen or submit them. Repository
+maintenance MAY inspect canonical v3 only to expire its exact-bound recovery
+references. No other schema may be decoded or admitted as a working copy;
+unsupported, malformed, incomplete or mismatched records MUST fail closed,
+remain untouched with a bounded diagnostic, and MUST NOT be migrated or
+promoted. V3 recovery references retain only their exact binding and seven-day
+cleanup; they are never promoted into the reusable secret store.
 
 ## Live secret interview answers
 
