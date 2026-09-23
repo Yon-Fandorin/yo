@@ -49,8 +49,6 @@ impl WorkingCopy {
     pub const SCHEMA: &'static str = "yo.interview-working-copy/v1";
     pub const SCHEMA_V2: &'static str = "yo.interview-working-copy/v2";
     pub const SCHEMA_V3: &'static str = "yo.interview-working-copy/v3";
-    /// Earlier contextual drafts remain readable but are not selected by the current UI.
-    const LEGACY_CONTEXTUAL_SCHEMA: &'static str = "yo.interview-working-copy/v4";
     pub const DRAFT_SCHEMA: &'static str = "yo.interview-draft/v1";
     pub fn new(capture: &CapturedInterview) -> Result<Self, InterviewError> {
         let answers = capture
@@ -100,12 +98,6 @@ impl WorkingCopy {
     pub fn is_contextual_draft(&self) -> bool {
         self.schema == Self::DRAFT_SCHEMA
     }
-    pub(super) fn has_contextual_schema(&self) -> bool {
-        matches!(
-            self.schema.as_str(),
-            Self::DRAFT_SCHEMA | Self::LEGACY_CONTEXTUAL_SCHEMA
-        )
-    }
     pub fn source(&self) -> (ActivityRequestRef, &str) {
         (self.source.interview, &self.source.revision)
     }
@@ -126,8 +118,8 @@ impl WorkingCopy {
         for (q, a) in capture.questions.iter().zip(&self.answers) {
             q.validate_answer(a, true)?;
         }
-        let expected_schema = if self.has_contextual_schema() {
-            self.schema.as_str()
+        let expected_schema = if self.is_contextual_draft() {
+            Self::DRAFT_SCHEMA
         } else if !self.secret_recovery.is_empty() {
             Self::SCHEMA_V3
         } else if capture.questions.iter().any(|q| q.is_secret) {
@@ -156,7 +148,6 @@ impl WorkingCopy {
         if (self.schema != Self::SCHEMA
             && self.schema != Self::SCHEMA_V2
             && self.schema != Self::SCHEMA_V3
-            && self.schema != Self::LEGACY_CONTEXTUAL_SCHEMA
             && self.schema != Self::DRAFT_SCHEMA)
             || !valid_id(&self.copy_id)
             || self.generation == 0
@@ -164,7 +155,7 @@ impl WorkingCopy {
         {
             return Err(invalid("unsupported or invalid interview working copy"));
         }
-        if self.has_contextual_schema() && !self.secret_recovery.is_empty() {
+        if self.is_contextual_draft() && !self.secret_recovery.is_empty() {
             return Err(invalid(
                 "contextual interview drafts cannot contain secret recovery references",
             ));
@@ -176,7 +167,7 @@ impl WorkingCopy {
         }
         if matches!(
             self.schema.as_str(),
-            Self::SCHEMA_V2 | Self::SCHEMA_V3 | Self::LEGACY_CONTEXTUAL_SCHEMA | Self::DRAFT_SCHEMA
+            Self::SCHEMA_V2 | Self::SCHEMA_V3 | Self::DRAFT_SCHEMA
         ) && self
             .answers
             .iter()
@@ -188,7 +179,7 @@ impl WorkingCopy {
         }
         if matches!(
             self.schema.as_str(),
-            Self::SCHEMA_V2 | Self::SCHEMA_V3 | Self::LEGACY_CONTEXTUAL_SCHEMA | Self::DRAFT_SCHEMA
+            Self::SCHEMA_V2 | Self::SCHEMA_V3 | Self::DRAFT_SCHEMA
         ) && matches!(self.submission, Some(Submission::NewConversation { .. }))
         {
             return Err(invalid(

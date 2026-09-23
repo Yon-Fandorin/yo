@@ -295,22 +295,13 @@ fn duplicate_contextual_drafts_fail_closed_without_deleting_either() {
     assert!(repository.load(&second.copy_id).unwrap().is_some());
 }
 
-// 이전 형식의 사본은 새 UI에서 숨기되 디스크에는 그대로 둔다.
+// 일반 작업 사본은 새 문맥 초안 UI에서 숨기되 디스크에는 그대로 둔다.
 #[test]
-fn older_working_copies_are_left_untouched_and_unlisted() {
+fn noncontextual_working_copies_are_left_untouched_and_unlisted() {
     let fixture = Fixture::new(false);
     let old = WorkingCopy::new(&fixture.catalog.interviews()[0]).unwrap();
-    let old_v4 = WorkingCopy::new_contextual(&fixture.catalog.interviews()[0]).unwrap();
-    let old_v4 = WorkingCopy::decode(
-        String::from_utf8(old_v4.encode().unwrap())
-            .unwrap()
-            .replacen("yo.interview-draft/v1", "yo.interview-working-copy/v4", 1)
-            .as_bytes(),
-    )
-    .unwrap();
     let repository = InterviewRepository::open(&fixture.root).unwrap();
     repository.save(&old, None, &fixture.catalog).unwrap();
-    repository.save(&old_v4, None, &fixture.catalog).unwrap();
     let mut controller = fixture.controller(turn().session_id());
     controller.command("discard").unwrap();
     assert!(controller.command("send").is_err());
@@ -322,7 +313,6 @@ fn older_working_copies_are_left_untouched_and_unlisted() {
             .contains("No unfinished")
     );
     assert!(repository.load(&old.copy_id).unwrap().is_some());
-    assert!(repository.load(&old_v4.copy_id).unwrap().is_some());
 }
 
 // 최종 응답의 영속 확인 후 남은 초안을 다시 표시하지 않고 제거한다.

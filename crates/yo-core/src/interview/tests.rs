@@ -384,24 +384,22 @@ fn contextual_draft_is_canonical_and_cannot_be_sent_as_new_conversation() {
     );
 }
 
-// 종전 v4 초안은 디코딩만 유지하고 새 v1 초안으로 오인하거나 전송하지 않는다.
+// 닫힌 스키마 집합에 없는 완전한 초안은 working copy로 받아들이지 않는다.
 #[test]
-fn old_contextual_draft_remains_readable_but_is_not_current() {
+fn contextual_draft_rejects_an_unrecognized_schema() {
     let (catalog, _) = batch();
     let copy = WorkingCopy::new_contextual(&catalog.interviews()[0]).unwrap();
-    let old_bytes = String::from_utf8(copy.encode().unwrap()).unwrap().replacen(
+    let unsupported = String::from_utf8(copy.encode().unwrap()).unwrap().replacen(
         "yo.interview-draft/v1",
-        "yo.interview-working-copy/v4",
+        "yo.interview-working-copy/future",
         1,
     );
-    let old = WorkingCopy::decode(old_bytes.as_bytes()).unwrap();
-    assert!(!old.is_contextual_draft());
-    assert!(old.validate(&catalog).is_ok());
+    assert!(WorkingCopy::decode(unsupported.as_bytes()).is_err());
 }
 
-// 종전 문맥 초안의 비밀 질문을 옛 복구 경로로 보내도 파일과 vault를 바꾸지 않는다.
+// 문맥 초안의 비밀 질문은 working-copy 복구 저장소에 값을 보관하지 않는다.
 #[test]
-fn old_contextual_secret_draft_cannot_enter_legacy_recovery() {
+fn contextual_secret_draft_cannot_enter_working_copy_recovery_storage() {
     let temp = Temp::new();
     let copies = temp.0.join("copies");
     let vault = temp.0.join("vault");
@@ -409,30 +407,24 @@ fn old_contextual_secret_draft_cannot_enter_legacy_recovery() {
     let repository = InterviewRepository::open_with_recovery(&copies, vault, key.clone()).unwrap();
     let catalog = catalog_for(request(1), secret_questions());
     let copy = WorkingCopy::new_contextual(&catalog.interviews()[0]).unwrap();
-    let bytes = String::from_utf8(copy.encode().unwrap()).unwrap().replacen(
-        "yo.interview-draft/v1",
-        "yo.interview-working-copy/v4",
-        1,
-    );
-    let old = WorkingCopy::decode(bytes.as_bytes()).unwrap();
-    repository.save(&old, None, &catalog).unwrap();
+    repository.save(&copy, None, &catalog).unwrap();
     let destination = SecretRecoveryDestination::managed(
         &crate::ProviderId::new("provider").unwrap(),
         &crate::ModelId::new("model").unwrap(),
         &crate::AccountId::new("account").unwrap(),
     );
     let result = repository.store_secret_recovery(
-        &old,
-        Some(old.generation),
+        &copy,
+        Some(copy.generation),
         &catalog,
         "q2",
         &destination,
         &crate::SecretInput::new("must-not-be-stored").unwrap(),
     );
     assert!(
-        matches!(result, Err(InterviewError::Invalid(message)) if message == "legacy secret recovery is unavailable for contextual drafts")
+        matches!(result, Err(InterviewError::Invalid(message)) if message == "working-copy secret recovery is unavailable for contextual drafts")
     );
-    assert_eq!(repository.load(&old.copy_id).unwrap().unwrap(), old);
+    assert_eq!(repository.load(&copy.copy_id).unwrap().unwrap(), copy);
     assert!(!key.exists());
 }
 
