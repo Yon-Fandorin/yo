@@ -100,27 +100,6 @@ fn account_completion_maps_refresh_failures_to_nonzero_status() {
     );
 }
 
-// 부분 refresh 실패는 결과를 게시한 뒤 일반적인 stderr error 없이 non-zero 상태만 반환합니다.
-#[test]
-fn account_refresh_failure_is_a_status_only_completion() {
-    let mut published = None;
-    let result = finish_account_output(
-        AccountRunOutput {
-            output: "account result\n".to_owned(),
-            diagnostics: Vec::new(),
-            completion: AccountCompletion::RefreshFailures,
-        },
-        |output| {
-            published = Some(output);
-            Ok(())
-        },
-        |_| Ok(()),
-    );
-
-    assert_eq!(published.as_deref(), Some("account result\n"));
-    assert!(matches!(result, Ok(AccountCompletion::RefreshFailures)));
-}
-
 // stdout 게시 실패는 deferred stderr diagnostic보다 먼저 fatal 오류로 종료합니다.
 #[test]
 fn account_output_failure_skips_deferred_diagnostics() {

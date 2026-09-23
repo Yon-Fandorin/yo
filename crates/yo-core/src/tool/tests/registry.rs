@@ -298,23 +298,6 @@ fn execution_argument_bytes_preserve_existing_recursive_normalization() {
     assert_eq!(call.argument_bytes(), raw);
 }
 
-// 한 요청에 고정된 레지스트리는 커넥터와 리플레이에 같은 순서와 스키마를 투영한다.
-#[test]
-fn frozen_registry_projection_is_stable() {
-    let registry = ToolRegistry::new([
-        definition("read-one", "read_one"),
-        definition("read-two", "read_two"),
-    ])
-    .unwrap()
-    .freeze();
-
-    let connector = registry.function_tools().unwrap();
-    let replay = registry.replay_tools();
-    assert_eq!(connector[0].name(), replay[0].name());
-    assert_eq!(connector[1].name(), replay[1].name());
-    assert_eq!(replay[0].schema_version(), TOOL_SCHEMA_DIALECT);
-}
-
 // connector와 replay projection은 description·schema·version을 모두 보존하고 registry insertion
 // order를 유지한다.
 #[test]

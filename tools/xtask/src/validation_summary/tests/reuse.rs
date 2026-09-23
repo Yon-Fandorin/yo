@@ -36,12 +36,33 @@ fn alpha3_reuse_context_invalidates_platform_or_toolchain_changes() {
     verify_current_reuse_context(&current).unwrap();
 
     let changed_platform = ReuseContext {
+        schema: current.schema.clone(),
         platform_os: "changed-os".to_owned(),
-        ..current
+        platform_arch: current.platform_arch.clone(),
+        toolchain_hash: current.toolchain_hash.clone(),
+        external_state: current.external_state.clone(),
     };
     assert!(
         verify_current_reuse_context(&changed_platform)
             .unwrap_err()
             .contains("platform changed")
+    );
+
+    let digest_start = "sha256:".len();
+    let mut changed_toolchain_hash = current.toolchain_hash.clone();
+    let replacement = if changed_toolchain_hash.as_bytes()[digest_start] == b'0' {
+        "1"
+    } else {
+        "0"
+    };
+    changed_toolchain_hash.replace_range(digest_start..digest_start + 1, replacement);
+    let changed_toolchain = ReuseContext {
+        toolchain_hash: changed_toolchain_hash,
+        ..current
+    };
+    assert!(
+        verify_current_reuse_context(&changed_toolchain)
+            .unwrap_err()
+            .contains("toolchain changed")
     );
 }
