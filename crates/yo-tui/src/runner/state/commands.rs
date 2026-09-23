@@ -10,8 +10,9 @@ use yo_core::{ActivityDocument, JournalDurability, secret_store::SecretMetadata}
 use super::{PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
     command::{
-        CommandEffect, CommandRegistry, compact_argument, fork_argument, model_argument,
-        prompt_argument, resume_argument, secrets_argument, tree_argument,
+        CommandDefinition, CommandEffect, CommandId, CommandRegistry, compact_argument,
+        fork_argument, model_argument, prompt_argument, resume_argument, secrets_argument,
+        tree_argument,
     },
     overlay::{PanelSnapshot, SlotError},
     runner::{
@@ -19,11 +20,138 @@ use crate::{
         chat::CopyAnswer,
         model::ModelSelectionState,
         session::{TuiDocument, TuiSessionInfo},
+        view::ObservabilityView,
     },
     terminal::clipboard::MAX_TEXT_BYTES,
 };
 
 impl TuiState {
+    pub(in crate::runner) fn enable_managed_commands(&mut self) {
+        self.managed_commands_enabled = true;
+    }
+
+    pub(in crate::runner) fn enable_developer_preview(&mut self) {
+        self.developer_preview_enabled = true;
+    }
+
+    pub(super) fn command_unavailable_reason(&self, id: CommandId) -> Option<&'static str> {
+        match id {
+            CommandId::Preview if !self.developer_preview_enabled => {
+                Some("Offline UI preview is available through the developer chat_preview example.")
+            },
+            CommandId::Preview
+                if !self.preview_mode
+                    && (self.active_turn.is_some()
+                        || self.starting_submission.is_some()
+                        || !self.pending_submissions.is_empty()
+                        || self.has_pending_request()) =>
+            {
+                Some("Finish or interrupt the current turn before opening the offline preview.")
+            },
+            CommandId::Compact if !self.managed_commands_enabled => {
+                Some("Context compaction is available only in a Yo-managed Session.")
+            },
+            CommandId::Compact
+                if self.active_turn.is_some()
+                    || self.starting_submission.is_some()
+                    || self.context_compaction_pending =>
+            {
+                Some("Context compaction requires an idle Session.")
+            },
+            CommandId::Fork if !self.managed_commands_enabled => {
+                Some("A verified exact Session fork is unavailable on this connection.")
+            },
+            CommandId::Fork | CommandId::New | CommandId::Tree | CommandId::Resume => {
+                self.session_transition_unavailable_reason()
+            },
+            CommandId::Interview if self.interview.is_none() => {
+                Some("Interview recovery storage is unavailable.")
+            },
+            CommandId::Secrets if self.secret_store.is_none() => {
+                Some("Local secret storage is unavailable.")
+            },
+            CommandId::Attach => self.image_attachment_unavailable_reason(),
+            CommandId::Prompt if self.prompt_templates.names().next().is_none() => {
+                Some("No saved prompt templates are configured.")
+            },
+            CommandId::Copy => match self.chat.last_completed_answer() {
+                None => Some("No completed assistant answer is available to copy."),
+                Some(CopyAnswer::NonText) => Some("The latest answer has no copyable text."),
+                Some(CopyAnswer::Text(answer)) if answer.len() > MAX_TEXT_BYTES => {
+                    Some("The latest answer is too large for the terminal clipboard.")
+                },
+                Some(CopyAnswer::Text(_)) => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub(super) fn available_command_ids(&self) -> Vec<CommandId> {
+        CommandRegistry::built_in()
+            .matching("")
+            .filter(|definition| self.command_unavailable_reason(definition.id()).is_none())
+            .map(|definition| definition.id())
+            .collect()
+    }
+
+    pub(super) fn sync_command_palette(&mut self, eligible: bool) {
+        let available = self.available_command_ids();
+        self.command_palette.sync(
+            self.editor.text(),
+            self.editor.cursor_byte_index(),
+            &mut self.overlay,
+            eligible,
+            &available,
+        );
+    }
+
+    pub(super) fn refresh_command_palette_if_active(&mut self) {
+        if self.command_palette.is_active() {
+            let eligible = self.views.active() == ObservabilityView::Chat
+                && self.question_notes.is_none()
+                && !(self.restored_question_draft.is_some()
+                    && self.restored_question_draft == self.pending_requests.front().copied());
+            self.sync_command_palette(eligible);
+        }
+    }
+
+    pub(super) fn reject_unavailable_command(
+        &mut self,
+        command: &CommandDefinition,
+        draft: &str,
+    ) -> Result<Option<StateEffect>, StateError> {
+        let Some(reason) = self.command_unavailable_reason(command.id()) else {
+            return Ok(None);
+        };
+        self.restore_draft(draft);
+        self.chat.push_notice(format!(
+            "Cannot run {}: {reason} Your draft was preserved.",
+            command.invocation()
+        ))?;
+        Ok(Some(StateEffect::Redraw))
+    }
+
+    fn session_transition_unavailable_reason(&self) -> Option<&'static str> {
+        if !matches!(self.durability, Some(JournalDurability::Durable { .. })) {
+            return Some("Cannot switch sessions until this conversation has durable history.");
+        }
+        if self.preview_mode
+            || self.context_compaction_pending
+            || self.active_turn.is_some()
+            || self.starting_submission.is_some()
+            || !self.pending_submissions.is_empty()
+            || self.has_pending_request()
+            || !self.follow_ups.is_empty()
+            || self.pending_model_selection.is_some()
+            || self.reserved_model_selection.is_some()
+        {
+            return Some(
+                "Cannot switch sessions during a turn, compaction, pending input, queued messages, model switch, or preview.",
+            );
+        }
+        None
+    }
+
     pub(in crate::runner) fn report_clipboard_sent(&mut self) -> Result<(), StateError> {
         let notice = "Sent answer to the terminal clipboard; paste to confirm.".to_owned();
         if let Some(preview) = self.preview.as_mut() {
@@ -243,23 +371,11 @@ impl TuiState {
     }
 
     pub(super) fn allow_session_transition(&mut self, draft: &str) -> Result<bool, StateError> {
-        if !matches!(self.durability, Some(JournalDurability::Durable { .. })) {
+        if let Some(reason) = self.session_transition_unavailable_reason() {
             self.restore_draft(draft);
-            self.chat.push_notice("Cannot switch sessions until this conversation has durable history. Your current session and draft were preserved.".to_owned())?;
-            return Ok(false);
-        }
-        if self.preview_mode
-            || self.context_compaction_pending
-            || self.active_turn.is_some()
-            || self.starting_submission.is_some()
-            || !self.pending_submissions.is_empty()
-            || self.has_pending_request()
-            || !self.follow_ups.is_empty()
-            || self.pending_model_selection.is_some()
-            || self.reserved_model_selection.is_some()
-        {
-            self.restore_draft(draft);
-            self.chat.push_notice("Cannot switch sessions during a turn, compaction, pending input, queued messages, model switch, or preview. Finish or recall pending work first; your input was preserved.".to_owned())?;
+            self.chat.push_notice(format!(
+                "{reason} Your current session and draft were preserved."
+            ))?;
             return Ok(false);
         }
         Ok(true)
@@ -347,6 +463,11 @@ impl TuiState {
         invocation: &str,
         draft: &str,
     ) -> Result<StateEffect, StateError> {
+        if let Some(command) = CommandRegistry::built_in().invocation_in(invocation)
+            && let Some(effect) = self.reject_unavailable_command(command, draft)?
+        {
+            return Ok(effect);
+        }
         match effect {
             CommandEffect::CopyAnswer => {
                 self.clear_editor();
@@ -386,9 +507,11 @@ impl TuiState {
             CommandEffect::InsertPrompt => self.handle_prompt_command(invocation, draft),
             CommandEffect::FindMessages => self.handle_find_command(invocation, draft),
             CommandEffect::ShowHelp => {
-                let document = TuiDocument::new(CommandRegistry::built_in().help_document())
-                    .expect("built-in help is a bounded document")
-                    .with_expanded(true);
+                let document = TuiDocument::new(
+                    CommandRegistry::built_in().help_document(&self.available_command_ids()),
+                )
+                .expect("built-in help is a bounded document")
+                .with_expanded(true);
                 self.observe_document(document)?;
                 self.clear_editor();
                 Ok(StateEffect::Redraw)

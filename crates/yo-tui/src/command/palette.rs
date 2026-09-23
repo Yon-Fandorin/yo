@@ -1,6 +1,6 @@
 //! Prompt-local command query, overlay, and escape lifecycle.
 
-use super::{CommandDefinition, CommandRegistry};
+use super::{CommandDefinition, CommandId, CommandRegistry};
 use crate::overlay::{
     AcceptanceReceipt, OverlayInstanceToken, PanelSnapshot, PromptOverlaySlot, SelectionEntry,
 };
@@ -9,6 +9,7 @@ use crate::overlay::{
 struct ActivePalette {
     token: OverlayInstanceToken,
     query: String,
+    snapshot: PanelSnapshot,
 }
 
 #[derive(Debug, Default)]
@@ -25,6 +26,7 @@ impl CommandPalette {
         cursor: usize,
         overlay: &mut PromptOverlaySlot,
         eligible: bool,
+        available: &[CommandId],
     ) {
         if self
             .literal_draft
@@ -50,20 +52,28 @@ impl CommandPalette {
             self.close(overlay);
             return;
         };
-        let snapshot = panel_snapshot(&query);
+        let snapshot = panel_snapshot(&query, available);
         if let Some(active) = self.active.as_mut() {
-            if active.query == query && overlay.is_current(active.token) {
+            if active.query == query
+                && active.snapshot == snapshot
+                && overlay.is_current(active.token)
+            {
                 return;
             }
             if overlay.refresh(active.token, snapshot.clone()).is_ok() {
                 active.query = query;
+                active.snapshot = snapshot;
                 return;
             }
         }
         self.active = overlay
-            .open_accepting_empty(snapshot)
+            .open_accepting_empty(snapshot.clone())
             .ok()
-            .map(|token| ActivePalette { token, query });
+            .map(|token| ActivePalette {
+                token,
+                query,
+                snapshot,
+            });
     }
 
     pub(crate) fn accept(
@@ -159,6 +169,10 @@ impl CommandPalette {
     pub(crate) fn dismiss(&mut self) {
         self.active = None;
     }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.active.is_some()
+    }
 }
 
 fn command_query(text: &str, cursor: usize) -> Option<String> {
@@ -185,9 +199,10 @@ fn command_query(text: &str, cursor: usize) -> Option<String> {
     Some(query.to_ascii_lowercase())
 }
 
-fn panel_snapshot(query: &str) -> PanelSnapshot {
+fn panel_snapshot(query: &str, available: &[CommandId]) -> PanelSnapshot {
     let mut entries = CommandRegistry::built_in()
         .matching(query)
+        .filter(|definition| available.contains(&definition.id()))
         .map(|definition| {
             SelectionEntry::enabled_with_context(
                 definition.identity(),

@@ -99,12 +99,7 @@ impl TuiState {
         self.prompt_assist.restore_input(&mapped, &mut self.overlay);
         let command_eligible =
             self.views.active() == ObservabilityView::Chat && !self.has_pending_request();
-        self.command_palette.sync(
-            self.editor.text(),
-            self.editor.cursor_byte_index(),
-            &mut self.overlay,
-            command_eligible,
-        );
+        self.sync_command_palette(command_eligible);
         self.external_editor_snapshot = None;
         Ok(())
     }

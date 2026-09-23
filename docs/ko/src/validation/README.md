@@ -131,21 +131,20 @@ managed FunctionCall replay를 요구하지 말고 `commandExecution` 인자와 
 
 ### 대화형 테스트 에이전트
 
-실제 `yo` 채팅에서 `/preview`를 입력한다. 별도 Python launcher나 앱 없이
-격리된 임시 child TUI state와 오프라인 테스트 에이전트가 열린다. 임의의 텍스트로
+`cargo run --locked -p yo-tui --example chat_preview`를 실행한 뒤 `/preview`를 입력한다.
+일반 `yo` 채팅에서는 이 개발용 명령을 제공하지 않는다. 예제에서 격리된 임시 child TUI state와
+오프라인 테스트 에이전트가 열린다. 임의의 텍스트로
 스트리밍 응답을 받거나 `tools`, `error`, `long`, `markdown`, `tables`, `diff`로 모의 도구 출력·실패 복구·
 스크롤·본문 및 코드 서식·반응형 표·코드 변경 내용을 확인한다. 시나리오 이름은 sandbox 안의 일반 메시지다. `Esc`는 중단이며,
-`/preview`, `/exit`, 빈 입력창 종료 동작은 원래 대화로 돌아간다.
-실제 Turn·submission·request가 대기 중이면 진입을 거절한다.
+`/preview`, `/exit`, 빈 입력창 종료 동작은 예제의 부모 대화로 돌아간다.
+Turn·submission·request가 대기 중이면 진입을 거절한다.
 
 처음 펼쳐지는 호스트 안내 문서는 코드·문서, 파일·검색, 도구·터미널, 승인·인터뷰,
 진행·상태, 차트·미디어별로 예시를 묶는다. 일반 문서 테마와 줄바꿈을 사용하며
 진입 직후 Alt+Up으로 안내 시작에 이동할 수 있다. 파일·내용 검색, shell 변형,
 합산 diff와 모델 전환 안내도 포함한다.
 
-별도 오프라인 터미널을 계속 열어두려면
-`cargo run --locked -p yo-tui --example chat_preview`를 실행하고 `/preview`를 입력한다.
-모델 연결이나 테스트 실행기의 시간 경고 없이 실제 TUI를 사용한다.
+이 예제는 모델 연결이나 테스트 실행기의 시간 경고 없이 실제 TUI를 사용한다.
 각 시나리오는 `Enter send`와 빈 입력창을 확인한 뒤 전송한다.
 
 

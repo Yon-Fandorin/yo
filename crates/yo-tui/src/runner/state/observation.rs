@@ -45,6 +45,7 @@ impl TuiState {
                 self.sync_request_overlay()?;
             },
         }
+        self.refresh_command_palette_if_active();
         Ok(StateEffect::Redraw)
     }
 
@@ -189,6 +190,7 @@ impl TuiState {
                 },
             )
             .map_err(StateError::Transcript)?;
+        self.refresh_command_palette_if_active();
         Ok(match lifecycle_effect {
             StateEffect::Exit => StateEffect::Exit,
             StateEffect::Redraw => StateEffect::Redraw,
@@ -209,7 +211,9 @@ impl TuiState {
         }
         let was_gap = matches!(self.durability, Some(JournalDurability::Gap { .. }));
         self.durability = Some(durability);
-        match durability {
+        let palette_was_active = self.command_palette.is_active();
+        self.refresh_command_palette_if_active();
+        let effect = match durability {
             JournalDurability::Gap {
                 durable_cutoff,
                 cause,
@@ -257,7 +261,12 @@ impl TuiState {
             },
             _ if was_gap => Ok(StateEffect::Redraw),
             _ => Ok(StateEffect::Unchanged),
-        }
+        }?;
+        Ok(if palette_was_active && effect == StateEffect::Unchanged {
+            StateEffect::Redraw
+        } else {
+            effect
+        })
     }
 
     pub(in crate::runner) fn enable_workspace_references(&mut self) {

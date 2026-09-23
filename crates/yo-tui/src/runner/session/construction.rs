@@ -15,6 +15,20 @@ use crate::{
 };
 
 impl TuiSession {
+    /// 관리형 모델의 컨텍스트 압축과 검증된 로컬 세션 분기 명령을 켭니다.
+    #[must_use]
+    pub fn with_managed_commands(mut self) -> Self {
+        self.state.enable_managed_commands();
+        self
+    }
+
+    /// 개발용 오프라인 화면 예제에서만 `/preview` 명령을 켭니다.
+    #[must_use]
+    pub fn with_developer_preview(mut self) -> Self {
+        self.state.enable_developer_preview();
+        self
+    }
+
     /// 명시된 Markdown 링크를 호스트가 해석하도록 설정합니다. None이면 웹 전용 링크로 복원합니다.
     /// 콜백을 만들기 전에 파일 소유권을 확인하며, 터미널 재진입 때도 이를 유지합니다.
     #[must_use]

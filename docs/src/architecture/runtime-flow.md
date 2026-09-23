@@ -302,10 +302,14 @@ live native model replacement retains the Session's frozen empty registry.
 
 In editable Chat, a slash in the only prompt token opens the prompt-adjacent
 command palette while the cursor is at the end of the draft. Further characters
-filter the ordered `/help`, `/model`, `/status`, `/compact`, and `/exit` catalog. Each child under
-`command/` owns one command's ID, invocation, description, and typed effect; the
+filter the registry's ordered commands that are usable in the current Session.
+Developer-only `/preview` appears only in the offline `chat_preview` example;
+delegated Sessions omit unsupported managed controls such as `/compact` and
+`/fork`. Each child under `command/` owns one command's ID, invocation,
+description, and typed effect; the
 shallow registry only validates uniqueness, composes order, filters entries,
-and projects help. The shared overlay slot owns Up/Down navigation, Enter or Tab
+and projects the same available entries into `/help`. The shared overlay slot
+owns Up/Down navigation, Enter or Tab
 acceptance, and Esc dismissal. An open but unpresented panel owns no keys. After
 a visible instance is refreshed, its token-and-revision presentation receipt
 fences movement and acceptance until the matching frame is committed; stale or
@@ -313,8 +317,10 @@ superseded frames cannot release that fence. A matching hidden commit releases
 the fence while marking the instance unpresented, so it still owns no keys.
 
 Enter while the palette owns an unknown or unpresented partial slash draft
-reports a local unknown command and preserves the draft. A visibly presented
-partial query may instead accept its enabled selected row. Only Esc that
+reports a local unknown command and preserves the draft. A known command that
+is unavailable in the current Session instead reports the reason, preserves
+the draft, and is not submitted to the model. A visibly presented partial
+query may instead accept its enabled selected row. Only Esc that
 dismisses a concretely visible palette arms that exact unchanged draft for one
 ordinary submission: it answers the outstanding Activity when one exists,
 otherwise it starts a Turn or steers the exact `TurnRef` observed by the
@@ -322,8 +328,8 @@ frontend. Editing the draft cancels the exception. `/help` adds a local command 
 `/model` enters the selection flow before Activity-response handling, so neither
 implicitly answers or cancels an outstanding Activity. `/exit` is the explicit
 process-lifecycle exception and uses the existing runner exit boundary. A
-read-only view makes the palette ineligible; a pending Activity does not hide
-these local commands.
+read-only view makes the palette ineligible; a pending Activity keeps eligible
+read-only commands available while commands that require idle state are hidden.
 
 `/status` adds an expanded local document with the current Yo Session ID,
 observed backend/model label, workspace label, and input state. The CLI supplies
@@ -338,8 +344,9 @@ Markdown-escaped before display.
 `/compact` is an idle Yo-managed control command. Its optional suffix is bounded
 user guidance for the summary request, not an ordinary prompt submission. The
 command preserves the draft and reports an idle requirement while a Turn is
-active; delegated Codex and Grok Sessions reject it as unsupported rather than
-claiming a Yo-managed checkpoint. That expected rejection is a nonterminal
+active. Delegated Codex and Grok Sessions hide it from the list and reject a
+direct invocation as unsupported rather than claiming a Yo-managed checkpoint.
+That expected rejection is a nonterminal
 control result and does not close the delegated Session.
 
 An ordinary prompt submitted while a Turn is visible carries that exact

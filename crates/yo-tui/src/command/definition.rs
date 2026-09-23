@@ -70,7 +70,7 @@ impl CommandDefinition {
         }
     }
 
-    pub(super) const fn id(self) -> CommandId {
+    pub(crate) const fn id(self) -> CommandId {
         self.id
     }
 

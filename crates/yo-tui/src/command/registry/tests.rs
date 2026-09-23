@@ -37,7 +37,11 @@ fn command_filter_preserves_module_declared_order() {
 #[test]
 fn help_document_uses_registry_and_explains_interaction() {
     let registry = CommandRegistry::built_in();
-    let document = registry.help_document();
+    let available = registry
+        .matching("")
+        .map(|definition| definition.id())
+        .collect::<Vec<_>>();
+    let document = registry.help_document(&available);
     assert!(document.to_snapshot().is_some());
     for definition in registry.matching("") {
         assert!(

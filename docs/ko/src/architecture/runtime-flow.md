@@ -268,10 +268,12 @@ tool definition과 tool choice를 생략하며, Session을 flag 없이 재개해
 함께 사용할 수 없고, live native model 교체도 Session의 빈 frozen registry를 유지한다.
 
 편집 가능한 Chat에서 유일한 prompt token의 slash를 입력하고 cursor가 draft 끝에 있으면
-prompt에 인접한 command palette가 열린다. 이어지는 문자는 순서가 정해진 `/help`,
-`/model`, `/status`, `/compact`, `/exit` catalog를 filtering한다. `command/`의 각 child는 command 하나의 ID,
+prompt에 인접한 command palette가 열린다. 이어지는 문자는 현재 Session에서 사용할 수 있는
+명령만 registry 순서대로 filtering한다. 개발용 `/preview`는 오프라인 `chat_preview` 예제에서만
+표시한다. delegated Session에서는 `/compact`와 `/fork`처럼 지원하지 않는 관리형 명령을 숨긴다.
+`command/`의 각 child는 command 하나의 ID,
 invocation, description, typed effect를 소유한다. 얕은 registry는 uniqueness 검증,
-순서 합성, 항목 filtering, help Projection만 담당한다. 공용 overlay slot은 위·아래 이동,
+순서 합성, 항목 filtering, 같은 가용 항목의 `/help` Projection만 담당한다. 공용 overlay slot은 위·아래 이동,
 Enter 또는 Tab acceptance, Esc 닫기를 소유한다. open됐지만 아직 표시되지 않은 panel은
 key를 소유하지 않는다. 한 번 보인 instance가 refresh되면 token과 revision을 포함한
 presentation receipt가 일치하는 frame이 commit될 때까지 이동과 acceptance에 fence를
@@ -279,15 +281,16 @@ presentation receipt가 일치하는 frame이 commit될 때까지 이동과 acce
 fence를 해제하는 동시에 instance를 unpresented로 표시하므로, 여전히 key를 소유하지 않는다.
 
 palette가 unknown 또는 아직 표시되지 않은 partial slash draft를 소유한 상태에서 Enter를
-누르면 로컬 unknown command를 알리고 draft를 보존한다. 표시된 partial query에서는 선택된
+누르면 로컬 unknown command를 알리고 draft를 보존한다. 현재 Session에서 사용할 수 없는
+기존 명령이라면 이유를 알리고 draft를 보존하며 모델에 제출하지 않는다. 표시된 partial query에서는 선택된
 enabled row를 대신 accept할 수 있다. 실제로 보인 palette를 닫은 Esc만 정확히 같은 unchanged
 draft의 ordinary submission 한 번을 허용한다. 대기 중인 Activity가 있으면 그 Activity에
 답하고, 없으면 Turn을 시작하거나 frontend가 관찰한 정확한 `TurnRef`를 steer한다.
 draft를 편집하면 이 예외는 취소된다. `/help`는 로컬 command 요약을 추가하고 `/model`은
 Activity 응답 처리보다 먼저 selection flow에 들어가므로 둘 다 대기 중인 Activity를
 암묵적으로 답하거나 취소하지 않는다. `/exit`는 명시적인 process-lifecycle 예외이며 기존
-runner 종료 경계를 사용한다. 읽기 전용 view에서는 palette가 비활성화되지만 pending
-Activity는 이 로컬 command를 숨기지 않는다.
+runner 종료 경계를 사용한다. 읽기 전용 view에서는 palette가 비활성화된다. pending Activity
+중에도 가능한 읽기 명령은 남기고 idle 상태가 필요한 명령은 숨긴다.
 
 `/status`는 현재 Yo Session ID, 관측된 backend/model label, 작업 폴더 label과 입력
 상태를 펼쳐진 로컬 문서로 보여준다. CLI가 새로 시작하거나 재개하거나 분기한 live
@@ -299,8 +302,9 @@ backend label을 갱신한다. 사용량은 마지막으로 완료된 관측일 
 
 `/compact`는 idle Yo-managed control command다. 선택적인 suffix는 일반 prompt 제출이 아니라
 summary request를 위한 bounded user guidance다. Active Turn에서는 draft를 보존하고 idle이
-필요하다고 알리며, delegated Codex와 Grok Session은 Yo-managed checkpoint를 지원한다고
-가장하지 않고 unsupported로 거부한다. 이 정상적인 거부는 nonterminal control result이며
+필요하다고 알린다. delegated Codex와 Grok Session에서는 목록에서 숨기고, 직접 입력하면
+Yo-managed checkpoint를 지원한다고 가장하지 않고 unsupported로 거부한다.
+이 정상적인 거부는 nonterminal control result이며
 delegated Session을 닫지 않는다.
 
 Turn이 보이는 동안 제출한 일반 prompt는 정확히 그 `TurnRef`를 `yo-core`까지 전달한다.

@@ -64,6 +64,9 @@ pub(super) fn build_live_session(
     .with_workspace_references(
         workspace_references.expect("the terminal frontend started workspace references"),
     );
+    if active_host.is_none() {
+        tui = tui.with_managed_commands();
+    }
     if let Some(history) = restored_prompt_history {
         tui = tui.with_restored_prompt_history(history);
     }

@@ -137,21 +137,20 @@ approval path, not automatic approval review or persistent policy amendment.
 
 ### Interactive test agent
 
-Inside the actual `yo` chat, enter `/preview`. This opens an isolated, ephemeral
-child TUI state with an offline test agent; no Python launcher or separate app
-is involved. Type any text for streamed replies, or send `tools`, `error`,
+Run `cargo run --locked -p yo-tui --example chat_preview`, then enter `/preview`.
+The ordinary `yo` chat does not offer this developer-only command. The example
+opens an isolated, ephemeral child TUI state with an offline test agent.
+Type any text for streamed replies, or send `tools`, `error`,
 `long`, `markdown`, `tables`, or `diff` for simulated tool output, failure/recovery,
 scrolling, formatted prose/code, responsive tables, and code changes. These scenario
 names are ordinary messages inside the sandbox. `Esc` interrupts. `/preview`,
-`/exit`, or the empty-prompt exit gesture returns to the original conversation.
-Entry is rejected while a real turn, submission, or request is pending.
+`/exit`, or the empty-prompt exit gesture returns to the example's parent conversation.
+Entry is rejected while a turn, submission, or request is pending.
 The initial expanded host document groups examples by code/documents, files/search,
 tools/terminal, approvals/interview, progress/status and charts/media. It uses the
 normal document theme and wrapping; Alt+Up reaches its start immediately after entry.
 The guide includes file/content search, shell variants and aggregate diff/reroute examples.
 
-For a persistent standalone offline terminal, run
-`cargo run --locked -p yo-tui --example chat_preview`, then enter `/preview`.
 This uses the production TUI without a model connection or test-harness timeout
 messages. Wait for `Enter send` and an empty prompt before sending each scenario.
 

@@ -71,7 +71,8 @@ fn main() {
         TuiSessionInfo::new("OFFLINE UI", "Enter /preview · no model connection"),
         ColorCapability::TrueColor,
         MotionPreference::Reduced,
-    );
+    )
+    .with_developer_preview();
     let mut preferences = OutputPreferences::default();
     let mut theme_overrides = ThemeOverrides::default();
     for argument in env::args().skip(1) {

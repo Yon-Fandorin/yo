@@ -10,8 +10,9 @@ use yo_core::{
 use super::{FOLLOW_UP_BYTES, FOLLOW_UP_LIMIT, PendingRequest, StateEffect, StateError, TuiState};
 use crate::{
     command::{
-        CommandEffect, attachment_argument, compact_argument, find_argument, fork_argument,
-        model_argument, prompt_argument, resume_argument, secrets_argument, tree_argument,
+        CommandEffect, CommandRegistry, attachment_argument, compact_argument, find_argument,
+        fork_argument, model_argument, prompt_argument, resume_argument, secrets_argument,
+        tree_argument,
     },
     input::{
         editor::EditorEffect,
@@ -144,6 +145,7 @@ impl TuiState {
         if matches!(effect, StateEffect::Dispatch(AgentAction::Interrupt)) {
             self.follow_ups_paused = true;
         }
+        self.refresh_command_palette_if_active();
         Ok(effect)
     }
 
@@ -217,20 +219,24 @@ impl TuiState {
         {
             return Ok(StateEffect::Unchanged);
         }
-        // 보존된 변경 사항 검토는 승인을 제출하지 않는다. command palette가 request panel을
-        // 대신하므로 해당 panel의 commit token을 요구하지 않는다.
-        let safe_local_command = self
-            .command_palette
-            .exact_submission(self.editor.text(), self.editor.cursor_byte_index())
-            .is_some_and(|command| {
-                matches!(
-                    command.effect(),
-                    CommandEffect::ReviewChanges
-                        | CommandEffect::CopyAnswer
-                        | CommandEffect::ShowStatus
-                )
-            });
-        if !safe_local_command
+        // 읽기 명령과 사용할 수 없는 명령은 승인을 제출하지 않는다. command palette가
+        // request panel을 대신하므로 해당 panel의 commit token을 요구하지 않는다.
+        let unavailable_command = CommandRegistry::built_in()
+            .invocation_in(self.editor.text())
+            .is_some_and(|command| self.command_unavailable_reason(command.id()).is_some());
+        let locally_handled_command = unavailable_command
+            || self
+                .command_palette
+                .exact_submission(self.editor.text(), self.editor.cursor_byte_index())
+                .is_some_and(|command| {
+                    matches!(
+                        command.effect(),
+                        CommandEffect::ReviewChanges
+                            | CommandEffect::CopyAnswer
+                            | CommandEffect::ShowStatus
+                    )
+                });
+        if !locally_handled_command
             && self.pending_requests.front().is_some_and(|request| {
                 matches!(request, PendingRequest::Approval(_))
                     && self.chat.approval(request.activity()).is_some()
@@ -391,6 +397,14 @@ impl TuiState {
                     .command_palette
                     .reject_visible(token, &mut self.overlay)
                 {
+                    if let Some(command) =
+                        CommandRegistry::built_in().invocation_in(self.editor.text())
+                    {
+                        let draft = self.editor.text().to_owned();
+                        if let Some(effect) = self.reject_unavailable_command(command, &draft)? {
+                            return Ok(effect);
+                        }
+                    }
                     self.push_unknown_command_notice(self.editor.text().to_owned())?;
                     return Ok(StateEffect::Redraw);
                 }
@@ -628,12 +642,7 @@ impl TuiState {
                     edit.as_ref(),
                     assist_eligible,
                 );
-                self.command_palette.sync(
-                    self.editor.text(),
-                    self.editor.cursor_byte_index(),
-                    &mut self.overlay,
-                    command_eligible,
-                );
+                self.sync_command_palette(command_eligible);
                 Ok(
                     request.map_or(StateEffect::Redraw, |request| match request {
                         PromptAssistRequest::Workspace(request) => {
@@ -647,6 +656,15 @@ impl TuiState {
                 let escaped_palette = self.command_palette.take_escape(&text);
                 let restored_answer = self.restored_question_draft.is_some()
                     && self.restored_question_draft == self.pending_requests.front().copied();
+                if !escaped_palette
+                    && !restored_answer
+                    && self.question_notes.is_none()
+                    && let Some(command) = CommandRegistry::built_in().invocation_in(&text)
+                    && let Some(effect) = self.reject_unavailable_command(command, &text)?
+                {
+                    self.command_palette.close(&mut self.overlay);
+                    return Ok(effect);
+                }
                 if !escaped_palette
                     && !restored_answer
                     && self.question_notes.is_none()
@@ -1120,7 +1138,7 @@ impl TuiState {
         if queued {
             self.follow_up_submission = None;
         }
-        match outcome {
+        let effect = match outcome {
             SubmissionOutcome::Accepted { .. } => {
                 self.prompt_history.retain(submission.input().clone());
                 if queued {
@@ -1145,11 +1163,14 @@ impl TuiState {
                     && let Some(selection) = self.reserved_model_selection.take()
                 {
                     self.pending_model_selection = Some(selection);
+                    self.refresh_command_palette_if_active();
                     return Ok(StateEffect::Exit);
                 }
                 Ok(StateEffect::Redraw)
             },
-        }
+        }?;
+        self.refresh_command_palette_if_active();
+        Ok(effect)
     }
 
     pub(super) fn queue_follow_up(&mut self) -> Result<StateEffect, StateError> {

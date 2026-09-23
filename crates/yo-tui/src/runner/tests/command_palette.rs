@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use yo_core::{
-    AgentEvent, JournalDurability, SubmissionOutcome, SubmissionRejection, SubmissionRejectionKind,
-    session_repository::RepositorySequence,
+    AgentEvent, ImagePreparationUpdate, JournalDurability, SubmissionOutcome, SubmissionRejection,
+    SubmissionRejectionKind, session_repository::RepositorySequence,
 };
 
 use super::{key, rendered_row, turn};
@@ -46,9 +46,173 @@ fn slash_opens_the_local_command_palette() {
     assert!(rendered.contains("/model"), "{rendered}");
     assert!(rendered.contains("/status"), "{rendered}");
     assert!(rendered.contains("/compact"), "{rendered}");
-    assert!(rendered.contains("/copy"), "{rendered}");
+    assert!(!rendered.contains("/copy"), "{rendered}");
     assert_eq!(state.editor().text(), "/");
     assert!(state.transcript().items().is_empty());
+}
+
+// 위임 연결에서 지원하지 않는 관리형 명령은 검색에 없고, 인자를 붙여도 실행되지 않는다.
+#[test]
+fn delegated_session_hides_unsupported_controls_and_preserves_drafts() {
+    let mut state = TuiState::with_session_info(Default::default());
+    state
+        .handle(InputEvent::Paste("/comp".to_owned()), Duration::ZERO)
+        .unwrap();
+    let rendered = present_palette(&mut state, Size::new(80, 16));
+    assert!(rendered.contains("No matching commands"), "{rendered}");
+
+    let mut state = TuiState::with_session_info(Default::default());
+    state
+        .handle(
+            InputEvent::Paste("/compact keep context".to_owned()),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(state.editor().text(), "/compact keep context");
+    let output = state
+        .session_output(&AppearanceState::default().pin())
+        .unwrap()
+        .unwrap();
+    assert!(output.contains("only in a Yo-managed Session"), "{output}");
+
+    let mut state = TuiState::with_session_info(Default::default());
+    state
+        .handle(InputEvent::Paste("/fork at".to_owned()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(state.editor().text(), "/fork at");
+    assert!(!state.take_fork_picker_request());
+}
+
+// 도움말도 같은 가용성 목록을 사용해 일반 대화에서 숨긴 명령을 안내하지 않는다.
+#[test]
+fn delegated_help_lists_only_available_commands() {
+    let mut state = TuiState::with_session_info(Default::default());
+    state
+        .handle(InputEvent::Paste("/help".to_owned()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let output = state
+        .session_output(&AppearanceState::default().pin())
+        .unwrap()
+        .unwrap();
+    assert!(output.contains("/model"), "{output}");
+    assert!(!output.contains("/preview"), "{output}");
+    assert!(!output.contains("/compact"), "{output}");
+    assert!(!output.contains("/fork"), "{output}");
+}
+
+// 같은 검색어가 열린 동안 저장 상태가 바뀌면 낡은 프레임은 선택할 수 없고 새 목록만 보인다.
+#[test]
+fn palette_refreshes_unavailable_fork_after_durability_changes() {
+    let mut state = TuiState::new();
+    state
+        .handle(InputEvent::Paste("/fo".to_owned()), Duration::ZERO)
+        .unwrap();
+    let rendered = present_palette(&mut state, Size::new(80, 16));
+    assert!(rendered.contains("No matching commands"), "{rendered}");
+    assert_eq!(
+        state
+            .observe_durability(JournalDurability::Durable {
+                journal_sequence: None,
+                repository_sequence: RepositorySequence::new(1),
+            })
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    let rendered = present_palette(&mut state, Size::new(80, 16));
+    assert!(rendered.contains("/fork"), "{rendered}");
+}
+
+// 이미지 준비 중에는 명령을 숨기고, 직접 입력해도 파일을 읽거나 초안을 지우지 않는다.
+#[test]
+fn attach_is_hidden_during_image_preparation_and_direct_input_is_preserved() {
+    let mut state = TuiState::new();
+    state.enable_image_preparation();
+    let StateEffect::PrepareImage(request) = state
+        .handle(
+            key(KeyCode::Character('v'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap()
+    else {
+        panic!("clipboard image preparation must start");
+    };
+    state
+        .handle(InputEvent::Paste("/att".to_owned()), Duration::ZERO)
+        .unwrap();
+    let rendered = present_palette(&mut state, Size::new(80, 16));
+    assert!(rendered.contains("No matching commands"), "{rendered}");
+    assert!(
+        state
+            .observe_image_preparation(ImagePreparationUpdate {
+                id: request.id,
+                revision: request.revision,
+                result: Err(SubmissionRejection::new(
+                    SubmissionRejectionKind::InvalidReference,
+                    "cancelled",
+                )),
+            })
+            .unwrap()
+    );
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    let rendered = present_palette(&mut state, Size::new(80, 16));
+    assert!(rendered.contains("/attach"), "{rendered}");
+
+    let mut state = TuiState::new();
+    state.enable_image_preparation();
+    assert!(matches!(
+        state
+            .handle(
+                key(KeyCode::Character('v'), KeyModifiers::CONTROL),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::PrepareImage(_)
+    ));
+    let draft = "/attach /tmp/yo-command-visibility-missing.png";
+    state
+        .handle(InputEvent::Paste(draft.to_owned()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(state.editor().text(), draft);
+    let output = state
+        .session_output(&AppearanceState::default().pin())
+        .unwrap()
+        .unwrap();
+    assert!(output.contains("pending preparation"), "{output}");
 }
 
 // 선택 지침이 있는 `/compact`가 idle control intent 하나로 정확히 변환됨을 검증합니다.

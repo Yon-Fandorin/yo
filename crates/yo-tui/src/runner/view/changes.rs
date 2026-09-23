@@ -204,7 +204,7 @@ impl ChangesView {
                     (source, start..end, label_start..start, change.outcome)
                 } else {
                     (
-                        "No file changes in this conversation yet.\nF1 returns to Chat.".to_owned(),
+                        "No file changes were reported in this conversation.\nThis view does not inspect the Git worktree.\nF1 returns to Chat.".to_owned(),
                         0..0,
                         0..0,
                         None,

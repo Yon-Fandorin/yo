@@ -21,10 +21,30 @@ fn send(state: &mut TuiState, text: &str) -> StateEffect {
         .unwrap()
 }
 
+// 일반 대화에서 개발용 프리뷰 명령을 직접 입력해도 모델에 보내지 않고 초안을 보존한다.
+#[test]
+fn ordinary_session_rejects_preview_without_dispatch() {
+    for draft in ["/preview", "/PREVIEW"] {
+        let mut state = TuiState::new();
+        assert_eq!(send(&mut state, draft), StateEffect::Redraw);
+        assert!(!state.preview_active());
+        assert_eq!(state.editor().text(), draft);
+        let output = state
+            .session_output(&AppearanceState::default().pin())
+            .unwrap()
+            .unwrap();
+        assert!(
+            output.contains("developer chat_preview example"),
+            "{output}"
+        );
+    }
+}
+
 // /preview 입력은 실제 agent dispatch로 새지 않고, 합성 대화는 원본 출력에 들어가지 않는다.
 #[test]
 fn preview_is_interactive_isolated_and_returns_to_real_session() {
     let mut state = TuiState::new();
+    state.enable_developer_preview();
     state
         .observe_record(yo_core::TranscriptRecord::CommandCommitted(
             yo_core::AgentCommand::StartTurn {
@@ -61,6 +81,7 @@ fn preview_is_interactive_isolated_and_returns_to_real_session() {
 #[test]
 fn active_real_turn_cannot_be_hidden_by_preview() {
     let mut state = TuiState::new();
+    state.enable_developer_preview();
     state
         .observe(yo_core::AgentEvent::TurnStarted { turn: turn() })
         .unwrap();
@@ -73,6 +94,7 @@ fn active_real_turn_cannot_be_hidden_by_preview() {
 #[test]
 fn preview_follow_ups_continue_after_host_only_commands() {
     let mut state = TuiState::new();
+    state.enable_developer_preview();
     send(&mut state, "/preview");
     send(&mut state, "status");
     for (message, expected) in [("status-update", true), ("status-clear", false)] {

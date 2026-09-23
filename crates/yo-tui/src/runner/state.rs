@@ -82,6 +82,8 @@ pub(super) struct TuiState {
     pub(super) interview: Option<super::interview::InterviewController>,
     preview: Option<Box<preview::Preview>>,
     preview_mode: bool,
+    developer_preview_enabled: bool,
+    managed_commands_enabled: bool,
     chat: ChatProjection,
     editor: PromptEditor,
     secret_editor: Option<SecretEditor>,
@@ -167,7 +169,9 @@ impl TuiState {
 
     #[cfg(test)]
     pub(super) fn new() -> Self {
-        Self::with_session_info(TuiSessionInfo::default())
+        let mut state = Self::with_session_info(TuiSessionInfo::default());
+        state.managed_commands_enabled = true;
+        state
     }
 
     pub(super) fn with_session_info(session_info: TuiSessionInfo) -> Self {

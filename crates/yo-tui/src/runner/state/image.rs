@@ -21,6 +21,36 @@ pub(super) struct PendingImage {
 }
 
 impl TuiState {
+    pub(super) fn image_attachment_unavailable_reason(&self) -> Option<&'static str> {
+        if !self.image_preparation_enabled
+            || self.preview_mode
+            || self.has_pending_request()
+            || self.pending_model_selection.is_some()
+            || self.reserved_model_selection.is_some()
+            || self.model_overlay.is_some()
+            || self.resume_overlay.is_some()
+            || self.fork_overlay.is_some()
+            || self.new_session_requested
+            || self.fork_session_requested
+            || self.resume_session_requested.is_some()
+        {
+            return Some("Image attachment is unavailable in this prompt.");
+        }
+        if self.pending_image.is_some() || !self.pending_submissions.is_empty() {
+            return Some(
+                "Wait for pending preparation or admission before attaching another image.",
+            );
+        }
+        if self.prompt_assist.image_occurrences().len() >= InputImage::MAX_OCCURRENCES
+            || !can_reserve_image(self.owned_image_bytes())
+        {
+            return Some(
+                "Image ownership limit reached (16 per input, 64 MiB across drafts and queue).",
+            );
+        }
+        None
+    }
+
     pub(in crate::runner) fn enable_image_preparation(&mut self) {
         self.image_preparation_enabled = true;
     }
@@ -70,33 +100,9 @@ impl TuiState {
         command: Range<usize>,
         source: ImagePreparationSource,
     ) -> Result<StateEffect, StateError> {
-        if !self.image_preparation_enabled
-            || self.preview_mode
-            || self.has_pending_request()
-            || self.pending_model_selection.is_some()
-            || self.reserved_model_selection.is_some()
-            || self.model_overlay.is_some()
-            || self.resume_overlay.is_some()
-            || self.fork_overlay.is_some()
-        {
-            self.chat.push_notice(
-                "Image attachment is unavailable in this prompt; your draft was preserved."
-                    .to_owned(),
-            )?;
-            return Ok(StateEffect::Redraw);
-        }
-        if self.pending_image.is_some() || !self.pending_submissions.is_empty() {
-            self.chat.push_notice(
-                "Wait for pending preparation or admission before attaching another image."
-                    .to_owned(),
-            )?;
-            return Ok(StateEffect::Redraw);
-        }
-        let owned = self.owned_image_bytes();
-        if self.prompt_assist.image_occurrences().len() >= InputImage::MAX_OCCURRENCES
-            || !can_reserve_image(owned)
-        {
-            self.chat.push_notice("Image ownership limit reached (16 per input, 64 MiB across drafts and queue); your draft was preserved.".to_owned())?;
+        if let Some(reason) = self.image_attachment_unavailable_reason() {
+            self.chat
+                .push_notice(format!("{reason} Your draft was preserved."))?;
             return Ok(StateEffect::Redraw);
         }
         let digests = self
@@ -150,8 +156,10 @@ impl TuiState {
             .pending_image
             .take()
             .expect("the update matched its pending image");
+        let palette_was_active = self.command_palette.is_active();
+        self.refresh_command_palette_if_active();
         if !current {
-            return Ok(false);
+            return Ok(palette_was_active);
         }
         let prepared = match update.result {
             Ok(prepared) => prepared,

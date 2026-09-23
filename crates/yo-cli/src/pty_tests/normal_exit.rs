@@ -441,7 +441,8 @@ fn child_themed_preview() {
         return;
     }
     let mut session = TuiSession::new(ColorCapability::TrueColor, MotionPreference::Reduced)
-        .with_theme(Theme::Light);
+        .with_theme(Theme::Light)
+        .with_developer_preview();
     let outcome = run_session_with_mode(
         &mut PendingTermination,
         &mut PendingAgent,

@@ -39,6 +39,7 @@ impl TuiState {
             "/preview or /exit: return to your session",
         ));
         state.preview_mode = true;
+        state.developer_preview_enabled = true;
         state.prompt_templates = self.prompt_templates.clone();
         state.set_presentation_mode(PresentationMode::Fullscreen);
         state.observe_document(

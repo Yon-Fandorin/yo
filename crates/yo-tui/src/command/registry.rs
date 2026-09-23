@@ -5,8 +5,8 @@ use std::{collections::HashSet, sync::OnceLock};
 use yo_core::ActivityDocument;
 
 use super::{
-    CommandDefinition, attach, changes, compact, copy, exit, find, fork, help, interview, model,
-    new, output, preview, prompt, resume, secrets, status, tree,
+    CommandDefinition, CommandId, attach, changes, compact, copy, exit, find, fork, help,
+    interview, model, new, output, preview, prompt, resume, secrets, status, tree,
 };
 
 const ORDERED_DEFINITIONS: &[&CommandDefinition] = &[
@@ -67,6 +67,14 @@ impl CommandRegistry {
         })
     }
 
+    pub(crate) fn invocation_in(&self, draft: &str) -> Option<&'static CommandDefinition> {
+        let token = draft.split_whitespace().next()?;
+        self.definitions
+            .iter()
+            .copied()
+            .find(|definition| definition.invocation().eq_ignore_ascii_case(token))
+    }
+
     pub(super) fn identity(&self, identity: &str) -> Option<&'static CommandDefinition> {
         self.definitions
             .iter()
@@ -74,7 +82,7 @@ impl CommandRegistry {
             .find(|definition| definition.identity() == identity)
     }
 
-    pub(super) fn matching<'a>(
+    pub(crate) fn matching<'a>(
         &'a self,
         query: &'a str,
     ) -> impl Iterator<Item = &'static CommandDefinition> + 'a {
@@ -88,9 +96,13 @@ impl CommandRegistry {
         })
     }
 
-    pub(crate) fn help_document(&self) -> ActivityDocument {
+    pub(crate) fn help_document(&self, available: &[CommandId]) -> ActivityDocument {
         let mut commands = String::new();
-        for definition in self.definitions {
+        for definition in self
+            .definitions
+            .iter()
+            .filter(|definition| available.contains(&definition.id()))
+        {
             commands.push_str(&format!(
                 "- `{}`: {}\n",
                 definition.invocation(),
