@@ -129,7 +129,8 @@ impl TuiState {
 ## Navigation
 Use **Alt+Up/Down** to reach item starts, **Up/Down** or **PageUp/PageDown** to scroll,
 and **End** to follow the latest output. **Alt+O** folds the current activity;
-**Ctrl+O** resets item choices and folds all. **Esc** interrupts.
+**Ctrl+O** resets item choices and folds all. **Alt+D** opens the focused file
+change in detail. **Esc** interrupts.
 `/preview` or `/exit` returns to your session. No model calls or file changes.
 "#.to_owned(),
             }).expect("bounded preview guide").with_expanded(true),

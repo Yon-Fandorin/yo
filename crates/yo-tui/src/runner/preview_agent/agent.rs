@@ -63,7 +63,7 @@ impl PreviewApproval {
             Self::Scopes => Some(approval_profile()),
             Self::FileChange => Some(ActivityApproval {
                 related_change: Some(2),
-                plain_text: "Review the proposed file changes with /changes.\nOffline preview: no files or permissions are changed.".into(),
+                plain_text: "Select Review proposed files to inspect the linked change.\nOffline preview: no files or permissions are changed.".into(),
                 choices: vec![
                     ApprovalChoice { label:"Approve request".into(), description:"Accept this offline proposal".into(), enabled:true },
                     ApprovalChoice { label:"Decline".into(), description:"Leave the proposal unapplied".into(), enabled:true },
@@ -315,7 +315,7 @@ impl AgentConnection for TestAgent {
                 let input = submission.input().as_str().to_owned();
                 self.ready.push_back(AgentPoll::Submission(SubmissionOutcome::Accepted { id: submission.id() }));
                 if input.trim() == "session-document" {
-                    let document = ActivityDocument { title: "Workspace guide".into(), markdown: "This **host document** did not start a model turn.\n\n| Action | Shortcut |\n| --- | --- |\n| Inspect output | `/output` |\n| Review changes | `/changes` |\n\n```rust\nuse std::path::Path;\n```".into() };
+                    let document = ActivityDocument { title: "Workspace guide".into(), markdown: "This **host document** did not start a model turn.\n\n| Action | Shortcut |\n| --- | --- |\n| Inspect output | `/output` |\n| Review a focused change | `Alt+D` |\n\n```rust\nuse std::path::Path;\n```".into() };
                     self.ready.push_back(AgentPoll::Document(TuiDocument::new(document).expect("bounded session document").with_expanded(true)));
                     return Ok(DispatchOutcome::Queued);
                 }

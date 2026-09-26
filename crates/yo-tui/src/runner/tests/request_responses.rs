@@ -1521,7 +1521,7 @@ fn unrenderable_approval_choices_cannot_be_submitted_by_typing_their_ordinals() 
 
 // 승인에 연결된 첫 번째 변경은 더 최근 변경이 있어도 정확히 열리고 화면 왕복은 승인하지 않는다.
 #[test]
-fn approval_changes_command_opens_the_related_file_without_approving() {
+fn approval_review_action_opens_the_related_file_without_approving() {
     use yo_core::{ActivityApproval, ActivityOutcome, ActivityUpdate, ApprovalChoice};
 
     use crate::surface::{CellContent, Point, Surface};
@@ -1596,15 +1596,21 @@ fn approval_changes_command_opens_the_related_file_without_approving() {
             let pin = AppearanceState::default().pin();
             let frame = state.prepare_frame(Size::new(80, 40), &pin).unwrap();
             state.commit_frame(&frame);
-            assert!(visible_rows(&frame.surface).contains("/changes: proposed files"));
-            for character in "/changes".chars() {
+            assert!(
+                visible_rows(&frame.surface).contains("Review proposed files"),
+                "{}",
+                visible_rows(&frame.surface)
+            );
+            if related == 1 {
                 state
-                    .handle(
-                        key(KeyCode::Character(character), KeyModifiers::NONE),
-                        Duration::ZERO,
-                    )
+                    .handle(InputEvent::Paste("keep draft".into()), Duration::ZERO)
                     .unwrap();
+                let frame = state.prepare_frame(Size::new(80, 40), &pin).unwrap();
+                state.commit_frame(&frame);
             }
+            state
+                .handle(key(KeyCode::Down, KeyModifiers::NONE), Duration::ZERO)
+                .unwrap();
             let frame = state.prepare_frame(Size::new(80, 40), &pin).unwrap();
             state.commit_frame(&frame);
             assert!(!matches!(
@@ -1617,7 +1623,7 @@ fn approval_changes_command_opens_the_related_file_without_approving() {
                 let frame = state.prepare_frame(Size::new(80, 40), &pin).unwrap();
                 assert!(visible_rows(&frame.surface).contains("not available"));
                 assert!(state.has_pending_request());
-                assert!(visible_rows(&frame.surface).contains("/changes: proposed files"));
+                assert!(visible_rows(&frame.surface).contains("Review proposed files"));
                 state.commit_frame(&frame);
                 assert_eq!(
                     state
@@ -1647,6 +1653,7 @@ fn approval_changes_command_opens_the_related_file_without_approving() {
                 StateEffect::Dispatch(_)
             ));
             assert!(state.has_pending_request());
+            assert_eq!(state.editor().text(), "keep draft");
         }
     }
 }

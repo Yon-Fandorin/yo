@@ -175,8 +175,9 @@ Implementation: `command/preview.rs` registers the command;
 
 Approval profiles may carry an optional `related_change`: a nonzero observed file-change
 activity ID in the request's own Turn, independent of provider wire IDs. Missing fields
-remain compatible with earlier profiles. During such an approval, `/changes` opens the
-linked activity's first file, rather than a more recent unrelated change. If the declared
+remain compatible with earlier profiles. During such an approval, the panel's
+Review proposed files action opens the linked activity's first file, rather than
+a more recent unrelated change. If the declared
 activity is unavailable, the UI explains that instead of selecting another file. Reviewing
 changes never submits an approval; normal committed-frame guards still apply to decisions.
 Codex supplies this reference only for an exact item ID observed as a file change in the
@@ -430,8 +431,9 @@ Added/removed line counts are presentation-only. Folding moves background rows
 with glyphs and retains the terminal outcome. `changes` in `/preview` exercises
 this activity path, while `diff` remains a Markdown fence example.
 
-`/changes` opens a read-only projection of retained typed FileChange activities,
-not a Git working-tree scan. Left/Right selects file sections, navigation keys and
+Alt+D on a focused file-change block, or Review proposed files in an approval,
+opens a read-only projection of retained typed FileChange activities, not a Git
+working-tree scan. Left/Right selects file sections, navigation keys and
 wheel scroll uncollapsed content, and F1 restores Chat. Explicit file metadata
 owns section boundaries even when its update contains `diff --git` headers.
 The fixed header shows the selected explicit file path during scrolling. At narrow
@@ -454,7 +456,7 @@ backgrounds and padding; the same diff role classifier serves Markdown and revie
 Theme changes resolve fresh styles without rebuilding source pages. End follows new
 snapshots, detached navigation anchors to source bytes across width changes, and a
 file switch starts at its heading. Compact Chat retains the large-diff summary
-and `/changes` hint; expanding an activity now reads an individual diff beyond
+and Alt+D hint; expanding an activity now reads an individual diff beyond
 65,535 rows directly in Chat. Retained source and exports stay complete.
 Tests cover 70,000 lines, failed-frame navigation retry, appended snapshots, file
 switches, continuation backgrounds, custom colors and width round trips.
@@ -976,7 +978,7 @@ owns the resolved values; components receive layout settings, not CLI/config pat
 A requested one-column body uses two columns to retain wide Unicode. Default head counts remain 2/6. Folded activities keep the configured opening rows
 and three trailing rows; folding begins after the head count plus six rows and
 only when the wrapped hint saves space. Zero head rows is allowed. Saturating
-arithmetic keeps the maximum u16 value valid. `/changes` bypasses folding.
+arithmetic keeps the maximum u16 value valid. The detailed Changes view bypasses folding.
 Tests in `runner/tests/appearance.rs` verify consumed frame output, independent
 tool/diff settings, wrapping, retained source, and preservation across theme choice.
 CLI config tests reject zero width, negative/overflow counts and unknown keys.
@@ -1679,7 +1681,7 @@ distinguish it from individual tool changes. Empty updates remove the previous d
 and explicitly report no remaining changes. The activity closes with the turn's
 completed/failed/interrupted outcome; finished-turn updates are ignored. Thread,
 turn, string type and the presentation byte limit are validated before publication.
-Existing diff colors, folding, width and `/changes` file navigation apply. A leading
+Existing diff colors, folding, width and detailed Changes-view file navigation apply. A leading
 explanation stays with the first file rather than creating a separate file section.
 Tests cover replacement/empty updates/all terminal outcomes, invalid targets/types,
 the exact size limit and first excess, and file navigation across 80/24/80 columns.
@@ -1775,7 +1777,7 @@ empty diffs say `No textual changes`. Custom tool renderers retain source access
 call or file write. Tests cover multiple hunks, new/unchanged files, path escaping,
 size boundaries, narrow resizing, theme roles and source export. For calls initially
 classified as edit/delete/move, the same FileChange activity now also receives the
-reported diffs, with explicit quoted file headers for `/changes` navigation. Partial
+reported diffs, with explicit quoted file headers for detailed Changes-view navigation. Partial
 updates retain those files; explicit empty content clears them. Original call failure
 and interruption remain authoritative; a displayed patch does not establish that a
 write succeeded. Other tool kinds keep their existing classification. No additional
@@ -1796,8 +1798,9 @@ disabled or out-of-range ordinals do not consume the request or send a response.
 
 The readable request includes the reported tool call ID and rawInput arguments, without
 copying arbitrary tool metadata into the semantic approval. A known unfinished file
-change in the same Turn links through the exact toolCallId to the existing `/changes`
-review gate. Other tool kinds and finished calls remain unlinked. Requests arriving
+change in the same Turn links through the exact toolCallId to the approval panel's
+Review proposed files action. Other tool kinds and finished calls remain unlinked.
+Requests arriving
 before the matching call retain its bounded ID; a later unfinished FileChange updates
 the same approval profile, in request order, without changing choices or response authority.
 Admission reserves the maximum related ID encoding, including the exact byte boundary.
@@ -1808,7 +1811,7 @@ calls never supply fallback details or links. Existing TUI profile-update and fr
 checks invalidate old review receipts when a late link or related diff appears.
 For an exact known unfinished call, permission-request rawInput/content/locations
 refresh the retained tool snapshot before the approval is published. New reported diff
-content therefore replaces the older `/changes` body, and explicit empty content clears
+content therefore replaces the older detailed Changes-view body, and explicit empty content clears
 it. Permission status/kind does not finish or reclassify the tool; rawOutput and arbitrary
 metadata are not imported from the permission request. Validation and duplicate-request
 checks precede this refresh. Request content and locations also remain literal in the approval history. For an

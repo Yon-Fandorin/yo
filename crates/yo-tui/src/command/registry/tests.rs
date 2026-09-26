@@ -16,7 +16,6 @@ fn command_filter_preserves_module_declared_order() {
             CommandId::Status,
             CommandId::Compact,
             CommandId::Copy,
-            CommandId::Changes,
             CommandId::Output,
             CommandId::Preview,
             CommandId::Attach,
@@ -53,6 +52,7 @@ fn help_document_uses_registry_and_explains_interaction() {
     for shortcut in [
         "Alt+Up/Down",
         "Alt+O",
+        "Alt+D",
         "Ctrl+O",
         "Ctrl+A/E",
         "Ctrl+G",

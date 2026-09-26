@@ -407,12 +407,6 @@ impl PendingRequest {
             && let Some(approval) = approval
         {
             let mut entries = vec![SelectionEntry::status("context", "F2: request history")];
-            if approval.related_change.is_some() {
-                entries.push(SelectionEntry::status(
-                    "changes",
-                    "/changes: proposed files",
-                ));
-            }
             if approval.decline_choice.is_none() {
                 entries.push(SelectionEntry::enabled_with_context(
                     "stop-turn",
@@ -437,6 +431,14 @@ impl PendingRequest {
                         choice.label.clone(),
                     ));
                 }
+            }
+            if approval.related_change.is_some() {
+                entries.push(SelectionEntry::enabled_with_context(
+                    "review-changes",
+                    "Review proposed files",
+                    None,
+                    None,
+                ));
             }
             return PanelSnapshot::new("Approval", entries)
                 .unwrap_or_else(|_| {

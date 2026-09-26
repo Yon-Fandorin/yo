@@ -139,7 +139,7 @@ impl OutputPreferences {
     }
 
     /// Keeps this many opening diff rows when folded, plus the final three rows.
-    /// `/changes` always displays the complete diff regardless of this setting.
+    /// The detailed Changes view displays the complete diff regardless of this setting.
     #[must_use]
     pub const fn with_diff_head_rows(mut self, rows: u16) -> Self {
         self.diff_head_rows = rows;

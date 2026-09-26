@@ -231,9 +231,7 @@ impl TuiState {
                 .is_some_and(|command| {
                     matches!(
                         command.effect(),
-                        CommandEffect::ReviewChanges
-                            | CommandEffect::CopyAnswer
-                            | CommandEffect::ShowStatus
+                        CommandEffect::CopyAnswer | CommandEffect::ShowStatus
                     )
                 });
         if !locally_handled_command
@@ -321,6 +319,11 @@ impl TuiState {
         let typed_reply = self.question_notes.is_none()
             && self.request_overlay.is_some()
             && !self.editor.text().is_empty()
+            && self
+                .overlay
+                .panel()
+                .and_then(|panel| panel.selected_identity())
+                .is_none_or(|identity| identity.as_str() != "review-changes")
             && matches!(&input, InputEvent::Key(key) if key.code == KeyCode::Enter);
         let overlay_effect = if typed_reply {
             OverlayInputEffect::Unhandled
@@ -477,6 +480,23 @@ impl TuiState {
                     && token == receipt.token()
                     && self.pending_requests.front() == Some(&PendingRequest::Approval(request))
                 {
+                    if receipt.identity() == "review-changes"
+                        && self
+                            .chat
+                            .approval(request.activity())
+                            .is_some_and(|approval| approval.related_change.is_some())
+                    {
+                        if let Some(item) = self.chat.approval_change(request.activity()) {
+                            self.views.open_changes_for(item);
+                        } else {
+                            self.chat.push_notice(
+                                "The file changes linked to this approval are not available."
+                                    .to_owned(),
+                            )?;
+                        }
+                        self.sync_request_overlay()?;
+                        return Ok(StateEffect::Redraw);
+                    }
                     if receipt.identity() == "stop-turn" {
                         return Ok(StateEffect::Dispatch(AgentAction::Interrupt));
                     }
@@ -563,6 +583,18 @@ impl TuiState {
 
         if let Some(effect) = self.handle_find_query(&input, now)? {
             return Ok(effect);
+        }
+
+        if matches!(&input, InputEvent::Key(key)
+            if key.action == KeyAction::Press
+                && key.modifiers == KeyModifiers::ALT
+                && matches!(key.code, KeyCode::Character('d' | 'D')))
+            && self.views.active() == ObservabilityView::Chat
+            && self.overlay.panel().is_none()
+            && let Some(item) = self.views.focused_change(self.chat.transcript().all())
+        {
+            self.views.open_changes_for(item);
+            return Ok(StateEffect::Redraw);
         }
 
         if self.question_notes.is_some()

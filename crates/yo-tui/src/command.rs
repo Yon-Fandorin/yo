@@ -1,7 +1,6 @@
 //! Prompt-local built-in command composition and public crate facade.
 
 mod attach;
-mod changes;
 pub(crate) use attach::attachment_argument;
 mod compact;
 mod copy;

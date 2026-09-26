@@ -6,9 +6,10 @@ use yo_core::{
 };
 
 use super::{
-    CommandEffect, CopyAnswer, MAX_TEXT_BYTES, PendingRequest, StateEffect, TuiSessionInfo,
-    TuiState, status_document,
+    CommandEffect, CopyAnswer, MAX_TEXT_BYTES, StateEffect, TuiSessionInfo, TuiState,
+    status_document,
 };
+use crate::runner::state::PendingRequest;
 
 // 상태 문서는 호스트 문자열을 Markdown으로 해석하지 않고 표시 길이를 제한한다.
 #[test]

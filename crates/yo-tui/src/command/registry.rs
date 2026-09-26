@@ -5,8 +5,8 @@ use std::{collections::HashSet, sync::OnceLock};
 use yo_core::ActivityDocument;
 
 use super::{
-    CommandDefinition, CommandId, attach, changes, compact, copy, exit, find, fork, help,
-    interview, model, new, output, preview, prompt, resume, secrets, status, tree,
+    CommandDefinition, CommandId, attach, compact, copy, exit, find, fork, help, interview, model,
+    new, output, preview, prompt, resume, secrets, status, tree,
 };
 
 const ORDERED_DEFINITIONS: &[&CommandDefinition] = &[
@@ -15,7 +15,6 @@ const ORDERED_DEFINITIONS: &[&CommandDefinition] = &[
     &status::DEFINITION,
     &compact::DEFINITION,
     &copy::DEFINITION,
-    &changes::DEFINITION,
     &output::DEFINITION,
     &preview::DEFINITION,
     &attach::DEFINITION,

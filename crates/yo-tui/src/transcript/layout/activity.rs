@@ -145,6 +145,11 @@ pub(super) fn prepare_diff(
     } else {
         text[..header_end].to_owned()
     };
+    let heading = if source.is_empty() {
+        heading
+    } else {
+        format!("{heading} · Alt+D")
+    };
     let mut body = PreparedBody {
         skip_activity_folding: false,
         rasters: Vec::new(),
@@ -173,7 +178,7 @@ pub(super) fn prepare_diff(
     if rows > usize::from(u16::MAX) - 256 {
         append_plain(
             &mut body,
-            "Large diff · open /changes to read every retained row.",
+            "Large diff · Alt+D opens every retained row.",
             width,
             GlyphRole::ActivityBody,
         )?;

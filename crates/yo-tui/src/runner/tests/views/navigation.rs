@@ -22,6 +22,19 @@ use crate::{
     surface::{CellContent, Point, Size},
 };
 
+fn open_focused_change(state: &mut TuiState, size: Size) {
+    render_and_commit(state, size);
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+}
+
 // 작성 중인 여러 줄 초안의 방향키는 편집 커서를 움직인다. 기록 스크롤은 PageUp으로
 // 계속 접근하며, 초안을 비우면 일반 방향키가 다시 기록을 움직인다.
 #[test]
@@ -362,8 +375,8 @@ fn wheel_bursts_restore_view_and_preserve_draft() {
     assert_eq!(render_and_commit(&mut state, size), before);
 }
 
-// /changes는 실제 FileChange만 파일별로 펼쳐 보여주고 읽기 입력이 모델 제출로 새지 않는다.
-// 좁은 폭에서도 복귀 키를 알 수 있고 F1은 기존 대화 위치로 돌아간다.
+// 채팅의 파일 변경 블록은 해당 FileChange만 파일별로 펼쳐 보여주고 읽기 입력이 모델 제출로 새지
+// 않는다. 좁은 폭에서도 복귀 키를 알 수 있고 F1은 기존 대화 위치로 돌아간다.
 #[test]
 fn changes_review_navigates_files_without_dispatching_input() {
     let mut state = TuiState::new();
@@ -406,15 +419,7 @@ fn changes_review_navigates_files_without_dispatching_input() {
     }
     let size = Size::new(40, 12);
     let chat = render_and_commit(&mut state, size);
-    state
-        .handle(InputEvent::Paste("/changes".into()), Duration::ZERO)
-        .unwrap();
-    assert_eq!(
-        state
-            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
-            .unwrap(),
-        StateEffect::Redraw
-    );
+    open_focused_change(&mut state, size);
     let first = render_and_commit(&mut state, size);
     assert!(first.contains("1/2"), "{first}");
     assert!(first.contains("first.rs"), "{first}");
@@ -455,6 +460,67 @@ fn changes_review_navigates_files_without_dispatching_input() {
     assert_eq!(render_and_commit(&mut state, size), chat);
 }
 
+// 상세 변경 단축키는 마지막으로 표시된 파일 변경 문맥에만 반응하고 이동 중 초안을 보존한다.
+#[test]
+fn alt_d_requires_a_committed_file_change_context() {
+    let mut state = TuiState::new();
+    for (id, kind, text) in [
+        (1, ActivityKind::FileChange, "update: target.rs\n-old\n+new"),
+        (2, ActivityKind::ToolCall, "cargo test"),
+    ] {
+        state
+            .observe(AgentEvent::ActivityStarted {
+                activity: activity(id),
+                kind,
+            })
+            .unwrap();
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: activity(id),
+                update: ActivityUpdate::TextSnapshot(text.into()),
+            })
+            .unwrap();
+    }
+    state
+        .handle(InputEvent::Paste("keep draft".into()), Duration::ZERO)
+        .unwrap();
+    let size = Size::new(40, 12);
+    render_and_commit(&mut state, size);
+    assert_ne!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    state
+        .handle(key(KeyCode::Up, KeyModifiers::ALT), Duration::ZERO)
+        .unwrap();
+    assert_ne!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    render_and_commit(&mut state, size);
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(state.views().active(), ObservabilityView::Changes);
+    assert_eq!(state.editor().text(), "keep draft");
+}
+
 // 긴 파일 경로는 고정 안내에서만 줄이며 폭 변경과 스크롤 뒤에도 파일명을 유지한다.
 #[test]
 fn changes_header_preserves_unicode_filename_while_scrolling() {
@@ -473,12 +539,7 @@ fn changes_header_preserves_unicode_filename_while_scrolling() {
             update: ActivityUpdate::TextSnapshot(body),
         })
         .unwrap();
-    state
-        .handle(InputEvent::Paste("/changes".into()), Duration::ZERO)
-        .unwrap();
-    state
-        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
-        .unwrap();
+    open_focused_change(&mut state, Size::new(80, 20));
     let wide = render_and_commit(&mut state, Size::new(100, 12));
     assert!(
         wide.lines()
@@ -537,16 +598,7 @@ fn live_changes_keep_the_selected_activity_when_earlier_files_arrive() {
             })
             .unwrap();
     }
-    state
-        .handle(InputEvent::Paste("/changes".into()), Duration::ZERO)
-        .unwrap();
-    state
-        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
-        .unwrap();
-    render_and_commit(&mut state, Size::new(40, 12));
-    state
-        .handle(key(KeyCode::Right, KeyModifiers::NONE), Duration::ZERO)
-        .unwrap();
+    open_focused_change(&mut state, Size::new(40, 12));
     assert!(render_and_commit(&mut state, Size::new(40, 12)).contains("selected.rs"));
     state
         .observe(AgentEvent::ActivityUpdated {
@@ -829,12 +881,7 @@ fn aggregate_diff_preamble_does_not_create_a_spurious_file_section() {
         })
         .unwrap();
     state.observe(AgentEvent::ActivityUpdated { activity: activity(1), update: ActivityUpdate::TextSnapshot("Turn aggregate diff\ndiff --git a/a.rs b/a.rs\n-old\n+new\ndiff --git a/b.rs b/b.rs\n-b\n+c\n".into()) }).unwrap();
-    state
-        .handle(InputEvent::Paste("/changes".into()), Duration::ZERO)
-        .unwrap();
-    state
-        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
-        .unwrap();
+    open_focused_change(&mut state, Size::new(80, 15));
     let first = render_and_commit(&mut state, Size::new(80, 15));
     assert!(first.contains("1/2"), "{first}");
     assert!(first.contains("Turn aggregate diff"), "{first}");
@@ -943,13 +990,16 @@ fn changes_pages_beyond_u16_and_preserves_file_and_snapshot_navigation() {
         .unwrap();
     let chat = render_and_commit(&mut state, Size::new(80, 20));
     assert!(chat.contains("Large diff"), "{chat}");
-    assert!(chat.contains("/changes"), "{chat}");
-    state
-        .handle(InputEvent::Paste("/changes".into()), Duration::ZERO)
-        .unwrap();
-    state
-        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
-        .unwrap();
+    assert!(chat.contains("Alt+D"), "{chat}");
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
     let top = render_and_commit(&mut state, Size::new(80, 12));
     assert!(top.contains("1/2"), "{top}");
     assert!(top.contains("huge.rs"), "{top}");
@@ -987,7 +1037,7 @@ fn changes_pages_beyond_u16_and_preserves_file_and_snapshot_navigation() {
 }
 
 // inline 예약 공간을 제외한 마지막 허용 행은 접힌 미리보기를 유지하고, 첫 초과 행부터
-// 전체 원문을 버리지 않는 /changes 안내로 전환한다.
+// 전체 원문을 버리지 않는 변경 상세 화면 안내로 전환한다.
 #[test]
 fn inline_diff_capacity_keeps_the_last_row_and_routes_the_first_excess_to_review() {
     for (rows, large) in [
@@ -1010,7 +1060,7 @@ fn inline_diff_capacity_keeps_the_last_row_and_routes_the_first_excess_to_review
         let frame = render_and_commit(&mut state, Size::new(80, 12));
         assert_eq!(frame.contains("Large diff"), large, "{frame}");
         if large {
-            assert!(frame.contains("/changes"), "{frame}");
+            assert!(frame.contains("Alt+D"), "{frame}");
         } else {
             assert!(frame.contains("+x"), "{frame}");
         }

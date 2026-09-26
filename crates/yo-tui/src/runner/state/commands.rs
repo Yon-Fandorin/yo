@@ -7,7 +7,7 @@ use std::{
 
 use yo_core::{ActivityDocument, JournalDurability, secret_store::SecretMetadata};
 
-use super::{PendingRequest, StateEffect, StateError, TuiState};
+use super::{StateEffect, StateError, TuiState};
 use crate::{
     command::{
         CommandDefinition, CommandEffect, CommandId, CommandRegistry, compact_argument,
@@ -537,28 +537,6 @@ impl TuiState {
                 .with_expanded(true);
                 self.observe_document(document)?;
                 self.clear_editor();
-                self.sync_request_overlay()?;
-                Ok(StateEffect::Redraw)
-            },
-            CommandEffect::ReviewChanges => {
-                self.clear_editor();
-                if let Some(PendingRequest::Approval(request)) = self.pending_requests.front()
-                    && self
-                        .chat
-                        .approval(request.activity())
-                        .is_some_and(|profile| profile.related_change.is_some())
-                {
-                    if let Some(item) = self.chat.approval_change(request.activity()) {
-                        self.views.open_changes_for(item);
-                    } else {
-                        self.chat.push_notice(
-                            "The file changes linked to this approval are not available."
-                                .to_owned(),
-                        )?;
-                    }
-                } else {
-                    self.views.open_changes();
-                }
                 self.sync_request_overlay()?;
                 Ok(StateEffect::Redraw)
             },

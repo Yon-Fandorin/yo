@@ -19,9 +19,9 @@ use crate::{
     surface::{Point, Rect, Size, Style, SurfaceView, WriteOutcome},
     text::flow::{TextFlowError, flow_text},
     transcript::{
-        TranscriptItemId, TranscriptLayoutConfig, TranscriptRenderError, TranscriptScrollCommand,
-        TranscriptSlice, TranscriptState, TranscriptStateError, TranscriptViewMode,
-        TranscriptViewState, render_commands,
+        TranscriptBody, TranscriptItemId, TranscriptLayoutConfig, TranscriptRenderError,
+        TranscriptScrollCommand, TranscriptSlice, TranscriptState, TranscriptStateError,
+        TranscriptViewMode, TranscriptViewState, render_commands,
     },
 };
 
@@ -182,6 +182,22 @@ impl ObservabilityViews {
         self.state.selected_change_key = Some((item, 0));
     }
 
+    pub(super) fn focused_change(&self, chat: TranscriptSlice<'_>) -> Option<TranscriptItemId> {
+        if self.state.active != ObservabilityView::Chat || self.state.chat.pending_scroll.is_some()
+        {
+            return None;
+        }
+        let focused = self.state.focused_activity?;
+        chat.items().iter().find_map(|item| {
+            let TranscriptBody::Message(message) = item.body();
+            (item.id() == focused
+                && message
+                    .file_change()
+                    .is_some_and(|change| !change.body.is_empty()))
+            .then_some(focused)
+        })
+    }
+
     pub(super) fn jump_chat_to(&mut self, item: TranscriptItemId) {
         self.pending_navigation[ObservabilityView::Chat as usize].clear();
         self.pending_navigation[ObservabilityView::Chat as usize]
@@ -217,6 +233,11 @@ impl ObservabilityViews {
 
     pub(super) fn wants_global_input(&self, input: &InputEvent) -> bool {
         self.bindings.target(input).is_some()
+            || (self.state.active == ObservabilityView::Chat
+                && matches!(input, InputEvent::Key(key)
+                    if key.action == KeyAction::Press
+                        && key.modifiers == KeyModifiers::ALT
+                        && matches!(key.code, KeyCode::Character('d' | 'D'))))
     }
 
     pub(super) fn observe_inherited_history(
