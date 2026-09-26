@@ -323,7 +323,7 @@ impl TuiState {
                 .overlay
                 .panel()
                 .and_then(|panel| panel.selected_identity())
-                .is_none_or(|identity| identity.as_str() != "review-changes")
+                .is_none_or(|identity| identity.as_str() != "review-proposed-files")
             && matches!(&input, InputEvent::Key(key) if key.code == KeyCode::Enter);
         let overlay_effect = if typed_reply {
             OverlayInputEffect::Unhandled
@@ -480,7 +480,7 @@ impl TuiState {
                     && token == receipt.token()
                     && self.pending_requests.front() == Some(&PendingRequest::Approval(request))
                 {
-                    if receipt.identity() == "review-changes"
+                    if receipt.identity() == "review-proposed-files"
                         && self
                             .chat
                             .approval(request.activity())

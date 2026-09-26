@@ -504,13 +504,13 @@ fn unpresented_partial_command_is_a_local_unknown() {
     assert!(output.contains("Unknown command `/e`"), "{output}");
 }
 
-// 표시된 palette에 일치 항목이 없는 상태에서 Enter를 누르면 panel을 닫고 로컬 unknown을
-// 알리되, draft를 agent나 Activity로 보내지 않는다.
+// 제거된 /changes를 직접 입력해도 panel을 닫고 로컬 unknown을 알리며,
+// draft를 agent나 Activity로 보내지 않는다.
 #[test]
-fn visible_unknown_command_closes_locally_and_preserves_the_draft() {
+fn retired_changes_command_closes_locally_and_preserves_the_draft() {
     let mut state = TuiState::new();
     state
-        .handle(InputEvent::Paste("/foo".to_owned()), Duration::ZERO)
+        .handle(InputEvent::Paste("/changes".to_owned()), Duration::ZERO)
         .unwrap();
     present_palette(&mut state, Size::new(80, 16));
 
@@ -520,7 +520,7 @@ fn visible_unknown_command_closes_locally_and_preserves_the_draft() {
             .unwrap(),
         StateEffect::Redraw
     );
-    assert_eq!(state.editor().text(), "/foo");
+    assert_eq!(state.editor().text(), "/changes");
     assert!(
         !state
             .prepare_frame(Size::new(80, 16), &AppearanceState::default().pin())
@@ -531,7 +531,7 @@ fn visible_unknown_command_closes_locally_and_preserves_the_draft() {
         .session_output(&AppearanceState::default().pin())
         .unwrap()
         .unwrap();
-    assert!(output.contains("Unknown command `/foo`"), "{output}");
+    assert!(output.contains("Unknown command `/changes`"), "{output}");
 }
 
 // 실제로 보인 palette를 Esc로 닫으면 정확히 그 unchanged draft의 다음 Enter 한 번만

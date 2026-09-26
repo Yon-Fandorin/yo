@@ -171,14 +171,10 @@ impl ObservabilityViews {
         self.pending_navigation[ObservabilityView::Output as usize].clear();
     }
 
-    pub(super) fn open_changes(&mut self) {
+    pub(super) fn open_changes_for(&mut self, item: TranscriptItemId) {
         self.switch_to(ObservabilityView::Changes);
         self.pending_navigation[ObservabilityView::Changes as usize]
             .push(TranscriptScrollCommand::JumpToStart);
-    }
-
-    pub(super) fn open_changes_for(&mut self, item: TranscriptItemId) {
-        self.open_changes();
         self.state.selected_change_key = Some((item, 0));
     }
 

@@ -434,7 +434,7 @@ impl PendingRequest {
             }
             if approval.related_change.is_some() {
                 entries.push(SelectionEntry::enabled_with_context(
-                    "review-changes",
+                    "review-proposed-files",
                     "Review proposed files",
                     None,
                     None,
