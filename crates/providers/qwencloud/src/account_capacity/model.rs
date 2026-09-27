@@ -26,11 +26,18 @@ pub(super) struct QwenCloudUsageData {
     pub(super) per1_week_percentage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) per1_week_reset_time: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) per1_month_percentage: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) per1_month_reset_time: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct QwenCloudQuotaData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) five_hour: Option<Value>,
-    pub(super) weekly: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) weekly: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) monthly: Option<Value>,
 }

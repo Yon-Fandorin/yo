@@ -88,6 +88,113 @@ fn accepts_weekly_window_when_five_hour_window_is_omitted() {
     );
 }
 
+// 현재 Personal plan은 활성 tier의 월간 한도만 보고할 수 있습니다. 정확한
+// window 길이를 응답에서 알 수 없으므로 reset만 보존하고 duration은 비웁니다.
+#[test]
+fn decodes_monthly_only_personal_plan_without_inventing_a_duration() {
+    let usage = json!({
+        "per1MonthPercentage": 0.0001823989202,
+        "per1MonthResetTime": 1_791_907_200_000_i64,
+        "unrelatedSecret": "never retain"
+    });
+    let subscription = json!({ "specCode": "standard" });
+    let quota_config = json!({
+        "standard": { "five_hour": 3_000, "monthly": 45_000, "unrelatedSecret": "omit" }
+    });
+    let (snapshot, provider_data) = decode_snapshot(
+        &usage,
+        &subscription,
+        &quota_config,
+        &provider(),
+        &account(),
+    )
+    .unwrap();
+    let bucket = &snapshot.buckets()[0];
+    let primary = bucket.primary().unwrap();
+    assert_eq!(bucket.plan(), Some("standard"));
+    assert_eq!(primary.window_duration_minutes(), None);
+    assert_eq!(primary.used_percent_basis_points(), 2);
+    assert_eq!(primary.resets_at_unix_seconds(), Some(1_791_907_200));
+    assert!(bucket.secondary().is_none());
+    assert_eq!(
+        serde_json::to_value(provider_data).unwrap(),
+        json!({
+            "specCode": "standard",
+            "usage": {
+                "per1MonthPercentage": 0.0001823989202,
+                "per1MonthResetTime": 1_791_907_200_000_i64
+            },
+            "quota": { "five_hour": 3_000, "monthly": 45_000 }
+        })
+    );
+}
+
+// 5시간 사용량이 실제 보고된 경우에만 월간 window 앞에 표시합니다.
+#[test]
+fn decodes_monthly_and_optional_five_hour_windows() {
+    let (snapshot, _) = decode_snapshot(
+        &json!({ "per5HourPercentage": 0.4, "per1MonthPercentage": 0.5 }),
+        &json!({ "specCode": "standard" }),
+        &json!({ "standard": { "five_hour": 3_000, "monthly": 45_000 } }),
+        &provider(),
+        &account(),
+    )
+    .unwrap();
+    let bucket = &snapshot.buckets()[0];
+    assert_eq!(
+        bucket.primary().unwrap().window_duration_minutes(),
+        Some(300)
+    );
+    assert_eq!(bucket.secondary().unwrap().window_duration_minutes(), None);
+    assert_eq!(
+        bucket.secondary().unwrap().used_percent_basis_points(),
+        5_000
+    );
+}
+
+// 활성 quota와 usage의 주기 불일치, 누락 또는 malformed 알려진 field는
+// 임의의 정상 잔여량으로 대체하지 않고 전체 refresh를 실패시킵니다.
+#[test]
+fn rejects_ambiguous_or_malformed_personal_plan_periods() {
+    let subscription = json!({ "specCode": "standard" });
+    let valid_usage = json!({ "per1MonthPercentage": 0.5 });
+    let valid_quota = json!({ "standard": { "monthly": 45_000 } });
+    let bad_cases = [
+        (
+            valid_usage.clone(),
+            json!({ "standard": { "weekly": 10_000 } }),
+        ),
+        (valid_usage.clone(), json!({ "standard": {} })),
+        (
+            valid_usage.clone(),
+            json!({ "standard": { "weekly": 10_000, "monthly": 45_000 } }),
+        ),
+        (
+            json!({ "per1WeekPercentage": 0.4, "per1MonthPercentage": 0.5 }),
+            valid_quota.clone(),
+        ),
+        (
+            json!({ "per1MonthResetTime": 1_791_907_200_000_i64 }),
+            valid_quota.clone(),
+        ),
+        (
+            json!({ "per1MonthPercentage": "invalid" }),
+            valid_quota.clone(),
+        ),
+        (
+            json!({ "per1MonthPercentage": 0.5, "per5HourPercentage": 0.2 }),
+            valid_quota.clone(),
+        ),
+        (valid_usage.clone(), json!({ "standard": { "monthly": 0 } })),
+    ];
+    for (usage, quota) in bad_cases {
+        assert!(
+            decode_snapshot(&usage, &subscription, &quota, &provider(), &account()).is_err(),
+            "unexpectedly accepted {usage} with {quota}"
+        );
+    }
+}
+
 // Login redirect와 malformed envelope는 정상 quota로 해석하지 않으며, payload parser는
 // console gateway가 성공을 명시한 exact nested data만 내보냅니다.
 #[test]

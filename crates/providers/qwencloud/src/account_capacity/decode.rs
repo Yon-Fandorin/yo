@@ -66,23 +66,41 @@ pub(super) fn decode_snapshot(
                 "QwenCloud quota configuration has no active subscription tier",
             )
         })?;
-    let weekly_quota = validate_positive_number(tier.get("weekly"), "weekly quota")?;
-    if tier.contains_key("five_hour") {
-        validate_positive_number(tier.get("five_hour"), "five-hour quota")?;
+    let five_hour_quota = tier
+        .get("five_hour")
+        .map(|value| validate_positive_number(Some(value), "five-hour quota"))
+        .transpose()?;
+    let weekly_quota = tier
+        .get("weekly")
+        .map(|value| validate_positive_number(Some(value), "weekly quota"))
+        .transpose()?;
+    let monthly_quota = tier
+        .get("monthly")
+        .map(|value| validate_positive_number(Some(value), "monthly quota"))
+        .transpose()?;
+    let five_hour = decode_window(usage, "5Hour", Some(FIVE_HOURS_MINUTES))?;
+    let weekly = decode_window(usage, "1Week", Some(ONE_WEEK_MINUTES))?;
+    let monthly = decode_window(usage, "1Month", None)?;
+    if five_hour.is_some() && five_hour_quota.is_none() {
+        return Err(failure(
+            QwenCloudCapacityFailureKind::Protocol,
+            "QwenCloud five-hour usage has no active-tier quota",
+        ));
     }
-    let five_hour = decode_window(usage, "5Hour", FIVE_HOURS_MINUTES)?;
-    let weekly = decode_window(usage, "1Week", ONE_WEEK_MINUTES)?;
-    let (primary, secondary) = match (five_hour, weekly) {
-        (Some(five_hour), Some(weekly)) => (Some(five_hour), Some(weekly)),
-        (Some(five_hour), None) => (Some(five_hour), None),
-        (None, Some(weekly)) => (Some(weekly), None),
-        (None, None) => {
+    // 주간과 월간은 서로 다른 plan 체계입니다. 활성 tier와 usage가 정확히
+    // 일치할 때만 중립 snapshot으로 승격합니다.
+    let plan_window = match (weekly_quota, monthly_quota, weekly, monthly) {
+        (Some(_), None, Some(window), None) | (None, Some(_), None, Some(window)) => window,
+        _ => {
             return Err(failure(
                 QwenCloudCapacityFailureKind::Protocol,
-                "QwenCloud usage response contains no usable quota window",
+                "QwenCloud active-tier quota and usage period disagree",
             ));
         },
     };
+    let (primary, secondary) = five_hour.map_or((Some(plan_window), None), |window| {
+        (Some(window), Some(plan_window))
+    });
     let limited = primary
         .iter()
         .chain(secondary.iter())
@@ -111,10 +129,17 @@ pub(super) fn decode_snapshot(
             per1_week_reset_time: weekly
                 .as_ref()
                 .and_then(|_| usage.get("per1WeekResetTime").cloned()),
+            per1_month_percentage: monthly
+                .as_ref()
+                .and_then(|_| usage.get("per1MonthPercentage").cloned()),
+            per1_month_reset_time: monthly
+                .as_ref()
+                .and_then(|_| usage.get("per1MonthResetTime").cloned()),
         },
         quota: QwenCloudQuotaData {
-            five_hour: tier.get("five_hour").cloned(),
-            weekly: weekly_quota.clone(),
+            five_hour: five_hour_quota.cloned(),
+            weekly: weekly_quota.cloned(),
+            monthly: monthly_quota.cloned(),
         },
     };
     Ok((
@@ -126,11 +151,17 @@ pub(super) fn decode_snapshot(
 fn decode_window(
     usage: &Value,
     field_prefix: &str,
-    duration_minutes: u64,
+    duration_minutes: Option<u64>,
 ) -> QwenCloudResult<Option<AccountCapacityWindow>> {
     let percentage_field = format!("per{field_prefix}Percentage");
     let reset_field = format!("per{field_prefix}ResetTime");
     let Some(raw_percentage) = usage.get(&percentage_field) else {
+        if usage.get(&reset_field).is_some() {
+            return Err(failure(
+                QwenCloudCapacityFailureKind::Protocol,
+                format!("QwenCloud usage {reset_field} has no matching percentage"),
+            ));
+        }
         return Ok(None);
     };
     let percentage = number(raw_percentage).ok_or_else(|| {
@@ -152,7 +183,7 @@ fn decode_window(
         .transpose()?;
     AccountCapacityWindow::from_used_percent_basis_points(
         used_percent_basis_points,
-        Some(duration_minutes),
+        duration_minutes,
         reset,
     )
     .map(Some)
