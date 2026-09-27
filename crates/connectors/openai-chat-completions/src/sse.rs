@@ -470,7 +470,7 @@ impl ChatCompletionsSseDecoder {
             .get(&index)
             .expect("an admitted tool-call index exists");
         if repeated_id.is_some_and(|id| !id.is_empty() && id != call.id)
-            || repeated_name.is_some_and(|name| name != call.name)
+            || repeated_name.is_some_and(|name| !name.is_empty() && name != call.name)
         {
             return Err(protocol_failure(
                 "Chat Completions tool-call identity changed across fragments",

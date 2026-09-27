@@ -453,9 +453,9 @@ fn decodes_mixed_content_and_tool_calls_without_losing_the_message() {
     assert!(decoder.finish().is_ok());
 }
 
-// 고정된 call ID 뒤의 명시적 빈 ID는 omission처럼 허용하고 argument bytes를 그대로 잇습니다.
+// 고정된 call ID와 이름 뒤의 명시적 빈 값은 omission처럼 허용하고 argument bytes를 그대로 잇습니다.
 #[test]
-fn treats_an_empty_repeated_tool_call_id_as_omission() {
+fn treats_empty_repeated_tool_call_identity_as_omission() {
     let stream = [
         event(json!({
             "id":"chat-empty-repeat",
@@ -468,7 +468,7 @@ fn treats_an_empty_repeated_tool_call_id_as_omission() {
             "id":"chat-empty-repeat",
             "choices":[{"index":0,"delta":{"tool_calls":[{
                 "index":0,"id":"","type":"function",
-                "function":{"arguments":"[]}\n"}
+                "function":{"name":"","arguments":"[]}\n"}
             }]},"finish_reason":"tool_calls"}]
         })),
         final_usage("chat-empty-repeat"),
@@ -481,15 +481,17 @@ fn treats_an_empty_repeated_tool_call_id_as_omission() {
 
     assert!(events.iter().any(|event| matches!(
         event,
-        ModelConnectorEvent::FunctionCallDone { call_id, arguments, .. }
-            if call_id == "call-stable" && arguments == "{\"files\":[]}\n"
+        ModelConnectorEvent::FunctionCallDone { call_id, name, arguments, .. }
+            if call_id == "call-stable" && name == "read_files"
+                && arguments == "{\"files\":[]}\n"
     )));
     assert!(decoder.finish().is_ok());
 }
 
-// 빈 최초 ID와 고정 뒤 변경된 비어 있지 않은 ID는 모두 call identity를 만들거나 바꿀 수 없습니다.
+// 빈 최초 ID와 고정 뒤 변경된 비어 있지 않은 ID 또는 이름은 call identity를 만들거나 바꿀 수
+// 없습니다.
 #[test]
-fn rejects_empty_initial_and_changed_repeated_tool_call_ids() {
+fn rejects_empty_initial_and_changed_repeated_tool_call_identity() {
     let mut empty_initial = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     let empty_error = empty_initial
         .push(
@@ -504,6 +506,21 @@ fn rejects_empty_initial_and_changed_repeated_tool_call_ids() {
         )
         .unwrap_err();
     assert_eq!(empty_error.kind(), ConnectorFailureKind::Protocol);
+
+    let mut empty_name = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+    let empty_name_error = empty_name
+        .push(
+            event(json!({
+                "id":"chat-empty-initial-name",
+                "choices":[{"index":0,"delta":{"tool_calls":[{
+                    "index":0,"id":"call-one","type":"function",
+                    "function":{"name":"","arguments":"{}"}
+                }]},"finish_reason":null}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap_err();
+    assert_eq!(empty_name_error.kind(), ConnectorFailureKind::Protocol);
 
     let mut changed = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     changed
@@ -530,6 +547,32 @@ fn rejects_empty_initial_and_changed_repeated_tool_call_ids() {
         )
         .unwrap_err();
     assert_eq!(changed_error.kind(), ConnectorFailureKind::Protocol);
+
+    let mut changed_name = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+    changed_name
+        .push(
+            event(json!({
+                "id":"chat-changed-name",
+                "choices":[{"index":0,"delta":{"tool_calls":[{
+                    "index":0,"id":"call-one","type":"function",
+                    "function":{"name":"read_files","arguments":"{"}
+                }]},"finish_reason":null}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap();
+    let changed_name_error = changed_name
+        .push(
+            event(json!({
+                "id":"chat-changed-name",
+                "choices":[{"index":0,"delta":{"tool_calls":[{
+                    "index":0,"function":{"name":"write_file","arguments":"}"}
+                }]},"finish_reason":null}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap_err();
+    assert_eq!(changed_name_error.kind(), ConnectorFailureKind::Protocol);
 }
 
 // response ID 변경, final usage 누락, stream 절단은 정상 종료로 승격하지 않습니다.
