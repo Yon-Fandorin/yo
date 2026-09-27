@@ -432,8 +432,8 @@ fn no_tools_profile_requires_an_empty_registry_and_disables_request_exposure() {
     assert!(body.get("tool_choice").is_none());
 }
 
-// local-tools/v1의 빈 local registry도 새 Session에서는 backend-owned secret interaction
-// 하나를 exact replay contract와 request exposure의 마지막 항목으로 투영합니다.
+// --no-tools는 binding의 local-tools/v1 허용 상한을 유지해도 빈 Session registry를
+// 그대로 기록하고, secret interaction을 포함한 모든 도구 노출을 막습니다.
 #[test]
 fn local_tools_profile_accepts_an_empty_session_registry() {
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -444,12 +444,9 @@ fn local_tools_profile_accepts_an_empty_session_registry() {
     )
     .unwrap();
     assert!(backend.registry.is_empty());
-    assert!(backend.tool_exposure_enabled);
-    assert_eq!(backend.contract.tools().len(), 1);
-    assert_eq!(
-        backend.contract.tools()[0].name(),
-        yo_core::NATIVE_SECRET_INTERACTION_NAME
-    );
+    assert!(!backend.tool_exposure_enabled);
+    assert!(!backend.secret_interaction_enabled);
+    assert!(backend.contract.tools().is_empty());
 
     backend
         .execute_command(AgentCommand::CreateSession {
@@ -464,12 +461,106 @@ fn local_tools_profile_accepts_an_empty_session_registry() {
         .unwrap();
     let requests = requests.lock().unwrap();
     let body = mock_tokenization_payload(&requests[0], "qwen3.8max");
-    assert_eq!(body["tools"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        body["tools"][0]["name"],
-        yo_core::NATIVE_SECRET_INTERACTION_NAME
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
+}
+
+// 빈 registry의 exact replay 계약은 새 프로세스의 backend가 그대로 재개하여
+// 후속 Turn에서도 도구 없이 모델에 요청할 수 있어야 합니다.
+#[test]
+fn empty_local_tools_session_resumes_and_completes_a_second_turn() {
+    let empty_registry = || ToolRegistry::default().freeze();
+    let first = backend_with_profile_and_registry(
+        profile("{}", "{}", "local-tools/v1"),
+        empty_registry(),
+        Arc::new(Mutex::new(Vec::new())),
+    )
+    .unwrap();
+    let (directory, continuation) = durable_continuation(first);
+    assert!(
+        continuation
+            .target()
+            .model_replay()
+            .contract()
+            .unwrap()
+            .tools()
+            .is_empty()
     );
-    assert_eq!(body["tool_choice"], "auto");
+    let session_id = continuation.descriptor().session_id();
+    let durable_identity = continuation.target().binding().binding_identity().clone();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut second = backend_with_profile_and_registry(
+        profile("{}", "{}", "local-tools/v1"),
+        empty_registry(),
+        Arc::clone(&requests),
+    )
+    .unwrap();
+    second.connector = Box::new(MockConnector {
+        rounds: event_rounds(vec![vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "second-response".to_owned(),
+            },
+            ModelConnectorEvent::TextDelta {
+                output_index: 0,
+                item_id: "message".to_owned(),
+                content_index: 0,
+                delta: "second answer".to_owned(),
+            },
+            ModelConnectorEvent::MessageDone {
+                output_index: 0,
+                item_id: "message".to_owned(),
+            },
+            completed("second-response"),
+        ]]),
+        requests: Arc::clone(&requests),
+    });
+    let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
+    let mut resumed =
+        AgentSession::start_cancellable_with_continuation(second, continuation, repository, || {
+            false
+        })
+        .unwrap()
+        .unwrap();
+    let mut admission = resumed
+        .dispatch(AgentIntent::submit("second request").unwrap())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while let CommandAdmission::Backpressured(pending) = admission {
+        assert!(
+            Instant::now() < deadline,
+            "second Turn stayed backpressured"
+        );
+        thread::sleep(Duration::from_millis(1));
+        admission = resumed.retry(pending).unwrap();
+    }
+    let transcript = resumed.transcript_reader();
+    loop {
+        if transcript.read_after(None).entries().iter().any(|entry| {
+            matches!(
+                entry.record(),
+                TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+                    turn,
+                    outcome: TurnOutcome::Completed,
+                }) if turn.turn_id().get().get() == 2
+            )
+        }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "second Turn did not finish");
+        assert_ne!(resumed.poll().unwrap(), AgentSessionPoll::Closed);
+        thread::sleep(Duration::from_millis(1));
+    }
+    resumed.shutdown().unwrap();
+    let request = &requests.lock().unwrap()[0];
+    let body = mock_tokenization_payload(request, "qwen3.8max");
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
+    let reader = LocalSessionReader::open(&directory.0).unwrap();
+    let recovered = read_stored_session_continuation(&reader, session_id).unwrap();
+    assert_eq!(
+        recovered.target().binding().binding_identity(),
+        &durable_identity
+    );
 }
 
 // 과거 비밀 도구 계약은 새 storage_offer 필드를 덧붙이지 않고 같은 정의로 재개한다.
