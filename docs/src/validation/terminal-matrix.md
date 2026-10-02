@@ -141,6 +141,52 @@ This verifies inspection of retained proposals and their own results. It does
 not supply a captured applied whole-file diff or scan Git state, establish a
 complete daily-work replacement, or repeat physical Mac input validation.
 
+## Saved native edit comparison in Linux tmux
+
+On 2026-10-02, the reviewed source based on `f26308c0` completed a disposable
+Fullscreen coding journey beside the existing Codex window in tmux 3.6b on
+Linux. The configured `qwencloud:default:qwen3.8-max` Token Plan used the
+Responses connector; this was subscription usage. One Session completed one
+Turn with four accepted model requests within the eight-request bound. Two CLI
+processes were used, with no new input or inference during fresh-process resume.
+
+| Journey | Observed result |
+|---|---|
+| Fix category normalization and deterministic ordering in `ledger.py` | One `edit_file` call applied two replacements; the unchanged twelve-test suite went from four failures to all passing, confirmed independently |
+| Compare the result with captured bytes and model replay | Retained before/after text exactly matched the original and published file; the model replay kept the exact compact success receipt without the optional comparison metadata |
+| Inspect the completed result in Chat and Alt+D | Saved edit comparison showed contextual differences with Korean text and emoji; proposal and recorded receipt remained separately inspectable |
+| Resize detail from 80 to 24 and back | The exact 80-column detail frame returned; F1 restored the exact Chat frame and unsent Korean/emoji draft |
+| Modify the workspace file after completion | The saved detail frame stayed identical and omitted the later external comment |
+| Resume the same Session with the corrected final CLI | The physical 102,339-byte Journal prefix and captured comparison remained unchanged; accepted requests stayed at four |
+
+The exact `python3 -m unittest -v` request received only one `this tool call
+only` approval. Native file editing used its existing automatic policy. The
+test-file bytes stayed unchanged. An initial Chat inspection exposed malformed
+Markdown block boundaries around the literal path. The corrected renderer was
+then checked against the same stored Session: path, provenance and diff appeared
+in separate blocks, literal fence markers were absent, and detail width/draft
+returns still matched exactly. Capture, admission and replay code did not change
+between those two CLI builds.
+
+The first CLI's SHA-256 was
+`5b33660a19e1d0104d1168c2ba9f91bfc70549f1d6bc12b7f50666cf3d848133`;
+the corrected final CLI used for resume was
+`1a6127ed71b854ffdb48a5ad9ce1249cc7812722864d8c7dcbc3db62cab038d4`.
+The unrestricted workspace suite passed before the final presentation correction.
+The affected final TUI suite then passed 1,038 unit and four integration tests;
+the final CLI package passed 553 unit tests and its non-ignored integration/PTY
+targets. Managed backend tests passed 114 and core tests 801. Final workspace
+all-target Clippy, formatting, test explanations and the current Linux target
+matrix passed. These overlapping runs must not be added as independent coverage.
+
+Both CLI processes exited with status 0. Only their owned windows closed; existing
+user windows and active selections, normal configuration, credentials and connection
+bytes and modes stayed unchanged. No process remained in the disposable workspace,
+and isolated authentication copies were removed. This journey verifies a retained
+comparison from a successful native edit. It does not prove an external-writer
+compare-and-swap, captured old content for `write_file`, whole-workspace Git review,
+a complete daily-work replacement, or physical Mac input on this candidate.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`

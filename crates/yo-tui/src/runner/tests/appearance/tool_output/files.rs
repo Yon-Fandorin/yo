@@ -568,3 +568,206 @@ fn directory_listing_limits_fall_back_without_partial_parsing() {
         assert_eq!(text.contains("file  "), rich, "{text}");
     }
 }
+
+// 화면 행을 복원할 때 연속 셀을 건너뛰어 grapheme 전체를 보존합니다.
+fn rendered_grapheme_rows(surface: &Surface) -> Vec<String> {
+    let size = surface.size();
+    (0..size.height)
+        .map(|y| {
+            let mut row = String::new();
+            for x in 0..size.width {
+                match surface.cell(Point::new(x, y)).unwrap().content() {
+                    CellContent::Blank => row.push(' '),
+                    CellContent::Continuation { .. } => {},
+                    CellContent::Grapheme { text, .. } => row.push_str(text),
+                }
+            }
+            row.trim_end().to_owned()
+        })
+        .collect()
+}
+
+// 확장된 Chat은 완료된 edit의 형식화된 비교를 한 번만 보여 주고 원시 metadata를 반복하지 않습니다.
+#[test]
+fn completed_edit_publication_is_rendered_once_in_expanded_chat() {
+    use serde_json::json;
+    use yo_core::{ActivityOutcome, FilePublicationEvidence, ToolOutput};
+
+    use crate::{
+        input::event::KeyModifiers,
+        runner::tests::{KeyCode, key},
+    };
+
+    let path = "src/`ledger`_[literal](target)_한글_👩‍💻.py";
+    let before = "old `code` [literal](file:///kept) 👩‍💻\n";
+    let after = "new `code` [literal](file:///kept) 👩‍💻\n";
+    let native_output = json!({"path":path,"status":"ok","replacements":1}).to_string();
+    let evidence = FilePublicationEvidence::complete(path, before, after)
+        .unwrap()
+        .to_snapshot()
+        .unwrap();
+    let output = ToolOutput {
+        tool: "edit_file".to_owned(),
+        server: None,
+        arguments: Some(json!({"path":path,"edits":[{"oldText":before,"newText":after}]})),
+        result: Some(json!({
+            "content":[{"type":"text", "text":native_output}],
+            "call_id":"call-publication",
+            "tool_id":"edit-file",
+            "execution_host":"workspace",
+            "outcome":"completed",
+            "truncated":false,
+            "isError":false,
+            "publicationEvidence":evidence,
+        })),
+        content_items: None,
+        error: None,
+        plain_text: "edit_file completed".to_owned(),
+    };
+    let mut session = TuiSession::new(ColorCapability::TrueColor, MotionPreference::Reduced);
+    let pin = session.appearance_pin();
+    let state = session.parts_mut().state;
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: activity(1),
+            kind: ActivityKind::ToolResult,
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: activity(1),
+            update: ActivityUpdate::TextSnapshot(output.to_snapshot().unwrap()),
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityFinished {
+            activity: activity(1),
+            outcome: ActivityOutcome::Completed,
+        })
+        .unwrap();
+
+    let collapsed = state.prepare_frame(Size::new(90, 45), &pin).unwrap();
+    state.commit_frame(&collapsed);
+    state
+        .handle(
+            key(KeyCode::Character('o'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    let frame = state.prepare_frame(Size::new(90, 45), &pin).unwrap();
+    let text = visible_rows(&frame.surface);
+    let rendered = rendered_grapheme_rows(&frame.surface).join("\n");
+    state.commit_frame(&frame);
+    assert!(
+        rendered.contains("-old `code` [literal](file:///kept) 👩‍💻"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("+new `code` [literal](file:///kept) 👩‍💻"),
+        "{rendered}"
+    );
+    assert!(text.contains("--- read before edit"), "{text}");
+    assert!(text.contains("+++ written by edit"), "{text}");
+    assert!(!text.contains("publicationEvidence"), "{text}");
+
+    let mut heading_visible = text.contains("Saved edit comparison");
+    let mut previous = text;
+    let mut pages = vec![(previous.clone(), rendered_grapheme_rows(&frame.surface))];
+    for _ in 0..4 {
+        state
+            .handle(key(KeyCode::PageUp, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        let frame = state.prepare_frame(Size::new(90, 45), &pin).unwrap();
+        let text = visible_rows(&frame.surface);
+        let rendered = rendered_grapheme_rows(&frame.surface);
+        state.commit_frame(&frame);
+        assert!(text.matches("Saved edit comparison").count() <= 1, "{text}");
+        assert!(!text.contains("publicationEvidence"), "{text}");
+        heading_visible |= text.contains("Saved edit comparison");
+        pages.push((text.clone(), rendered));
+        if heading_visible || text == previous {
+            break;
+        }
+        previous = text;
+    }
+    assert!(
+        heading_visible,
+        "the expanded chat page did not reach the comparison heading"
+    );
+    let pages = pages.into_iter().rev().collect::<Vec<_>>();
+    assert!(
+        pages
+            .iter()
+            .all(|(page, _)| !page.contains("```text") && !page.contains("```diff")),
+        "{pages:?}"
+    );
+    let path_page = pages
+        .iter()
+        .find(|(page, _)| page.contains("Path:") && page.contains("Saved from this completed edit"))
+        .expect("path and provenance should be visible on the same Chat page");
+    let rows = path_page.1.iter().map(String::as_str).collect::<Vec<_>>();
+    let heading = rows
+        .iter()
+        .position(|line| line.trim() == "Saved edit comparison")
+        .unwrap();
+    let path_label = rows.iter().position(|line| line.trim() == "Path:").unwrap();
+    let path_row = rows.iter().position(|line| line.trim() == path).unwrap();
+    let provenance = rows
+        .iter()
+        .position(|line| line.trim().starts_with("Saved from this completed edit"))
+        .unwrap();
+    assert!(
+        heading < path_label && path_label < path_row && path_row < provenance,
+        "{}",
+        path_page.0
+    );
+}
+
+// presentation 본문은 CRLF, Unicode, 끝 개행 부재와 출력 상한을 보존합니다.
+#[test]
+fn publication_presentation_preserves_hunks_and_enforces_display_bounds() {
+    use yo_core::FilePublicationEvidence;
+
+    use crate::transcript::file_publication_presentation;
+
+    let middle = (0..10)
+        .map(|index| format!("unchanged {index}\r\n"))
+        .collect::<String>();
+    let before = format!("first\r\nold e\u{301} 👩‍💻\r\n{middle}last old");
+    let after = format!("first\r\nnew 한글 👩‍💻\r\n{middle}last new");
+    let evidence = FilePublicationEvidence::complete("src/main.rs", before, after).unwrap();
+    let diff = file_publication_presentation(&evidence).body;
+
+    assert_eq!(
+        diff.lines().filter(|line| line.starts_with("@@ ")).count(),
+        2,
+        "{diff}"
+    );
+    assert!(diff.contains("-old e\u{301} 👩‍💻\r\n"), "{diff}");
+    assert!(diff.contains("+new 한글 👩‍💻\r\n"), "{diff}");
+    assert!(
+        diff.contains("-last old\n\\ No newline at end of file"),
+        "{diff}"
+    );
+    assert!(
+        diff.contains("+last new\n\\ No newline at end of file"),
+        "{diff}"
+    );
+
+    let before = "a".repeat(150_000);
+    let after = "b".repeat(150_000);
+    let evidence = FilePublicationEvidence::complete("large.txt", before, after).unwrap();
+    let diff = file_publication_presentation(&evidence).body;
+    assert_eq!(diff.len(), 256 * 1024);
+    assert!(diff.starts_with("--- read before edit\n+++ written by edit\n"));
+    assert!(diff.ends_with("\n… publication diff truncated at 256 KiB …\n"));
+
+    let before = "same\n".repeat(20_000);
+    let after = format!("{before}same\n");
+    let evidence = FilePublicationEvidence::complete("many-lines.txt", before, after).unwrap();
+    let diff = file_publication_presentation(&evidence).body;
+    assert_eq!(
+        diff,
+        "Publication diff omitted: captured content exceeds the 40,000-line comparison limit."
+    );
+}

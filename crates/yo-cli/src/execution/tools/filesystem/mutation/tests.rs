@@ -2,15 +2,123 @@ use std::{
     ffi::OsString,
     fs::{self, OpenOptions},
     io::Write,
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+use yo_core::{
+    FilePublicationEvidence, FilePublicationEvidenceState,
+    FilePublicationEvidenceUnavailableReason, ToolExecutionOutcome, ToolExecutionResult,
 };
 
 use super::{
     EditRequest, MAX_FILE_BYTES, Scratch, Success, Terminal, UnwindCleanup, WriteRequest,
-    catch_failure, execute_edit_after_capture, execute_write, execute_write_after_mode,
-    lock_mutation, publish_in_parent,
+    attach_edit_publication_evidence, catch_failure, execute_edit_after_capture, execute_write,
+    execute_write_after_mode, lock_mutation, publish_in_parent,
 };
 use crate::execution::tools::{filesystem::path::AdmittedPath, tests::TestDirectory};
+
+// 게시된 edit만 기존 capture buffer를 제한된 profile로 넘기며 설정 상한을 넘으면 원문을 버린다.
+#[test]
+fn edit_publication_evidence_uses_captured_bytes_and_retention_bound() {
+    let before = b"old\n".to_vec();
+    let after = b"new\n".to_vec();
+    let expected = FilePublicationEvidence::complete("src/file.txt", "old\n", "new\n")
+        .unwrap()
+        .to_snapshot()
+        .unwrap();
+    let completed = || {
+        ToolExecutionResult::new(
+            ToolExecutionOutcome::Completed,
+            r#"{"path":"src/file.txt","status":"ok","replacements":1}"#,
+            false,
+        )
+    };
+
+    let exact = attach_edit_publication_evidence(
+        completed(),
+        "src/file.txt",
+        before.clone(),
+        after.clone(),
+        Some(expected.len()),
+    );
+    assert_eq!(exact.output(), completed().output());
+    assert_eq!(exact.retained_output(), Some((expected.as_str(), false)));
+
+    let first_excess = attach_edit_publication_evidence(
+        completed(),
+        "src/file.txt",
+        before.clone(),
+        after.clone(),
+        Some(expected.len() - 1),
+    );
+    assert_eq!(first_excess.output(), completed().output());
+    let (snapshot, truncated) = first_excess.retained_output().unwrap();
+    assert!(!truncated);
+    let unavailable = FilePublicationEvidence::from_snapshot(snapshot).unwrap();
+    assert_eq!(unavailable.path(), "src/file.txt");
+    assert_eq!(
+        unavailable.state(),
+        &FilePublicationEvidenceState::Unavailable {
+            reason: FilePublicationEvidenceUnavailableReason::OverBound,
+        }
+    );
+    assert!(!snapshot.contains("old\\n"));
+    assert!(!snapshot.contains("new\\n"));
+
+    let disabled = attach_edit_publication_evidence(
+        completed(),
+        "src/file.txt",
+        before.clone(),
+        after.clone(),
+        None,
+    );
+    assert_eq!(disabled.retained_output(), None);
+
+    let failed = attach_edit_publication_evidence(
+        ToolExecutionResult::new(
+            ToolExecutionOutcome::Failed,
+            r#"{"path":"src/file.txt","status":"error","error":"publication_failed"}"#,
+            false,
+        ),
+        "src/file.txt",
+        before,
+        after,
+        Some(4096),
+    );
+    assert_eq!(failed.retained_output(), None);
+}
+
+// publication 전에 취소된 edit는 source를 바꾸지 않고 완료 evidence를 내보내지 않는다.
+#[test]
+fn interrupted_edit_does_not_retain_publication_evidence() {
+    let directory = TestDirectory::new();
+    let source = directory.0.join("source.txt");
+    fs::write(&source, "before").unwrap();
+    let cancelled = AtomicBool::new(false);
+    let result = execute_edit_after_capture(
+        fs::File::open(&directory.0).unwrap(),
+        None,
+        Arc::new(Mutex::new(())),
+        EditRequest {
+            path: AdmittedPath::new("source.txt".to_owned(), vec![OsString::from("source.txt")]),
+            edits: vec![super::super::mutation_plan::ExactEdit::new(
+                "before".into(),
+                "after".into(),
+            )],
+        },
+        &cancelled,
+        UnwindCleanup::default(),
+        Some(4096),
+        || cancelled.store(true, Ordering::Release),
+    );
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Interrupted);
+    assert_eq!(fs::read_to_string(source).unwrap(), "before");
+    assert_eq!(result.retained_output(), None);
+}
 
 // waiting mutation은 같은 host lock을 우회하지 않으며 cancellation이 이미 보이면
 // filesystem phase에 들어가지 않고 Interrupted 경로를 선택할 수 있습니다.
@@ -63,10 +171,7 @@ fn publication_failure_and_cancellation_cleanup_owned_scratch() {
         Success::Write(7),
         UnwindCleanup::default(),
     );
-    assert_eq!(
-        cancelled.outcome(),
-        yo_core::ToolExecutionOutcome::Interrupted
-    );
+    assert_eq!(cancelled.outcome(), ToolExecutionOutcome::Interrupted);
     assert!(!directory.0.join("cancelled").exists());
     assert!(fs::read_dir(&directory.0).unwrap().all(|entry| {
         !entry
@@ -123,6 +228,7 @@ fn edit_growth_precedes_the_stable_size_limit() {
         request,
         &AtomicBool::new(false),
         UnwindCleanup::default(),
+        None,
         || {
             OpenOptions::new()
                 .append(true)
@@ -186,7 +292,7 @@ fn panic_after_final_mode_cleans_scratch_and_does_not_disable_mutation() {
         &AtomicBool::new(false),
         UnwindCleanup::default(),
     );
-    assert_eq!(next.outcome(), yo_core::ToolExecutionOutcome::Completed);
+    assert_eq!(next.outcome(), ToolExecutionOutcome::Completed);
     assert_eq!(
         fs::read_to_string(directory.0.join("next.txt")).unwrap(),
         "next"

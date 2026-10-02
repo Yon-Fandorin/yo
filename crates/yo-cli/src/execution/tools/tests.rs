@@ -108,6 +108,56 @@ fn command_execution_is_approval_bound_and_cancellable() {
     );
 }
 
+// 성공한 edit는 기존 before/planned capture만 보존하며 이후 workspace 변경과 무관하게 replay JSON을
+// 유지한다.
+#[test]
+fn edit_retains_published_capture_separately_from_native_result() {
+    let workspace = TestDirectory::new();
+    let path = workspace.0.join("sample.txt");
+    let before = "before \"quoted\" \\folder\nlast\n";
+    let after = "after \"quoted\" \\folder\nlast\n";
+    fs::write(&path, before).unwrap();
+    let registry = registry(LocalToolRegistryRevision::BasicFiles).unwrap();
+    let mut host = LocalToolHost::new(&workspace.0, &workspace.0.join("credentials.yaml")).unwrap();
+    let arguments = serde_json::json!({
+        "path": "sample.txt",
+        "edits": [{"oldText": "before", "newText": "after"}],
+    })
+    .to_string();
+    let mut tool_request = request(&registry, "edit_file", &arguments);
+    tool_request.maximum_retained_output_bytes = Some(4096);
+    let mut execution = host.start(tool_request).unwrap();
+    let result = finish(execution.as_mut());
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
+    assert_eq!(
+        result.output(),
+        r#"{"path":"sample.txt","status":"ok","replacements":1}"#
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), after);
+    let (snapshot, truncated) = result.retained_output().unwrap();
+    assert!(!truncated);
+    let evidence = yo_core::FilePublicationEvidence::from_snapshot(snapshot).unwrap();
+    assert_eq!(evidence.path(), "sample.txt");
+    assert_eq!(
+        evidence.state(),
+        &yo_core::FilePublicationEvidenceState::Complete {
+            before: before.to_owned(),
+            after: after.to_owned(),
+        }
+    );
+
+    fs::write(&path, "changed after the tool returned").unwrap();
+    assert_eq!(
+        yo_core::FilePublicationEvidence::from_snapshot(snapshot),
+        Some(evidence)
+    );
+    assert_eq!(
+        result.output(),
+        r#"{"path":"sample.txt","status":"ok","replacements":1}"#
+    );
+}
+
 // 선택한 API key가 tool output에 섞이면 replay나 transcript에 들어가기 전에 거부한다.
 #[test]
 fn semantic_admission_rejects_selected_credential_material() {

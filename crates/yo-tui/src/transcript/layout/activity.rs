@@ -8,7 +8,10 @@ mod tool_resources;
 mod tool_shell;
 
 use serde_json::Value;
-pub(crate) use tool_files::{LocalFileProposal, LocalFileProposalBodyStyle};
+pub(crate) use tool_files::{
+    FilePublicationPresentation, LocalFileProposal, LocalFileProposalBodyStyle,
+    completed_file_publication, file_publication_presentation,
+};
 use yo_core::{
     ActivityDocument, ActivityKind, ActivityNotice, ActivityPlan, ActivityReasoning,
     ActivitySummary, NoticeLevel, PlanStepStatus, SummaryKind, ToolOutput,

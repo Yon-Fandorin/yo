@@ -1,13 +1,27 @@
 use std::{
+    io::{self, Write},
     ops::Range,
     path::{Component, Path},
+    str,
+    time::Duration,
 };
 
 use serde_json::{Value, from_str};
-use yo_core::ToolOutput;
+use similar::TextDiff;
+use unicode_segmentation::UnicodeSegmentation;
+use yo_core::{
+    ActivityKind, FilePublicationEvidence, FilePublicationEvidenceState,
+    FilePublicationEvidenceUnavailableReason, ToolOutput,
+};
+
+use crate::transcript::TranscriptActivityOutcome;
 
 const MAX_LOCAL_FILE_PATH_BYTES: usize = 1_024;
 const MAX_EDIT_PRESENTATION_BYTES: usize = 256 * 1024;
+const MAX_PUBLICATION_PRESENTATION_BYTES: usize = 256 * 1024;
+const MAX_PUBLICATION_CAPTURE_BYTES: usize = 1024 * 1024;
+const MAX_PUBLICATION_DIFF_LINES: usize = 40_000;
+const PUBLICATION_DIFF_TRUNCATION: &str = "\n… publication diff truncated at 256 KiB …\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalFileProposalBodyStyle {
@@ -18,6 +32,15 @@ pub(crate) enum LocalFileProposalBodyStyle {
 pub(crate) struct LocalFileProposal<'a> {
     pub(crate) path: &'a str,
     kind: ValidatedLocalFileProposalKind<'a>,
+    pub(crate) body_style: LocalFileProposalBodyStyle,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FilePublicationPresentation {
+    pub(crate) path: String,
+    pub(crate) heading: &'static str,
+    pub(crate) provenance: &'static str,
+    pub(crate) body: String,
     pub(crate) body_style: LocalFileProposalBodyStyle,
 }
 
@@ -88,6 +111,155 @@ pub(crate) fn local_file_proposal_markdown(output: &ToolOutput) -> Option<String
 
 pub(crate) fn local_file_proposal_path(output: &ToolOutput) -> Option<&str> {
     validate_local_file_proposal(output).map(|proposal| proposal.path)
+}
+
+// 완료된 managed edit_file의 typed capture만 publication evidence로 표시합니다.
+pub(crate) fn completed_file_publication(
+    output: &ToolOutput,
+    kind: Option<ActivityKind>,
+    outcome: Option<TranscriptActivityOutcome>,
+) -> Option<FilePublicationEvidence> {
+    if output.tool != "edit_file"
+        || output.server.is_some()
+        || kind != Some(ActivityKind::ToolResult)
+        || outcome != Some(TranscriptActivityOutcome::Completed)
+        || output.error.is_some()
+        || output.content_items.is_some()
+    {
+        return None;
+    }
+
+    let result = output.result.as_ref()?.as_object()?;
+    if result.get("tool_id")?.as_str()? != "edit-file"
+        || result.get("outcome")?.as_str()? != "completed"
+        || result.get("truncated")?.as_bool()?
+        || result.get("isError")?.as_bool()?
+        || result.get("call_id")?.as_str()?.trim().is_empty()
+        || result.get("execution_host")?.as_str()?.trim().is_empty()
+    {
+        return None;
+    }
+
+    let arguments = output.arguments.as_ref()?.as_object()?;
+    if !(arguments.len() == 1 || arguments.len() == 2) {
+        return None;
+    }
+    let argument_path = arguments.get("path")?.as_str()?;
+    if !admitted_local_path(argument_path) || contains_redaction_marker(argument_path) {
+        return None;
+    }
+
+    let content = result.get("content")?.as_array()?;
+    let [block] = content.as_slice() else {
+        return None;
+    };
+    let block = block.as_object()?;
+    if block.get("type")?.as_str()? != "text" {
+        return None;
+    }
+    let (receipt_path, replacement_count) =
+        mutation_result_receipt("edit_file", block.get("text")?.as_str()?)?;
+    match arguments.get("edits") {
+        Some(Value::Array(edits)) if arguments.len() == 2 => {
+            if edits.is_empty() || edits.len() > 256 || replacement_count != edits.len() as u64 {
+                return None;
+            }
+            if edits.iter().any(|edit| {
+                let Some(fields) = edit.as_object() else {
+                    return true;
+                };
+                fields.len() != 2
+                    || fields
+                        .get("oldText")
+                        .and_then(Value::as_str)
+                        .is_none_or(str::is_empty)
+                    || fields.get("newText").and_then(Value::as_str).is_none()
+            }) {
+                return None;
+            }
+        },
+        None if arguments.len() == 1 => {},
+        _ => return None,
+    }
+
+    let evidence =
+        FilePublicationEvidence::from_snapshot(result.get("publicationEvidence")?.as_str()?)?;
+    if evidence.path() != argument_path || evidence.path() != receipt_path {
+        return None;
+    }
+    Some(evidence)
+}
+
+pub(crate) fn file_publication_presentation(
+    evidence: &FilePublicationEvidence,
+) -> FilePublicationPresentation {
+    let path = evidence.path().to_owned();
+    match evidence.state() {
+        FilePublicationEvidenceState::Complete { before, after } => FilePublicationPresentation {
+            path,
+            heading: "Saved edit comparison",
+            provenance: "Saved from this completed edit; the current file may have changed since.",
+            body: publication_diff(before, after),
+            body_style: LocalFileProposalBodyStyle::Diff,
+        },
+        FilePublicationEvidenceState::Unavailable { reason } => FilePublicationPresentation {
+            path,
+            heading: "Saved edit comparison unavailable",
+            provenance: "The completed edit result recorded no content comparison.",
+            body: unavailable_reason(*reason).to_owned(),
+            body_style: LocalFileProposalBodyStyle::Plain,
+        },
+    }
+}
+
+fn unavailable_reason(reason: FilePublicationEvidenceUnavailableReason) -> &'static str {
+    match reason {
+        FilePublicationEvidenceUnavailableReason::Disabled => "Content capture was disabled.",
+        FilePublicationEvidenceUnavailableReason::OverBound => {
+            "Captured content exceeded the evidence limit."
+        },
+        FilePublicationEvidenceUnavailableReason::GenerationFailed => {
+            "The content capture could not be prepared."
+        },
+        FilePublicationEvidenceUnavailableReason::SemanticAdmission => {
+            "Privacy checks excluded the captured content."
+        },
+        FilePublicationEvidenceUnavailableReason::InvalidEvidence => {
+            "The captured content could not be recognized."
+        },
+        FilePublicationEvidenceUnavailableReason::SnapshotCapacity => {
+            "The saved comparison exceeded the storage limit."
+        },
+    }
+}
+
+pub(crate) fn file_publication_markdown(evidence: &FilePublicationEvidence) -> String {
+    let presentation = file_publication_presentation(evidence);
+    let body = match presentation.body_style {
+        LocalFileProposalBodyStyle::Diff => literal_block("diff", &presentation.body),
+        LocalFileProposalBodyStyle::Plain => literal_block("text", &presentation.body),
+    };
+    let rendered = format!(
+        "**{}**\n\nPath:\n\n{}\n\n{}\n\n{}",
+        presentation.heading,
+        literal_block("text", &presentation.path),
+        presentation.provenance,
+        body,
+    );
+    if rendered.len() <= MAX_PUBLICATION_PRESENTATION_BYTES {
+        rendered
+    } else {
+        format!(
+            "**{}**\n\nPath:\n\n{}\n\n{}\n\n{}",
+            presentation.heading,
+            literal_block("text", &presentation.path),
+            presentation.provenance,
+            literal_block(
+                "text",
+                "Publication diff omitted because its literal rendering exceeds 256 KiB."
+            ),
+        )
+    }
 }
 
 fn validate_local_file_proposal(output: &ToolOutput) -> Option<ValidatedLocalFileProposal<'_>> {
@@ -235,9 +407,19 @@ fn replacement_diff(old: &str, new: &str) -> String {
 }
 
 pub(super) fn mutation_result_markdown(tool: &str, source: &str) -> Option<String> {
-    let (field, label) = match tool {
-        "edit_file" => ("replacements", "Applied replacements"),
-        "write_file" => ("bytes", "Written bytes"),
+    let label = match tool {
+        "edit_file" => "Applied replacements",
+        "write_file" => "Written bytes",
+        _ => return None,
+    };
+    let (path, count) = mutation_result_receipt(tool, source)?;
+    Some(literal_block("text", &format!("{path}\n{label}: {count}")))
+}
+
+fn mutation_result_receipt(tool: &str, source: &str) -> Option<(String, u64)> {
+    let field = match tool {
+        "edit_file" => "replacements",
+        "write_file" => "bytes",
         _ => return None,
     };
     if source.len() > 16 * 1024 {
@@ -250,7 +432,90 @@ pub(super) fn mutation_result_markdown(tool: &str, source: &str) -> Option<Strin
     }
     let count = result.get(field)?.as_u64()?;
     let path = result.get("path")?.as_str()?;
-    Some(literal_block("text", &format!("{path}\n{label}: {count}")))
+    Some((path.to_owned(), count))
+}
+
+fn publication_diff(before: &str, after: &str) -> String {
+    if before == after {
+        return "No textual differences were captured.".to_owned();
+    }
+    let capture_bytes = before.len().saturating_add(after.len());
+    if capture_bytes > MAX_PUBLICATION_CAPTURE_BYTES {
+        return "Publication diff omitted: captured content exceeds the presentation limit."
+            .to_owned();
+    }
+    let line_count = before
+        .split_inclusive('\n')
+        .take(MAX_PUBLICATION_DIFF_LINES + 1)
+        .count()
+        .saturating_add(
+            after
+                .split_inclusive('\n')
+                .take(MAX_PUBLICATION_DIFF_LINES + 1)
+                .count(),
+        );
+    if line_count > MAX_PUBLICATION_DIFF_LINES {
+        return "Publication diff omitted: captured content exceeds the 40,000-line comparison limit."
+            .to_owned();
+    }
+
+    let diff = TextDiff::configure()
+        .timeout(Duration::from_millis(50))
+        .diff_lines(before, after);
+    let mut writer = BoundedDiffWriter::default();
+    let formatted = diff
+        .unified_diff()
+        .context_radius(3)
+        .header("read before edit", "written by edit")
+        .to_writer(&mut writer);
+    if writer.exceeded || formatted.is_err() {
+        writer.output.push_str(PUBLICATION_DIFF_TRUNCATION);
+    }
+    if writer.output.is_empty() {
+        "No textual differences were captured.".to_owned()
+    } else {
+        writer.output
+    }
+}
+
+#[derive(Default)]
+struct BoundedDiffWriter {
+    output: String,
+    exceeded: bool,
+}
+
+impl Write for BoundedDiffWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        let text = str::from_utf8(bytes)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "diff output was not UTF-8"))?;
+        let budget = MAX_PUBLICATION_PRESENTATION_BYTES - PUBLICATION_DIFF_TRUNCATION.len();
+        let remaining = budget.saturating_sub(self.output.len());
+        if bytes.len() <= remaining {
+            self.output.push_str(text);
+            return Ok(bytes.len());
+        }
+
+        let mut appended = 0;
+        for grapheme in text.graphemes(true) {
+            if grapheme.len() > remaining.saturating_sub(appended) {
+                break;
+            }
+            self.output.push_str(grapheme);
+            appended += grapheme.len();
+        }
+        self.exceeded = true;
+        Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "publication diff output limit reached",
+        ))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 pub(super) fn edit_markdown(arguments: &Value) -> Option<(String, bool)> {

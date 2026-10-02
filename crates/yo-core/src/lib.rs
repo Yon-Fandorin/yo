@@ -48,8 +48,10 @@ pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
 pub use event::{
     ActivityApproval, ActivityDocument, ActivityKind, ActivityNotice, ActivityOutcome,
     ActivityPlan, ActivityQuestion, ActivityReasoning, ActivitySummary, ActivityUpdate, AgentEvent,
-    ApprovalChoice, Failure, MessageContent, NoticeLevel, PlanStep, PlanStepStatus, QuestionChoice,
-    SecretStorageOffer, SecretStorageRecommendation, SummaryKind, ToolOutput, TurnOutcome,
+    ApprovalChoice, Failure, FilePublicationEvidence, FilePublicationEvidenceState,
+    FilePublicationEvidenceUnavailableReason, MessageContent, NoticeLevel, PlanStep,
+    PlanStepStatus, QuestionChoice, SecretStorageOffer, SecretStorageRecommendation, SummaryKind,
+    ToolOutput, TurnOutcome,
 };
 pub use host::{
     HostWorkspacePath, HostWorkspacePathError, LocalWorkspaceHostIdentity,

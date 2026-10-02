@@ -16,7 +16,7 @@ use super::{
     GlyphRole, NonZeroU16, PositionedTranscriptGrapheme, PreparedBody, TranscriptLayoutConfig,
     TranscriptMessage, append_plain, markdown, media, tool_files, tool_resources, tool_shell,
 };
-use crate::transcript::ToolRenderInput;
+use crate::transcript::{ToolRenderInput, TranscriptActivityOutcome};
 
 pub(super) fn prepare_tool(
     config: &TranscriptLayoutConfig,
@@ -136,7 +136,7 @@ pub(super) fn tool_presentation(
                     skip_activity_folding = config.shell_tail_rows > 0 && is_shell(&output.tool);
                     let preview = (skip_activity_folding && config.compact_activities())
                         .then_some((width, config.shell_tail_rows));
-                    tool_markdown(output, preview)
+                    tool_markdown(output, preview, kind, activity.outcome)
                 })
             })
     } else {
@@ -215,7 +215,12 @@ pub(super) fn content_block_markdown(block: &Value, successful: bool) -> String 
     }
 }
 
-fn tool_markdown(output: &ToolOutput, preview: Option<(NonZeroU16, u16)>) -> String {
+fn tool_markdown(
+    output: &ToolOutput,
+    preview: Option<(NonZeroU16, u16)>,
+    kind: ActivityKind,
+    outcome: Option<TranscriptActivityOutcome>,
+) -> String {
     if output.tool == "webSearch"
         && output.result.is_none()
         && output.content_items.is_none()
@@ -258,6 +263,14 @@ fn tool_markdown(output: &ToolOutput, preview: Option<(NonZeroU16, u16)>) -> Str
     };
     let heading = file_path.map_or_else(|| identity.clone(), |path| format!("{identity} · {path}"));
     let mut sections = vec![literal_block("text", &heading)];
+    let publication_presented = if let Some(evidence) =
+        tool_files::completed_file_publication(output, Some(kind), outcome)
+    {
+        sections.push(tool_files::file_publication_markdown(&evidence));
+        true
+    } else {
+        false
+    };
     let mut truncation_presented = false;
     let mut progress_presented = false;
     if let Some(arguments) = &output.arguments {
@@ -461,6 +474,9 @@ fn tool_markdown(output: &ToolOutput, preview: Option<(NonZeroU16, u16)>) -> Str
     }
     if let Some(result) = &output.result {
         let mut remaining = result.clone();
+        if publication_presented && let Some(fields) = remaining.as_object_mut() {
+            fields.remove("publicationEvidence");
+        }
         if is_shell {
             let mut details = Vec::new();
             for (key, label, suffix) in [

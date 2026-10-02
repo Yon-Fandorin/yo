@@ -201,6 +201,7 @@ impl ToolExecutionHost for LocalToolHost {
             "edit-file" => {
                 let edit = mutation::parse_edit(request.call.arguments(), path::basic_path)?;
                 let result_path = edit.path().to_owned();
+                let maximum_retained_output_bytes = request.maximum_retained_output_bytes;
                 let workspace = self
                     .workspace_directory
                     .try_clone()
@@ -217,6 +218,7 @@ impl ToolExecutionHost for LocalToolHost {
                             edit,
                             &cancelled,
                             cleanup.clone(),
+                            maximum_retained_output_bytes,
                         )
                     })
                 })))

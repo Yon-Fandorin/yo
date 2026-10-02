@@ -2898,6 +2898,7 @@ dependencies = [
  "pulldown-cmark",
  "rustix",
  "serde_json",
+ "similar",
  "syntect",
  "unicode-segmentation",
  "url",

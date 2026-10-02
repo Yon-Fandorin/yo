@@ -20,7 +20,10 @@ use nix::{
     unistd::{UnlinkatFlags, close, unlinkat},
 };
 use serde_json::Value;
-use yo_core::{ToolExecutionError, ToolExecutionResult};
+use yo_core::{
+    FilePublicationEvidence, FilePublicationEvidenceUnavailableReason, ToolExecutionError,
+    ToolExecutionOutcome, ToolExecutionResult,
+};
 
 use super::{
     descriptor::{
@@ -168,6 +171,7 @@ pub(super) fn execute_edit(
     request: EditRequest,
     cancelled: &AtomicBool,
     unwind_cleanup: UnwindCleanup,
+    maximum_retained_output_bytes: Option<usize>,
 ) -> ToolExecutionResult {
     execute_edit_after_capture(
         workspace,
@@ -176,6 +180,7 @@ pub(super) fn execute_edit(
         request,
         cancelled,
         unwind_cleanup,
+        maximum_retained_output_bytes,
         || {},
     )
 }
@@ -188,6 +193,7 @@ fn execute_edit_after_capture(
     request: EditRequest,
     cancelled: &AtomicBool,
     unwind_cleanup: UnwindCleanup,
+    maximum_retained_output_bytes: Option<usize>,
     after_capture: impl FnOnce(),
 ) -> ToolExecutionResult {
     let _guard = match lock_mutation(&lock, cancelled) {
@@ -252,7 +258,7 @@ fn execute_edit_after_capture(
     if planned.len() > MAX_FILE_BYTES {
         return mutation_error(request.path.display(), "too_large");
     }
-    publish(
+    let result = publish(
         &workspace,
         denied_credential,
         &request.path,
@@ -261,7 +267,78 @@ fn execute_edit_after_capture(
         cancelled,
         Success::Edit(request.edits.len()),
         unwind_cleanup,
+    );
+    attach_edit_publication_evidence(
+        result,
+        request.path.display(),
+        original,
+        planned,
+        maximum_retained_output_bytes,
     )
+}
+
+fn attach_edit_publication_evidence(
+    result: ToolExecutionResult,
+    path: &str,
+    original: Vec<u8>,
+    planned: Vec<u8>,
+    maximum_retained_output_bytes: Option<usize>,
+) -> ToolExecutionResult {
+    if result.outcome() != ToolExecutionOutcome::Completed {
+        return result;
+    }
+    let Some(retained_limit) = maximum_retained_output_bytes else {
+        return result;
+    };
+    let retained = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let raw_limit = retained_limit.min(FilePublicationEvidence::MAX_SNAPSHOT_BYTES);
+        let raw_size = original
+            .len()
+            .checked_add(planned.len())
+            .and_then(|size| size.checked_add(path.len()));
+        let evidence = if raw_size.is_some_and(|size| size <= raw_limit) {
+            match (String::from_utf8(original), String::from_utf8(planned)) {
+                (Ok(before), Ok(after)) => FilePublicationEvidence::complete(path, before, after)
+                    .or_else(|| {
+                        FilePublicationEvidence::unavailable(
+                            path,
+                            FilePublicationEvidenceUnavailableReason::GenerationFailed,
+                        )
+                    }),
+                _ => FilePublicationEvidence::unavailable(
+                    path,
+                    FilePublicationEvidenceUnavailableReason::GenerationFailed,
+                ),
+            }
+        } else {
+            FilePublicationEvidence::unavailable(
+                path,
+                FilePublicationEvidenceUnavailableReason::OverBound,
+            )
+        }?;
+        let snapshot = evidence.to_snapshot();
+        let snapshot = match snapshot {
+            Some(snapshot) if snapshot.len() <= retained_limit => snapshot,
+            _ => FilePublicationEvidence::unavailable(
+                path,
+                FilePublicationEvidenceUnavailableReason::OverBound,
+            )?
+            .to_snapshot()?,
+        };
+        (snapshot.len() <= retained_limit).then_some(snapshot)
+    }))
+    .ok()
+    .flatten();
+    match retained {
+        Some(snapshot) => {
+            let fallback = result.clone();
+            panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                result.with_retained_output(snapshot, false)
+            }))
+            .unwrap_or(fallback)
+        },
+        None => result,
+    }
 }
 
 pub(super) fn execute_write(

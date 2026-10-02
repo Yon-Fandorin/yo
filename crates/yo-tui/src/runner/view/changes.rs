@@ -11,9 +11,10 @@ use crate::{
     surface::{Point, Rect, Size, SurfaceView, WriteOutcome, cell_width},
     text::flow::{TextFlowError, TextPages, flow_text},
     transcript::{
-        FileChangeView, LocalFileProposal, LocalFileProposalBodyStyle, TranscriptActivityOutcome,
-        TranscriptBody, TranscriptItemId, TranscriptMessage, TranscriptScrollCommand,
-        TranscriptSlice, TranscriptStyles, local_file_proposal, local_file_proposal_path,
+        FileChangeView, FilePublicationPresentation, LocalFileProposal, LocalFileProposalBodyStyle,
+        TranscriptActivityOutcome, TranscriptBody, TranscriptItemId, TranscriptMessage,
+        TranscriptScrollCommand, TranscriptSlice, TranscriptStyles, completed_file_publication,
+        file_publication_presentation, local_file_proposal, local_file_proposal_path,
     },
 };
 
@@ -88,6 +89,10 @@ enum SectionSource<'a> {
         message: &'a TranscriptMessage,
         path: String,
     },
+    Publication {
+        message: &'a TranscriptMessage,
+        presentation: Arc<FilePublicationPresentation>,
+    },
 }
 
 impl Section<'_> {
@@ -95,6 +100,7 @@ impl Section<'_> {
         match &self.source {
             SectionSource::Reported(_) => "Changes",
             SectionSource::Proposal { .. } => "Proposed",
+            SectionSource::Publication { .. } => "Recorded",
         }
     }
 
@@ -106,6 +112,7 @@ impl Section<'_> {
                     .find_map(|prefix| line.strip_prefix(prefix))
             }),
             SectionSource::Proposal { path, .. } => Some(path),
+            SectionSource::Publication { presentation, .. } => Some(&presentation.path),
         }
     }
 }
@@ -114,6 +121,7 @@ pub(super) fn can_open(message: &TranscriptMessage) -> bool {
     message
         .file_change()
         .is_some_and(|change| !change.body.is_empty())
+        || has_publication(message)
         || proposal_path(message).is_some()
 }
 
@@ -128,10 +136,34 @@ fn proposal_path(message: &TranscriptMessage) -> Option<String> {
     local_file_proposal_path(&output).map(str::to_owned)
 }
 
+fn has_publication(message: &TranscriptMessage) -> bool {
+    message
+        .tool_source()
+        .and_then(ToolOutput::from_snapshot)
+        .is_some_and(|output| {
+            completed_file_publication(&output, message.tool_kind(), message.tool_outcome())
+                .is_some()
+        })
+}
+
 #[derive(Clone, Debug, Default)]
-struct ProposalIndex {
+struct ObservationIndex {
     signature: Vec<(TranscriptItemId, u64)>,
-    paths: HashMap<TranscriptItemId, (u64, Option<String>)>,
+    observations: Arc<HashMap<TranscriptItemId, IndexedObservation>>,
+}
+
+#[derive(Clone, Debug)]
+struct IndexedObservation {
+    revision: u64,
+    proposal_path: Option<String>,
+    publication: Option<Arc<FilePublicationPresentation>>,
+}
+
+struct SourceParts {
+    source: String,
+    bodies: Vec<(Range<usize>, LocalFileProposalBodyStyle)>,
+    labels: Vec<Range<usize>>,
+    outcome: Option<TranscriptActivityOutcome>,
 }
 
 fn is_file_header(line: &str) -> bool {
@@ -156,9 +188,8 @@ struct Cache {
     width: NonZeroU16,
     source: String,
     lines: Vec<usize>,
-    body: Range<usize>,
-    label: Range<usize>,
-    body_style: LocalFileProposalBodyStyle,
+    bodies: Vec<(Range<usize>, LocalFileProposalBodyStyle)>,
+    labels: Vec<Range<usize>>,
     outcome: Option<TranscriptActivityOutcome>,
     pages: TextPages,
 }
@@ -166,12 +197,12 @@ struct Cache {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ChangesView {
     cache: RefCell<Option<Arc<Cache>>>,
-    proposal_index: RefCell<Option<ProposalIndex>>,
+    observation_index: RefCell<Option<ObservationIndex>>,
 }
 
 impl ChangesView {
     pub(super) fn sections<'a>(&self, chat: TranscriptSlice<'a>) -> Vec<Section<'a>> {
-        let proposal_paths = self.proposal_paths(chat);
+        let observations = self.observations(chat);
         let mut sections = Vec::new();
         for item in chat.items() {
             let TranscriptBody::Message(message) = item.body();
@@ -212,56 +243,93 @@ impl ChangesView {
                 });
                 continue;
             }
-            if let Some((revision, Some(path))) = proposal_paths.get(&item.id())
-                && *revision == item.revision()
+            if let Some(observation) = observations
+                .get(&item.id())
+                .filter(|observation| observation.revision == item.revision())
             {
-                sections.push(Section {
-                    key: (item.id(), 0),
-                    revision: item.revision(),
-                    source: SectionSource::Proposal {
-                        message,
-                        path: path.clone(),
-                    },
-                });
+                if let Some(presentation) = &observation.publication {
+                    sections.push(Section {
+                        key: (item.id(), 0),
+                        revision: item.revision(),
+                        source: SectionSource::Publication {
+                            message,
+                            presentation: Arc::clone(presentation),
+                        },
+                    });
+                    continue;
+                }
+                if let Some(path) = &observation.proposal_path {
+                    sections.push(Section {
+                        key: (item.id(), 0),
+                        revision: item.revision(),
+                        source: SectionSource::Proposal {
+                            message,
+                            path: path.clone(),
+                        },
+                    });
+                }
             }
         }
         sections
     }
 
-    fn proposal_paths(
+    fn observations(
         &self,
         chat: TranscriptSlice<'_>,
-    ) -> HashMap<TranscriptItemId, (u64, Option<String>)> {
+    ) -> Arc<HashMap<TranscriptItemId, IndexedObservation>> {
         let signature = chat
             .items()
             .iter()
             .map(|item| (item.id(), item.revision()))
             .collect::<Vec<_>>();
-        let mut cached = self.proposal_index.borrow_mut();
+        let mut cached = self.observation_index.borrow_mut();
         if cached
             .as_ref()
             .is_none_or(|index| index.signature != signature)
         {
             let previous = cached.take().unwrap_or_default();
-            let mut paths = HashMap::new();
+            let mut observations = HashMap::new();
             for item in chat.items() {
-                if let Some((revision, path)) = previous.paths.get(&item.id())
-                    && *revision == item.revision()
+                if let Some(observation) = previous.observations.get(&item.id())
+                    && observation.revision == item.revision()
                 {
-                    paths.insert(item.id(), (*revision, path.clone()));
+                    observations.insert(item.id(), observation.clone());
                     continue;
                 }
                 let TranscriptBody::Message(message) = item.body();
-                let path = proposal_path(message);
-                paths.insert(item.id(), (item.revision(), path));
+                let output = message.tool_source().and_then(ToolOutput::from_snapshot);
+                let proposal_path = output
+                    .as_ref()
+                    .and_then(local_file_proposal_path)
+                    .map(str::to_owned);
+                let publication = output.as_ref().and_then(|output| {
+                    let evidence = completed_file_publication(
+                        output,
+                        message.tool_kind(),
+                        message.tool_outcome(),
+                    )?;
+                    Some(Arc::new(file_publication_presentation(&evidence)))
+                });
+                observations.insert(
+                    item.id(),
+                    IndexedObservation {
+                        revision: item.revision(),
+                        proposal_path,
+                        publication,
+                    },
+                );
             }
-            *cached = Some(ProposalIndex { signature, paths });
+            *cached = Some(ObservationIndex {
+                signature,
+                observations: Arc::new(observations),
+            });
         }
-        cached
-            .as_ref()
-            .expect("proposal index was populated")
-            .paths
-            .clone()
+        Arc::clone(
+            &cached
+                .as_ref()
+                .expect("observation index was populated")
+                .observations,
+        )
     }
 
     pub(super) fn render(
@@ -283,7 +351,12 @@ impl ChangesView {
                 .as_ref()
                 .is_none_or(|cache| cache.key != key || cache.width != columns)
             {
-                let (source, body, label, outcome, body_style) = if let Some(section) = selected {
+                let SourceParts {
+                    source,
+                    bodies,
+                    labels,
+                    outcome,
+                } = if let Some(section) = selected {
                     match &section.source {
                         SectionSource::Reported(change) => {
                             let added = change
@@ -307,13 +380,12 @@ impl ChangesView {
                                 source.push('\n');
                                 source.push_str(footer);
                             }
-                            (
+                            SourceParts {
                                 source,
-                                start..end,
-                                label_start..start,
-                                change.outcome,
-                                LocalFileProposalBodyStyle::Diff,
-                            )
+                                bodies: vec![(start..end, LocalFileProposalBodyStyle::Diff)],
+                                labels: once(label_start..start).collect(),
+                                outcome: change.outcome,
+                            }
                         },
                         SectionSource::Proposal { message, path } => {
                             let output = ToolOutput::from_snapshot(
@@ -327,20 +399,34 @@ impl ChangesView {
                             debug_assert_eq!(proposal.path, path.as_str());
                             proposal_source(message, &output, &proposal)
                         },
+                        SectionSource::Publication {
+                            message,
+                            presentation,
+                        } => {
+                            let output = ToolOutput::from_snapshot(
+                                message
+                                    .tool_source()
+                                    .expect("a publication section retains its tool source"),
+                            )
+                            .expect("a publication section retains a complete tool output");
+                            publication_source(message, &output, presentation)
+                        },
                     }
                 } else {
-                    (
-                        "No file changes were reported in this conversation.\nThis view does not inspect the Git worktree.\nF1 returns to Chat.".to_owned(),
-                        0..0,
-                        0..0,
-                        None,
-                        LocalFileProposalBodyStyle::Diff,
-                    )
+                    SourceParts {
+                        source: "No file changes were reported in this conversation.\nThis view does not inspect the Git worktree.\nF1 returns to Chat.".to_owned(),
+                        bodies: Vec::new(),
+                        labels: Vec::new(),
+                        outcome: None,
+                    }
                 };
+                let fallback_style = bodies
+                    .first()
+                    .map_or(LocalFileProposalBodyStyle::Diff, |(_, style)| *style);
                 let pages = TextPages::with_escaped_fallback(
                     &source,
                     columns,
-                    match body_style {
+                    match fallback_style {
                         LocalFileProposalBodyStyle::Diff => "Escaped diff (unrenderable cells)",
                         LocalFileProposalBodyStyle::Plain => {
                             "Escaped proposed content (unrenderable cells)"
@@ -355,9 +441,8 @@ impl ChangesView {
                     width: columns,
                     source,
                     lines,
-                    body,
-                    label,
-                    body_style,
+                    bodies,
+                    labels,
                     outcome,
                     pages,
                 }));
@@ -430,20 +515,24 @@ impl ChangesView {
                 .get(line_index + 1)
                 .copied()
                 .unwrap_or(cache.source.len());
-            let in_body = cache.body.contains(&start);
-            let style = if in_body {
-                match cache.body_style {
+            let body_style = cache
+                .bodies
+                .iter()
+                .find_map(|(range, style)| range.contains(&start).then_some(*style));
+            let in_label = cache.labels.iter().any(|range| range.contains(&start));
+            let style = if let Some(body_style) = body_style {
+                match body_style {
                     LocalFileProposalBodyStyle::Diff => {
                         styles.markdown.diff_line_style(&cache.source[start..end])
                     },
                     LocalFileProposalBodyStyle::Plain => styles.activity.body,
                 }
-            } else if cache.label.contains(&start) {
+            } else if in_label {
                 styles.markdown.code_label
             } else {
                 styles.activity.status(cache.outcome)
             };
-            if in_body || cache.label.contains(&start) {
+            if body_style.is_some() || in_label {
                 view.subview(Rect::new(Point::new(0, row), Size::new(width.get(), 1)))
                     .expect("diff row fits body")
                     .clear(style);
@@ -464,13 +553,7 @@ fn proposal_source(
     message: &TranscriptMessage,
     output: &ToolOutput,
     proposal: &LocalFileProposal<'_>,
-) -> (
-    String,
-    Range<usize>,
-    Range<usize>,
-    Option<TranscriptActivityOutcome>,
-    LocalFileProposalBodyStyle,
-) {
+) -> SourceParts {
     let kind = message
         .tool_kind()
         .expect("a proposed section is a typed tool observation");
@@ -521,13 +604,102 @@ fn proposal_source(
         source.push_str("\n\nRecorded activity detail:\n");
         source.push_str(detail);
     }
-    (
+    SourceParts {
         source,
-        body,
-        label_start..label_end,
+        bodies: vec![(body, proposal.body_style)],
+        labels: once(label_start..label_end).collect(),
         outcome,
-        proposal.body_style,
-    )
+    }
+}
+
+fn publication_source(
+    message: &TranscriptMessage,
+    output: &ToolOutput,
+    presentation: &FilePublicationPresentation,
+) -> SourceParts {
+    let outcome = message.tool_outcome();
+    let mut source = format!(
+        "{}\nPath: {}\nActivity outcome: {}\n{}\n",
+        presentation.heading,
+        presentation.path,
+        activity_outcome_label(outcome),
+        presentation.provenance,
+    );
+    let publication_label_start = source.len();
+    source.push_str(match presentation.body_style {
+        LocalFileProposalBodyStyle::Diff => "Read before edit → written by edit",
+        LocalFileProposalBodyStyle::Plain => "Unavailable reason",
+    });
+    let publication_label_end = source.len();
+    source.push_str("\n\n");
+    let publication_body_start = source.len();
+    source.push_str(&presentation.body);
+    let publication_body_end = source.len();
+    let mut bodies = vec![(
+        publication_body_start..publication_body_end,
+        presentation.body_style,
+    )];
+    let mut labels: Vec<Range<usize>> =
+        once(publication_label_start..publication_label_end).collect();
+
+    if let Some(proposal) = local_file_proposal(output) {
+        source.push_str("\n\n");
+        let label_start = source.len();
+        source.push_str(proposal.label());
+        let label_end = source.len();
+        source.push_str("\n\n");
+        bodies.push((
+            proposal.append_detail_body(&mut source),
+            proposal.body_style,
+        ));
+        labels.push(label_start..label_end);
+    }
+
+    if let Some(result) = &output.result {
+        let mut displayed = result.clone();
+        if let Some(fields) = displayed.as_object_mut() {
+            fields.remove("publicationEvidence");
+        }
+        source.push_str("\n\nRecorded result:\n");
+        append_bounded_detail(&mut source, &displayed.to_string(), 16 * 1024);
+    }
+    if let Some(content_items) = &output.content_items {
+        source.push_str("\n\nRecorded content items:\n");
+        append_bounded_detail(&mut source, &content_items.to_string(), 16 * 1024);
+    }
+    if let Some(error) = &output.error {
+        source.push_str("\n\nRecorded error:\n");
+        append_bounded_detail(&mut source, &error.to_string(), 16 * 1024);
+    }
+    if let Some(detail) = message
+        .tool_outcome_detail()
+        .filter(|detail| !detail.is_empty())
+    {
+        source.push_str("\n\nRecorded activity detail:\n");
+        append_bounded_detail(&mut source, detail, 16 * 1024);
+    }
+
+    SourceParts {
+        source,
+        bodies,
+        labels,
+        outcome,
+    }
+}
+
+fn append_bounded_detail(source: &mut String, detail: &str, maximum: usize) {
+    if detail.len() <= maximum {
+        source.push_str(detail);
+        return;
+    }
+    let end = detail
+        .grapheme_indices(true)
+        .take_while(|(start, grapheme)| start + grapheme.len() <= maximum)
+        .map(|(start, grapheme)| start + grapheme.len())
+        .last()
+        .unwrap_or(0);
+    source.push_str(&detail[..end]);
+    source.push_str("\n… recorded detail omitted after 16 KiB …");
 }
 
 fn activity_outcome_label(outcome: Option<TranscriptActivityOutcome>) -> &'static str {
@@ -596,7 +768,7 @@ mod tests {
         let (narrow, at, escaped) = render(1, &[]);
         assert_eq!(at.anchor, original.anchor);
         assert_eq!(
-            &escaped.source[escaped.body.clone()],
+            &escaped.source[escaped.bodies[0].0.clone()],
             body.trim_end_matches('\n')
         );
         let shown = escaped

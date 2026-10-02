@@ -458,9 +458,21 @@ recorded result, error and activity outcome or failure reason. A prepared call
 without a result explicitly says that no execution result exists in this observation;
 its Completed activity does not establish a successful file mutation. Separate call
 and result observations are not joined by tool name or a parsed call identifier.
-Malformed, redacted or excessive proposals cannot open detail or an older unrelated
-change; their existing Chat and literal fallbacks remain. This projection performs no filesystem I/O
-and supplies neither a verified applied diff nor Git status. Tests cover failed
+Malformed, redacted or excessive proposals cannot open proposal detail or an older unrelated
+change; their existing Chat and literal fallbacks remain. A successful native edit
+may also retain its captured original and publication content in a bounded typed
+result extension. Chat and Alt+D derive the same contextual comparison from that
+result's admitted evidence, independently of whether its proposal is available.
+The comparison survives later workspace changes. Missing legacy evidence retains
+proposal-only presentation; explicitly unavailable evidence shows its reason.
+This projection performs no filesystem I/O or Git scan. Captured publication content
+does not assert that an external writer left the original unchanged until rename.
+The optional evidence envelope is capped at 1 MiB. Its decoded before/after text
+passes semantic admission separately and is absent from the model's tool-result
+replay. The comparison admits at most 40,000 total source lines and renders at
+most 256 KiB of diff body; omission or truncation is explicit. An optional capture
+or retention failure does not change a successful edit's Completed outcome.
+Tests cover failed
 preparation and results, empty writes, the first excessive edit count/byte,
 same-name observation isolation, draft/F1 return and Unicode resize anchors.
 The selected file now uses `TextPages` with usize row counts and a cached

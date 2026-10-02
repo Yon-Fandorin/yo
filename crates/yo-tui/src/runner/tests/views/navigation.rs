@@ -3,7 +3,8 @@ use std::time::Duration;
 use serde_json::json;
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, AgentEvent, DurabilityGapCause,
-    Failure, JournalDurability, ToolOutput, TranscriptRecord, UserInput,
+    Failure, FilePublicationEvidence, FilePublicationEvidenceUnavailableReason, JournalDurability,
+    ToolOutput, TranscriptRecord, UserInput,
     session_repository::{DurableCutoff, RepositorySequence},
 };
 
@@ -61,6 +62,56 @@ fn observe_tool_output(
                 outcome,
             })
             .unwrap();
+    }
+}
+
+fn expanded_chat_pages_from_current_position(state: &mut TuiState, size: Size) -> String {
+    let mut pages = Vec::new();
+    for _ in 0..20 {
+        let page = render_and_commit(state, size);
+        if pages.last() == Some(&page) {
+            break;
+        }
+        pages.push(page);
+        state
+            .handle(key(KeyCode::PageUp, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+    }
+    pages.reverse();
+    pages.join("\n")
+}
+
+fn managed_edit_result(
+    arguments: serde_json::Value,
+    receipt_path: &str,
+    replacements: usize,
+    evidence: &str,
+) -> ToolOutput {
+    let receipt = json!({
+        "path": receipt_path,
+        "status": "ok",
+        "replacements": replacements,
+    })
+    .to_string();
+    ToolOutput {
+        tool: "edit_file".to_owned(),
+        server: None,
+        arguments: Some(arguments.clone()),
+        result: Some(json!({
+            "content": [{"type":"text", "text":receipt}],
+            "call_id": "call-publication",
+            "tool_id": "edit-file",
+            "execution_host": "workspace",
+            "outcome": "completed",
+            "truncated": false,
+            "isError": false,
+            "publicationEvidence": evidence,
+        })),
+        content_items: None,
+        error: None,
+        plain_text: format!(
+            "edit_file · call-publication\ncompleted\nArguments:\n{arguments:#}\nResult:\n{receipt}"
+        ),
     }
 }
 
@@ -660,6 +711,431 @@ fn alt_d_opens_the_managed_tool_result_proposal_and_restores_chat() {
         .unwrap();
     assert_eq!(render_and_commit(&mut state, size), chat);
     assert_eq!(state.editor().text(), "keep this draft");
+}
+
+// 완료된 managed 결과는 저장된 캡처를 제안과 결과보다 먼저 보이고, 폭을 왕복해도 상세 위치와 초안을
+// 보존합니다.
+#[test]
+fn alt_d_shows_the_recorded_publication_before_proposal_and_receipt() {
+    let before = (0..32)
+        .map(|index| format!("old {index} e\u{301} 👩‍💻\n"))
+        .collect::<String>();
+    let after = (0..32)
+        .map(|index| format!("new {index} 한글 👩‍💻\n"))
+        .collect::<String>();
+    let arguments = json!({"path":"src/main.rs","edits":[
+        {"oldText":before,"newText":after}
+    ]});
+    let evidence = FilePublicationEvidence::complete("src/main.rs", before, after)
+        .unwrap()
+        .to_snapshot()
+        .unwrap();
+    let output = managed_edit_result(arguments, "src/main.rs", 1, &evidence);
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        1,
+        ActivityKind::ToolResult,
+        output,
+        Some(ActivityOutcome::Completed),
+    );
+    state
+        .handle(
+            InputEvent::Paste("keep publication draft".into()),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+    let wide = Size::new(80, 30);
+    render_and_commit(&mut state, wide);
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('o'), KeyModifiers::CONTROL),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    render_and_commit(&mut state, wide);
+    let chat_history = expanded_chat_pages_from_current_position(&mut state, wide);
+    let captured = chat_history.find("Saved edit comparison").unwrap();
+    let proposal = chat_history.find("Proposed replacements").unwrap();
+    let receipt = chat_history.find("Applied replacements: 1").unwrap();
+    assert!(captured < proposal && proposal < receipt, "{chat_history}");
+    assert!(
+        chat_history.contains("Saved from this completed edit"),
+        "{chat_history}"
+    );
+    assert!(
+        chat_history.contains("current file may have changed since"),
+        "{chat_history}"
+    );
+    state
+        .handle(key(KeyCode::End, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    let chat = render_and_commit(&mut state, wide);
+
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let detail_size = Size::new(80, 20);
+    let mut detail_pages = Vec::new();
+    let mut captured_page = None;
+    let mut proposal_page = None;
+    let mut receipt_page = None;
+    for page_number in 0..20 {
+        let detail = render_and_commit(&mut state, detail_size);
+        assert!(!detail.contains("publicationEvidence"), "{detail}");
+        if detail.contains("Read before edit → written by edit") {
+            captured_page.get_or_insert(page_number);
+        }
+        if detail.contains("Proposed replacements") {
+            proposal_page.get_or_insert(page_number);
+        }
+        if detail.contains("Recorded result") {
+            receipt_page.get_or_insert(page_number);
+        }
+        detail_pages.push(detail);
+        if receipt_page.is_some() {
+            break;
+        }
+        state
+            .handle(key(KeyCode::PageDown, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+    }
+    assert_eq!(captured_page, Some(0), "{detail_pages:?}");
+    assert!(
+        proposal_page.is_some_and(|page| page > captured_page.unwrap()),
+        "{detail_pages:?}"
+    );
+    assert!(
+        receipt_page.is_some_and(|page| page > proposal_page.unwrap()),
+        "{detail_pages:?}"
+    );
+    let detail = detail_pages.join("\n");
+    assert!(detail.contains("call-publication"), "{detail}");
+
+    let mut previous_detail_page = render_and_commit(&mut state, detail_size);
+    for _ in 0..20 {
+        state
+            .handle(key(KeyCode::PageUp, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        let page = render_and_commit(&mut state, detail_size);
+        if page == previous_detail_page {
+            break;
+        }
+        previous_detail_page = page;
+    }
+
+    let narrow_size = Size::new(24, 8);
+    let narrow = render_and_commit(&mut state, narrow_size);
+    assert!(narrow.contains("Saved edit comparison"), "{narrow}");
+    let mut comparison_body_visible = false;
+    for _ in 0..8 {
+        if has_visible_graphemes(&mut state, narrow_size, &["한", "글", " ", "👩‍💻"]) {
+            comparison_body_visible = true;
+            break;
+        }
+        state
+            .handle(key(KeyCode::PageDown, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap();
+        render_and_commit(&mut state, narrow_size);
+    }
+    assert!(comparison_body_visible, "{narrow}");
+    state
+        .handle(key(KeyCode::PageDown, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    let scrolled = render_and_commit(&mut state, narrow_size);
+    let anchor = state.views().view_positions();
+    render_and_commit(&mut state, detail_size);
+    assert_eq!(render_and_commit(&mut state, narrow_size), scrolled);
+    assert_eq!(state.views().view_positions(), anchor);
+
+    state
+        .handle(function(1, KeyAction::Press), Duration::ZERO)
+        .unwrap();
+    assert_eq!(render_and_commit(&mut state, wide), chat);
+    assert_eq!(state.editor().text(), "keep publication draft");
+}
+
+// 제안 내용이 redacted여도 path와 성공 영수증이 상관되면 저장된 publication 캡처를 열 수 있습니다.
+#[test]
+fn alt_d_keeps_publication_evidence_when_the_proposal_is_redacted() {
+    let arguments = json!({"path":"src/secret.rs","edits":[
+        {"oldText":"[redacted]","newText":"[redacted-output]"}
+    ]});
+    let evidence =
+        FilePublicationEvidence::complete("src/secret.rs", "captured original", "published bytes")
+            .unwrap()
+            .to_snapshot()
+            .unwrap();
+    let output = managed_edit_result(arguments, "src/secret.rs", 1, &evidence);
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        1,
+        ActivityKind::ToolResult,
+        output,
+        Some(ActivityOutcome::Completed),
+    );
+    let size = Size::new(80, 18);
+    render_and_commit(&mut state, size);
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let detail = render_and_commit(&mut state, size);
+    assert!(detail.contains("Saved edit comparison"), "{detail}");
+    assert!(detail.contains("captured original"), "{detail}");
+    assert!(detail.contains("published bytes"), "{detail}");
+    assert!(!detail.contains("Proposed replacements"), "{detail}");
+    assert!(detail.contains("Recorded result"), "{detail}");
+}
+
+// 외부 snapshot 용량 제한으로 path만 남아도, 상관된 unavailable evidence를 열 수 있습니다.
+#[test]
+fn alt_d_opens_publication_evidence_when_snapshot_capacity_removed_the_proposal() {
+    let evidence = FilePublicationEvidence::unavailable(
+        "src/history.rs",
+        FilePublicationEvidenceUnavailableReason::SnapshotCapacity,
+    )
+    .unwrap()
+    .to_snapshot()
+    .unwrap();
+    let output = managed_edit_result(
+        json!({"path":"src/history.rs"}),
+        "src/history.rs",
+        1,
+        &evidence,
+    );
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        2,
+        ActivityKind::ToolResult,
+        output,
+        Some(ActivityOutcome::Completed),
+    );
+    let size = Size::new(80, 18);
+    render_and_commit(&mut state, size);
+    state
+        .handle(
+            key(KeyCode::Character('o'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    let chat = expanded_chat_pages_from_current_position(&mut state, size);
+    assert!(chat.contains("Saved edit comparison unavailable"), "{chat}");
+    assert!(chat.contains("storage limit"), "{chat}");
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let detail = render_and_commit(&mut state, size);
+    assert!(
+        detail.contains("Saved edit comparison unavailable"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("The saved comparison exceeded the storage limit."),
+        "{detail}"
+    );
+    assert!(!detail.contains("Proposed replacements"), "{detail}");
+    assert!(detail.contains("Recorded result"), "{detail}");
+}
+
+// 잘못되거나 실패했거나 경로가 맞지 않는 metadata는 적용된 캡처로 승격하지 않습니다.
+#[test]
+fn alt_d_rejects_malformed_failed_and_uncorrelated_publication_metadata() {
+    let arguments = json!({"path":"src/main.rs","edits":[
+        {"oldText":"old","newText":"new"}
+    ]});
+    let valid = FilePublicationEvidence::complete("src/main.rs", "old", "new")
+        .unwrap()
+        .to_snapshot()
+        .unwrap();
+    for (id, evidence, receipt_path, outcome, activity_kind) in [
+        (
+            1,
+            "malformed snapshot",
+            "src/main.rs",
+            ActivityOutcome::Completed,
+            ActivityKind::ToolResult,
+        ),
+        (
+            2,
+            valid.as_str(),
+            "src/main.rs",
+            ActivityOutcome::Failed(Failure::new("edit failed")),
+            ActivityKind::ToolResult,
+        ),
+        (
+            3,
+            valid.as_str(),
+            "src/other.rs",
+            ActivityOutcome::Completed,
+            ActivityKind::ToolResult,
+        ),
+        (
+            4,
+            valid.as_str(),
+            "src/main.rs",
+            ActivityOutcome::Completed,
+            ActivityKind::ToolCall,
+        ),
+        (
+            8,
+            valid.as_str(),
+            "src/main.rs",
+            ActivityOutcome::Interrupted,
+            ActivityKind::ToolResult,
+        ),
+    ] {
+        let output = managed_edit_result(arguments.clone(), receipt_path, 1, evidence);
+        let mut state = TuiState::new();
+        observe_tool_output(&mut state, id, activity_kind, output, Some(outcome));
+        let size = Size::new(80, 18);
+        render_and_commit(&mut state, size);
+        state
+            .handle(
+                key(KeyCode::Character('o'), KeyModifiers::CONTROL),
+                Duration::ZERO,
+            )
+            .unwrap();
+        let chat = expanded_chat_pages_from_current_position(&mut state, size);
+        assert!(!chat.contains("Saved edit comparison"), "{chat}");
+        assert_eq!(
+            state
+                .handle(
+                    key(KeyCode::Character('d'), KeyModifiers::ALT),
+                    Duration::ZERO
+                )
+                .unwrap(),
+            StateEffect::Redraw
+        );
+        let detail = render_and_commit(&mut state, size);
+        assert!(!detail.contains("Saved edit comparison"), "{detail}");
+        assert!(detail.contains("Proposed replacements"), "{detail}");
+    }
+
+    let mut marker_only = managed_edit_result(arguments.clone(), "src/main.rs", 1, &valid);
+    marker_only
+        .result
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+        .unwrap()
+        .remove("publicationEvidence");
+    marker_only
+        .plain_text
+        .push_str("\npublicationEvidence: completed file was changed");
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        6,
+        ActivityKind::ToolResult,
+        marker_only,
+        Some(ActivityOutcome::Completed),
+    );
+    let size = Size::new(80, 18);
+    render_and_commit(&mut state, size);
+    state
+        .handle(
+            key(KeyCode::Character('o'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    let chat = expanded_chat_pages_from_current_position(&mut state, size);
+    assert!(!chat.contains("Saved edit comparison"), "{chat}");
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let detail = render_and_commit(&mut state, size);
+    assert!(!detail.contains("Saved edit comparison"), "{detail}");
+    assert!(detail.contains("Proposed replacements"), "{detail}");
+
+    let mut ordinary = managed_edit_result(arguments.clone(), "src/main.rs", 1, &valid);
+    ordinary.tool = "edit".to_owned();
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        7,
+        ActivityKind::ToolResult,
+        ordinary,
+        Some(ActivityOutcome::Completed),
+    );
+    render_and_commit(&mut state, size);
+    state
+        .handle(
+            key(KeyCode::Character('o'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    let chat = expanded_chat_pages_from_current_position(&mut state, size);
+    assert!(!chat.contains("Saved edit comparison"), "{chat}");
+
+    let unavailable = FilePublicationEvidence::unavailable(
+        "src/main.rs",
+        FilePublicationEvidenceUnavailableReason::SemanticAdmission,
+    )
+    .unwrap()
+    .to_snapshot()
+    .unwrap();
+    let output = managed_edit_result(arguments, "src/main.rs", 1, &unavailable);
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        5,
+        ActivityKind::ToolResult,
+        output,
+        Some(ActivityOutcome::Completed),
+    );
+    let size = Size::new(80, 18);
+    render_and_commit(&mut state, size);
+    state
+        .handle(
+            key(KeyCode::Character('o'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    let chat = expanded_chat_pages_from_current_position(&mut state, size);
+    assert!(chat.contains("Saved edit comparison unavailable"), "{chat}");
+    assert!(chat.contains("Privacy checks excluded"), "{chat}");
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let detail = render_and_commit(&mut state, size);
+    assert!(detail.contains("Unavailable reason"), "{detail}");
+    assert!(detail.contains("Privacy checks excluded"), "{detail}");
+    assert!(detail.contains("Activity outcome: Completed"), "{detail}");
 }
 
 // 같은 이름의 실패 관찰이 이어져도 상세 화면은 선택한 ToolResult의 근거만 보존합니다.

@@ -1149,3 +1149,814 @@ fn retained_output_is_admitted_separately_and_never_enters_model_replay() {
         }
     }
 }
+
+// Native edit의 bounded capture는 호출 인자와 별도로 표시하고 완료 receipt와 정확히 상관시킨다.
+#[test]
+fn edit_publication_evidence_is_admitted_correlated_and_replay_neutral() {
+    use serde_json::json;
+    use yo_core::{
+        ActivityOutcome, ActivityUpdate, BackendPoll, FilePublicationEvidence,
+        FilePublicationEvidenceState, FilePublicationEvidenceUnavailableReason,
+        ModelConnectorInputItem, TOOL_SCHEMA_DIALECT, ToolApprovalRequirement, ToolDefinition,
+        ToolEffect, ToolOutput, ToolRegistry, ToolSemanticAdmission, ToolSemanticAdmissionError,
+    };
+
+    struct PublicationHost {
+        result: ToolExecutionResult,
+        retained_limit: Option<usize>,
+    }
+    impl ToolExecutionHost for PublicationHost {
+        fn identity(&self) -> &str {
+            "native-edit-host-v1"
+        }
+        fn is_available(&self, _: &ToolId) -> bool {
+            true
+        }
+        fn start(
+            &mut self,
+            request: ToolExecutionRequest,
+        ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+            assert_eq!(request.call.definition().id().as_str(), "edit-file");
+            assert_eq!(request.call.definition().wire_name(), "edit_file");
+            assert_eq!(request.call.call_id(), "edit-call");
+            assert_eq!(request.maximum_retained_output_bytes, self.retained_limit);
+            Ok(Box::new(MockExecution {
+                result: Some(self.result.clone()),
+            }))
+        }
+        fn shutdown(&mut self) -> Result<(), ToolExecutionError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum EditAdmissionMode {
+        Preserve,
+        RedactBefore,
+        RejectBefore,
+        ExpandBefore,
+        RedactArguments,
+        PanicBefore,
+    }
+
+    struct EditAdmission {
+        mode: EditAdmissionMode,
+    }
+    impl ToolSemanticAdmission for EditAdmission {
+        fn admit_arguments(
+            &self,
+            _: &ToolDefinition,
+            arguments: &str,
+        ) -> Result<String, ToolSemanticAdmissionError> {
+            if matches!(self.mode, EditAdmissionMode::RedactArguments) {
+                Ok(r#"{}"#.to_owned())
+            } else {
+                Ok(arguments.to_owned())
+            }
+        }
+        fn admit_output(
+            &self,
+            _: &ToolDefinition,
+            output: &str,
+        ) -> Result<String, ToolSemanticAdmissionError> {
+            if output != "before image\n\"\\" {
+                return Ok(output.to_owned());
+            }
+            match self.mode {
+                EditAdmissionMode::RedactBefore => Ok("redacted image".to_owned()),
+                EditAdmissionMode::RejectBefore => {
+                    Err(ToolSemanticAdmissionError::new("captured source rejected"))
+                },
+                EditAdmissionMode::ExpandBefore => Ok(format!("{output}expanded")),
+                EditAdmissionMode::PanicBefore => panic!("captured content admission panicked"),
+                EditAdmissionMode::Preserve | EditAdmissionMode::RedactArguments => {
+                    Ok(output.to_owned())
+                },
+            }
+        }
+    }
+
+    fn edit_registry(argument_limit: usize) -> yo_core::FrozenToolRegistry {
+        ToolRegistry::new([ToolDefinition::new(
+            ToolId::new("edit-file").unwrap(),
+            "edit_file",
+            "edits exact text in one workspace file",
+            TOOL_SCHEMA_DIALECT,
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "oldText": {"type": "string"},
+                                "newText": {"type": "string"}
+                            },
+                            "required": ["oldText", "newText"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["path", "edits"],
+                "additionalProperties": false
+            }),
+            ToolEffect::WorkspaceWrite,
+            ToolApprovalRequirement::Automatic,
+        )
+        .unwrap()
+        .with_argument_byte_limit(argument_limit)
+        .unwrap()])
+        .unwrap()
+        .freeze()
+    }
+
+    fn run_edit(
+        arguments: String,
+        result: ToolExecutionResult,
+        retained_limit: Option<usize>,
+        admission_mode: EditAdmissionMode,
+        argument_limit: usize,
+    ) -> (
+        Option<ToolOutput>,
+        Option<ActivityOutcome>,
+        Option<String>,
+        usize,
+        bool,
+    ) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let rounds = vec![
+            vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "r1".to_owned(),
+                },
+                ModelConnectorEvent::FunctionCallStarted {
+                    output_index: 0,
+                    item_id: "edit-item".to_owned(),
+                    call_id: "edit-call".to_owned(),
+                    name: "edit_file".to_owned(),
+                },
+                ModelConnectorEvent::FunctionCallDone {
+                    output_index: 0,
+                    item_id: "edit-item".to_owned(),
+                    call_id: "edit-call".to_owned(),
+                    name: "edit_file".to_owned(),
+                    arguments,
+                },
+                completed("r1"),
+            ],
+            vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "r2".to_owned(),
+                },
+                completed("r2"),
+            ],
+        ];
+        let mut backend = NativeModelBackend::with_connector(
+            Box::new(MockConnector {
+                rounds: event_rounds(rounds),
+                requests: Arc::clone(&requests),
+            }),
+            binding(),
+            edit_registry(argument_limit),
+            NativeModelBackendServices::new(
+                Box::new(yo_core::admit_standard_complete_binding),
+                Some(Box::new(EditAdmission {
+                    mode: admission_mode,
+                })),
+                Box::new(PublicationHost {
+                    result,
+                    retained_limit,
+                }),
+                Box::new(FixedTokenCounter(1)),
+            ),
+            context_profile(),
+            NativeModelBackendConfig {
+                maximum_tool_output_bytes: 4096,
+                maximum_retained_tool_output_bytes: retained_limit,
+                ..NativeModelBackendConfig::default()
+            },
+        )
+        .unwrap();
+        backend
+            .execute_command(AgentCommand::CreateSession {
+                session_id: turn().session_id(),
+            })
+            .unwrap();
+        backend
+            .execute_command(AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("inspect edit"),
+            })
+            .unwrap();
+        let mut observed_activity = None;
+        let mut profile = None;
+        let mut finished = None;
+        let mut terminal = false;
+        for _ in 0..200 {
+            match backend.poll_event().unwrap() {
+                BackendPoll::Event(BackendEvent::ActivityUpdated {
+                    activity,
+                    update: ActivityUpdate::TextSnapshot(text),
+                }) => {
+                    if let Some(output) = ToolOutput::from_snapshot(&text)
+                        .filter(|output| output.tool == "edit_file" && output.result.is_some())
+                    {
+                        observed_activity = Some(activity);
+                        profile = Some(output);
+                    }
+                },
+                BackendPoll::Event(BackendEvent::ActivityFinished { activity, outcome })
+                    if observed_activity == Some(activity) =>
+                {
+                    finished = Some(outcome);
+                },
+                BackendPoll::Event(BackendEvent::TurnFinished { .. })
+                | BackendPoll::Event(BackendEvent::ResumableTurnFinished { .. }) => {
+                    terminal = true;
+                    break;
+                },
+                _ => {},
+            }
+        }
+        let requests = requests.lock().unwrap();
+        let replay_output = requests.get(1).and_then(|request| {
+            request.input().iter().find_map(|item| match item {
+                ModelConnectorInputItem::FunctionCallOutput { call_id, output }
+                    if call_id == "edit-call" =>
+                {
+                    Some(output.clone())
+                },
+                _ => None,
+            })
+        });
+        (profile, finished, replay_output, requests.len(), terminal)
+    }
+
+    let native_output = r#"{"path":"src/file.txt","status":"ok","replacements":1}"#;
+    let before = "before image\n\"\\";
+    let after = "after image\n\"\\";
+    let complete_profile = FilePublicationEvidence::complete("src/file.txt", before, after)
+        .unwrap()
+        .to_snapshot()
+        .unwrap();
+    let arguments = json!({
+        "path": "src/file.txt",
+        "edits": [{"oldText": "before image", "newText": "after image"}]
+    })
+    .to_string();
+    let (complete, finished, replay, request_count, terminal) = run_edit(
+        arguments.clone(),
+        ToolExecutionResult::new(ToolExecutionOutcome::Completed, native_output, false)
+            .with_retained_output(complete_profile.clone(), false),
+        Some(4096),
+        EditAdmissionMode::Preserve,
+        20 * 1024 * 1024,
+    );
+    assert!(terminal);
+    assert_eq!(request_count, 2);
+    assert_eq!(finished, Some(ActivityOutcome::Completed));
+    let complete = complete.expect("typed edit publication snapshot");
+    assert_eq!(complete.tool, "edit_file");
+    assert_eq!(complete.arguments.as_ref().unwrap()["path"], "src/file.txt");
+    let result = complete.result.as_ref().unwrap();
+    assert_eq!(result["call_id"], "edit-call");
+    assert_eq!(result["tool_id"], "edit-file");
+    assert_eq!(result["execution_host"], "native-edit-host-v1");
+    assert_eq!(result["outcome"], "completed");
+    assert_eq!(result["truncated"], false);
+    assert_eq!(result["isError"], false);
+    assert_eq!(result["content"][0]["text"], native_output);
+    assert_eq!(result["publicationEvidence"], complete_profile);
+    let admitted_evidence =
+        FilePublicationEvidence::from_snapshot(result["publicationEvidence"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(admitted_evidence.path(), "src/file.txt");
+    assert_eq!(
+        admitted_evidence.state(),
+        &FilePublicationEvidenceState::Complete {
+            before: before.to_owned(),
+            after: after.to_owned(),
+        }
+    );
+    assert!(!complete.plain_text.contains(before));
+    assert!(!complete.plain_text.contains(after));
+    assert_eq!(replay.as_deref(), Some(native_output));
+
+    let invalid_profile = "not a versioned evidence profile".to_owned();
+    let wrong_path_profile = FilePublicationEvidence::complete("other.txt", before, after)
+        .unwrap()
+        .to_snapshot()
+        .unwrap();
+    let oversized_profile = complete_profile.clone();
+    let cases = [
+        (
+            "disabled",
+            None,
+            Some((complete_profile.clone(), false)),
+            EditAdmissionMode::Preserve,
+            Some(FilePublicationEvidenceUnavailableReason::Disabled),
+        ),
+        (
+            "missing",
+            Some(4096),
+            None,
+            EditAdmissionMode::Preserve,
+            Some(FilePublicationEvidenceUnavailableReason::InvalidEvidence),
+        ),
+        (
+            "malformed",
+            Some(4096),
+            Some((invalid_profile, false)),
+            EditAdmissionMode::Preserve,
+            Some(FilePublicationEvidenceUnavailableReason::InvalidEvidence),
+        ),
+        (
+            "path mismatch",
+            Some(4096),
+            Some((wrong_path_profile, false)),
+            EditAdmissionMode::Preserve,
+            Some(FilePublicationEvidenceUnavailableReason::InvalidEvidence),
+        ),
+        (
+            "truncated",
+            Some(4096),
+            Some((complete_profile.clone(), true)),
+            EditAdmissionMode::Preserve,
+            Some(FilePublicationEvidenceUnavailableReason::InvalidEvidence),
+        ),
+        (
+            "over bound",
+            Some(8),
+            Some((oversized_profile, false)),
+            EditAdmissionMode::Preserve,
+            Some(FilePublicationEvidenceUnavailableReason::OverBound),
+        ),
+        (
+            "changed admission",
+            Some(4096),
+            Some((complete_profile.clone(), false)),
+            EditAdmissionMode::RedactBefore,
+            Some(FilePublicationEvidenceUnavailableReason::SemanticAdmission),
+        ),
+        (
+            "rejected captured content",
+            Some(4096),
+            Some((complete_profile.clone(), false)),
+            EditAdmissionMode::RejectBefore,
+            Some(FilePublicationEvidenceUnavailableReason::SemanticAdmission),
+        ),
+        (
+            "expanded captured content",
+            Some(4096),
+            Some((complete_profile.clone(), false)),
+            EditAdmissionMode::ExpandBefore,
+            Some(FilePublicationEvidenceUnavailableReason::SemanticAdmission),
+        ),
+        (
+            "panicking captured-content admission",
+            Some(4096),
+            Some((complete_profile.clone(), false)),
+            EditAdmissionMode::PanicBefore,
+            Some(FilePublicationEvidenceUnavailableReason::GenerationFailed),
+        ),
+    ];
+    for (label, retained_limit, retained, admission_mode, expected_reason) in cases {
+        let result = if let Some((text, truncated)) = retained {
+            ToolExecutionResult::new(ToolExecutionOutcome::Completed, native_output, false)
+                .with_retained_output(text, truncated)
+        } else {
+            ToolExecutionResult::new(ToolExecutionOutcome::Completed, native_output, false)
+        };
+        let (profile, finished, replay, request_count, terminal) = run_edit(
+            arguments.clone(),
+            result,
+            retained_limit,
+            admission_mode,
+            20 * 1024 * 1024,
+        );
+        assert!(terminal, "{label}");
+        assert_eq!(request_count, 2, "{label}");
+        assert_eq!(finished, Some(ActivityOutcome::Completed), "{label}");
+        assert_eq!(replay.as_deref(), Some(native_output), "{label}");
+        let profile =
+            profile.expect("the successful native edit retains a typed availability state");
+        let profile_result = profile.result.as_ref().unwrap();
+        assert_eq!(
+            profile_result["content"][0]["text"], native_output,
+            "{label}"
+        );
+        let evidence = FilePublicationEvidence::from_snapshot(
+            profile_result["publicationEvidence"].as_str().unwrap(),
+        )
+        .expect("bounded unavailable evidence");
+        assert_eq!(evidence.path(), "src/file.txt", "{label}");
+        assert_eq!(
+            evidence.state(),
+            &FilePublicationEvidenceState::Unavailable {
+                reason: expected_reason.unwrap(),
+            },
+            "{label}"
+        );
+        assert!(!profile.plain_text.contains(before), "{label}");
+        assert!(!profile.plain_text.contains(after), "{label}");
+    }
+
+    for (label, arguments, admission_mode) in [
+        (
+            "redacted admitted arguments",
+            arguments.clone(),
+            EditAdmissionMode::RedactArguments,
+        ),
+        (
+            "admitted path mismatch",
+            arguments.replace("src/file.txt", "other.txt"),
+            EditAdmissionMode::Preserve,
+        ),
+    ] {
+        let result =
+            ToolExecutionResult::new(ToolExecutionOutcome::Completed, native_output, false)
+                .with_retained_output(complete_profile.clone(), false);
+        let (profile, finished, replay, request_count, terminal) = run_edit(
+            arguments,
+            result,
+            Some(4096),
+            admission_mode,
+            20 * 1024 * 1024,
+        );
+        assert!(terminal, "{label}");
+        assert_eq!(request_count, 2, "{label}");
+        assert_eq!(finished, Some(ActivityOutcome::Completed), "{label}");
+        assert_eq!(replay.as_deref(), Some(native_output), "{label}");
+        let profile = profile.expect("completed native edit output");
+        let profile_result = profile.result.as_ref().unwrap();
+        assert_eq!(
+            profile_result["content"][0]["text"], native_output,
+            "{label}"
+        );
+        assert!(
+            !profile_result
+                .as_object()
+                .unwrap()
+                .contains_key("publicationEvidence"),
+            "{label}"
+        );
+        assert!(
+            !profile_result
+                .as_object()
+                .unwrap()
+                .contains_key("retainedOutput"),
+            "{label}"
+        );
+        assert!(!profile.plain_text.contains(before), "{label}");
+        assert!(!profile.plain_text.contains(after), "{label}");
+        assert!(
+            !profile.plain_text.contains(complete_profile.as_str()),
+            "{label}"
+        );
+    }
+
+    let mismatched_receipt = r#"{"path":"other.txt","status":"ok","replacements":1}"#;
+    let result =
+        ToolExecutionResult::new(ToolExecutionOutcome::Completed, mismatched_receipt, false)
+            .with_retained_output(complete_profile.clone(), false);
+    let (profile, finished, replay, request_count, terminal) = run_edit(
+        arguments.clone(),
+        result,
+        Some(4096),
+        EditAdmissionMode::Preserve,
+        20 * 1024 * 1024,
+    );
+    assert!(terminal, "receipt path mismatch");
+    assert_eq!(request_count, 2, "receipt path mismatch");
+    assert_eq!(
+        finished,
+        Some(ActivityOutcome::Completed),
+        "receipt path mismatch"
+    );
+    assert_eq!(replay.as_deref(), Some(mismatched_receipt));
+    let profile = profile.expect("completed native edit output");
+    let profile_result = profile.result.as_ref().unwrap();
+    assert_eq!(profile_result["content"][0]["text"], mismatched_receipt);
+    assert!(
+        !profile_result
+            .as_object()
+            .unwrap()
+            .contains_key("publicationEvidence")
+    );
+    assert!(
+        !profile_result
+            .as_object()
+            .unwrap()
+            .contains_key("retainedOutput")
+    );
+    assert!(!profile.plain_text.contains(before));
+    assert!(!profile.plain_text.contains(after));
+
+    let truncated_receipt =
+        ToolExecutionResult::new(ToolExecutionOutcome::Completed, native_output, true)
+            .with_retained_output(complete_profile.clone(), false);
+    let (profile, finished, replay, request_count, terminal) = run_edit(
+        arguments.clone(),
+        truncated_receipt,
+        Some(4096),
+        EditAdmissionMode::Preserve,
+        20 * 1024 * 1024,
+    );
+    assert!(terminal, "truncated receipt");
+    assert_eq!(request_count, 2, "truncated receipt");
+    assert_eq!(
+        finished,
+        Some(ActivityOutcome::Completed),
+        "truncated receipt"
+    );
+    let profile = profile.expect("completed native edit output");
+    let profile_result = profile.result.as_ref().unwrap();
+    assert_eq!(profile_result["truncated"], true);
+    assert!(
+        !profile_result
+            .as_object()
+            .unwrap()
+            .contains_key("publicationEvidence")
+    );
+    assert_eq!(
+        replay.as_deref(),
+        profile_result["content"][0]["text"].as_str()
+    );
+    assert!(!profile.plain_text.contains(before));
+    assert!(!profile.plain_text.contains(after));
+
+    let failed = ToolExecutionResult::new(ToolExecutionOutcome::Interrupted, native_output, false);
+    let (profile, finished, replay, _, terminal) = run_edit(
+        arguments.clone(),
+        failed,
+        Some(4096),
+        EditAdmissionMode::Preserve,
+        20 * 1024 * 1024,
+    );
+    assert!(terminal);
+    assert_eq!(finished, Some(ActivityOutcome::Interrupted));
+    assert_eq!(replay.as_deref(), Some(native_output));
+    let interrupted_result = profile.unwrap().result.unwrap();
+    assert!(
+        !interrupted_result
+            .as_object()
+            .unwrap()
+            .contains_key("publicationEvidence")
+    );
+}
+
+// 최종 ToolOutput이 넘치면 원본 편집 인자를 생략해도 path와 typed unavailable 상태를 보존한다.
+#[test]
+fn edit_publication_snapshot_overflow_keeps_completed_receipt_and_unavailable_path() {
+    use serde_json::json;
+    use yo_core::{
+        ActivityOutcome, FilePublicationEvidence, FilePublicationEvidenceState,
+        FilePublicationEvidenceUnavailableReason, ToolOutput,
+    };
+
+    let native_output = r#"{"path":"large.txt","status":"ok","replacements":1}"#;
+    let before = "b".repeat(800_000);
+    let after = "a".repeat(200_000);
+    let captured_bytes = before.len() + after.len();
+    assert_eq!(captured_bytes, 1_000_000);
+    let retained = FilePublicationEvidence::complete("large.txt", before, after)
+        .unwrap()
+        .to_snapshot()
+        .unwrap();
+    assert!(retained.len() <= FilePublicationEvidence::MAX_SNAPSHOT_BYTES);
+    let arguments = json!({
+        "path": "large.txt",
+        "edits": [{"oldText": "x".repeat(16_000_000), "newText": "y"}]
+    })
+    .to_string();
+    assert!(arguments.len() < 16 * 1024 * 1024);
+    assert!(arguments.len() + captured_bytes > ToolOutput::MAX_SNAPSHOT_BYTES);
+    let (profile, finished, replay, request_count, terminal) = run_large_publication_edit(
+        arguments,
+        ToolExecutionResult::new(ToolExecutionOutcome::Completed, native_output, false)
+            .with_retained_output(retained, false),
+    );
+    assert!(terminal);
+    assert_eq!(request_count, 2);
+    assert_eq!(finished, Some(ActivityOutcome::Completed));
+    assert_eq!(replay.as_deref(), Some(native_output));
+    let profile = profile.expect("snapshot-capacity profile");
+    assert_eq!(
+        profile.arguments.as_ref().unwrap(),
+        &json!({"path":"large.txt"})
+    );
+    assert!(!profile.plain_text.contains("xxxxx"));
+    let result = profile.result.as_ref().unwrap();
+    assert_eq!(result["content"][0]["text"], native_output);
+    let evidence =
+        FilePublicationEvidence::from_snapshot(result["publicationEvidence"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(evidence.path(), "large.txt");
+    assert_eq!(
+        evidence.state(),
+        &FilePublicationEvidenceState::Unavailable {
+            reason: FilePublicationEvidenceUnavailableReason::SnapshotCapacity,
+        }
+    );
+    let serialized = profile.to_snapshot().unwrap();
+    assert!(serialized.len() <= ToolOutput::MAX_SNAPSHOT_BYTES);
+    assert!(!serialized.contains("xxxxxxxxxx"));
+}
+
+fn run_large_publication_edit(
+    arguments: String,
+    result: ToolExecutionResult,
+) -> (
+    Option<yo_core::ToolOutput>,
+    Option<yo_core::ActivityOutcome>,
+    Option<String>,
+    usize,
+    bool,
+) {
+    use serde_json::json;
+    use yo_core::{
+        ActivityUpdate, BackendPoll, FilePublicationEvidence, TOOL_SCHEMA_DIALECT,
+        ToolApprovalRequirement, ToolDefinition, ToolEffect, ToolRegistry, ToolSemanticAdmission,
+    };
+
+    struct Host(ToolExecutionResult);
+    impl ToolExecutionHost for Host {
+        fn identity(&self) -> &str {
+            "native-edit-host-v1"
+        }
+        fn is_available(&self, _: &ToolId) -> bool {
+            true
+        }
+        fn start(
+            &mut self,
+            request: ToolExecutionRequest,
+        ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+            assert_eq!(request.call.call_id(), "edit-call");
+            assert_eq!(
+                request.maximum_retained_output_bytes,
+                Some(FilePublicationEvidence::MAX_SNAPSHOT_BYTES)
+            );
+            Ok(Box::new(MockExecution {
+                result: Some(self.0.clone()),
+            }))
+        }
+        fn shutdown(&mut self) -> Result<(), ToolExecutionError> {
+            Ok(())
+        }
+    }
+    struct Admission;
+    impl ToolSemanticAdmission for Admission {
+        fn admit_arguments(
+            &self,
+            _: &ToolDefinition,
+            arguments: &str,
+        ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
+            Ok(arguments.to_owned())
+        }
+        fn admit_output(
+            &self,
+            _: &ToolDefinition,
+            output: &str,
+        ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
+            Ok(output.to_owned())
+        }
+    }
+    let registry = ToolRegistry::new([ToolDefinition::new(
+        ToolId::new("edit-file").unwrap(),
+        "edit_file",
+        "edits exact text in one workspace file",
+        TOOL_SCHEMA_DIALECT,
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "oldText": {"type": "string"},
+                            "newText": {"type": "string"}
+                        },
+                        "required": ["oldText", "newText"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["path", "edits"],
+            "additionalProperties": false
+        }),
+        ToolEffect::WorkspaceWrite,
+        ToolApprovalRequirement::Automatic,
+    )
+    .unwrap()
+    .with_argument_byte_limit(18 * 1024 * 1024)
+    .unwrap()])
+    .unwrap()
+    .freeze();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let rounds = vec![
+        vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "r1".to_owned(),
+            },
+            ModelConnectorEvent::FunctionCallStarted {
+                output_index: 0,
+                item_id: "edit-item".to_owned(),
+                call_id: "edit-call".to_owned(),
+                name: "edit_file".to_owned(),
+            },
+            ModelConnectorEvent::FunctionCallDone {
+                output_index: 0,
+                item_id: "edit-item".to_owned(),
+                call_id: "edit-call".to_owned(),
+                name: "edit_file".to_owned(),
+                arguments,
+            },
+            completed("r1"),
+        ],
+        vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "r2".to_owned(),
+            },
+            completed("r2"),
+        ],
+    ];
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(rounds),
+            requests: Arc::clone(&requests),
+        }),
+        binding(),
+        registry,
+        NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
+            Some(Box::new(Admission)),
+            Box::new(Host(result)),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig {
+            maximum_tool_output_bytes: 4096,
+            maximum_tool_argument_bytes: 16 * 1024 * 1024,
+            maximum_retained_tool_output_bytes: Some(FilePublicationEvidence::MAX_SNAPSHOT_BYTES),
+            ..NativeModelBackendConfig::default()
+        },
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("inspect edit"),
+        })
+        .unwrap();
+    let mut observed_activity = None;
+    let mut profile = None;
+    let mut finished = None;
+    let mut terminal = false;
+    for _ in 0..200 {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(text),
+            }) => {
+                if let Some(output) = yo_core::ToolOutput::from_snapshot(&text)
+                    .filter(|output| output.tool == "edit_file" && output.result.is_some())
+                {
+                    observed_activity = Some(activity);
+                    profile = Some(output);
+                }
+            },
+            BackendPoll::Event(BackendEvent::ActivityFinished { activity, outcome })
+                if observed_activity == Some(activity) =>
+            {
+                finished = Some(outcome);
+            },
+            BackendPoll::Event(BackendEvent::TurnFinished { .. })
+            | BackendPoll::Event(BackendEvent::ResumableTurnFinished { .. }) => {
+                terminal = true;
+                break;
+            },
+            _ => {},
+        }
+    }
+    let requests = requests.lock().unwrap();
+    let replay_output = requests.get(1).and_then(|request| {
+        request.input().iter().find_map(|item| match item {
+            ModelConnectorInputItem::FunctionCallOutput { call_id, output }
+                if call_id == "edit-call" =>
+            {
+                Some(output.clone())
+            },
+            _ => None,
+        })
+    });
+    (profile, finished, replay_output, requests.len(), terminal)
+}

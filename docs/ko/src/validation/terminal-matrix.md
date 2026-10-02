@@ -137,6 +137,50 @@ rendering parity 네 개와 실제 PTY·단위 테스트 550개를 포함한 CLI
 제공하거나 Git 상태를 스캔하지 않으며 완전한 일상 작업 대체나 Mac 실제
 키보드 검증을 입증하지 않는다.
 
+## Linux tmux의 저장된 내장 편집 비교
+
+2026-10-02에 `f26308c0` 기반의 검토된 소스로 Linux tmux 3.6b의 기존
+Codex 창 옆에서 일회용 Fullscreen 코딩 흐름을 검증했다. 설정된
+`qwencloud:default:qwen3.8-max` Token Plan과 Responses connector를 사용한
+구독 사용량이다. 한 Session에서 Turn 하나를 완료했고, 허용한 모델 요청
+여덟 번 중 네 번이 수락됐다. CLI 프로세스 두 개를 사용했으며 새 프로세스
+재개 중에는 새 입력이나 추론을 보내지 않았다.
+
+| 흐름 | 관찰 결과 |
+|---|---|
+| `ledger.py`의 분류 정규화와 결정적 정렬 수정 | `edit_file` 호출 하나로 두 교체를 적용했다. 수정하지 않은 테스트 열두 개는 실패 네 개에서 전부 통과로 바뀌었고 직접 실행해 대조했다 |
+| 결과와 캡처한 바이트·모델 replay 대조 | 보존한 변경 전후 텍스트는 원본·게시한 파일과 정확히 일치했다. 모델 replay는 선택적인 비교 metadata 없이 정확한 compact 성공 영수증을 유지했다 |
+| Chat과 Alt+D에서 완료된 결과 검사 | Saved edit comparison이 한글·emoji를 포함한 문맥 diff를 표시했고 제안·저장된 영수증은 별도로 검사할 수 있었다 |
+| 상세 폭을 80→24→80열로 변경 | 정확한 80열 상세 frame이 돌아왔고 F1은 정확한 Chat frame과 미제출 한글·emoji 초안을 복원했다 |
+| 완료 후 작업공간 파일 수정 | 저장된 상세 frame은 동일했고 이후 외부에서 덧붙인 주석은 포함하지 않았다 |
+| 수정된 최종 CLI로 같은 Session 재개 | 물리 Journal의 102,339바이트 prefix와 캡처한 비교가 그대로였으며 수락된 요청 수는 네 번을 유지했다 |
+
+정확한 `python3 -m unittest -v` 요청에만 `this tool call only` 승인을
+한 번 보냈다. 내장 파일 편집은 기존 자동 실행 정책을 사용했고 테스트 파일
+바이트는 그대로였다. 최초 Chat 검사에서 literal 경로 주변의 Markdown
+단락 경계 오류를 발견했다. 수정된 renderer로 같은 저장 Session을 검사해
+경로·출처·diff가 별도 블록으로 표시되고 literal fence 표시는 나오지 않으며
+상세 폭·초안 복원이 정확히 일치함을 확인했다. 두 CLI 빌드 사이에 수집·검사·
+replay 코드는 바뀌지 않았다.
+
+첫 CLI의 SHA-256은
+`5b33660a19e1d0104d1168c2ba9f91bfc70549f1d6bc12b7f50666cf3d848133`이고,
+재개에 사용한 수정된 최종 CLI는
+`1a6127ed71b854ffdb48a5ad9ce1249cc7812722864d8c7dcbc3db62cab038d4`다.
+마지막 표시 수정 전에 제한 없는 workspace suite가 통과했다. 이후 최종 TUI
+영향 범위 검사에서 단위 테스트 1,038개와 integration 네 개가 통과했고,
+최종 CLI package는 단위 테스트 553개와 ignored가 아닌 integration/PTY
+target이 통과했다. 관리형 backend는 114개, core는 801개가 통과했다.
+최종 전체 target workspace Clippy, 포맷, 테스트 설명과 현재 Linux target
+matrix도 통과했다. 서로 겹치는 실행을 독립적인 검사 범위처럼 합산하지 않는다.
+
+두 CLI 프로세스 모두 상태 0으로 종료했다. 소유한 창만 닫았으며 기존 사용자
+창·활성 선택과 정상 설정·인증·연결 파일의 바이트·권한은 유지됐다. 일회용
+작업공간에 남은 프로세스는 없고 격리된 인증 복사본은 제거했다. 이 흐름은
+성공한 내장 편집에서 보존한 비교를 검증한다. 외부 작성자에 대한 compare-and-swap,
+`write_file`의 기존 내용 수집, 전체 작업공간 Git 검토, 완전한 일상 업무 대체나
+이 후보의 Mac 물리 입력을 입증하지는 않는다.
+
 ## 저장된 Mac의 큰 본문 페이지 검증
 
 2026-09-13에 clean 후보 `af16336de8836475af39022d08bf612d13955110`이

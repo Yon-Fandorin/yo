@@ -1,12 +1,17 @@
 //! Serial tool approval, execution, admitted output, and replay handoff.
 
-use serde_json::{from_str, json};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use serde::Deserialize;
+use serde_json::{Value, from_str, json};
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate,
     ApprovalDecision, BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind,
-    Failure, ModelReplayItem, ToolApprovalBinding, ToolApprovalRequirement, ToolExecutionOutcome,
-    ToolExecutionPoll, ToolExecutionRequest, ToolExecutionResult, ToolOutput,
-    ToolValidationFailure, ValidatedToolCall,
+    Failure, FilePublicationEvidence, FilePublicationEvidenceState,
+    FilePublicationEvidenceUnavailableReason, ModelReplayItem, ToolApprovalBinding,
+    ToolApprovalRequirement, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest,
+    ToolExecutionResult, ToolOutput, ToolSemanticAdmission, ToolValidationFailure,
+    ValidatedToolCall,
 };
 
 use super::{
@@ -276,7 +281,28 @@ impl NativeModelBackend {
             self.config.maximum_tool_output_bytes,
             result.truncated(),
         );
-        let retained = if let Some((text, truncated)) = result.retained_output() {
+        let admitted_arguments = state.delta.iter().rev().find_map(|item| match item {
+            ModelReplayItem::FunctionCall {
+                call_id, arguments, ..
+            } if call_id == call.call_id() => from_str(arguments).ok(),
+            _ => None,
+        });
+        let native_edit_completed =
+            is_native_edit(&call) && outcome == ToolExecutionOutcome::Completed;
+        let publication_candidate = native_edit_completed
+            && admitted_edit_spec(admitted_arguments.as_ref()).is_some_and(
+                |(path, replacements)| {
+                    native_edit_success_receipt_matches(
+                        result.output(),
+                        path,
+                        replacements,
+                        truncated,
+                    )
+                },
+            );
+        let retained = if native_edit_completed {
+            None
+        } else if let Some((text, truncated)) = result.retained_output() {
             let limit = self.config.maximum_retained_tool_output_bytes.unwrap_or(0);
             if text.len() > limit || self.config.maximum_retained_tool_output_bytes.is_none() {
                 self.fail_tool_admission(
@@ -357,12 +383,40 @@ impl NativeModelBackend {
             unreachable!("the replay output was constructed as a function result")
         };
         // Reuse admitted replay arguments, never the execution call's raw arguments.
-        let arguments = state.delta.iter().rev().find_map(|item| match item {
-            ModelReplayItem::FunctionCall {
-                call_id, arguments, ..
-            } if call_id == call.call_id() => from_str(arguments).ok(),
-            _ => None,
-        });
+        let arguments = admitted_arguments;
+        let publication_path = if publication_candidate {
+            admitted_edit_spec(arguments.as_ref()).map(|(path, _)| path.to_owned())
+        } else {
+            None
+        };
+        let publication_evidence = if publication_candidate {
+            catch_unwind(AssertUnwindSafe(|| {
+                self.semantic_admission.as_ref().and_then(|admission| {
+                    edit_publication_evidence_snapshot(EditPublicationSnapshotContext {
+                        call: &call,
+                        arguments: arguments.as_ref(),
+                        native_output: result.output(),
+                        admitted_output: output,
+                        truncated,
+                        retained: result.retained_output(),
+                        retention_limit: self.config.maximum_retained_tool_output_bytes,
+                        admission: admission.as_ref(),
+                    })
+                })
+            }))
+            .ok()
+            .flatten()
+            .or_else(|| {
+                publication_path.as_deref().and_then(|path| {
+                    unavailable_publication_evidence(
+                        path,
+                        FilePublicationEvidenceUnavailableReason::GenerationFailed,
+                    )
+                })
+            })
+        } else {
+            None
+        };
         let status = match outcome {
             ToolExecutionOutcome::Completed => "completed",
             ToolExecutionOutcome::Failed => "failed",
@@ -371,15 +425,25 @@ impl NativeModelBackend {
         let display_output = retained
             .as_ref()
             .map_or(output.as_str(), |(text, _)| text.as_str());
-        let plain_text = format!(
-            "{} · {}\n{status}\nArguments:\n{}\nResult:\n{display_output}",
-            call.definition().wire_name(),
-            call.call_id(),
-            arguments.as_ref().map_or_else(
-                || "(not available)".to_owned(),
-                |value| format!("{value:#}")
+        let plain_text = if let (Some(path), Some(_)) =
+            (publication_path.as_deref(), publication_evidence.as_ref())
+        {
+            format!(
+                "{} · {}\n{status}\nPath: {path}\nResult:\n{display_output}",
+                call.definition().wire_name(),
+                call.call_id(),
             )
-        );
+        } else {
+            format!(
+                "{} · {}\n{status}\nArguments:\n{}\nResult:\n{display_output}",
+                call.definition().wire_name(),
+                call.call_id(),
+                arguments.as_ref().map_or_else(
+                    || "(not available)".to_owned(),
+                    |value| format!("{value:#}")
+                )
+            )
+        };
         let mut profile = ToolOutput {
             tool: call.definition().wire_name().to_owned(),
             server: None,
@@ -401,6 +465,10 @@ impl NativeModelBackend {
             profile.result.as_mut().expect("native result exists")["retainedOutput"] =
                 json!({"truncated": truncated});
         }
+        if let Some(evidence) = &publication_evidence {
+            profile.result.as_mut().expect("native result exists")["publicationEvidence"] =
+                json!(evidence);
+        }
         let snapshot = if let Some(snapshot) = profile.to_snapshot() {
             snapshot
         } else if retained.is_some() {
@@ -415,6 +483,27 @@ impl NativeModelBackend {
                 BackendFailureKind::Protocol,
                 "tool retained output exceeds presentation capacity",
             ));
+        } else if let (Some(path), Some(_)) =
+            (publication_path.as_deref(), publication_evidence.as_ref())
+        {
+            let unavailable = FilePublicationEvidence::unavailable(
+                path,
+                FilePublicationEvidenceUnavailableReason::SnapshotCapacity,
+            )
+            .and_then(|evidence| evidence.to_snapshot());
+            if let Some(unavailable) = unavailable {
+                profile.arguments = Some(json!({"path": path}));
+                profile.plain_text = format!(
+                    "{} · {}\n{status}\nPath: {path}\nPublication evidence unavailable: snapshot capacity.",
+                    call.definition().wire_name(),
+                    call.call_id(),
+                );
+                profile.result.as_mut().expect("native result exists")["publicationEvidence"] =
+                    json!(unavailable);
+            }
+            profile.to_snapshot().unwrap_or_else(|| {
+                json!({ "call_id": call.call_id(), "output": output }).to_string()
+            })
         } else {
             json!({ "call_id": call.call_id(), "output": output }).to_string()
         };
@@ -512,6 +601,143 @@ impl NativeModelBackend {
         }
         self.turn = Some(state);
         Ok(BackendCommandEvidence::None)
+    }
+}
+
+fn is_native_edit(call: &ValidatedToolCall) -> bool {
+    call.definition().id().as_str() == "edit-file" && call.definition().wire_name() == "edit_file"
+}
+
+fn admitted_edit_spec(arguments: Option<&Value>) -> Option<(&str, usize)> {
+    let arguments = arguments?;
+    let path = arguments.get("path")?.as_str()?;
+    let edits = arguments.get("edits")?.as_array()?;
+    (!path.is_empty() && (1..=256).contains(&edits.len())).then_some((path, edits.len()))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeEditSuccessReceipt {
+    path: String,
+    status: String,
+    replacements: usize,
+}
+
+fn native_edit_success_receipt_matches(
+    output: &str,
+    path: &str,
+    replacements: usize,
+    truncated: bool,
+) -> bool {
+    if truncated {
+        return false;
+    }
+    from_str::<NativeEditSuccessReceipt>(output).is_ok_and(|receipt| {
+        receipt.path == path && receipt.status == "ok" && receipt.replacements == replacements
+    })
+}
+
+fn unavailable_publication_evidence(
+    path: &str,
+    reason: FilePublicationEvidenceUnavailableReason,
+) -> Option<String> {
+    FilePublicationEvidence::unavailable(path, reason)?.to_snapshot()
+}
+
+struct EditPublicationSnapshotContext<'a> {
+    call: &'a ValidatedToolCall,
+    arguments: Option<&'a Value>,
+    native_output: &'a str,
+    admitted_output: &'a str,
+    truncated: bool,
+    retained: Option<(&'a str, bool)>,
+    retention_limit: Option<usize>,
+    admission: &'a dyn ToolSemanticAdmission,
+}
+
+fn edit_publication_evidence_snapshot(
+    context: EditPublicationSnapshotContext<'_>,
+) -> Option<String> {
+    let EditPublicationSnapshotContext {
+        call,
+        arguments,
+        native_output,
+        admitted_output,
+        truncated,
+        retained,
+        retention_limit,
+        admission,
+    } = context;
+    if !is_native_edit(call) {
+        return None;
+    }
+    let (path, replacements) = admitted_edit_spec(arguments)?;
+    if !native_edit_success_receipt_matches(native_output, path, replacements, truncated) {
+        return None;
+    }
+    let Some(retention_limit) = retention_limit else {
+        return unavailable_publication_evidence(
+            path,
+            FilePublicationEvidenceUnavailableReason::Disabled,
+        );
+    };
+    if admitted_output != native_output {
+        return unavailable_publication_evidence(
+            path,
+            FilePublicationEvidenceUnavailableReason::SemanticAdmission,
+        );
+    }
+    let Some((snapshot, retained_truncated)) = retained else {
+        return unavailable_publication_evidence(
+            path,
+            FilePublicationEvidenceUnavailableReason::InvalidEvidence,
+        );
+    };
+    if retained_truncated {
+        return unavailable_publication_evidence(
+            path,
+            FilePublicationEvidenceUnavailableReason::InvalidEvidence,
+        );
+    }
+    if snapshot.len() > retention_limit
+        || snapshot.len() > FilePublicationEvidence::MAX_SNAPSHOT_BYTES
+    {
+        return unavailable_publication_evidence(
+            path,
+            FilePublicationEvidenceUnavailableReason::OverBound,
+        );
+    }
+    let Some(evidence) = FilePublicationEvidence::from_snapshot(snapshot) else {
+        return unavailable_publication_evidence(
+            path,
+            FilePublicationEvidenceUnavailableReason::InvalidEvidence,
+        );
+    };
+    if evidence.path() != path {
+        return unavailable_publication_evidence(
+            path,
+            FilePublicationEvidenceUnavailableReason::InvalidEvidence,
+        );
+    }
+    match evidence.state() {
+        FilePublicationEvidenceState::Unavailable { .. } => Some(snapshot.to_owned()),
+        FilePublicationEvidenceState::Complete { before, after } => {
+            let before_admitted = admission.admit_output(call.definition(), before);
+            let after_admitted = admission.admit_output(call.definition(), after);
+            if !before_admitted
+                .as_ref()
+                .is_ok_and(|admitted| admitted == before)
+                || !after_admitted
+                    .as_ref()
+                    .is_ok_and(|admitted| admitted == after)
+            {
+                return unavailable_publication_evidence(
+                    path,
+                    FilePublicationEvidenceUnavailableReason::SemanticAdmission,
+                );
+            }
+            Some(snapshot.to_owned())
+        },
     }
 }
 

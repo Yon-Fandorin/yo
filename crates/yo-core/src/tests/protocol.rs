@@ -250,3 +250,84 @@ fn message_content_round_trip_and_first_excess() {
     assert!(content.to_snapshot().is_none());
     assert!(MessageContent::from_snapshot(&(exact + " ")).is_none());
 }
+
+// 게시 결과 profile은 원문을 보존하고 버전, state, 전체 크기 경계를 엄격히 확인한다.
+#[test]
+fn file_publication_evidence_round_trip_and_closed_bounds() {
+    use serde_json::Value;
+
+    use crate::{
+        FilePublicationEvidence, FilePublicationEvidenceState,
+        FilePublicationEvidenceUnavailableReason,
+    };
+
+    let before = "fn main() { println!(\"old\\path\"); }\n";
+    let after = "fn main() { println!(\"새 값\\path\"); }\n";
+    let complete = FilePublicationEvidence::complete("src/main.rs", before, after).unwrap();
+    let snapshot = complete.to_snapshot().unwrap();
+    let value: Value = serde_json::from_str(&snapshot).unwrap();
+    assert_eq!(value["schema"], FilePublicationEvidence::SCHEMA);
+    assert_eq!(value["output"]["path"], "src/main.rs");
+    assert_eq!(value["output"]["state"]["status"], "complete");
+    assert_eq!(value["output"]["state"]["before"], before);
+    assert_eq!(value["output"]["state"]["after"], after);
+    assert_eq!(
+        FilePublicationEvidence::from_snapshot(&snapshot),
+        Some(complete)
+    );
+
+    assert!(
+        FilePublicationEvidence::from_snapshot(&snapshot.replace(
+            FilePublicationEvidence::SCHEMA,
+            "yo.file-publication-evidence/v2"
+        ))
+        .is_none()
+    );
+    let mut unknown_field: Value = serde_json::from_str(&snapshot).unwrap();
+    unknown_field["output"]["extra"] = Value::Bool(true);
+    assert!(FilePublicationEvidence::from_snapshot(&unknown_field.to_string()).is_none());
+    let mut unknown_state: Value = serde_json::from_str(&snapshot).unwrap();
+    unknown_state["output"]["state"]["status"] = Value::String("future".to_owned());
+    assert!(FilePublicationEvidence::from_snapshot(&unknown_state.to_string()).is_none());
+
+    let unavailable = FilePublicationEvidence::unavailable(
+        "src/main.rs",
+        FilePublicationEvidenceUnavailableReason::Disabled,
+    )
+    .unwrap();
+    let unavailable_snapshot = unavailable.to_snapshot().unwrap();
+    assert_eq!(
+        FilePublicationEvidence::from_snapshot(&unavailable_snapshot),
+        Some(unavailable)
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&unavailable_snapshot).unwrap()["output"]["state"]["reason"],
+        "disabled"
+    );
+    assert!(!unavailable_snapshot.contains("before"));
+    assert!(!unavailable_snapshot.contains("after"));
+
+    let empty = FilePublicationEvidence::complete("a", "", "").unwrap();
+    let empty_snapshot = empty.to_snapshot().unwrap();
+    let exact_after =
+        "x".repeat(FilePublicationEvidence::MAX_SNAPSHOT_BYTES - empty_snapshot.len());
+    let exact = FilePublicationEvidence::complete("a", "", exact_after).unwrap();
+    let exact_snapshot = exact.to_snapshot().unwrap();
+    assert_eq!(
+        exact_snapshot.len(),
+        FilePublicationEvidence::MAX_SNAPSHOT_BYTES
+    );
+    assert_eq!(
+        FilePublicationEvidence::from_snapshot(&exact_snapshot),
+        Some(exact)
+    );
+    assert!(FilePublicationEvidence::from_snapshot(&(exact_snapshot + "x")).is_none());
+
+    assert!(FilePublicationEvidence::complete("bad\npath", "a", "b").is_none());
+    assert!(matches!(
+        FilePublicationEvidence::from_snapshot(&snapshot)
+            .unwrap()
+            .state(),
+        FilePublicationEvidenceState::Complete { .. }
+    ));
+}

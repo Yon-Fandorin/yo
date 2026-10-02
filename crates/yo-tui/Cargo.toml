@@ -16,6 +16,7 @@ pulldown-cmark = { version = "=0.13.4", default-features = false }
 emojis = "=0.9.0"
 icu_properties = { version = "=2.2.0", features = ["compiled_data"] }
 unicode-segmentation = "=1.13.3"
+similar = "=2.7.0"
 yo-core = { path = "../yo-core" }
 jiff = { version = "=0.2.35", default-features = false, features = ["std"] }
 

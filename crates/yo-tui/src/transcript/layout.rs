@@ -4,7 +4,9 @@ mod activity;
 mod config;
 mod markdown;
 pub(crate) use activity::{
-    LocalFileProposal, LocalFileProposalBodyStyle, local_file_proposal, local_file_proposal_path,
+    FilePublicationPresentation, LocalFileProposal, LocalFileProposalBodyStyle,
+    completed_file_publication, file_publication_presentation, local_file_proposal,
+    local_file_proposal_path,
 };
 use markdown::Decoration;
 pub(crate) use markdown::MarkdownStyles;

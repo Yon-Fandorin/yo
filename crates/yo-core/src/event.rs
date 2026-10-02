@@ -22,4 +22,7 @@ pub use interaction::{
 pub use outcome::{ActivityOutcome, Failure, TurnOutcome};
 pub use plan::{ActivityPlan, PlanStep, PlanStepStatus};
 pub use summary::{ActivityDocument, ActivityReasoning, ActivitySummary, SummaryKind};
-pub use tool::{MessageContent, ToolOutput};
+pub use tool::{
+    FilePublicationEvidence, FilePublicationEvidenceState,
+    FilePublicationEvidenceUnavailableReason, MessageContent, ToolOutput,
+};
