@@ -190,6 +190,436 @@ fn native_backend_runs_automatic_tool_once_and_replays_it_before_the_next_round(
     );
 }
 
+// ToolResult의 host receipt를 먼저 보낸 뒤 성공한 start에만 admitted 인자의 무출력 실행 상태를 같은
+// Activity로 보냅니다.
+#[test]
+fn running_tool_snapshot_follows_host_start_and_replays_only_admitted_values() {
+    use serde_json::json;
+    use yo_core::{
+        ActivityKind, ActivityRef, ActivityUpdate, BackendPoll, ToolDefinition, ToolOutput,
+        ToolSemanticAdmission, ToolSemanticAdmissionError, admit_standard_complete_binding,
+    };
+
+    struct Redacted;
+    impl ToolSemanticAdmission for Redacted {
+        fn admit_arguments(
+            &self,
+            _: &ToolDefinition,
+            _: &str,
+        ) -> Result<String, ToolSemanticAdmissionError> {
+            Ok(r#"{"path":"admitted.txt"}"#.to_owned())
+        }
+
+        fn admit_output(
+            &self,
+            _: &ToolDefinition,
+            _: &str,
+        ) -> Result<String, ToolSemanticAdmissionError> {
+            Ok("admitted-result".to_owned())
+        }
+    }
+
+    struct PendingOnce {
+        polls: usize,
+        result: Option<ToolExecutionResult>,
+    }
+    impl ToolExecution for PendingOnce {
+        fn poll(&mut self) -> Result<yo_core::ToolExecutionPoll, ToolExecutionError> {
+            self.polls += 1;
+            Ok(if self.polls == 1 {
+                yo_core::ToolExecutionPoll::Pending
+            } else {
+                yo_core::ToolExecutionPoll::Ready
+            })
+        }
+
+        fn take_result(&mut self) -> Option<ToolExecutionResult> {
+            self.result.take()
+        }
+
+        fn cancel(&self) {}
+
+        fn shutdown(&mut self) -> Result<(), ToolExecutionError> {
+            Ok(())
+        }
+    }
+
+    struct PendingOnceHost(Arc<Mutex<usize>>);
+    impl ToolExecutionHost for PendingOnceHost {
+        fn identity(&self) -> &str {
+            "quiet-running-host-v1"
+        }
+
+        fn is_available(&self, _: &ToolId) -> bool {
+            true
+        }
+
+        fn start(
+            &mut self,
+            _: ToolExecutionRequest,
+        ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+            *self.0.lock().unwrap() += 1;
+            Ok(Box::new(PendingOnce {
+                polls: 0,
+                result: Some(ToolExecutionResult::new(
+                    ToolExecutionOutcome::Completed,
+                    "host-only result",
+                    false,
+                )),
+            }))
+        }
+
+        fn shutdown(&mut self) -> Result<(), ToolExecutionError> {
+            Ok(())
+        }
+    }
+
+    let starts = Arc::new(Mutex::new(0));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let rounds = vec![
+        vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "tool".to_owned(),
+            },
+            ModelConnectorEvent::FunctionCallStarted {
+                output_index: 0,
+                item_id: "item-1".to_owned(),
+                call_id: "call-1".to_owned(),
+                name: "read_file".to_owned(),
+            },
+            ModelConnectorEvent::FunctionCallDone {
+                output_index: 0,
+                item_id: "item-1".to_owned(),
+                call_id: "call-1".to_owned(),
+                name: "read_file".to_owned(),
+                arguments: r#"{"path":"RAW_PATH_SECRET"}"#.to_owned(),
+            },
+            completed("tool"),
+        ],
+        vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "answer".to_owned(),
+            },
+            ModelConnectorEvent::TextDelta {
+                output_index: 0,
+                item_id: "message".to_owned(),
+                content_index: 0,
+                delta: "done".to_owned(),
+            },
+            ModelConnectorEvent::MessageDone {
+                output_index: 0,
+                item_id: "message".to_owned(),
+            },
+            completed("answer"),
+        ],
+    ];
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(rounds),
+            requests: Arc::clone(&requests),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(admit_standard_complete_binding),
+            Some(Box::new(Redacted)),
+            Box::new(PendingOnceHost(Arc::clone(&starts))),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("inspect"),
+        })
+        .unwrap();
+
+    let mut call_activity = None;
+    let mut result_activity: Option<ActivityRef> = None;
+    let mut saw_receipt = false;
+    let mut saw_running = false;
+    let mut saw_pending_poll = false;
+    let mut saw_terminal_result = false;
+    let mut terminal = false;
+    let mut visible = String::new();
+    for _ in 0..150 {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(event) => {
+                match &event {
+                    BackendEvent::ActivityStarted { activity, kind } => match kind {
+                        ActivityKind::ToolCall => call_activity = Some(*activity),
+                        ActivityKind::ToolResult => {
+                            assert_ne!(call_activity, Some(*activity));
+                            assert_eq!(*starts.lock().unwrap(), 0);
+                            result_activity = Some(*activity);
+                        },
+                        _ => {},
+                    },
+                    BackendEvent::ActivityUpdated {
+                        activity,
+                        update: ActivityUpdate::TextSnapshot(text),
+                    } if result_activity == Some(*activity) => {
+                        match ToolOutput::from_snapshot(text) {
+                            Some(output) => match output.result.as_ref() {
+                                None => {
+                                    assert_eq!(*starts.lock().unwrap(), 1);
+                                    assert_eq!(output.tool, "read_file");
+                                    assert_eq!(
+                                        output.arguments,
+                                        Some(json!({"path":"admitted.txt"}))
+                                    );
+                                    assert!(output.plain_text.contains("admitted.txt"));
+                                    assert!(!text.contains("RAW_PATH_SECRET"));
+                                    assert!(!output.plain_text.contains("RAW_PATH_SECRET"));
+                                    saw_running = true;
+                                },
+                                Some(result) => {
+                                    assert_eq!(result["content"][0]["text"], "admitted-result");
+                                    assert_eq!(
+                                        output.arguments,
+                                        Some(json!({"path":"admitted.txt"}))
+                                    );
+                                    saw_terminal_result = true;
+                                },
+                            },
+                            None => {
+                                let receipt: serde_json::Value =
+                                    serde_json::from_str(text).unwrap();
+                                assert_eq!(*starts.lock().unwrap(), 0);
+                                assert_eq!(receipt["call_id"], "call-1");
+                                assert_eq!(receipt["tool_id"], "read-file");
+                                assert_eq!(receipt["execution_host"], "quiet-running-host-v1");
+                                assert_eq!(receipt["attempt"], 1);
+                                saw_receipt = true;
+                            },
+                        }
+                    },
+                    BackendEvent::ResumableTurnFinished { .. } => {
+                        visible.push_str(&format!("{event:?}"));
+                        terminal = true;
+                        break;
+                    },
+                    _ => {},
+                }
+                visible.push_str(&format!("{event:?}"));
+            },
+            BackendPoll::Pending => {
+                if saw_running && !saw_pending_poll {
+                    saw_pending_poll = true;
+                }
+            },
+            BackendPoll::Closed => panic!("backend closed before the completed Turn"),
+        }
+    }
+    assert!(terminal);
+    assert!(saw_receipt && saw_running && saw_pending_poll && saw_terminal_result);
+    assert_eq!(*starts.lock().unwrap(), 1);
+    assert!(!visible.contains("RAW_PATH_SECRET"));
+    assert!(!visible.contains("host-only result"));
+    let result_activity = result_activity.unwrap();
+    assert_ne!(call_activity, Some(result_activity));
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].input().iter().any(|item| matches!(item,
+        ModelConnectorInputItem::FunctionCallOutput { call_id, output }
+            if call_id == "call-1" && output == "admitted-result"
+    )));
+}
+
+// admitted 인자만으로 만든 ToolOutput이 profile 상한을 넘으면 active executor와 ToolResult
+// receipt를 유지합니다.
+#[test]
+fn oversized_running_tool_profile_does_not_fail_a_started_execution() {
+    use yo_core::{ActivityKind, ActivityUpdate, BackendPoll, ToolOutput};
+
+    struct PendingExecution {
+        cancellations: Arc<Mutex<usize>>,
+        shutdowns: Arc<Mutex<usize>>,
+    }
+    impl ToolExecution for PendingExecution {
+        fn poll(&mut self) -> Result<yo_core::ToolExecutionPoll, ToolExecutionError> {
+            Ok(yo_core::ToolExecutionPoll::Pending)
+        }
+
+        fn take_result(&mut self) -> Option<ToolExecutionResult> {
+            None
+        }
+
+        fn cancel(&self) {
+            *self.cancellations.lock().unwrap() += 1;
+        }
+
+        fn shutdown(&mut self) -> Result<(), ToolExecutionError> {
+            *self.shutdowns.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    struct PendingHost {
+        starts: Arc<Mutex<usize>>,
+        cancellations: Arc<Mutex<usize>>,
+        shutdowns: Arc<Mutex<usize>>,
+    }
+    impl ToolExecutionHost for PendingHost {
+        fn identity(&self) -> &str {
+            "oversized-profile-host-v1"
+        }
+
+        fn is_available(&self, _: &ToolId) -> bool {
+            true
+        }
+
+        fn start(
+            &mut self,
+            _: ToolExecutionRequest,
+        ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+            *self.starts.lock().unwrap() += 1;
+            Ok(Box::new(PendingExecution {
+                cancellations: Arc::clone(&self.cancellations),
+                shutdowns: Arc::clone(&self.shutdowns),
+            }))
+        }
+
+        fn shutdown(&mut self) -> Result<(), ToolExecutionError> {
+            Ok(())
+        }
+    }
+
+    let path = "x".repeat(9 * 1024 * 1024);
+    let arguments = format!("{{\"path\":\"{path}\"}}");
+    let maximum_argument_bytes = 10 * 1024 * 1024;
+    assert!(arguments.len() < maximum_argument_bytes);
+    assert!(path.len() * 2 > ToolOutput::MAX_SNAPSHOT_BYTES);
+
+    let starts = Arc::new(Mutex::new(0));
+    let cancellations = Arc::new(Mutex::new(0));
+    let shutdowns = Arc::new(Mutex::new(0));
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(vec![vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "tool".to_owned(),
+                },
+                ModelConnectorEvent::FunctionCallStarted {
+                    output_index: 0,
+                    item_id: "item-1".to_owned(),
+                    call_id: "call-large".to_owned(),
+                    name: "read_file".to_owned(),
+                },
+                ModelConnectorEvent::FunctionCallDone {
+                    output_index: 0,
+                    item_id: "item-1".to_owned(),
+                    call_id: "call-large".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments,
+                },
+                completed("tool"),
+            ]]),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
+            Some(Box::new(ExactAdmission)),
+            Box::new(PendingHost {
+                starts: Arc::clone(&starts),
+                cancellations: Arc::clone(&cancellations),
+                shutdowns: Arc::clone(&shutdowns),
+            }),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig {
+            maximum_tool_argument_bytes: maximum_argument_bytes,
+            ..NativeModelBackendConfig::default()
+        },
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("inspect"),
+        })
+        .unwrap();
+
+    let mut result_activity = None;
+    let mut saw_receipt = false;
+    let mut saw_running_profile = false;
+    let mut started_without_profile = false;
+    for _ in 0..100 {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::ToolResult,
+            }) => result_activity = Some(activity),
+            BackendPoll::Event(BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(text),
+            }) if result_activity == Some(activity) => {
+                if let Some(output) = ToolOutput::from_snapshot(&text) {
+                    saw_running_profile |= output.result.is_none();
+                } else {
+                    let receipt: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    assert_eq!(receipt["call_id"], "call-large");
+                    assert_eq!(receipt["execution_host"], "oversized-profile-host-v1");
+                    saw_receipt = true;
+                }
+            },
+            BackendPoll::Pending if saw_receipt => {
+                started_without_profile = *starts.lock().unwrap() == 1
+                    && backend
+                        .turn
+                        .as_ref()
+                        .is_some_and(|state| state.active_tool.is_some());
+                if started_without_profile {
+                    break;
+                }
+            },
+            BackendPoll::Event(_) | BackendPoll::Pending => {},
+            BackendPoll::Closed => panic!("backend closed before the pending execution"),
+        }
+    }
+    assert!(saw_receipt);
+    assert!(!saw_running_profile);
+    assert!(started_without_profile);
+    assert_eq!(*starts.lock().unwrap(), 1);
+
+    backend
+        .execute_command(AgentCommand::InterruptTurn { turn: turn() })
+        .unwrap();
+    let interrupted = (0..100)
+        .find_map(|_| match backend.poll_event().unwrap() {
+            BackendPoll::Event(
+                event @ BackendEvent::TurnFinished {
+                    outcome: TurnOutcome::Interrupted,
+                    ..
+                },
+            ) => Some(event),
+            BackendPoll::Event(_) | BackendPoll::Pending => None,
+            other => panic!("started executor did not remain interruptible: {other:?}"),
+        })
+        .expect("started executor did not report interruption within 100 polls");
+    assert!(matches!(interrupted, BackendEvent::TurnFinished { .. }));
+    assert_eq!(*starts.lock().unwrap(), 1);
+    assert_eq!(*cancellations.lock().unwrap(), 1);
+    assert_eq!(*shutdowns.lock().unwrap(), 1);
+}
+
 // agent-owned absolute tool budget은 binding identity가 아니라 runtime config에서 한 attempt의
 // ToolExecutionRequest로 전달되고, 기본값 없음과 구분되는 exact Duration을 보존합니다.
 #[test]

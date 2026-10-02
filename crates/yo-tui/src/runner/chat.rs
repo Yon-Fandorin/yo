@@ -74,6 +74,7 @@ struct ActivityPresentation {
     visible: bool,
     usage: Option<String>,
     is_structured: bool,
+    running_tool: bool,
     question: Option<ActivityQuestion>,
     approval: Option<ActivityApproval>,
 }
@@ -396,6 +397,7 @@ impl ChatProjection {
             },
             ActivityUpdate::TextSnapshot(text) => {
                 let receipt = self.interviews.answer_receipt(activity);
+                presentation.running_tool |= is_nonterminal_tool_output(presentation.kind, text);
                 presentation.approval =
                     matches!(presentation.kind, ActivityKind::ApprovalRequest { .. })
                         .then(|| ActivityApproval::from_snapshot(text))
@@ -457,6 +459,11 @@ impl ChatProjection {
                         )
                     },
                 };
+                let text = if presentation.running_tool {
+                    label_running_tool(text)
+                } else {
+                    text
+                };
                 let visible = !text.is_empty();
                 let changed = self
                     .transcript
@@ -513,6 +520,7 @@ impl ChatProjection {
                 visible: label.is_some(),
                 usage: None,
                 is_structured: false,
+                running_tool: false,
                 question: None,
                 approval: None,
             },
@@ -530,6 +538,21 @@ impl ChatProjection {
         };
         let id = presentation.item;
         let mut heading_changed = false;
+        if presentation.running_tool {
+            let item = self
+                .transcript
+                .items()
+                .iter()
+                .find(|item| item.id() == id)
+                .expect("an active presentation owns a transcript item");
+            let TranscriptBody::Message(message) = item.body();
+            if let Some(payload) = message.text().strip_prefix("Running tool…") {
+                heading_changed = self
+                    .transcript
+                    .replace_text_changed(id, format!("Tool result{payload}"))
+                    .map_err(StateError::Transcript)?;
+            }
+        }
         if matches!(
             presentation.kind,
             ActivityKind::ToolCall | ActivityKind::FileChange | ActivityKind::ModelWork
@@ -893,6 +916,28 @@ fn project_snapshot(kind: ActivityKind, text: String) -> String {
         label.to_owned()
     } else {
         format!("{label}\n{text}")
+    }
+}
+
+fn is_nonterminal_tool_output(kind: ActivityKind, text: &str) -> bool {
+    if kind != ActivityKind::ToolResult {
+        return false;
+    }
+    let Some(output) = ToolOutput::from_snapshot(text) else {
+        return false;
+    };
+    if output.error.is_some() || output.content_items.is_some() {
+        return false;
+    }
+    output.result.as_ref().is_none_or(|result| {
+        result.get("progress").and_then(serde_json::Value::as_bool) == Some(true)
+    })
+}
+
+fn label_running_tool(text: String) -> String {
+    match text.strip_prefix("Tool result") {
+        Some(payload) => format!("Running tool…{payload}"),
+        None => text,
     }
 }
 

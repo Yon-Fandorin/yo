@@ -718,6 +718,168 @@ fn native_command_progress_renders_streams_until_authoritative_completion() {
         }
     }
 }
+
+// 조용히 실행 중인 native command는 admitted 인자만 기존 renderer와 export에 보이고, 실제 완료 뒤
+// 진행 label을 지웁니다.
+#[test]
+fn quiet_native_command_uses_admitted_arguments_and_terminal_activity_state() {
+    use serde_json::json;
+    use yo_core::{ActivityOutcome, ActivityUpdate, ToolOutput};
+
+    use crate::ToolRenderer;
+
+    fn exported_activity_body(text: &str) -> String {
+        let Some((_, body)) = text.split_once('\n') else {
+            return text.to_owned();
+        };
+        body.lines()
+            .map(|line| line.strip_prefix("  ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    let command = "printf 'ADMITTED_COMMAND'";
+    let output = ToolOutput {
+        tool: "run_command".to_owned(),
+        server: None,
+        arguments: Some(json!({"command":command})),
+        result: None,
+        content_items: None,
+        error: None,
+        plain_text: format!("run_command · call-quiet\nArguments:\n{{\"command\":\"{command}\"}}"),
+    };
+    let activity = activity(71);
+    let mut session = TuiSession::new(ColorCapability::TrueColor, MotionPreference::Reduced);
+    let state = session.parts_mut().state;
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::ToolResult,
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity,
+            update: ActivityUpdate::TextSnapshot(
+                r#"{"call_id":"call-quiet","tool_id":"run-command","execution_host":"host","attempt":1}"#.to_owned(),
+            ),
+        })
+        .unwrap();
+    let pin = session.appearance_pin();
+    let receipt = session
+        .parts_mut()
+        .state
+        .prepare_frame(Size::new(80, 48), &pin)
+        .unwrap();
+    assert!(!visible_rows(&receipt.surface).contains("Running tool…"));
+    session.parts_mut().state.commit_frame(&receipt);
+
+    session
+        .parts_mut()
+        .state
+        .observe(AgentEvent::ActivityUpdated {
+            activity,
+            update: ActivityUpdate::TextSnapshot(output.to_snapshot().unwrap()),
+        })
+        .unwrap();
+    for width in [20, 40, 80] {
+        let frame = session
+            .parts_mut()
+            .state
+            .prepare_frame(Size::new(width, 72), &pin)
+            .unwrap();
+        let text = visible_rows(&frame.surface);
+        let compact = text
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        assert!(text.contains("Running tool…"), "{width}: {text}");
+        assert!(compact.contains("ADMITTED_COMMAND"), "{width}: {text}");
+        assert!(!text.contains("RAW_COMMAND_SECRET"), "{width}: {text}");
+        assert!(
+            !text.contains("stdout") && !text.contains("stderr"),
+            "{width}: {text}"
+        );
+    }
+    let exported = session.session_output().unwrap().unwrap();
+    assert!(
+        exported_activity_body(&exported) == output.plain_text,
+        "{exported}"
+    );
+    assert!(!exported.contains("RAW_COMMAND_SECRET"), "{exported}");
+
+    let expected = output.clone();
+    let mut custom = TuiSession::new(ColorCapability::TrueColor, MotionPreference::Reduced);
+    custom
+        .parts_mut()
+        .state
+        .observe(AgentEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::ToolResult,
+        })
+        .unwrap();
+    custom
+        .parts_mut()
+        .state
+        .observe(AgentEvent::ActivityUpdated {
+            activity,
+            update: ActivityUpdate::TextSnapshot(expected.to_snapshot().unwrap()),
+        })
+        .unwrap();
+    custom = custom.with_tool_renderer(Some(ToolRenderer::new(move |input| {
+        assert_eq!(input.kind, ActivityKind::ToolResult);
+        assert!(input.outcome.is_none());
+        assert_eq!(input.output, Some(&expected));
+        assert_eq!(input.source, expected.plain_text);
+        Some("CUSTOM_QUIET_COMMAND".to_owned())
+    })));
+    let custom_pin = custom.appearance_pin();
+    let frame = custom
+        .parts_mut()
+        .state
+        .prepare_frame(Size::new(40, 30), &custom_pin)
+        .unwrap();
+    assert!(visible_rows(&frame.surface).contains("CUSTOM_QUIET_COMMAND"));
+    assert!(!visible_rows(&frame.surface).contains("Command"));
+    assert!(
+        exported_activity_body(&custom.session_output().unwrap().unwrap()) == output.plain_text
+    );
+
+    let terminal = ToolOutput {
+        result: Some(json!({
+            "content":[{"type":"text","text":"status: 0\nstdout:\ncompleted output\nstderr:\n"}],
+            "outcome":"completed",
+            "isError":false
+        })),
+        plain_text: "run_command · call-quiet\ncompleted".to_owned(),
+        ..output
+    };
+    session
+        .parts_mut()
+        .state
+        .observe(AgentEvent::ActivityUpdated {
+            activity,
+            update: ActivityUpdate::TextSnapshot(terminal.to_snapshot().unwrap()),
+        })
+        .unwrap();
+    session
+        .parts_mut()
+        .state
+        .observe(AgentEvent::ActivityFinished {
+            activity,
+            outcome: ActivityOutcome::Completed,
+        })
+        .unwrap();
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame(Size::new(80, 48), &pin)
+        .unwrap();
+    let text = visible_rows(&frame.surface);
+    assert!(!text.contains("Running tool…"), "{text}");
+    assert!(text.contains("Tool result"), "{text}");
+    assert!(text.contains("completed output"), "{text}");
+}
 // 7만 행과 좁은 화면에서 6만 행 넘게 개행되는 한 줄도 최신 출력·원문·사용자 콜백을 보존한다.
 #[test]
 fn folded_shell_output_survives_large_row_counts_and_long_lines() {

@@ -1,12 +1,16 @@
-use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
-    AgentCommand, BackendEvent, BackendPoll, ModelConnectorEvent, ModelConnectorInputItem,
-    ModelReplayItem, ToolApprovalRequirement, ToolExecution, ToolExecutionError, ToolExecutionHost,
-    ToolExecutionRequest, ToolId, ToolSemanticAdmission, ToolValidationFailure, UserInput,
+    ActivityKind, ActivityUpdate, AgentCommand, BackendEvent, BackendPoll, ModelConnectorEvent,
+    ModelConnectorInputItem, ModelReplayItem, ToolApprovalRequirement, ToolExecution,
+    ToolExecutionError, ToolExecutionHost, ToolExecutionRequest, ToolId, ToolOutput,
+    ToolSemanticAdmission, ToolValidationFailure, UserInput,
 };
 
 use super::support::{
@@ -154,8 +158,6 @@ fn native_backend_refuses_to_expose_tools_without_semantic_admission() {
 // 검증합니다.
 #[test]
 fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_request() {
-    use yo_core::ToolOutput;
-
     let requests = Arc::new(Mutex::new(Vec::new()));
     let rounds = vec![
         vec![
@@ -217,13 +219,26 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
         })
         .unwrap();
 
+    let mut activity_kinds = HashMap::new();
     let mut visible_updates = Vec::new();
+    let mut typed_profiles = Vec::new();
     let evidence = loop {
         match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ActivityStarted { activity, kind }) => {
+                activity_kinds.insert(activity, kind);
+            },
             BackendPoll::Event(BackendEvent::ActivityUpdated {
-                update: yo_core::ActivityUpdate::TextSnapshot(text),
-                ..
-            }) => visible_updates.push(text),
+                activity,
+                update: ActivityUpdate::TextSnapshot(text),
+            }) => {
+                if let (Some(kind), Some(output)) = (
+                    activity_kinds.get(&activity).copied(),
+                    ToolOutput::from_snapshot(&text),
+                ) {
+                    typed_profiles.push((kind, output));
+                }
+                visible_updates.push(text);
+            },
             BackendPoll::Event(BackendEvent::ResumableTurnFinished { evidence, .. }) => {
                 break evidence;
             },
@@ -231,22 +246,38 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
             BackendPoll::Closed => panic!("backend closed before resumable completion"),
         }
     };
-    let typed = visible_updates
+    assert_eq!(typed_profiles.len(), 3);
+    let expected_arguments = Some(serde_json::json!({"path":"[redacted]"}));
+    let expected_plain_text = "read_file · call-1\nArguments:\n{\"path\":\"[redacted]\"}";
+    for ((kind, profile), expected_kind) in typed_profiles[..2]
         .iter()
-        .filter_map(|text| ToolOutput::from_snapshot(text))
-        .collect::<Vec<_>>();
-    assert_eq!(typed.len(), 2);
-    assert!(typed[0].result.is_none());
-    assert_eq!(typed[0].arguments.as_ref().unwrap()["path"], "[redacted]");
-    let typed = &typed[1..];
-    assert_eq!(typed[0].tool, "read_file");
-    assert_eq!(typed[0].arguments.as_ref().unwrap()["path"], "[redacted]");
-    let result = typed[0].result.as_ref().unwrap();
+        .zip([ActivityKind::ToolCall, ActivityKind::ToolResult])
+    {
+        assert_eq!(*kind, expected_kind);
+        assert_eq!(profile.tool, "read_file");
+        assert_eq!(profile.arguments, expected_arguments);
+        assert!(profile.result.is_none());
+        assert!(profile.content_items.is_none());
+        assert!(profile.error.is_none());
+        assert_eq!(profile.plain_text, expected_plain_text);
+    }
+    let (terminal_kind, terminal) = &typed_profiles[2];
+    assert_eq!(*terminal_kind, ActivityKind::ToolResult);
+    assert_eq!(terminal.tool, "read_file");
+    assert_eq!(terminal.arguments, expected_arguments);
+    assert!(terminal.content_items.is_none());
+    assert!(terminal.error.is_none());
+    let result = terminal.result.as_ref().unwrap();
+    assert_eq!(
+        result["content"],
+        serde_json::json!([{"type":"text","text":"[redacted-output]"}])
+    );
     assert_eq!(result["content"][0]["text"], "[redacted-output]");
     assert_eq!(result["call_id"], "call-1");
+    assert_eq!(result["tool_id"], "read-file");
     assert_eq!(result["outcome"], "completed");
     assert_eq!(result["isError"], false);
-    assert!(typed[0].plain_text.contains("[redacted-output]"));
+    assert!(terminal.plain_text.contains("[redacted-output]"));
     let visible = visible_updates.join("\n");
     assert!(!visible.contains("secret.txt"));
     assert!(!visible.contains("contents"));
@@ -512,17 +543,36 @@ fn injected_policy_diagnostics_do_not_cross_the_semantic_boundary() {
         })
         .unwrap();
     let mut visible = String::new();
+    let mut tool_result_activity = None;
+    let mut saw_running_snapshot = false;
     loop {
         match host_backend.poll_event().unwrap() {
             BackendPoll::Event(event @ BackendEvent::ResumableTurnFinished { .. }) => {
                 visible.push_str(&format!("{event:?}"));
                 break;
             },
-            BackendPoll::Event(event) => visible.push_str(&format!("{event:?}")),
+            BackendPoll::Event(event) => {
+                match &event {
+                    BackendEvent::ActivityStarted {
+                        activity,
+                        kind: ActivityKind::ToolResult,
+                    } => tool_result_activity = Some(*activity),
+                    BackendEvent::ActivityUpdated {
+                        activity,
+                        update: ActivityUpdate::TextSnapshot(text),
+                    } if tool_result_activity == Some(*activity) => {
+                        saw_running_snapshot |= ToolOutput::from_snapshot(text)
+                            .is_some_and(|output| output.result.is_none());
+                    },
+                    _ => {},
+                }
+                visible.push_str(&format!("{event:?}"));
+            },
             BackendPoll::Pending => {},
             BackendPoll::Closed => panic!("backend closed before the completed Turn"),
         }
     }
+    assert!(!saw_running_snapshot);
     assert!(!visible.contains("execution-host-secret"));
     assert!(visible.contains("tool execution failed"));
 }

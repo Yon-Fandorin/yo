@@ -1501,6 +1501,16 @@ are displayed literally without file/network access. `/preview shell-truncated` 
 an offline fixture. Tests cover 80/24/80 columns, line/byte/complete cases, literal
 paths, raw callbacks, and exact/first-excess path and encoded metadata limits.
 
+After the native host successfully starts an execution, the managed backend
+adds an optional typed ToolOutput snapshot to that execution's own ToolResult
+Activity. It uses already admitted replay arguments, with no observed result,
+content or error invented for a quiet process. Chat shows `Running tool…` while
+that Activity remains open; admitted progress keeps the label and actual terminal
+completion removes it. The preceding durable correlation receipt stays before
+dispatch and does not claim a running execution. A profile that cannot fit the
+existing snapshot bound leaves that receipt and the active execution intact.
+No extra execution, model request or replay item is introduced.
+
 Native command progress now follows ToolExecution::take_progress -> the managed
 backend progress admission -> a nonterminal ToolOutput snapshot. Existing hosts
 and semantic policies default to no progress. Local command pipes coalesce bounded

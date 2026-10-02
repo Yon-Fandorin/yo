@@ -187,6 +187,61 @@ comparison from a successful native edit. It does not prove an external-writer
 compare-and-swap, captured old content for `write_file`, whole-workspace Git review,
 a complete daily-work replacement, or physical Mac input on this candidate.
 
+## Real-project foreground command in Linux tmux
+
+On 2026-10-02, clean `2eba3a53` ran a read-only real-project task beside the
+existing Codex window. One Fullscreen CLI process used the configured
+`qwencloud:default:qwen3.8-max` Token Plan through Responses, with four accepted
+model requests within the six-request bound. The binary SHA-256 was
+`1a6127ed71b854ffdb48a5ad9ce1249cc7812722864d8c7dcbc3db62cab038d4`.
+
+The model read two specified source windows and requested exactly one bounded,
+offline `cargo test -p yo-tui --no-fail-fast` execution. Its exact command received
+one `this tool call only` approval. The authoritative run summary recorded exit
+0 after 124 seconds; the independently hash-checked log contained 1,038 passing
+unit and four passing integration tests. Sources and Git HEAD stayed unchanged.
+The command's live quiet frame exposed raw correlation JSON under a generic
+Tool result heading rather than a readable active command.
+
+After that successful execution, a subsequent `read_files` request failed tool
+argument semantic admission and the first Turn ended Failed. The rejected
+arguments were not retained, so this observation does not establish their exact
+path or rejection cause. A new message in the same Session requested a summary
+without tools. That second Turn completed without more execution, but the model
+reported no earlier source or test-result context. The current accepted
+completed-only replay boundary explains this distinction: a completed command
+does not make its failed enclosing Turn resumable. This is not a successful
+end-to-end coding-task result or evidence that the context was preserved.
+
+The CLI exited 0. Its own window and copied authentication were removed; the
+observed CLI, Cargo and test processes were absent. Existing user windows and
+active selections plus normal configuration and credential bytes/modes were
+preserved. The foreground command's five-minute output-inactivity deadline
+remains in effect; this 124-second run does not validate longer silent commands,
+detached execution, failed-Turn recovery after restart, or physical Mac input.
+
+The subsequent quiet-command presentation candidate used the same paid route,
+one CLI, two accepted model requests within a four-request bound and one exact
+approved execution. Its binary SHA-256 was
+`6693814edcd9c9f6c2e23e1e40269a99a784e0d992a6aab5c81802f9d7a2bed3`.
+The source-only Rust diff SHA-256 was
+`718795698f14160887ec17daf81332bd72c3912b684e01a09addb7acd45cb7c2`;
+those source bytes stayed unchanged throughout the run.
+
+The real quiet command showed its admitted command and `Running tool…` at 40,
+80 and 100 columns without raw correlation JSON or fabricated output. At 20
+columns the long command pushed the heading above the 40-row viewport; an
+80-row capture showed both the heading and command. Actual completion replaced
+the heading with Tool result. The hash-checked test log recorded 1,040 passing
+unit tests and four passing integration tests in 125 seconds, with exit 0.
+
+The single Turn completed and the model summarized the successful run without
+additional tools or executions. The CLI exited 0, its own window and copied
+authentication were removed, observed CLI/Cargo/test processes were absent and
+normal settings, credentials, user windows and active selections stayed unchanged.
+This verifies the quiet foreground-command journey; it does not fix or revalidate
+the failed-Turn context boundary described above.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`

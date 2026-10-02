@@ -115,6 +115,17 @@ impl NativeModelBackend {
                     activity,
                     execution,
                 });
+                if let Some(snapshot) = state
+                    .active_tool
+                    .as_ref()
+                    .and_then(|active| running_tool_output_snapshot(state, active))
+                {
+                    // 실행 시작이 확인된 뒤 원래 ToolResult Activity에 typed snapshot을 덧붙인다.
+                    self.events.push_back(BackendEvent::ActivityUpdated {
+                        activity,
+                        update: ActivityUpdate::TextSnapshot(snapshot),
+                    });
+                }
             },
             Err(_) => self.finish_tool(
                 state,
@@ -602,6 +613,31 @@ impl NativeModelBackend {
         self.turn = Some(state);
         Ok(BackendCommandEvidence::None)
     }
+}
+
+fn running_tool_output_snapshot(state: &TurnState, active: &ActiveTool) -> Option<String> {
+    let (arguments, admitted_text) = state.delta.iter().rev().find_map(|item| match item {
+        ModelReplayItem::FunctionCall {
+            call_id, arguments, ..
+        } if call_id == active.call.call_id() => {
+            Some((from_str::<Value>(arguments).ok()?, arguments))
+        },
+        _ => None,
+    })?;
+    ToolOutput {
+        tool: active.call.definition().wire_name().to_owned(),
+        server: None,
+        arguments: Some(arguments),
+        result: None,
+        content_items: None,
+        error: None,
+        plain_text: format!(
+            "{} · {}\nArguments:\n{admitted_text}",
+            active.call.definition().wire_name(),
+            active.call.call_id(),
+        ),
+    }
+    .to_snapshot()
 }
 
 fn is_native_edit(call: &ValidatedToolCall) -> bool {

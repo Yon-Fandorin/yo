@@ -144,6 +144,110 @@ fn finished_tool_replaces_only_its_progress_heading() {
     }
 }
 
+// 원본 ToolResult receipt는 generic 상태로 남고, typed 대기·진행 snapshot만 열린 Activity를 실행
+// 중으로 표시합니다.
+#[test]
+fn typed_tool_result_keeps_its_running_label_until_terminal_outcome() {
+    use serde_json::json;
+    use yo_core::ToolOutput;
+
+    fn text(state: &TuiState) -> String {
+        let TranscriptBody::Message(message) = state.transcript().items()[0].body();
+        message.text().to_owned()
+    }
+
+    for outcome in [
+        ActivityOutcome::Completed,
+        ActivityOutcome::Interrupted,
+        ActivityOutcome::Failed(Failure::new("native tool failed")),
+    ] {
+        let mut state = TuiState::new();
+        let tool = activity(1);
+        state
+            .observe(AgentEvent::ActivityStarted {
+                activity: tool,
+                kind: ActivityKind::ToolResult,
+            })
+            .unwrap();
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: tool,
+                update: ActivityUpdate::TextSnapshot(
+                    r#"{"call_id":"call-1","tool_id":"run-command","execution_host":"host","attempt":1}"#.to_owned(),
+                ),
+            })
+            .unwrap();
+        assert!(text(&state).starts_with("Tool result\n"));
+        assert!(!text(&state).starts_with("Running tool…"));
+
+        let pending = ToolOutput {
+            tool: "run_command".to_owned(),
+            server: None,
+            arguments: None,
+            result: None,
+            content_items: None,
+            error: None,
+            plain_text: "run_command · call-1".to_owned(),
+        };
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: tool,
+                update: ActivityUpdate::TextSnapshot(pending.to_snapshot().unwrap()),
+            })
+            .unwrap();
+        assert!(text(&state).starts_with("Running tool…\n"));
+
+        let progress = ToolOutput {
+            result: Some(json!({
+                "content":[{"type":"text","text":"admitted progress"}],
+                "progress":true
+            })),
+            plain_text: "admitted progress".to_owned(),
+            ..pending.clone()
+        };
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: tool,
+                update: ActivityUpdate::TextSnapshot(progress.to_snapshot().unwrap()),
+            })
+            .unwrap();
+        assert!(text(&state).starts_with("Running tool…\n"));
+
+        if outcome == ActivityOutcome::Completed {
+            let terminal = ToolOutput {
+                result: Some(json!({
+                    "content":[{"type":"text","text":"admitted final"}],
+                    "outcome":"completed"
+                })),
+                plain_text: "admitted final".to_owned(),
+                ..pending
+            };
+            state
+                .observe(AgentEvent::ActivityUpdated {
+                    activity: tool,
+                    update: ActivityUpdate::TextSnapshot(terminal.to_snapshot().unwrap()),
+                })
+                .unwrap();
+            assert!(text(&state).starts_with("Running tool…\n"));
+        }
+        state
+            .observe(AgentEvent::ActivityFinished {
+                activity: tool,
+                outcome: outcome.clone(),
+            })
+            .unwrap();
+        assert!(text(&state).starts_with("Tool result\n"));
+        assert!(!text(&state).starts_with("Running tool…"));
+        match outcome {
+            ActivityOutcome::Completed => {},
+            ActivityOutcome::Interrupted => assert!(text(&state).contains("\nInterrupted")),
+            ActivityOutcome::Failed(_) => {
+                assert!(text(&state).contains("\nFailed: native tool failed"));
+            },
+        }
+    }
+}
+
 // agent message의 streaming delta를 먼저 표시하더라도 final snapshot이 다르면 화면 문자열을
 // authoritative 결과로 교체하고 완료 뒤 그대로 남긴다.
 #[test]
