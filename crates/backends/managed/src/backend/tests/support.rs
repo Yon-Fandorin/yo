@@ -140,6 +140,12 @@ pub(in crate::backend) struct MockHost {
     starts: Arc<Mutex<usize>>,
 }
 
+impl MockHost {
+    pub(in crate::backend) fn with_start_counter(starts: Arc<Mutex<usize>>) -> Self {
+        Self { starts }
+    }
+}
+
 impl ToolExecutionHost for MockHost {
     fn identity(&self) -> &str {
         "test-host-v1"

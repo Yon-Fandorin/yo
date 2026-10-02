@@ -240,6 +240,13 @@ impl<B: AgentBackend> AgentRuntime<B> {
             Ok(evidence) => evidence,
         };
         if let Err(error) = self.validate_command_evidence(&command, submission_id, &evidence) {
+            if matches!(
+                evidence,
+                BackendCommandEvidence::SubmissionPrepared
+                    | BackendCommandEvidence::ProtectedInputPrepared
+            ) {
+                let _ = self.backend.abort_prepared_command();
+            }
             if submission_id.is_some() {
                 let turn = submission_turn(&command);
                 self.accepted_requests.remove(&turn);
@@ -263,8 +270,14 @@ impl<B: AgentBackend> AgentRuntime<B> {
         let events = match self.engine.commit_command(command, supports_steer) {
             Ok(events) => events,
             Err(rejection) => {
-                if matches!(evidence, BackendCommandEvidence::ProtectedInputPrepared) {
+                if matches!(
+                    evidence,
+                    BackendCommandEvidence::SubmissionPrepared
+                        | BackendCommandEvidence::ProtectedInputPrepared
+                ) {
                     let _ = self.backend.abort_prepared_command();
+                }
+                if matches!(evidence, BackendCommandEvidence::ProtectedInputPrepared) {
                     self.secret_input_terminal = true;
                 }
                 return Err(RuntimeError::StateDiverged(rejection));
@@ -299,6 +312,32 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 self.accepted_submissions.insert(turn, submission_id);
                 self.journal
                     .append_committed_submission(committed, submission_id, &events);
+            },
+            (Some(submission_id), BackendCommandEvidence::SubmissionPrepared) => {
+                if !self.journal.append_committed_submission_transactionally(
+                    committed.clone(),
+                    submission_id,
+                    &events,
+                ) {
+                    let _ = self.backend.abort_prepared_command();
+                    return Err(RuntimeError::backend(crate::BackendFailure::new(
+                        BackendFailureKind::Session,
+                        "steering input could not be committed durably",
+                    )));
+                }
+                let inserted = self.submission_ids.insert(submission_id);
+                debug_assert!(inserted, "a duplicate submission cannot pass validation");
+                let turn = submission_turn(&committed);
+                self.accepted_requests.remove(&turn);
+                self.accepted_submissions.insert(turn, submission_id);
+                self.binding_has_unanchored_request = true;
+                if self.backend.commit_prepared_command().is_err() {
+                    let _ = self.backend.abort_prepared_command();
+                    return Err(RuntimeError::backend(crate::BackendFailure::new(
+                        BackendFailureKind::Session,
+                        "steering input was committed but its backend queue could not be armed",
+                    )));
+                }
             },
             (None, BackendCommandEvidence::BindingOpened(evidence)) => {
                 let epoch = 1;
@@ -375,6 +414,11 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 ) && submission_id.is_some()
                     && self.binding_epoch.is_some()
                     && evidence.is_valid()
+            },
+            BackendCommandEvidence::SubmissionPrepared => {
+                matches!(command, AgentCommand::SteerTurn { .. })
+                    && submission_id.is_some()
+                    && self.binding_epoch.is_some()
             },
             BackendCommandEvidence::ProtectedInputPrepared => {
                 matches!(

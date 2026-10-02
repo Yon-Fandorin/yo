@@ -12,9 +12,27 @@ use super::{
     model::{ReferenceTarget, ReplayGroup},
 };
 use crate::{
-    ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem, ReplayProfile,
+    ActivityKind, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
+    ModelReplayRole, ReplayProfile,
     backend::{provider_private_schema, validate_provider_private_replay_sequence},
 };
+
+fn replay_user_inputs(items: &[ModelReplayItem]) -> Vec<ModelReplayItem> {
+    items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item,
+                ModelReplayItem::MultimodalUser { .. }
+                    | ModelReplayItem::Message {
+                        role: ModelReplayRole::User,
+                        ..
+                    }
+            )
+        })
+        .cloned()
+        .collect()
+}
 
 fn artifact_matches(item: &ModelReplayItem, receipt: &ContextArtifactReceipt) -> bool {
     if receipt.media_kind() != "text/plain" {
@@ -195,7 +213,7 @@ impl CorrelationRecovery {
                     matches!(
                         item,
                         ModelReplayItem::Message {
-                            role: crate::ModelReplayRole::Assistant,
+                            role: ModelReplayRole::Assistant,
                             ..
                         }
                     )
@@ -306,6 +324,17 @@ impl CorrelationRecovery {
         &self,
         checkpoint: &ContextCheckpoint,
     ) -> Result<(), JournalCodecError> {
+        if self
+            .latest_accepted_request
+            .iter()
+            .any(|((epoch, _), sequence)| {
+                *epoch == checkpoint.epoch() && *sequence > checkpoint.source_journal_boundary()
+            })
+        {
+            return Err(JournalCodecError::new(
+                "context checkpoint source boundary precedes an accepted request",
+            ));
+        }
         let expected_coordinates = (checkpoint.epoch(), checkpoint.previous_context_epoch());
         let source_groups = self
             .replay_groups
@@ -590,31 +619,196 @@ impl CorrelationRecovery {
     }
 
     pub(super) fn active_input_group_matches(&self, group: &ContextRetainedGroup) -> bool {
-        let Some(input) = self.submitted_inputs.get(&group.first_sequence()) else {
-            return false;
+        let submitted = self
+            .submitted_inputs
+            .range(group.first_sequence()..=group.last_sequence())
+            .map(|(sequence, item)| (*sequence, item))
+            .collect::<Vec<_>>();
+        let checkpoint_root = self.latest_checkpoint == Some(group.first_sequence());
+        let turn = if let Some((first_sequence, _)) = submitted.first() {
+            let Some(turn) = self.submitted_input_turns.get(first_sequence) else {
+                return false;
+            };
+            if submitted
+                .iter()
+                .any(|(sequence, _)| self.submitted_input_turns.get(sequence) != Some(turn))
+            {
+                return false;
+            }
+            *turn
+        } else {
+            if !checkpoint_root {
+                return false;
+            }
+            let request_turns = self
+                .latest_accepted_request
+                .iter()
+                .filter_map(|((_, turn), sequence)| {
+                    (group.first_sequence() <= *sequence && *sequence <= group.last_sequence())
+                        .then_some(*turn)
+                })
+                .collect::<BTreeSet<_>>();
+            if request_turns.len() != 1 {
+                return false;
+            }
+            let Some(turn) = request_turns.into_iter().next() else {
+                return false;
+            };
+            turn
         };
-        if group.items().first() != Some(input)
-            || self
-                .submitted_inputs
+        if !self.active_turn_starts.contains_key(&turn) {
+            return false;
+        }
+        let expected_inputs = submitted
+            .iter()
+            .map(|(_, item)| (**item).clone())
+            .collect::<Vec<_>>();
+        let retained_inputs = replay_user_inputs(group.items());
+        if retained_inputs != expected_inputs {
+            return false;
+        }
+        let last_input_sequence = submitted.last().map(|(sequence, _)| *sequence);
+        let last_activity = self
+            .closed_activity_boundaries
+            .range(group.first_sequence()..=group.last_sequence())
+            .filter_map(|(sequence, (activity_turn, kind))| {
+                (*activity_turn == turn).then_some((*sequence, *kind))
+            })
+            .next_back();
+        let accepted_request = self
+            .latest_accepted_request
+            .iter()
+            .filter_map(|((_, accepted_turn), sequence)| {
+                (*accepted_turn == turn
+                    && group.first_sequence() <= *sequence
+                    && *sequence <= group.last_sequence())
+                .then_some(*sequence)
+            })
+            .max();
+        let interrupted_after_request = accepted_request.is_some_and(|request| {
+            self.interrupted_activity_boundaries
                 .range(group.first_sequence()..=group.last_sequence())
-                .count()
-                != 1
+                .any(|(sequence, activity_turn)| *activity_turn == turn && request < *sequence)
+        });
+        if interrupted_after_request
+            || self
+                .started_activities
+                .keys()
+                .any(|activity| activity.turn_id() == turn)
         {
             return false;
         }
-        if group.first_sequence() == group.last_sequence() {
-            return group.items().len() == 1;
+        let has_non_input_items = group.items().len() != expected_inputs.len();
+        if !has_non_input_items {
+            return accepted_request.is_none()
+                && last_input_sequence == Some(group.last_sequence());
         }
-        self.completed_activity_boundaries
-            .contains(&group.last_sequence())
-            && group
-                .items()
-                .iter()
-                .any(|item| matches!(item, ModelReplayItem::FunctionCall { .. }))
-            && group
-                .items()
-                .iter()
-                .any(|item| matches!(item, ModelReplayItem::FunctionCallOutput { .. }))
+        let has_tool_items = group.items().iter().any(|item| {
+            matches!(
+                item,
+                ModelReplayItem::FunctionCall { .. } | ModelReplayItem::FunctionCallOutput { .. }
+            )
+        });
+        let has_assistant_messages = group.items().iter().any(|item| {
+            matches!(
+                item,
+                ModelReplayItem::Message {
+                    role: ModelReplayRole::Assistant,
+                    ..
+                }
+            )
+        });
+        let has_tool_call = group
+            .items()
+            .iter()
+            .any(|item| matches!(item, ModelReplayItem::FunctionCall { .. }));
+        let has_tool_output = group
+            .items()
+            .iter()
+            .any(|item| matches!(item, ModelReplayItem::FunctionCallOutput { .. }));
+        let completed_tool_call = self
+            .completed_activity_boundaries
+            .range(group.first_sequence()..=group.last_sequence())
+            .filter_map(|(sequence, (activity_turn, kind))| {
+                (*activity_turn == turn && *kind == ActivityKind::ToolCall).then_some(*sequence)
+            })
+            .next_back();
+        let completed_assistant = self
+            .completed_activity_boundaries
+            .range(group.first_sequence()..=group.last_sequence())
+            .filter_map(|(sequence, (activity_turn, kind))| {
+                (*activity_turn == turn && *kind == ActivityKind::AgentMessage).then_some(*sequence)
+            })
+            .next_back();
+        let activity_end_is_closed_response = last_activity.is_some_and(|(boundary, kind)| {
+            let response_precedes_tail = completed_assistant
+                .into_iter()
+                .chain(completed_tool_call)
+                .any(|response| {
+                    accepted_request
+                        .is_some_and(|request| request < response && response < boundary)
+                });
+            match kind {
+                ActivityKind::AgentMessage => completed_assistant == Some(boundary),
+                ActivityKind::ToolCall => completed_tool_call == Some(boundary),
+                ActivityKind::ToolResult => {
+                    completed_tool_call.is_some_and(|tool_call| tool_call < boundary)
+                },
+                _ => {
+                    response_precedes_tail
+                        && self.completed_activity_boundaries.get(&boundary) == Some(&(turn, kind))
+                },
+            }
+        });
+        let tool_response_is_closed = has_tool_call
+            && has_tool_output
+            && group.items().iter().all(|item| {
+                matches!(
+                    item,
+                    ModelReplayItem::MultimodalUser { .. }
+                        | ModelReplayItem::Message {
+                            role: ModelReplayRole::User,
+                            ..
+                        }
+                        | ModelReplayItem::FunctionCall { .. }
+                        | ModelReplayItem::FunctionCallOutput { .. }
+                )
+            })
+            && accepted_request
+                .zip(completed_tool_call)
+                .is_some_and(|(request, completion)| request < completion)
+            && activity_end_is_closed_response
+            && last_activity.is_some_and(|(boundary, _)| {
+                group.last_sequence()
+                    == last_input_sequence.map_or(boundary, |input| input.max(boundary))
+            });
+        if tool_response_is_closed {
+            return true;
+        }
+        has_assistant_messages
+            && group.items().iter().all(|item| {
+                matches!(
+                    item,
+                    ModelReplayItem::MultimodalUser { .. }
+                        | ModelReplayItem::Message {
+                            role: ModelReplayRole::User | ModelReplayRole::Assistant,
+                            ..
+                        }
+                        | ModelReplayItem::FunctionCall { .. }
+                        | ModelReplayItem::FunctionCallOutput { .. }
+                        | ModelReplayItem::ProviderPrivateAssistant { .. }
+                )
+            })
+            && (!has_tool_items
+                || (has_tool_call && has_tool_output && completed_tool_call.is_some()))
+            && activity_end_is_closed_response
+            && last_activity.is_some_and(|(boundary, _)| {
+                group.last_sequence()
+                    == last_input_sequence.map_or(boundary, |input| input.max(boundary))
+            })
+            && accepted_request
+                .zip(completed_assistant)
+                .is_some_and(|(request, completion)| request < completion)
     }
 
     pub(super) fn validate_source_range(

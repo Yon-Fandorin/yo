@@ -102,6 +102,16 @@ pub(super) fn completed_summary_round(
             },
         );
     }
+    let Some(ModelConnectorEvent::Terminal { usage, .. }) = events.last_mut() else {
+        unreachable!("완료 summary round는 terminal event로 끝납니다")
+    };
+    *usage = yo_core::ResponsesUsage {
+        input_tokens: Some(20),
+        output_tokens: Some(10),
+        total_tokens: Some(30),
+        reasoning_tokens: Some(0),
+        cache_read_input_tokens: yo_core::CacheReadInputTokens::Unsupported,
+    };
     events
 }
 
@@ -201,6 +211,47 @@ impl ToolExecutionHost for FailingStartHost {
 pub(super) struct SequenceTokenCounter {
     input_tokens: Mutex<VecDeque<u64>>,
     payloads: Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+pub(super) struct CapSensitiveTokenCounter {
+    pub(super) payloads: Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+impl yo_core::ModelTokenCounter for CapSensitiveTokenCounter {
+    fn count_input_tokens(
+        &self,
+        _tokenizer_profile: &str,
+        request: &serde_json::Value,
+    ) -> Result<u64, yo_core::ModelTokenCounterError> {
+        self.payloads.lock().unwrap().push(request.clone());
+        let input_text = request["input"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["content"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let output_cap = request["max_output_tokens"].as_u64();
+        let tokens = if input_text.contains("Create a faithful context checkpoint") {
+            20
+        } else if input_text.contains("# Context Checkpoint") {
+            30
+        } else if input_text.contains("input-3") && input_text.contains("first answer") {
+            match output_cap {
+                Some(10) => 96,
+                Some(4) => 82,
+                _ => 90,
+            }
+        } else if input_text.contains("input-3") {
+            match output_cap {
+                Some(10) => 10,
+                _ => 20,
+            }
+        } else {
+            10
+        };
+        Ok(tokens)
+    }
 }
 
 impl SequenceTokenCounter {

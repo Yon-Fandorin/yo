@@ -2,13 +2,14 @@ use std::sync::{Arc, Mutex};
 
 use yo_backend::BackendAdapter;
 use yo_core::{
-    ActivityUpdate, AgentCommand, BackendCommandEvidence, BackendEvent, CompleteModelBinding,
-    ContextPolicyChanged, ContextPressureObservation, ContextStrategy, InputImage,
-    InputImageSnapshot, ModelConnectorInputItem, ToolRegistry, UserInput,
+    ActivityUpdate, AgentCommand, BackendCommandEvidence, BackendEvent, BackendPoll,
+    CompleteModelBinding, ContextPolicyChanged, ContextPressureObservation, ContextStrategy,
+    InputImage, InputImageSnapshot, ModelConnectorEvent, ModelConnectorInputItem,
+    ModelConnectorInputRole, ToolRegistry, UserInput,
 };
 
 use super::support::{
-    FixedTokenCounter, MockConnector, MockHost, event_rounds, kimi::kimi_admission, turn,
+    FixedTokenCounter, MockConnector, MockHost, completed, event_rounds, kimi::kimi_admission, turn,
 };
 use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 
@@ -26,6 +27,14 @@ fn image_input(count: usize) -> UserInput {
                 .collect(),
         )
         .unwrap()
+}
+
+fn qwen_image_profile() -> CompleteModelBinding {
+    CompleteModelBinding::from_durable_json(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yo-core/src/model_service/tests/qwencloud-image-binding.json"
+    )))
+    .unwrap()
 }
 
 // 실제 모델 루프의 최종 요청 cap과 pressure는 같은 전체 추정치를 사용하고 N=0도 v2 정책을 유지한다.
@@ -141,4 +150,116 @@ fn final_request_cap_and_pressure_use_one_complete_image_estimate() {
             backend.shutdown().unwrap();
         }
     }
+}
+
+// staged UserInput의 이미지 occurrence와 순서를 보존해 durable commit 뒤 실제 다음 요청에
+// 전달합니다.
+#[test]
+fn committed_multimodal_steer_reaches_the_next_connector_request_intact() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let rounds = event_rounds(vec![
+        vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "image-first".to_owned(),
+            },
+            ModelConnectorEvent::TextDelta {
+                output_index: 0,
+                item_id: "image-first-message".to_owned(),
+                content_index: 0,
+                delta: "first answer".to_owned(),
+            },
+            ModelConnectorEvent::MessageDone {
+                output_index: 0,
+                item_id: "image-first-message".to_owned(),
+            },
+            completed("image-first"),
+        ],
+        vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "image-second".to_owned(),
+            },
+            ModelConnectorEvent::TextDelta {
+                output_index: 0,
+                item_id: "image-second-message".to_owned(),
+                content_index: 0,
+                delta: "done".to_owned(),
+            },
+            ModelConnectorEvent::MessageDone {
+                output_index: 0,
+                item_id: "image-second-message".to_owned(),
+            },
+            completed("image-second"),
+        ],
+    ]);
+    let complete = qwen_image_profile();
+    let mut backend = NativeModelBackend::with_connector_and_profile(
+        Box::new(MockConnector {
+            rounds,
+            requests: Arc::clone(&requests),
+        }),
+        complete.binding().clone(),
+        ToolRegistry::default().freeze(),
+        NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
+            None,
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        complete.profile().context().clone(),
+        Some(complete.profile().clone()),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap();
+    let turn = turn();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn.session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn,
+            input: UserInput::from("initial request"),
+        })
+        .unwrap();
+
+    let correction = image_input(1);
+    let expected_parts = correction.model_parts();
+    assert_eq!(
+        backend
+            .execute_command(AgentCommand::SteerTurn {
+                turn,
+                input: correction,
+            })
+            .unwrap(),
+        BackendCommandEvidence::SubmissionPrepared
+    );
+    backend.commit_prepared_command().unwrap();
+    let completion = (0..1_000)
+        .find_map(|_| match backend.poll_event().unwrap() {
+            BackendPoll::Event(
+                event @ (BackendEvent::TurnFinished { .. }
+                | BackendEvent::ResumableTurnFinished { .. }),
+            ) => Some(event),
+            BackendPoll::Event(_) | BackendPoll::Pending => None,
+            BackendPoll::Closed => panic!("backend closed before finishing the Turn"),
+        })
+        .expect("image steering Turn did not reach a bounded terminal event");
+    let BackendEvent::ResumableTurnFinished { .. } = completion else {
+        panic!("image correction Turn이 replay 가능 상태로 끝나지 않았습니다: {completion:?}")
+    };
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(matches!(
+        requests[1].input().last(),
+        Some(ModelConnectorInputItem::MultimodalUser { parts }) if parts == &expected_parts
+    ));
+    assert!(matches!(
+        requests[1].input().get(requests[1].input().len() - 2),
+        Some(ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::Assistant,
+            content,
+            ..
+        }) if content == "first answer"
+    ));
 }

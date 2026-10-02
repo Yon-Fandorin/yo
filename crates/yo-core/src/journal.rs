@@ -182,6 +182,21 @@ impl SessionJournal {
         self.append_committed(committed, events);
     }
 
+    /// 상관관계가 있는 제출의 전체 의미 기록이 내구성 저장소에 도달한 경우에만 반영합니다.
+    pub(crate) fn append_committed_submission_transactionally(
+        &mut self,
+        command: AgentCommand,
+        submission_id: SubmissionId,
+        events: &[AgentEvent],
+    ) -> bool {
+        let committed = CommittedCommand::submission(command, submission_id)
+            .expect("only a submission command may carry a SubmissionId");
+        let mut records = Vec::with_capacity(events.len() + 1);
+        records.push(SemanticRecord::CommandCommitted(committed));
+        records.extend(events.iter().cloned().map(SemanticRecord::EventCommitted));
+        self.append_records_transactionally(records)
+    }
+
     fn append_committed(&mut self, command: CommittedCommand, events: &[AgentEvent]) {
         let mut records = Vec::with_capacity(events.len() + 1);
         records.push(SemanticRecord::CommandCommitted(command));

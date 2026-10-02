@@ -156,7 +156,8 @@ fn check_automatic_compaction_survives_disk_resume_with_exact_retained_connector
             completed_text_round("turn-3", "third"),
         ],
         Arc::clone(&requests),
-        vec![10, 10, 90, 20, 30, 30],
+        // 같은 output cap에서 원래 문맥은 90, checkpoint와 successor 문맥은 각각 30입니다.
+        vec![10, 10, 90, 20, 90, 30, 30],
     );
     let mut repository = LocalSessionRepository::open(&storage, 16 * 1024 * 1024).unwrap();
     repository.acquire_session_writer(session_id).unwrap();
@@ -195,6 +196,16 @@ fn check_automatic_compaction_survives_disk_resume_with_exact_retained_connector
         .filter(|record| matches!(record, TranscriptRecord::ContextCheckpointCommitted(_)))
         .count();
     assert_eq!(checkpoints, 1, "the automatic checkpoint must be durable");
+    let checkpoint = history
+        .records()
+        .iter()
+        .find_map(|record| match record {
+            TranscriptRecord::ContextCheckpointCommitted(observation) => Some(observation),
+            _ => None,
+        })
+        .expect("the single committed checkpoint retains its exact pressure accounting");
+    assert_eq!(checkpoint.input_tokens_before(), 90);
+    assert_eq!(checkpoint.input_tokens_after(), 30);
     let completed_turns = history
         .records()
         .iter()

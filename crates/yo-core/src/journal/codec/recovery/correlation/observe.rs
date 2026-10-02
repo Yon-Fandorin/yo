@@ -10,8 +10,8 @@ use super::{
     },
 };
 use crate::{
-    AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplayItem,
-    ReplayProfile, TurnOutcome,
+    ActivityOutcome, AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence,
+    ModelReplayItem, ReplayProfile, TurnOutcome,
     backend::{provider_private_schema, validate_provider_private_replay_sequence},
     journal::CommittedCommand,
 };
@@ -502,11 +502,13 @@ impl CorrelationRecovery {
                 self.active_turn_starts.insert(turn.turn_id(), sequence);
                 self.submitted_inputs
                     .insert(sequence, input.model_replay_item());
+                self.submitted_input_turns.insert(sequence, turn.turn_id());
                 turn.turn_id()
             },
             AgentCommand::SteerTurn { turn, input } => {
                 self.submitted_inputs
                     .insert(sequence, input.model_replay_item());
+                self.submitted_input_turns.insert(sequence, turn.turn_id());
                 turn.turn_id()
             },
             AgentCommand::CreateSession { .. }
@@ -535,10 +537,25 @@ impl CorrelationRecovery {
             AgentEvent::TurnStarted { turn } => {
                 self.completed_turns.remove(&turn.turn_id());
             },
-            AgentEvent::ActivityFinished { .. } => {
-                self.completed_activity_boundaries.insert(sequence);
+            AgentEvent::ActivityFinished { activity, outcome } => {
+                if let Some((_, kind)) = self.started_activities.remove(activity) {
+                    if matches!(outcome, ActivityOutcome::Interrupted) {
+                        self.interrupted_activity_boundaries
+                            .insert(sequence, activity.turn_id());
+                    } else {
+                        self.closed_activity_boundaries
+                            .insert(sequence, (activity.turn_id(), kind));
+                        if matches!(outcome, ActivityOutcome::Completed) {
+                            self.completed_activity_boundaries
+                                .insert(sequence, (activity.turn_id(), kind));
+                        }
+                    }
+                }
             },
-            AgentEvent::ActivityStarted { .. } | AgentEvent::ActivityUpdated { .. } => {},
+            AgentEvent::ActivityStarted { activity, kind } => {
+                self.started_activities.insert(*activity, (sequence, *kind));
+            },
+            AgentEvent::ActivityUpdated { .. } => {},
         }
     }
 

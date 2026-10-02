@@ -38,10 +38,7 @@ pub(super) fn execute_command(
         AgentCommand::StartTurn { turn, input } => {
             backend.start_turn(turn, input.model_replay_item())
         },
-        AgentCommand::SteerTurn { .. } => Err(failure(
-            BackendFailureKind::Unsupported,
-            "native model loop does not support steering",
-        )),
+        AgentCommand::SteerTurn { turn, input } => backend.prepare_steer(turn, input),
         AgentCommand::InterruptTurn { turn } => backend.interrupt(turn),
         AgentCommand::RespondToActivity {
             request,

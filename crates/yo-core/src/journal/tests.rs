@@ -9,7 +9,7 @@ use std::{
 };
 
 use super::{
-    JournalDurability, JournalEntry, SemanticRecord, SessionJournal,
+    ContextActiveSource, JournalDurability, JournalEntry, SemanticRecord, SessionJournal,
     codec::{decode, recover},
     write_state,
 };
@@ -316,6 +316,278 @@ fn recovers_an_initial_descriptor_gap_with_the_complete_session_snapshot() {
         recovered.journal_cutoff().map(JournalSequence::get),
         Some(4)
     );
+}
+
+// 준비된 상관 제출은 내구성 append에 성공한 경우에만 정확한 SubmissionId와 함께 live Journal에
+// 반영됩니다.
+#[test]
+fn publishes_correlated_submission_transactionally_with_its_exact_identity() {
+    let session_id = session(30);
+    let descriptor = crate::fixture_descriptor(session_id);
+    let repository = SharedRepository::default();
+    let pressure = Arc::clone(&repository.pressure);
+    let observed = Arc::clone(&repository.state);
+    let mut journal =
+        SessionJournal::with_repository_and_descriptor(Box::new(repository), descriptor);
+    journal.initialize_durability();
+    journal.append_committed_command(
+        AgentCommand::CreateSession { session_id },
+        &[AgentEvent::SessionCreated { session_id }],
+    );
+
+    let turn = turn(session_id, 1);
+    let command = AgentCommand::SteerTurn {
+        turn,
+        input: UserInput::from("correct this"),
+    };
+    let id: crate::SubmissionId = "10000000-0000-4000-8000-000000000030".parse().unwrap();
+    let before = journal.entries();
+    pressure.store(true, Ordering::Release);
+
+    assert!(!journal.append_committed_submission_transactionally(command.clone(), id, &[]));
+    assert_eq!(journal.entries(), before);
+
+    pressure.store(false, Ordering::Release);
+    assert!(journal.append_committed_submission_transactionally(command.clone(), id, &[]));
+    let entries = journal.entries();
+    let Some(SemanticRecord::CommandCommitted(committed)) =
+        entries.last().map(JournalEntry::record)
+    else {
+        panic!("the durable submission is the latest semantic record");
+    };
+    assert_eq!(committed.command(), &command);
+    assert_eq!(committed.submission_id(), Some(id));
+
+    let stored = observed.lock().unwrap();
+    let commit = decode(
+        stored
+            .entries
+            .last()
+            .expect("the successful transaction reaches durable storage")
+            .record()
+            .payload(),
+    )
+    .expect("the transaction's durable record decodes");
+    assert!(commit.records().iter().any(|record| {
+        matches!(
+            record.record(),
+            super::codec::JournalRecord::CommandCommitted(committed)
+                if committed.command() == &command && committed.submission_id() == Some(id)
+        )
+    }));
+}
+
+// 전달 시점에 갱신된 active suffix는 source boundary 안의 모든 제출을 정확한 순서와 횟수로 담아야
+// 합니다.
+#[test]
+fn advances_live_active_suffix_only_for_exact_committed_input_provenance() {
+    let session_id = session(31);
+    let turn = turn(session_id, 1);
+    let initial = UserInput::new("initial");
+    let first_correction = UserInput::new("first correction");
+    let second_correction = UserInput::new("second correction");
+    let submission_id = |value: u8| -> crate::SubmissionId {
+        format!("10000000-0000-4000-8000-0000000000{value:02x}")
+            .parse()
+            .unwrap()
+    };
+    let mut journal = SessionJournal::new();
+    journal.append_committed_submission(
+        AgentCommand::StartTurn {
+            turn,
+            input: initial.clone(),
+        },
+        submission_id(31),
+        &[],
+    );
+    let first_sequence = journal.last_sequence().unwrap();
+    journal.append_committed_submission(
+        AgentCommand::SteerTurn {
+            turn,
+            input: first_correction.clone(),
+        },
+        submission_id(32),
+        &[],
+    );
+    journal.append_committed_submission(
+        AgentCommand::SteerTurn {
+            turn,
+            input: second_correction.clone(),
+        },
+        submission_id(33),
+        &[],
+    );
+    let last_sequence = journal.last_sequence().unwrap();
+    let mut source = ContextActiveSource::new(
+        turn,
+        first_sequence,
+        first_sequence,
+        vec![initial.model_replay_item()],
+    );
+    let exact_items = vec![
+        initial.model_replay_item(),
+        first_correction.model_replay_item(),
+        second_correction.model_replay_item(),
+    ];
+
+    assert!(!journal.advance_active_context_source(
+        &mut source,
+        turn,
+        last_sequence,
+        vec![
+            exact_items[0].clone(),
+            exact_items[2].clone(),
+            exact_items[1].clone(),
+        ],
+    ));
+    assert!(journal.advance_active_context_source(&mut source, turn, last_sequence, exact_items,));
+}
+
+// accepted request 뒤 아직 model response Activity가 오지 않았다면 correction만으로든
+// 꾸며낸 assistant item과 함께든 live active source를 그 너머로 옮길 수 없습니다.
+#[test]
+fn does_not_advance_live_active_source_past_an_open_accepted_request() {
+    let session_id = session(31);
+    let turn = turn(session_id, 1);
+    let initial = UserInput::new("initial");
+    let correction = UserInput::new("correction");
+    let submission_id = |value: u8| -> crate::SubmissionId {
+        format!("10000000-0000-4000-8000-0000000000{value:02x}")
+            .parse()
+            .unwrap()
+    };
+    let mut journal = SessionJournal::new();
+    journal.append_committed_submission(
+        AgentCommand::StartTurn {
+            turn,
+            input: initial.clone(),
+        },
+        submission_id(31),
+        &[],
+    );
+    let first_sequence = journal.last_sequence().unwrap();
+    let mut source = ContextActiveSource::new(
+        turn,
+        first_sequence,
+        first_sequence,
+        vec![initial.model_replay_item()],
+    );
+    journal.append_accepted_request(
+        turn,
+        1,
+        1,
+        BackendRequestEvidence::new(
+            "scripted/request/v1",
+            BackendIdentity::new("scripted/exchange/v1", "exchange-1"),
+            BackendIdentity::new("scripted/request/v1", "request-1"),
+        ),
+    );
+    journal.append_committed_submission(
+        AgentCommand::SteerTurn {
+            turn,
+            input: correction.clone(),
+        },
+        submission_id(32),
+        &[],
+    );
+    let last_sequence = journal.last_sequence().unwrap();
+
+    assert!(!journal.advance_active_context_source(
+        &mut source,
+        turn,
+        last_sequence,
+        vec![initial.model_replay_item(), correction.model_replay_item()],
+    ));
+    assert!(!journal.advance_active_context_source(
+        &mut source,
+        turn,
+        last_sequence,
+        vec![
+            initial.model_replay_item(),
+            crate::ModelReplayItem::Message {
+                role: crate::ModelReplayRole::Assistant,
+                content: "unobserved response".to_owned(),
+                refusal: None,
+            },
+            correction.model_replay_item(),
+        ],
+    ));
+}
+
+// assistant ActivityFinished 뒤 suffix 전달 전에 도착한 correction도 FIFO 그대로 같은
+// active source boundary에 반영할 수 있습니다.
+#[test]
+fn advances_live_active_source_after_a_completed_response_with_a_correction() {
+    let session_id = session(31);
+    let turn = turn(session_id, 1);
+    let initial = UserInput::new("initial");
+    let correction = UserInput::new("correction");
+    let submission_id = |value: u8| -> crate::SubmissionId {
+        format!("10000000-0000-4000-8000-0000000000{value:02x}")
+            .parse()
+            .unwrap()
+    };
+    let mut journal = SessionJournal::new();
+    journal.append_committed_submission(
+        AgentCommand::StartTurn {
+            turn,
+            input: initial.clone(),
+        },
+        submission_id(31),
+        &[],
+    );
+    let first_sequence = journal.last_sequence().unwrap();
+    let mut source = ContextActiveSource::new(
+        turn,
+        first_sequence,
+        first_sequence,
+        vec![initial.model_replay_item()],
+    );
+    journal.append_accepted_request(
+        turn,
+        1,
+        1,
+        BackendRequestEvidence::new(
+            "scripted/request/v1",
+            BackendIdentity::new("scripted/exchange/v1", "exchange-1"),
+            BackendIdentity::new("scripted/request/v1", "request-1"),
+        ),
+    );
+    let activity = ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(1).unwrap()));
+    journal.append_events(&[
+        AgentEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::AgentMessage,
+        },
+        AgentEvent::ActivityFinished {
+            activity,
+            outcome: ActivityOutcome::Completed,
+        },
+    ]);
+    journal.append_committed_submission(
+        AgentCommand::SteerTurn {
+            turn,
+            input: correction.clone(),
+        },
+        submission_id(32),
+        &[],
+    );
+    let last_sequence = journal.last_sequence().unwrap();
+
+    assert!(journal.advance_active_context_source(
+        &mut source,
+        turn,
+        last_sequence,
+        vec![
+            initial.model_replay_item(),
+            crate::ModelReplayItem::Message {
+                role: crate::ModelReplayRole::Assistant,
+                content: "completed response".to_owned(),
+                refusal: None,
+            },
+            correction.model_replay_item(),
+        ],
+    ));
 }
 
 // live writer가 binding, accepted request, 완료 outcome과 Anchor를 각각 한 physical append로

@@ -9,7 +9,7 @@ use serde_json::json;
 use yo_core::{
     ActivityOutcome, ApiDialect, BackendCommandEvidence, BackendEvent, BackendFailure,
     BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, Failure, ModelReplayDelta,
-    ModelReplayItem, TurnOutcome, TurnRef,
+    ModelReplayItem, TurnOutcome, TurnRef, UserInput,
 };
 
 use super::{
@@ -70,6 +70,9 @@ impl NativeModelBackend {
             pending_secret_call: None,
             awaiting_secret_input: None,
             prepared_secret_request: None,
+            prepared_steer: None,
+            armed_steers: Default::default(),
+            armed_steer_encoded_bytes: 0,
             terminal_secret_request: false,
             start_next_round: false,
             compaction: None,
@@ -94,6 +97,86 @@ impl NativeModelBackend {
         Ok(BackendCommandEvidence::RequestAccepted(
             self.request_evidence(turn),
         ))
+    }
+
+    pub(super) fn prepare_steer(
+        &mut self,
+        turn: TurnRef,
+        input: UserInput,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        let Some(state) = self.turn.as_ref() else {
+            return Err(failure(
+                BackendFailureKind::CommandRejected,
+                "the exact Turn is no longer active in the native backend",
+            ));
+        };
+        if state.turn != turn {
+            return Err(failure(
+                BackendFailureKind::CommandRejected,
+                "the exact Turn is no longer active in the native backend",
+            ));
+        }
+        if state.awaiting_secret_input.is_some()
+            || state.prepared_secret_request.is_some()
+            || state.terminal_secret_request
+        {
+            return Err(failure(
+                BackendFailureKind::CommandRejected,
+                "the native secret interaction does not admit steering",
+            ));
+        }
+        if state.prepared_steer.is_some() {
+            return Err(failure(
+                BackendFailureKind::CommandRejected,
+                "a native Turn input is already awaiting durable commit",
+            ));
+        }
+
+        let item = input.model_replay_item();
+        if !self.steer_fits_pending_replay(state, &item)? {
+            return Err(failure(
+                BackendFailureKind::CommandRejected,
+                "native Turn input exceeds the pending replay capacity",
+            ));
+        }
+        self.turn
+            .as_mut()
+            .expect("the exact Turn remained active during admission")
+            .prepared_steer = Some(item);
+        Ok(BackendCommandEvidence::SubmissionPrepared)
+    }
+
+    pub(super) fn commit_prepared_steer(&mut self) -> Result<(), BackendFailure> {
+        let state = self.turn.as_mut().ok_or_else(|| {
+            failure(
+                BackendFailureKind::Protocol,
+                "prepared native Turn input lost its active Turn before commit",
+            )
+        })?;
+        let item = state.prepared_steer.take().ok_or_else(|| {
+            failure(
+                BackendFailureKind::Protocol,
+                "no native Turn input is prepared for durable commit",
+            )
+        })?;
+        state.armed_steer_encoded_bytes = state
+            .armed_steer_encoded_bytes
+            .checked_add(item.encoded_len())
+            .ok_or_else(|| {
+                failure(
+                    BackendFailureKind::ContextExhausted,
+                    "native Turn input exceeds the pending replay capacity",
+                )
+            })?;
+        state.armed_steers.push_back(item);
+        Ok(())
+    }
+
+    pub(super) fn abort_prepared_steer(&mut self) -> bool {
+        let Some(state) = self.turn.as_mut() else {
+            return false;
+        };
+        state.prepared_steer.take().is_some()
     }
 
     pub(super) fn complete_turn(&mut self, state: &mut TurnState) -> Result<(), BackendFailure> {

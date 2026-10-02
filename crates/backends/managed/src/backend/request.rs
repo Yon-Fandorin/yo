@@ -1,5 +1,7 @@
 //! Exact model-request construction, token counting, and bounded output-cap admission.
 
+use std::mem;
+
 use yo_core::{
     ApiDialect, BackendFailure, BackendFailureKind, BackendIdentity, BackendRequestEvidence,
     ModelCacheAffinityHint, ModelConnectorCancellation, ModelConnectorInputItem,
@@ -47,6 +49,8 @@ impl NativeModelBackend {
                 "native model loop exceeded its model-round limit",
             ));
         }
+        state.delta.extend(mem::take(&mut state.armed_steers));
+        state.armed_steer_encoded_bytes = 0;
         self.ensure_pending_replay_capacity(state)?;
         let mut items = Vec::new();
         items.push(ModelConnectorInputItem::Message {
@@ -56,20 +60,7 @@ impl NativeModelBackend {
         });
         items.extend(self.replay.items().iter().map(replay_input));
         items.extend(state.delta.iter().map(replay_input));
-        let tool_exposure = if self.tool_exposure_enabled {
-            let mut tools = self
-                .registry
-                .function_tools()
-                .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
-            if self.secret_interaction_enabled {
-                tools.push(super::secret::function_tool(
-                    !self.historical_secret_interaction,
-                )?);
-            }
-            RequestToolExposure::enabled(tools)
-        } else {
-            RequestToolExposure::disabled()
-        };
+        let tool_exposure = self.turn_tool_exposure()?;
         let replay_budget = ModelReplayDelta::replay_budget(
             self.replay.contract().is_none().then_some(&self.contract),
             state.delta.iter(),
@@ -243,15 +234,53 @@ impl NativeModelBackend {
         items: Vec<ModelConnectorInputItem>,
         tools: RequestToolExposure,
         session_id: SessionId,
+        max_output_tokens: Option<u64>,
     ) -> Result<InputCount, BackendFailure> {
         let request = ModelConnectorRequest::new(
             items,
             tools,
-            self.model_context.max_output_tokens(),
+            max_output_tokens,
             self.config.reasoning_effort,
         )
         .map_err(map_connector_turn)?
         .with_cache_affinity_hint(ModelCacheAffinityHint::for_session(session_id));
         self.count_request_input(&request)
+    }
+
+    pub(super) fn count_turn_input(
+        &self,
+        state: &TurnState,
+        delta: &[yo_core::ModelReplayItem],
+        max_output_tokens: Option<u64>,
+    ) -> Result<InputCount, BackendFailure> {
+        let mut items = vec![ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::System,
+            content: self.contract.system_prompt().to_owned(),
+            refusal: None,
+        }];
+        items.extend(self.replay.items().iter().map(replay_input));
+        items.extend(delta.iter().map(replay_input));
+        self.count_input_for_items(
+            items,
+            self.turn_tool_exposure()?,
+            state.turn.session_id(),
+            max_output_tokens,
+        )
+    }
+
+    pub(super) fn turn_tool_exposure(&self) -> Result<RequestToolExposure, BackendFailure> {
+        if !self.tool_exposure_enabled {
+            return Ok(RequestToolExposure::disabled());
+        }
+        let mut tools = self
+            .registry
+            .function_tools()
+            .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
+        if self.secret_interaction_enabled {
+            tools.push(super::secret::function_tool(
+                !self.historical_secret_interaction,
+            )?);
+        }
+        Ok(RequestToolExposure::enabled(tools))
     }
 }

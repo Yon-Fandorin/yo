@@ -1,9 +1,13 @@
-use std::{collections::BTreeSet, fmt::Write as _, mem};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+    mem,
+};
 
 use sha2::Digest as _;
 
 use super::super::{
-    JournalSequence, SemanticRecord, SessionJournal,
+    JournalEntry, JournalSequence, SemanticRecord, SessionJournal,
     codec::{
         BindingCloseReason, ContextArtifactReceipt, ContextCheckpoint, ContextImageLoss,
         ContextImageSource, ContextLoss, ContextPolicyChanged, ContextRetainedGroup,
@@ -12,9 +16,210 @@ use super::super::{
     read_state,
 };
 use crate::{
-    AgentCommand, AgentEvent, ContextCheckpointProposal, ModelReplay, ModelReplayItem, TurnOutcome,
-    TurnRef,
+    ActivityKind, ActivityOutcome, ActivityRef, AgentCommand, AgentEvent,
+    ContextCheckpointProposal, ModelReplay, ModelReplayItem, ModelReplayRole, ReplayProfile,
+    TurnOutcome, TurnRef,
+    backend::{provider_private_schema, validate_provider_private_replay_sequence},
 };
+
+#[derive(Default)]
+struct ActiveSourceEvidence {
+    accepted_request: Option<JournalSequence>,
+    last_activity_boundary: Option<JournalSequence>,
+    last_activity_kind: Option<ActivityKind>,
+    last_agent_message_boundary: Option<JournalSequence>,
+    last_tool_call_boundary: Option<JournalSequence>,
+    last_interrupted_activity_boundary: Option<JournalSequence>,
+    last_activity_completed: bool,
+    has_open_activity: bool,
+}
+
+fn active_source_evidence(
+    entries: &[JournalEntry],
+    turn: TurnRef,
+    first: JournalSequence,
+    last: JournalSequence,
+) -> ActiveSourceEvidence {
+    let mut evidence = ActiveSourceEvidence::default();
+    let mut started_activities = BTreeMap::<ActivityRef, ActivityKind>::new();
+    for entry in entries.iter().filter(|entry| entry.sequence() <= last) {
+        match entry.record() {
+            SemanticRecord::BackendRequestAccepted(request)
+                if request.turn_id() == turn.turn_id() && entry.sequence() >= first =>
+            {
+                evidence.accepted_request = Some(entry.sequence());
+            },
+            SemanticRecord::EventCommitted(AgentEvent::ActivityStarted { activity, kind })
+                if activity.turn() == turn =>
+            {
+                started_activities.insert(*activity, *kind);
+            },
+            SemanticRecord::EventCommitted(AgentEvent::ActivityFinished { activity, outcome })
+                if activity.turn() == turn =>
+            {
+                if let Some(kind) = started_activities.remove(activity)
+                    && entry.sequence() >= first
+                {
+                    if matches!(outcome, ActivityOutcome::Interrupted) {
+                        evidence.last_interrupted_activity_boundary = Some(entry.sequence());
+                    } else {
+                        evidence.last_activity_boundary = Some(entry.sequence());
+                        evidence.last_activity_kind = Some(kind);
+                        evidence.last_activity_completed =
+                            matches!(outcome, ActivityOutcome::Completed);
+                        if matches!(outcome, ActivityOutcome::Completed) {
+                            match kind {
+                                ActivityKind::AgentMessage => {
+                                    evidence.last_agent_message_boundary = Some(entry.sequence());
+                                },
+                                ActivityKind::ToolCall => {
+                                    evidence.last_tool_call_boundary = Some(entry.sequence());
+                                },
+                                _ => {},
+                            }
+                        }
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+    evidence.has_open_activity = !started_activities.is_empty();
+    evidence
+}
+
+fn active_suffix_matches(
+    entries: &[JournalEntry],
+    turn: TurnRef,
+    first: JournalSequence,
+    last: JournalSequence,
+    items: &[ModelReplayItem],
+) -> bool {
+    let Some(expected_inputs) = committed_user_inputs(entries, turn, first, last) else {
+        return false;
+    };
+    if replay_user_inputs(items) != expected_inputs {
+        return false;
+    }
+    if items.iter().any(|item| {
+        !matches!(
+            item,
+            ModelReplayItem::MultimodalUser { .. }
+                | ModelReplayItem::Message {
+                    role: ModelReplayRole::User | ModelReplayRole::Assistant,
+                    ..
+                }
+                | ModelReplayItem::FunctionCall { .. }
+                | ModelReplayItem::FunctionCallOutput { .. }
+                | ModelReplayItem::ProviderPrivateAssistant { .. }
+        )
+    }) {
+        return false;
+    }
+    let evidence = active_source_evidence(entries, turn, first, last);
+    if evidence.has_open_activity {
+        return false;
+    }
+    let last_input_sequence = entries
+        .iter()
+        .filter(|entry| first <= entry.sequence() && entry.sequence() <= last)
+        .filter_map(|entry| match entry.record() {
+            SemanticRecord::CommandCommitted(committed)
+                if matches!(
+                    committed.command(),
+                    AgentCommand::StartTurn { turn: candidate, .. }
+                        | AgentCommand::SteerTurn { turn: candidate, .. }
+                        if *candidate == turn
+                ) =>
+            {
+                Some(entry.sequence())
+            },
+            _ => None,
+        })
+        .next_back();
+    let checkpoint_root = entries
+        .iter()
+        .filter(|entry| entry.sequence() <= last)
+        .filter_map(|entry| {
+            matches!(entry.record(), SemanticRecord::ContextCheckpoint(_))
+                .then_some(entry.sequence())
+        })
+        .next_back()
+        == Some(first);
+    if last_input_sequence.is_none() && !checkpoint_root {
+        return false;
+    }
+    let has_assistant_message = items.iter().any(|item| {
+        matches!(
+            item,
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                ..
+            }
+        )
+    });
+    let has_tool_call = items
+        .iter()
+        .any(|item| matches!(item, ModelReplayItem::FunctionCall { .. }));
+    let has_tool_output = items
+        .iter()
+        .any(|item| matches!(item, ModelReplayItem::FunctionCallOutput { .. }));
+    let has_tool_items = has_tool_call || has_tool_output;
+    let only_active_inputs = items.iter().all(|item| {
+        matches!(
+            item,
+            ModelReplayItem::MultimodalUser { .. }
+                | ModelReplayItem::Message {
+                    role: ModelReplayRole::User,
+                    ..
+                }
+        )
+    });
+
+    let Some(request) = evidence.accepted_request else {
+        return only_active_inputs && last_input_sequence == Some(last);
+    };
+    if evidence
+        .last_interrupted_activity_boundary
+        .is_some_and(|boundary| request < boundary)
+    {
+        return false;
+    }
+    let Some(last_activity) = evidence.last_activity_boundary else {
+        return false;
+    };
+    let response_precedes_tail = evidence
+        .last_agent_message_boundary
+        .into_iter()
+        .chain(evidence.last_tool_call_boundary)
+        .any(|response| request < response && response < last_activity);
+    let activity_end_is_closed_response = match evidence.last_activity_kind {
+        Some(ActivityKind::AgentMessage) => {
+            evidence.last_agent_message_boundary == Some(last_activity)
+        },
+        Some(ActivityKind::ToolCall) => evidence.last_tool_call_boundary == Some(last_activity),
+        Some(ActivityKind::ToolResult) => evidence
+            .last_tool_call_boundary
+            .is_some_and(|tool_call| tool_call < last_activity),
+        Some(_) => evidence.last_activity_completed && response_precedes_tail,
+        None => false,
+    };
+    let assistant_completed = evidence
+        .last_agent_message_boundary
+        .is_some_and(|boundary| request < boundary);
+    if has_assistant_message && assistant_completed && activity_end_is_closed_response {
+        return last == last_input_sequence.map_or(last_activity, |input| input.max(last_activity))
+            && (!has_tool_items || (has_tool_call && has_tool_output));
+    }
+    let tool_call_completed = evidence
+        .last_tool_call_boundary
+        .is_some_and(|boundary| request < boundary);
+    has_tool_call
+        && has_tool_output
+        && tool_call_completed
+        && activity_end_is_closed_response
+        && last == last_input_sequence.map_or(last_activity, |input| input.max(last_activity))
+}
 
 #[derive(Clone)]
 pub(super) struct ContextSourceGroup {
@@ -70,6 +275,70 @@ impl ContextActiveSource {
 }
 
 impl SessionJournal {
+    pub(crate) fn advance_active_context_source(
+        &self,
+        source: &mut ContextActiveSource,
+        turn: TurnRef,
+        last_sequence: JournalSequence,
+        items: Vec<ModelReplayItem>,
+    ) -> bool {
+        let mut candidate = source.clone();
+        if !candidate.try_advance(turn, last_sequence, items) {
+            return false;
+        }
+        let entries = self.semantic_entries();
+        let Some(root) = entries
+            .iter()
+            .find(|entry| entry.sequence() == candidate.first_sequence)
+        else {
+            return false;
+        };
+        match root.record() {
+            SemanticRecord::CommandCommitted(committed) => match committed.command() {
+                AgentCommand::StartTurn {
+                    turn: candidate_turn,
+                    input,
+                } if *candidate_turn == turn
+                    && candidate.items.first() == Some(&input.model_replay_item()) => {},
+                _ => return false,
+            },
+            SemanticRecord::ContextCheckpoint(_) => {},
+            _ => return false,
+        }
+        let Some(last) = entries
+            .iter()
+            .find(|entry| entry.sequence() == candidate.last_sequence)
+        else {
+            return false;
+        };
+        let closed_boundary = match last.record() {
+            SemanticRecord::EventCommitted(AgentEvent::ActivityFinished { activity, .. }) => {
+                activity.turn() == turn
+            },
+            SemanticRecord::CommandCommitted(committed) => matches!(
+                committed.command(),
+                AgentCommand::SteerTurn {
+                    turn: candidate_turn,
+                    ..
+                } if *candidate_turn == turn
+            ),
+            _ => false,
+        };
+        if !closed_boundary
+            || !active_suffix_matches(
+                &entries,
+                turn,
+                candidate.first_sequence,
+                candidate.last_sequence,
+                &candidate.items,
+            )
+        {
+            return false;
+        }
+        *source = candidate;
+        true
+    }
+
     pub(crate) fn append_context_policy(&mut self, policy: ContextPolicyChanged) -> bool {
         let records = vec![SemanticRecord::ContextPolicyChanged(policy)];
         if self.durable.is_none() {
@@ -146,24 +415,38 @@ impl SessionJournal {
             .collect::<Option<Vec<_>>>()?;
         let source_journal_boundary = if let Some(turn) = proposal.turn() {
             let source = active_source?;
-            let (sequence, input) = entries.iter().find_map(|entry| {
-                (entry.sequence() == source.first_sequence).then(|| match entry.record() {
-                    SemanticRecord::CommandCommitted(committed) => match committed.command() {
-                        AgentCommand::StartTurn {
-                            turn: candidate,
-                            input,
-                        } if *candidate == turn => Some((entry.sequence(), input)),
-                        _ => None,
-                    },
-                    _ => None,
-                })?
-            })?;
-            let expected_input = input.model_replay_item();
-            if source.turn != turn
-                || source.first_sequence != sequence
-                || source.last_sequence < source.first_sequence
-                || source.items.first() != Some(&expected_input)
-                || source.items.as_slice() != proposal.active_group()
+            if source.turn != turn || source.last_sequence < source.first_sequence {
+                return None;
+            }
+            let root = entries
+                .iter()
+                .find(|entry| entry.sequence() == source.first_sequence)?;
+            let start_input = match root.record() {
+                SemanticRecord::CommandCommitted(committed) => match committed.command() {
+                    AgentCommand::StartTurn {
+                        turn: candidate,
+                        input,
+                    } if *candidate == turn => Some(input.model_replay_item()),
+                    _ => return None,
+                },
+                SemanticRecord::ContextCheckpoint(checkpoint)
+                    if checkpoint.epoch() == epoch
+                        && checkpoint.successor_context_epoch() == previous_context_epoch =>
+                {
+                    None
+                },
+                _ => return None,
+            };
+            if start_input
+                .as_ref()
+                .is_some_and(|input| source.items.first() != Some(input))
+                || replay_user_inputs(&source.items)
+                    != committed_user_inputs(
+                        &entries,
+                        turn,
+                        source.first_sequence,
+                        source.last_sequence,
+                    )?
                 || entries
                     .iter()
                     .find(|entry| entry.sequence() == source.last_sequence)
@@ -176,19 +459,85 @@ impl SessionJournal {
                                     ..
                                 }) if activity.turn() == turn
                             )
+                            && !matches!(
+                                entry.record(),
+                                SemanticRecord::CommandCommitted(committed)
+                                    if matches!(
+                                        committed.command(),
+                                        AgentCommand::SteerTurn {
+                                            turn: candidate,
+                                            ..
+                                        } if *candidate == turn
+                                    )
+                            )
                     })
             {
+                return None;
+            }
+            let mut trailing_inputs = Vec::new();
+            let mut trailing_boundary = None;
+            for entry in entries
+                .iter()
+                .filter(|entry| entry.sequence() > source.last_sequence)
+            {
+                let SemanticRecord::CommandCommitted(committed) = entry.record() else {
+                    continue;
+                };
+                match committed.command() {
+                    AgentCommand::SteerTurn {
+                        turn: candidate,
+                        input,
+                    } if *candidate == turn => {
+                        trailing_inputs.push(input.model_replay_item());
+                        trailing_boundary = Some(entry.sequence());
+                    },
+                    AgentCommand::StartTurn { .. } | AgentCommand::SteerTurn { .. } => {
+                        return None;
+                    },
+                    AgentCommand::CreateSession { .. }
+                    | AgentCommand::RespondToActivity { .. }
+                    | AgentCommand::InterruptTurn { .. }
+                    | AgentCommand::CompactContext { .. } => return None,
+                }
+            }
+            if !proposal.active_group().starts_with(source.items.as_slice())
+                || proposal.active_group()[source.items.len()..] != trailing_inputs
+                || replay_user_inputs(proposal.active_group())
+                    != committed_user_inputs(
+                        &entries,
+                        turn,
+                        source.first_sequence,
+                        trailing_boundary.unwrap_or(source.last_sequence),
+                    )?
+            {
+                return None;
+            }
+            let boundary = trailing_boundary.unwrap_or(source.last_sequence);
+            if !active_suffix_matches(
+                &entries,
+                turn,
+                source.first_sequence,
+                boundary,
+                proposal.active_group(),
+            ) || entries.iter().any(|entry| {
+                entry.sequence() > boundary
+                    && matches!(
+                        entry.record(),
+                        SemanticRecord::BackendRequestAccepted(request)
+                            if request.turn_id() == turn.turn_id()
+                    )
+            }) {
                 return None;
             }
             retained.push(
                 ContextRetainedGroup::try_new(
                     source.first_sequence,
-                    source.last_sequence,
+                    boundary,
                     proposal.active_group().to_vec(),
                 )
                 .ok()?,
             );
-            source.last_sequence
+            boundary
         } else {
             if active_source.is_some() || !proposal.active_group().is_empty() {
                 return None;
@@ -293,6 +642,44 @@ impl SessionJournal {
             },
             _ => None,
         })?;
+        let retained_items = checkpoint
+            .retained_groups()
+            .iter()
+            .flat_map(|group| group.items())
+            .cloned()
+            .collect::<Vec<_>>();
+        let has_provider_private = retained_items
+            .iter()
+            .any(|item| matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }));
+        match binding.continuation_strategy() {
+            crate::ContinuationStrategy::ExactReplay {
+                replay_profile: ReplayProfile::SemanticOnly,
+                ..
+            } if has_provider_private => return None,
+            crate::ContinuationStrategy::ExactReplay {
+                replay_profile: ReplayProfile::ProviderPrivateLocalPlaintext,
+                ..
+            } => {
+                if retained_items.iter().any(|item| {
+                    matches!(
+                        item,
+                        ModelReplayItem::Message {
+                            role: ModelReplayRole::Assistant,
+                            ..
+                        }
+                    )
+                }) {
+                    validate_provider_private_replay_sequence(
+                        &retained_items,
+                        provider_private_schema(ReplayProfile::ProviderPrivateLocalPlaintext)?,
+                    )
+                    .ok()?;
+                } else if has_provider_private {
+                    return None;
+                }
+            },
+            _ => {},
+        }
         checkpoint
             .validate_binding_accounting(binding.binding_identity().value())
             .ok()?;
@@ -309,8 +696,59 @@ impl SessionJournal {
     }
 }
 
+fn committed_user_inputs(
+    entries: &[JournalEntry],
+    turn: TurnRef,
+    first: JournalSequence,
+    last: JournalSequence,
+) -> Option<Vec<ModelReplayItem>> {
+    let mut inputs = Vec::new();
+    for entry in entries
+        .iter()
+        .filter(|entry| first <= entry.sequence() && entry.sequence() <= last)
+    {
+        let SemanticRecord::CommandCommitted(committed) = entry.record() else {
+            continue;
+        };
+        match committed.command() {
+            AgentCommand::StartTurn {
+                turn: candidate,
+                input,
+            }
+            | AgentCommand::SteerTurn {
+                turn: candidate,
+                input,
+            } => {
+                if *candidate != turn || committed.submission_id().is_none() {
+                    return None;
+                }
+                inputs.push(input.model_replay_item());
+            },
+            _ => {},
+        }
+    }
+    Some(inputs)
+}
+
+fn replay_user_inputs(items: &[ModelReplayItem]) -> Vec<ModelReplayItem> {
+    items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item,
+                ModelReplayItem::MultimodalUser { .. }
+                    | ModelReplayItem::Message {
+                        role: ModelReplayRole::User,
+                        ..
+                    }
+            )
+        })
+        .cloned()
+        .collect()
+}
+
 pub(super) fn context_source_groups(
-    entries: &[super::super::JournalEntry],
+    entries: &[JournalEntry],
     epoch: u64,
     context_epoch: u64,
 ) -> Option<Vec<ContextSourceGroup>> {

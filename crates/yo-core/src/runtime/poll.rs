@@ -1,6 +1,6 @@
 use std::slice;
 
-use super::{AgentBackend, AgentRuntime, RuntimeError, RuntimePoll};
+use super::{AgentBackend, AgentRuntime, ContextActiveSource, RuntimeError, RuntimePoll};
 use crate::{
     AgentEvent, BackendEvent, BackendFailureKind, BackendPoll, BackendResumeSource,
     ContinuationStrategy, Failure, TurnOutcome,
@@ -197,7 +197,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
             self.model_replay = replay;
             self.replay_contract_rebind_required = false;
             self.resume_source = Some(BackendResumeSource::ContextCheckpoint(sequence));
-            self.active_context_source = None;
+            self.active_context_source = proposal
+                .turn()
+                .map(|turn| ContextActiveSource::new(turn, sequence, sequence, Vec::new()));
             if proposal.turn().is_none() && self.idle_context_compaction_pending {
                 self.idle_context_checkpoint_committed = true;
             }
@@ -211,10 +213,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
             };
             if self.engine.active_turn() != Some(turn)
                 || self.engine.active_turn_has_open_activity()
-                || !self
-                    .active_context_source
-                    .as_mut()
-                    .is_some_and(|source| source.try_advance(turn, last_sequence, items))
+                || !self.active_context_source.as_mut().is_some_and(|source| {
+                    self.journal
+                        .advance_active_context_source(source, turn, last_sequence, items)
+                })
             {
                 return self.reject_correlation_event(
                     "backend completed an active context suffix outside a closed semantic boundary",

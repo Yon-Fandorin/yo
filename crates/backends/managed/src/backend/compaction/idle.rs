@@ -60,8 +60,12 @@ impl NativeModelBackend {
             refusal: None,
         }];
         current_items.extend(self.replay.items().iter().map(replay_input));
-        let input_tokens_before =
-            self.count_input_for_items(current_items, tool_exposure, session_id)?;
+        let input_tokens_before = self.count_input_for_items(
+            current_items,
+            tool_exposure,
+            session_id,
+            self.model_context.max_output_tokens(),
+        )?;
 
         let retained_groups = vec![
             self.replay_groups

@@ -1,8 +1,16 @@
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
+
 use super::{activity, id, runtime_with_active_turn, session, submission, turn};
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand, AgentEvent,
-    AgentRejection, AgentRuntime, ApprovalDecision, BackendCapabilities, BackendEvent,
-    BackendScriptStep, RequestId, RuntimeError, RuntimePoll, ScriptedBackend, UserInput,
+    AgentRejection, AgentRuntime, ApprovalDecision, BackendAdapter, BackendBindingEvidence,
+    BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind,
+    BackendIdentity, BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendScriptStep,
+    BackendStopHandle, ContinuationStrategy, RequestId, RuntimeError, RuntimePoll, ScriptedBackend,
+    UserInput,
 };
 
 fn runtime_with_secret_request(
@@ -30,6 +38,110 @@ fn runtime_with_secret_request(
     runtime.poll_event().unwrap();
     runtime.poll_event().unwrap();
     (runtime, request)
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ProtectedReceiptCounters {
+    prepared: usize,
+    aborted: usize,
+    transport_attempts: usize,
+}
+
+struct ProtectedReceiptBackend {
+    counters: Arc<Mutex<ProtectedReceiptCounters>>,
+    events: VecDeque<BackendEvent>,
+    prepared: bool,
+}
+
+impl BackendAdapter for ProtectedReceiptBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
+    fn stop_handle(&self) -> BackendStopHandle {
+        BackendStopHandle::no_op()
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::none().with_steer()
+    }
+
+    fn execute_command(
+        &mut self,
+        command: Self::Command,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        match command {
+            AgentCommand::CreateSession { .. } => Ok(BackendCommandEvidence::BindingOpened(
+                BackendBindingEvidence::new(
+                    "protected-test",
+                    "1",
+                    BackendIdentity::new("protected-test/binding/v1", "binding"),
+                    BackendIdentity::new("protected-test/model/v1", "model"),
+                    BackendIdentity::new("protected-test/session/v1", "session"),
+                    ContinuationStrategy::BackendManagedState,
+                ),
+            )),
+            AgentCommand::StartTurn { turn, .. } => {
+                let request_activity = activity(turn, 1);
+                let request_id = RequestId::new(id(50));
+                self.events.push_back(BackendEvent::ActivityStarted {
+                    activity: request_activity,
+                    kind: ActivityKind::UserInputRequest { request_id },
+                });
+                self.events.push_back(BackendEvent::ActivityFinished {
+                    activity: request_activity,
+                    outcome: ActivityOutcome::Completed,
+                });
+                Ok(BackendCommandEvidence::RequestAccepted(
+                    BackendRequestEvidence::new(
+                        "protected-test/request/v1",
+                        BackendIdentity::new("protected-test/exchange/v1", "exchange"),
+                        BackendIdentity::new("protected-test/request/v1", "request"),
+                    ),
+                ))
+            },
+            AgentCommand::RespondToActivity {
+                response: ActivityResponse::SecretInput(_),
+                ..
+            } => {
+                self.prepared = true;
+                self.counters.lock().unwrap().prepared += 1;
+                Ok(BackendCommandEvidence::ProtectedInputPrepared)
+            },
+            _ => Ok(BackendCommandEvidence::None),
+        }
+    }
+
+    fn commit_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        if !self.prepared {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Protocol,
+                "no protected receipt is prepared",
+            ));
+        }
+        self.prepared = false;
+        self.counters.lock().unwrap().transport_attempts += 1;
+        Ok(())
+    }
+
+    fn abort_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        if self.prepared {
+            self.prepared = false;
+            self.counters.lock().unwrap().aborted += 1;
+        }
+        Ok(())
+    }
+
+    fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
+        Ok(self
+            .events
+            .pop_front()
+            .map_or(BackendPoll::Pending, BackendPoll::Event))
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        Ok(())
+    }
 }
 
 // approval 요청과 사용자 응답이 steer나 새 Turn으로 바뀌지 않고 하나의 상관관계 흐름으로
@@ -270,8 +382,8 @@ fn failed_secret_dispatch_exposes_only_static_public_diagnostics() {
         request,
         response: ActivityResponse::SecretInput(SecretInput::new(secret).unwrap()),
     };
-    let backend_failure = crate::BackendFailure::new(
-        crate::BackendFailureKind::Protocol,
+    let backend_failure = BackendFailure::new(
+        BackendFailureKind::Protocol,
         format!("backend echoed {secret}"),
     );
     let (mut runtime, _) = runtime_with_secret_request([
@@ -287,7 +399,7 @@ fn failed_secret_dispatch_exposes_only_static_public_diagnostics() {
     let RuntimeError::Backend { failure, .. } = error else {
         panic!("secret transport failure must remain a backend failure");
     };
-    assert_eq!(failure.kind(), crate::BackendFailureKind::Protocol);
+    assert_eq!(failure.kind(), BackendFailureKind::Protocol);
     assert_eq!(
         failure.message(),
         "secret input delivery failed with an unknown outcome"
@@ -308,8 +420,8 @@ fn secret_poll_failure_redacts_backend_diagnostics_from_error_and_transcript() {
         request,
         response: ActivityResponse::SecretInput(SecretInput::new(secret).unwrap()),
     };
-    let failure = crate::BackendFailure::new(
-        crate::BackendFailureKind::Protocol,
+    let failure = BackendFailure::new(
+        BackendFailureKind::Protocol,
         format!("poll backend echoed {secret}"),
     );
     let (mut runtime, _) = runtime_with_secret_request([
@@ -384,8 +496,8 @@ fn secret_shutdown_failure_redacts_backend_diagnostics_from_error_and_transcript
         request,
         response: ActivityResponse::SecretInput(SecretInput::new(secret).unwrap()),
     };
-    let failure = crate::BackendFailure::new(
-        crate::BackendFailureKind::Cleanup,
+    let failure = BackendFailure::new(
+        BackendFailureKind::Cleanup,
         format!("shutdown backend echoed {secret}"),
     );
     let (mut runtime, _) = runtime_with_secret_request([
@@ -423,8 +535,8 @@ fn over_budget_secret_rejection_is_safe_and_retryable() {
     let (mut runtime, _) = runtime_with_secret_request([
         BackendScriptStep::RejectCommand {
             command: oversized.clone(),
-            failure: crate::BackendFailure::new(
-                crate::BackendFailureKind::InputOverBudget,
+            failure: BackendFailure::new(
+                BackendFailureKind::InputOverBudget,
                 format!("backend retained {canary}"),
             ),
         },
@@ -527,5 +639,77 @@ fn prepared_native_secret_requires_a_durable_receipt_and_terminalizes_the_sessio
             .to_string()
             .contains("ended at a protected input submission")
     );
+    runtime.shutdown().unwrap();
+}
+
+// 비밀 영수증 저장이 실패하면 준비 상태만 폐기하고 secret transport는 한 번도 시작하지 않습니다.
+#[test]
+fn failed_protected_receipt_publication_never_attempts_secret_transport() {
+    use crate::SecretInput;
+
+    let session_id = session(50);
+    let active_turn = turn(session_id, 1);
+    let counters = Arc::new(Mutex::new(ProtectedReceiptCounters::default()));
+    let backend = ProtectedReceiptBackend {
+        counters: Arc::clone(&counters),
+        events: VecDeque::new(),
+        prepared: false,
+    };
+    let mut runtime = AgentRuntime::new(backend);
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("request a protected value"),
+            },
+            submission(50),
+        )
+        .unwrap();
+    runtime.poll_event().unwrap();
+    runtime.poll_event().unwrap();
+    let request = ActivityRequestRef::new(activity(active_turn, 1), RequestId::new(id(50)));
+    let before = runtime.journal().entries();
+
+    let error = runtime
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInput(
+                SecretInput::new("receipt-failure-canary").unwrap(),
+            ),
+        })
+        .expect_err("a memory-only journal cannot authorize protected transport");
+
+    assert!(
+        error
+            .to_string()
+            .contains("receipt could not be committed durably")
+    );
+    assert_eq!(runtime.journal().entries(), before);
+    assert_eq!(
+        *counters.lock().unwrap(),
+        ProtectedReceiptCounters {
+            prepared: 1,
+            aborted: 1,
+            transport_attempts: 0,
+        }
+    );
+    let later = runtime
+        .execute_submission(
+            AgentCommand::SteerTurn {
+                turn: active_turn,
+                input: UserInput::from("continue"),
+            },
+            submission(51),
+        )
+        .unwrap_err();
+    assert!(
+        later
+            .to_string()
+            .contains("ended at a protected input submission")
+    );
+    assert_eq!(counters.lock().unwrap().transport_attempts, 0);
     runtime.shutdown().unwrap();
 }

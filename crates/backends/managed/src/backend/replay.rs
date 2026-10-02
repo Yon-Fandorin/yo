@@ -124,11 +124,11 @@ impl NativeModelBackend {
             .max()
     }
 
-    fn prospective_replay_delta_encoded_len(
+    fn prospective_replay_delta_usage(
         &self,
         state: &TurnState,
         extra: Option<(usize, &ModelReplayItem)>,
-    ) -> Result<usize, BackendFailure> {
+    ) -> Result<(usize, usize), BackendFailure> {
         if extra
             .as_ref()
             .is_some_and(|(output_index, _)| state.round_replay.contains_key(output_index))
@@ -181,28 +181,79 @@ impl NativeModelBackend {
             .chain(extra.as_ref().map(|(output_index, _)| *output_index))
             .chain(completed_messages.keys().copied())
             .collect::<BTreeSet<_>>();
-        let round_items = output_indices.into_iter().map(|output_index| {
-            state
-                .round_replay
-                .get(&output_index)
-                .or_else(|| {
-                    extra.as_ref().and_then(|(extra_index, item)| {
-                        (*extra_index == output_index).then_some(*item)
+        let round_items = output_indices
+            .into_iter()
+            .map(|output_index| {
+                state
+                    .round_replay
+                    .get(&output_index)
+                    .or_else(|| {
+                        extra.as_ref().and_then(|(extra_index, item)| {
+                            (*extra_index == output_index).then_some(*item)
+                        })
                     })
-                })
-                .or_else(|| completed_messages.get(&output_index))
-                .expect("every prospective output index has one replay item")
-        });
-        ModelReplayDelta::prospective_encoded_len(
+                    .or_else(|| completed_messages.get(&output_index))
+                    .expect("every prospective output index has one replay item")
+            })
+            .collect::<Vec<_>>();
+        let item_count = state.delta.len().saturating_add(round_items.len());
+        let encoded_bytes = ModelReplayDelta::prospective_encoded_len(
             self.replay.contract().is_none().then_some(&self.contract),
-            state.delta.iter().chain(round_items),
+            state.delta.iter().chain(round_items.iter().copied()),
         )
         .ok_or_else(|| {
             failure(
                 BackendFailureKind::ContextExhausted,
                 "model replay item capacity exceeded before durable retention",
             )
-        })
+        })?;
+        Ok((item_count, encoded_bytes))
+    }
+
+    fn add_pending_steer_capacity(
+        &self,
+        state: &TurnState,
+        base_item_count: usize,
+        base_encoded_bytes: usize,
+        extra_steer: Option<&ModelReplayItem>,
+    ) -> Option<usize> {
+        let pending_count = state
+            .armed_steers
+            .len()
+            .checked_add(usize::from(state.prepared_steer.is_some()))?
+            .checked_add(usize::from(extra_steer.is_some()))?;
+        if base_item_count.checked_add(pending_count)? > ModelReplayDelta::MAX_ITEMS {
+            return None;
+        }
+        let pending_bytes = state
+            .armed_steer_encoded_bytes
+            .checked_add(
+                state
+                    .prepared_steer
+                    .as_ref()
+                    .map_or(0, ModelReplayItem::encoded_len),
+            )?
+            .checked_add(extra_steer.map_or(0, ModelReplayItem::encoded_len))?;
+        let separators = if base_item_count == 0 {
+            pending_count.saturating_sub(1)
+        } else {
+            pending_count
+        };
+        base_encoded_bytes
+            .checked_add(pending_bytes)?
+            .checked_add(separators)
+    }
+
+    pub(super) fn steer_fits_pending_replay(
+        &self,
+        state: &TurnState,
+        item: &ModelReplayItem,
+    ) -> Result<bool, BackendFailure> {
+        let (base_item_count, base_encoded_bytes) =
+            self.prospective_replay_delta_usage(state, None)?;
+        Ok(self
+            .add_pending_steer_capacity(state, base_item_count, base_encoded_bytes, Some(item))
+            .is_some_and(|bytes| bytes <= ModelReplayDelta::MAX_ENCODED_BYTES))
     }
 
     pub(super) fn ensure_replay_capacity_with_round_item(
@@ -210,8 +261,11 @@ impl NativeModelBackend {
         state: &TurnState,
         extra: Option<(usize, &ModelReplayItem)>,
     ) -> Result<(), BackendFailure> {
-        if self.prospective_replay_delta_encoded_len(state, extra)?
-            <= ModelReplayDelta::MAX_ENCODED_BYTES
+        let (base_item_count, base_encoded_bytes) =
+            self.prospective_replay_delta_usage(state, extra)?;
+        if self
+            .add_pending_steer_capacity(state, base_item_count, base_encoded_bytes, None)
+            .is_some_and(|bytes| bytes <= ModelReplayDelta::MAX_ENCODED_BYTES)
         {
             Ok(())
         } else {
@@ -241,6 +295,10 @@ impl NativeModelBackend {
         state: &TurnState,
         extra: Option<&ModelReplayItem>,
     ) -> Result<(), BackendFailure> {
+        let item_count = state
+            .delta
+            .len()
+            .saturating_add(usize::from(extra.is_some()));
         let encoded_bytes = ModelReplayDelta::prospective_encoded_len(
             self.replay.contract().is_none().then_some(&self.contract),
             state.delta.iter().chain(extra),
@@ -251,6 +309,14 @@ impl NativeModelBackend {
                 "model replay item capacity exceeded before durable retention",
             )
         })?;
+        let encoded_bytes = self
+            .add_pending_steer_capacity(state, item_count, encoded_bytes, None)
+            .ok_or_else(|| {
+                failure(
+                    BackendFailureKind::ContextExhausted,
+                    "model replay item capacity exceeded before durable retention",
+                )
+            })?;
         if encoded_bytes <= ModelReplayDelta::MAX_ENCODED_BYTES {
             Ok(())
         } else {
@@ -273,7 +339,13 @@ impl NativeModelBackend {
                 .contract()
                 .is_none()
                 .then(|| self.contract.clone()),
-            state.delta.clone(),
+            state
+                .delta
+                .iter()
+                .chain(state.armed_steers.iter())
+                .chain(state.prepared_steer.iter())
+                .cloned()
+                .collect(),
         );
         let mut replay = self.replay.clone();
         replay.apply(&delta).map_err(|message| {

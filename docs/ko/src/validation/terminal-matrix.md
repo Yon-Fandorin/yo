@@ -67,6 +67,39 @@ Journal cutoff는 611, 사용량 영수증은 12개로 유지됐다.
 Python 작업이 완전한 일상 업무 대체, 안전한 명령 자동 승인이나 살아 있는
 질문의 복원을 입증하지는 않는다. Mac 실제 키 입력은 여기서 반복하지 않았다.
 
+## Linux tmux에서 같은 Turn의 수정 지시 검증
+
+2026-10-02에 검토를 마친 native steering 소스로 기존 `yo` tmux Session의
+Codex 창 옆에 소유한 창 두 개를 열어 Fullscreen 흐름을 검증했다.
+기존 `qwencloud:default:qwen3.8-max` Token Plan과 Responses connector를
+사용했다. Yo Session 하나에서 Turn 세 개와 수락된 모델 요청 다섯 개를
+실행했다. 열두 요청 상한 안의 구독 사용량이다.
+
+| 사용 흐름 | 관찰한 결과 |
+|---|---|
+| 승인한 명령 실행 중 Enter로 수정 지시 | 같은 Turn에서 내구성 있게 수락했다. 요청 세 개로 해당 Turn을 완료했고 독립적인 파일 검사에서 정확히 `YO_NATIVE_STEER_OK\n`을 확인했다 |
+| Alt+Q로 다음 작업 예약 | 첫 Turn 실행 중 `Queued 1`이 표시됐다. 완료 후 별도 두 번째 Turn에서 `YO_NATIVE_QUEUE_OK`로 답했다 |
+| 종료 후 같은 Session 재개 | 새 프로세스에 저장된 예약 작업 답변이 표시됐다. 새 입력 전까지 수락된 요청 수는 네 개로 유지됐다 |
+| 재개 후 실행한 명령을 Esc로 중단 | 실제 프로세스와 `YO_NATIVE_CANCEL_READY` 출력을 먼저 확인했다. 세 번째 Turn은 Interrupted로 끝났고 자식 프로세스가 종료됐으며 완료 표시 파일은 생성되지 않았다 |
+| 80 × 24 크기로 변경 | 예약 작업 답변과 일반 입력 안내가 계속 표시됐다 |
+
+정확한 `python3 wait.py`와 `python3 cancel.py` 요청에 각각
+`this tool call only` 범위만 승인했다. 모델이 요청한 파일 변경과 Session/state는 소유한
+임시 경로 안으로 한정했다. Yo 프로세스 두 개 모두 상태 0으로 종료했고
+해당 창을 닫았다. 기존 사용자 창, 활성 Codex 창, 원래 설정과 인증 파일의
+바이트는 유지됐다.
+
+처음 CLI 빌드의 실행 파일 SHA-256은
+`08ea99dc06fc7c1f72f0b7cd8872fe5298a10381f48947c0fbbb7fe198d4aad4`이다.
+재개에 사용한 workspace-test 빌드의 SHA-256은
+`fcc329210c13bf4b904a7af9e0b150740185b407f02f2e2061a1a4a91b63738d`이며
+두 빌드 사이에 검토된 소스는 바뀌지 않았다. 최종 제한 없는 workspace
+테스트와 all-target Clippy가 통과했으며 관리형 backend 112개와 core 800개를
+포함한다. 독립적인 최종 리뷰에 남은 중요 지적은 없었다.
+이미지 보존과 보호 입력 전후의 공개 수정 지시 처리는 결정적 테스트로 검증했다. 이 Linux 텍스트
+스크립트 검증은 해당 실서비스 경로나 Mac 실제 키 입력을 확인한 것이 아니며,
+완전한 일상 업무 대체를 입증하지는 않는다.
+
 ## 저장된 Mac의 큰 본문 페이지 검증
 
 2026-09-13에 clean 후보 `af16336de8836475af39022d08bf612d13955110`이

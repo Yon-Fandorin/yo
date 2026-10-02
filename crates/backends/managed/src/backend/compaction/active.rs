@@ -65,7 +65,7 @@ impl NativeModelBackend {
         match decision {
             PressureAdmission::Admit { .. } => Ok(false),
             PressureAdmission::Compact { .. } => {
-                self.start_compaction_summary(state, input_count)?;
+                self.start_compaction_summary(state, input_count.max_output_tokens())?;
                 Ok(true)
             },
             PressureAdmission::Reject { .. } => Err(failure(
@@ -78,7 +78,7 @@ impl NativeModelBackend {
     fn start_compaction_summary(
         &mut self,
         state: &mut TurnState,
-        input_tokens_before: InputCount,
+        input_output_cap: Option<u64>,
     ) -> Result<(), BackendFailure> {
         let starts_with_current_input = matches!(
             state.delta.first(),
@@ -90,23 +90,58 @@ impl NativeModelBackend {
                 } | ModelReplayItem::MultimodalUser { .. }
             )
         );
-        let completed_tool_boundary = state.round > 0
-            && state
-                .delta
-                .iter()
-                .any(|item| matches!(item, ModelReplayItem::FunctionCall { .. }))
-            && state
-                .delta
-                .iter()
-                .any(|item| matches!(item, ModelReplayItem::FunctionCallOutput { .. }))
+        let mut completed_call_ids = state
+            .delta
+            .iter()
+            .filter_map(|item| match item {
+                ModelReplayItem::FunctionCall { call_id, .. } => Some(call_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut completed_output_ids = state
+            .delta
+            .iter()
+            .filter_map(|item| match item {
+                ModelReplayItem::FunctionCallOutput { call_id, .. } => Some(call_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        completed_call_ids.sort_unstable();
+        completed_output_ids.sort_unstable();
+        let tool_work_closed = completed_call_ids == completed_output_ids
             && state.pending_calls.is_empty()
             && state.active_tool.is_none()
             && state.ready_tool.is_none()
             && state.dispatch_tool.is_none()
             && state.awaiting_approval.is_none();
+        let completed_tool_boundary =
+            state.round > 0 && !completed_call_ids.is_empty() && tool_work_closed;
+        let last_tool_item = state.delta.iter().rposition(|item| {
+            matches!(
+                item,
+                ModelReplayItem::FunctionCall { .. } | ModelReplayItem::FunctionCallOutput { .. }
+            )
+        });
+        let completed_assistant_boundary = state.round > 0
+            && tool_work_closed
+            && state
+                .delta
+                .iter()
+                .rposition(|item| {
+                    matches!(
+                        item,
+                        ModelReplayItem::Message {
+                            role: ModelReplayRole::Assistant,
+                            ..
+                        }
+                    )
+                })
+                .is_some_and(|assistant_index| {
+                    last_tool_item.is_none_or(|tool_index| assistant_index > tool_index)
+                });
         if !starts_with_current_input
             || (state.round == 0 && state.delta.len() != 1)
-            || (state.round > 0 && !completed_tool_boundary)
+            || (state.round > 0 && !completed_tool_boundary && !completed_assistant_boundary)
         {
             return Err(failure(
                 BackendFailureKind::ContextExhausted,
@@ -162,9 +197,9 @@ impl NativeModelBackend {
         };
         state.stream = Some(stream);
         state.compaction = Some(CompactionState::Summarizing {
-            input_tokens_before,
             summarized_groups,
             retained_groups,
+            input_output_cap,
             body: String::new(),
             response_id: None,
             message_identity: None,

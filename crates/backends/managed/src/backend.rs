@@ -173,21 +173,31 @@ struct AwaitingSecretInput {
 struct PreparedSecretRequest {
     request: Option<yo_core::ModelConnectorRequest>,
     comparison: String,
+    correction_count: usize,
     armed: bool,
 }
 
 enum CompactionState {
     Summarizing {
-        input_tokens_before: InputCount,
         summarized_groups: Vec<Vec<ModelReplayItem>>,
         retained_groups: Vec<Vec<ModelReplayItem>>,
+        input_output_cap: Option<u64>,
         body: String,
         response_id: Option<String>,
         message_identity: Option<(usize, String)>,
         message_done: bool,
     },
+    CompletedSummary {
+        summarized_groups: Vec<Vec<ModelReplayItem>>,
+        retained_groups: Vec<Vec<ModelReplayItem>>,
+        input_output_cap: Option<u64>,
+        body: String,
+        summary_usage: serde_json::Value,
+    },
     AwaitingCheckpoint {
         replay: ModelReplay,
+        included_steers: usize,
+        included_steer_encoded_bytes: usize,
     },
 }
 
@@ -230,6 +240,9 @@ struct TurnState {
     pending_secret_call: Option<PendingSecretCall>,
     awaiting_secret_input: Option<AwaitingSecretInput>,
     prepared_secret_request: Option<PreparedSecretRequest>,
+    prepared_steer: Option<ModelReplayItem>,
+    armed_steers: VecDeque<ModelReplayItem>,
+    armed_steer_encoded_bytes: usize,
     terminal_secret_request: bool,
     start_next_round: bool,
     compaction: Option<CompactionState>,
@@ -654,7 +667,12 @@ impl NativeModelBackend {
     }
 
     fn pop_event(&mut self) -> Option<BackendEvent> {
-        let event = self.events.pop_front()?;
+        let mut event = self.events.pop_front()?;
+        if let BackendEvent::ContextActiveSuffixCompleted { turn, items } = &mut event
+            && let Some(state) = self.turn.as_ref().filter(|state| state.turn == *turn)
+        {
+            items.extend(state.armed_steers.iter().cloned());
+        }
         match &event {
             BackendEvent::ActivityStarted { activity, .. } => {
                 self.open_activities.insert(*activity);

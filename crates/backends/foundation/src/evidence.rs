@@ -188,6 +188,9 @@ pub enum BackendCommandEvidence {
     None,
     BindingOpened(BackendBindingEvidence),
     RequestAccepted(BackendRequestEvidence),
+    /// 정확한 조향 제출을 준비했으며 내구성 있는 기록과 commit 호출 전에는 소비자가 처리할 수 없는
+    /// 상태.
+    SubmissionPrepared,
     /// A protected terminal interaction was validated and prepared in memory.
     ///
     /// The runtime must durably commit its payload-free command before calling

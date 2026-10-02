@@ -24,15 +24,17 @@ pub(super) fn stop_handle(backend: &NativeModelBackend) -> BackendStopHandle {
 }
 
 pub(super) fn capabilities(backend: &NativeModelBackend) -> BackendCapabilities {
-    BackendCapabilities::none().with_image_input(if backend.image_accounting.is_some() {
-        ImageInputCapability::Supported {
-            maximum_occurrences: 16,
-            maximum_image_bytes: InputImageSnapshot::MAX_BYTES as u64,
-            maximum_input_bytes: InputImageSnapshot::MAX_BYTES as u64,
-        }
-    } else {
-        ImageInputCapability::Unsupported
-    })
+    BackendCapabilities::none().with_steer().with_image_input(
+        if backend.image_accounting.is_some() {
+            ImageInputCapability::Supported {
+                maximum_occurrences: 16,
+                maximum_image_bytes: InputImageSnapshot::MAX_BYTES as u64,
+                maximum_input_bytes: InputImageSnapshot::MAX_BYTES as u64,
+            }
+        } else {
+            ImageInputCapability::Unsupported
+        },
+    )
 }
 
 pub(super) fn shutdown(backend: &mut NativeModelBackend) -> Result<(), BackendFailure> {

@@ -69,6 +69,39 @@ Session/state were removed after inspection. This bounded Python task does not
 establish a complete daily-work replacement, automatic safe command approval,
 or restored live questions. Physical Mac input was not repeated here.
 
+## Native same-Turn corrections in Linux tmux
+
+On 2026-10-02, the reviewed native-steering source completed a scripted
+Fullscreen journey in two owned windows beside the existing Codex window in
+the `yo` tmux Session. The existing `qwencloud:default:qwen3.8-max` Token Plan
+used the Responses connector. One Yo Session had three Turns and five accepted
+model requests, within the twelve-request bound; this was subscription usage.
+
+| Journey | Observed result |
+|---|---|
+| Enter a correction while an approved command runs | The correction was durably admitted in the same Turn; three requests completed that Turn and independent inspection found exactly `YO_NATIVE_STEER_OK\n` in the requested file |
+| Queue a later task with Alt+Q | `Queued 1` appeared while the first Turn was active; its completion preceded a distinct second Turn answering `YO_NATIVE_QUEUE_OK` |
+| Exit and resume the same Session | The stored queued answer appeared in a fresh process; accepted-request count stayed at four until new input |
+| Interrupt the resumed command with Esc | Actual process and `YO_NATIVE_CANCEL_READY` output were observed first; the third Turn ended Interrupted, its child process disappeared and its completion-marker file remained absent |
+| Resize to 80 × 24 | The queued answer and ordinary input guidance remained visible |
+
+The exact `python3 wait.py` and `python3 cancel.py` requests each received
+only `this tool call only` approval. Model-requested file changes and Session/state were confined
+to the owned disposable paths. Both Yo processes exited with status 0 and
+their windows closed; existing user windows, the active Codex window, and
+original configuration and credential bytes were preserved.
+
+The initial CLI build's binary SHA-256 was
+`08ea99dc06fc7c1f72f0b7cd8872fe5298a10381f48947c0fbbb7fe198d4aad4`.
+The workspace-test build used for resume had SHA-256
+`fcc329210c13bf4b904a7af9e0b150740185b407f02f2e2061a1a4a91b63738d`;
+the reviewed source did not change between these builds. The final unrestricted
+workspace suite and all-target Clippy passed, including 112 managed-backend
+and 800 core tests. Independent final review found no remaining material issue.
+Image preservation and protected-input interaction with public corrections have deterministic coverage; this
+scripted Linux text journey did not exercise those live paths or physical Mac
+keys and does not establish a complete daily-work replacement.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`

@@ -3,9 +3,10 @@ use std::env;
 #[cfg(test)]
 use std::process;
 #[cfg(test)]
-use std::sync::atomic::AtomicUsize;
-#[cfg(test)]
-use std::sync::atomic::Ordering;
+use std::{
+    collections::VecDeque,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use std::{
     fs,
     path::PathBuf,
@@ -18,13 +19,18 @@ use yo_backend::BackendAdapter as AgentBackend;
 #[cfg(test)]
 use yo_core::session_repository::StoredSessionContinuation;
 use yo_core::{
-    AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionPoll, ApiDialect,
-    BackendCommandEvidence, BackendIdentity, CommandAdmission, EffectiveModelProfile,
-    HostWorkspacePath, ModelConnectorEvent, ModelProfileLayer, ModelProfileParameters,
-    ReasoningEffort, SessionDescriptor, ToolApprovalRequirement, ToolRegistry, TranscriptRecord,
-    TurnOutcome, UserInput, VersionedProfileId, WorkspaceHostId,
+    ActivityKind, AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionPoll,
+    ApiDialect, BackendCommandEvidence, BackendIdentity, CommandAdmission, ConnectorError,
+    ContextPolicyChanged, ContextStrategy, EffectiveModelProfile, HostWorkspacePath,
+    InputSubmission, ModelConnector, ModelConnectorCancellation, ModelConnectorEvent,
+    ModelConnectorInputItem, ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort,
+    ModelContextProfile, ModelProfileLayer, ModelProfileParameters, ModelReplayItem,
+    ModelReplayRole, ModelTokenCounter, ModelTokenCounterError, ReasoningEffort,
+    RequestTraceRecord, SessionDescriptor, SubmissionId, ToolApprovalRequirement, ToolRegistry,
+    TranscriptRecord, TurnOutcome, UserInput, VersionedProfileId, WorkspaceHostId,
     session_repository::{
-        LocalSessionReader, LocalSessionRepository, read_stored_session_continuation,
+        LocalSessionReader, LocalSessionRepository, read_stored_session,
+        read_stored_session_continuation,
     },
 };
 
@@ -79,7 +85,7 @@ fn backend_with_profile(
 fn backend_with_profile_and_registry(
     profile: EffectiveModelProfile,
     registry: yo_core::FrozenToolRegistry,
-    requests: Arc<Mutex<Vec<yo_core::ModelConnectorRequest>>>,
+    requests: Arc<Mutex<Vec<ModelConnectorRequest>>>,
 ) -> Result<NativeModelBackend, yo_core::BackendFailure> {
     backend_with_profile_registry_and_config(
         profile,
@@ -92,7 +98,7 @@ fn backend_with_profile_and_registry(
 fn backend_with_profile_registry_and_config(
     profile: EffectiveModelProfile,
     registry: yo_core::FrozenToolRegistry,
-    requests: Arc<Mutex<Vec<yo_core::ModelConnectorRequest>>>,
+    requests: Arc<Mutex<Vec<ModelConnectorRequest>>>,
     config: NativeModelBackendConfig,
 ) -> Result<NativeModelBackend, yo_core::BackendFailure> {
     let model_context = profile.context().clone();
@@ -194,6 +200,1411 @@ impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+struct FirstRequestGateConnector {
+    requests: Arc<Mutex<Vec<ModelConnectorRequest>>>,
+    rounds: Mutex<VecDeque<Vec<ModelConnectorEvent>>>,
+    first_request_released: Arc<AtomicBool>,
+    starts: AtomicUsize,
+}
+
+impl ModelConnector for FirstRequestGateConnector {
+    fn request_url(&self) -> &str {
+        "https://example.invalid/v1/responses"
+    }
+
+    fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<serde_json::Value, ConnectorError> {
+        Ok(mock_tokenization_payload(request, "mock-model"))
+    }
+
+    fn start(
+        &self,
+        request: ModelConnectorRequest,
+        _cancellation: ModelConnectorCancellation,
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, ConnectorError> {
+        self.requests.lock().unwrap().push(request);
+        let events = self
+            .rounds
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("the durable steering fixture supplies every model round");
+        let gate = (self.starts.fetch_add(1, Ordering::AcqRel) == 0)
+            .then(|| Arc::clone(&self.first_request_released));
+        Ok(Box::new(FirstRequestGateStream {
+            events: events.into(),
+            gate,
+        }))
+    }
+}
+
+struct FirstRequestGateStream {
+    events: VecDeque<ModelConnectorEvent>,
+    gate: Option<Arc<AtomicBool>>,
+}
+
+impl ModelConnectorStreamPort for FirstRequestGateStream {
+    fn poll(&mut self) -> Result<ModelConnectorPoll, ConnectorError> {
+        if self
+            .gate
+            .as_ref()
+            .is_some_and(|gate| !gate.load(Ordering::Acquire))
+        {
+            return Ok(ModelConnectorPoll::Pending);
+        }
+        Ok(self
+            .events
+            .pop_front()
+            .map_or(ModelConnectorPoll::Closed, ModelConnectorPoll::Event))
+    }
+
+    fn cancel(&self) {
+        if let Some(gate) = &self.gate {
+            gate.store(true, Ordering::Release);
+        }
+    }
+
+    fn shutdown(&mut self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+struct RequestDispatchRace {
+    requests: Mutex<Vec<ModelConnectorRequest>>,
+    first_stream_released: Arc<AtomicBool>,
+    second_start_entered: AtomicBool,
+    second_start_released: AtomicBool,
+    second_stream_released: Arc<AtomicBool>,
+}
+
+struct RequestDispatchRaceConnector {
+    race: Arc<RequestDispatchRace>,
+    rounds: Mutex<VecDeque<Vec<ModelConnectorEvent>>>,
+    starts: AtomicUsize,
+}
+
+impl ModelConnector for RequestDispatchRaceConnector {
+    fn request_url(&self) -> &str {
+        "https://example.invalid/v1/responses"
+    }
+
+    fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<serde_json::Value, ConnectorError> {
+        Ok(mock_tokenization_payload(request, "mock-model"))
+    }
+
+    fn start(
+        &self,
+        request: ModelConnectorRequest,
+        cancellation: ModelConnectorCancellation,
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, ConnectorError> {
+        let round = self.starts.fetch_add(1, Ordering::AcqRel);
+        self.race.requests.lock().unwrap().push(request);
+        if round == 1 {
+            self.race
+                .second_start_entered
+                .store(true, Ordering::Release);
+            while !self.race.second_start_released.load(Ordering::Acquire)
+                && !cancellation.is_cancelled()
+            {
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let events = self
+            .rounds
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("the dispatch-race fixture supplies every model round");
+        let gate = match round {
+            0 => Some(Arc::clone(&self.race.first_stream_released)),
+            1 => Some(Arc::clone(&self.race.second_stream_released)),
+            _ => None,
+        };
+        Ok(Box::new(RequestDispatchRaceStream {
+            events: events.into(),
+            gate,
+            cancellation,
+        }))
+    }
+}
+
+struct RequestDispatchRaceStream {
+    events: VecDeque<ModelConnectorEvent>,
+    gate: Option<Arc<AtomicBool>>,
+    cancellation: ModelConnectorCancellation,
+}
+
+impl ModelConnectorStreamPort for RequestDispatchRaceStream {
+    fn poll(&mut self) -> Result<ModelConnectorPoll, ConnectorError> {
+        if self.cancellation.is_cancelled() {
+            return Ok(ModelConnectorPoll::Closed);
+        }
+        if self
+            .gate
+            .as_ref()
+            .is_some_and(|gate| !gate.load(Ordering::Acquire))
+        {
+            return Ok(ModelConnectorPoll::Pending);
+        }
+        Ok(self
+            .events
+            .pop_front()
+            .map_or(ModelConnectorPoll::Closed, ModelConnectorPoll::Event))
+    }
+
+    fn cancel(&self) {
+        if let Some(gate) = &self.gate {
+            gate.store(true, Ordering::Release);
+        }
+    }
+
+    fn shutdown(&mut self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+fn text_round(response_id: &str, answer: &str) -> Vec<ModelConnectorEvent> {
+    vec![
+        ModelConnectorEvent::ResponseCreated {
+            response_id: response_id.to_owned(),
+        },
+        ModelConnectorEvent::TextDelta {
+            output_index: 0,
+            item_id: format!("{response_id}-message"),
+            content_index: 0,
+            delta: answer.to_owned(),
+        },
+        ModelConnectorEvent::MessageDone {
+            output_index: 0,
+            item_id: format!("{response_id}-message"),
+        },
+        completed(response_id),
+    ]
+}
+
+fn reasoning_text_round(
+    response_id: &str,
+    summary: &str,
+    answer: &str,
+) -> Vec<ModelConnectorEvent> {
+    vec![
+        ModelConnectorEvent::ResponseCreated {
+            response_id: response_id.to_owned(),
+        },
+        ModelConnectorEvent::ReasoningDelta {
+            output_index: 1,
+            item_id: format!("{response_id}-reasoning"),
+            channel: yo_core::ReasoningChannel::Summary,
+            part_index: 0,
+            delta: summary.to_owned(),
+        },
+        ModelConnectorEvent::TextDelta {
+            output_index: 0,
+            item_id: format!("{response_id}-message"),
+            content_index: 0,
+            delta: answer.to_owned(),
+        },
+        ModelConnectorEvent::MessageDone {
+            output_index: 0,
+            item_id: format!("{response_id}-message"),
+        },
+        completed(response_id),
+    ]
+}
+
+fn completed_summary_round(response_id: &str, summary: &str) -> Vec<ModelConnectorEvent> {
+    let mut events = text_round(response_id, summary);
+    let Some(ModelConnectorEvent::Terminal { usage, .. }) = events.last_mut() else {
+        unreachable!("완료된 summary response는 terminal event로 끝납니다")
+    };
+    *usage = yo_core::ResponsesUsage {
+        input_tokens: Some(20),
+        output_tokens: Some(10),
+        total_tokens: Some(30),
+        reasoning_tokens: Some(0),
+        cache_read_input_tokens: yo_core::CacheReadInputTokens::Unsupported,
+    };
+    events
+}
+
+fn read_file_call_round() -> Vec<ModelConnectorEvent> {
+    vec![
+        ModelConnectorEvent::ResponseCreated {
+            response_id: "durable-checkpoint-tool".to_owned(),
+        },
+        ModelConnectorEvent::FunctionCallStarted {
+            output_index: 0,
+            item_id: "durable-checkpoint-call-item".to_owned(),
+            call_id: "durable-checkpoint-call".to_owned(),
+            name: "read_file".to_owned(),
+        },
+        ModelConnectorEvent::FunctionCallDone {
+            output_index: 0,
+            item_id: "durable-checkpoint-call-item".to_owned(),
+            call_id: "durable-checkpoint-call".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: r#"{"path":"checkpoint.txt"}"#.to_owned(),
+        },
+        completed("durable-checkpoint-tool"),
+    ]
+}
+
+fn durable_portable_summary() -> String {
+    [
+        "# Context Checkpoint",
+        "## Current Objective\nContinue the current task.",
+        "## Active Constraints\nNone.",
+        "## Decisions\nPreserve exact retained history.",
+        "## Verified Progress\nTwo prior turns completed.",
+        "## Current State\nA new turn is ready.",
+        "## Unknown or Unverified\nNone.",
+        "## Next Actions\nAnswer the current user input.",
+        "## Critical References\nNone.",
+    ]
+    .join("\n")
+}
+
+struct SequenceTokenCounter(Mutex<VecDeque<u64>>);
+
+impl ModelTokenCounter for SequenceTokenCounter {
+    fn count_input_tokens(
+        &self,
+        _tokenizer_profile: &str,
+        _request: &serde_json::Value,
+    ) -> Result<u64, ModelTokenCounterError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("durable compaction fixture declares every payload count"))
+    }
+}
+
+fn visible_request_messages(
+    request: &ModelConnectorRequest,
+) -> Vec<(yo_core::ResponsesInputRole, String)> {
+    request
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            yo_core::ResponsesInputItem::Message { role, content, .. }
+                if matches!(
+                    role,
+                    yo_core::ResponsesInputRole::User | yo_core::ResponsesInputRole::Assistant
+                ) =>
+            {
+                Some((*role, content.as_str().to_owned()))
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+fn dispatch_until_queued(session: &mut AgentSession, intent: AgentIntent, deadline: Instant) {
+    let mut admission = session.dispatch(intent).unwrap();
+    loop {
+        match admission {
+            CommandAdmission::Queued => return,
+            CommandAdmission::Backpressured(pending) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "session command stayed backpressured"
+                );
+                let _ = session.poll().unwrap();
+                thread::yield_now();
+                admission = session.retry(pending).unwrap();
+            },
+            CommandAdmission::Rejected { rejection, .. } => {
+                panic!(
+                    "durable steering fixture was rejected: {}",
+                    rejection.message()
+                )
+            },
+        }
+    }
+}
+
+fn await_accepted_submission(session: &mut AgentSession, id: SubmissionId, deadline: Instant) {
+    loop {
+        if let Some(outcome) = session.take_submission_outcome() {
+            assert_eq!(outcome, yo_core::SubmissionOutcome::Accepted { id });
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "durable submission outcome did not arrive"
+        );
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn wait_for_completed_turns(
+    session: &mut AgentSession,
+    transcript: &yo_core::TranscriptReader,
+    count: usize,
+    deadline: Instant,
+) {
+    loop {
+        let completed = transcript
+            .read_after(None)
+            .entries()
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.record(),
+                    TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+                        outcome: TurnOutcome::Completed,
+                        ..
+                    })
+                )
+            })
+            .count();
+        if completed >= count && session.is_idle_for_new_conversation() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "durable fixture did not reach its completed Turn boundary"
+        );
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+// 실제 connector request, 최신 anchor, reopen replay를 내구 AgentSession 경로로 검증합니다.
+#[test]
+fn durable_agent_session_steer_reaches_connector_and_reopens_from_latest_anchor() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let first_request_released = Arc::new(AtomicBool::new(false));
+    let mut backend = backend_without_profile();
+    assert!(backend.capabilities().supports_steer());
+    backend.connector = Box::new(FirstRequestGateConnector {
+        requests: Arc::clone(&requests),
+        rounds: Mutex::new(
+            vec![
+                text_round("durable-first-response", "first answer"),
+                text_round("durable-successor-response", "second answer"),
+            ]
+            .into(),
+        ),
+        first_request_released: Arc::clone(&first_request_released),
+        starts: AtomicUsize::new(0),
+    });
+
+    let directory = TestDirectory::new();
+    let descriptor = SessionDescriptor::new(
+        WorkspaceHostId::new().unwrap(),
+        HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let session_id = descriptor.session_id();
+    let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
+    let mut session =
+        AgentSession::start_cancellable_with_repository(backend, descriptor, repository, || false)
+            .unwrap()
+            .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(4);
+
+    let initial_id = SubmissionId::new().unwrap();
+    dispatch_until_queued(
+        &mut session,
+        AgentIntent::Submit(InputSubmission::new(
+            initial_id,
+            UserInput::from("initial durable input"),
+        )),
+        deadline,
+    );
+    await_accepted_submission(&mut session, initial_id, deadline);
+
+    let transcript = session.transcript_reader();
+    let turn = loop {
+        let turn = transcript
+            .read_after(None)
+            .entries()
+            .iter()
+            .find_map(|entry| match entry.record() {
+                TranscriptRecord::EventCommitted(AgentEvent::TurnStarted { turn }) => Some(*turn),
+                _ => None,
+            });
+        if let Some(turn) = turn {
+            break turn;
+        }
+        assert!(Instant::now() < deadline, "durable Turn did not start");
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    };
+
+    let steer_id = SubmissionId::new().unwrap();
+    dispatch_until_queued(
+        &mut session,
+        AgentIntent::Steer {
+            turn,
+            submission: InputSubmission::new(steer_id, UserInput::from("durable correction")),
+        },
+        deadline,
+    );
+    await_accepted_submission(&mut session, steer_id, deadline);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    first_request_released.store(true, Ordering::Release);
+
+    loop {
+        let finished = transcript.read_after(None).entries().iter().any(|entry| {
+            matches!(
+                entry.record(),
+                TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+                    outcome: TurnOutcome::Completed,
+                    ..
+                })
+            )
+        });
+        if finished {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "steered durable Turn did not finish"
+        );
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    {
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        let successor_messages = captured[1]
+            .input()
+            .iter()
+            .filter_map(|item| match item {
+                yo_core::ResponsesInputItem::Message { role, content, .. }
+                    if matches!(
+                        role,
+                        yo_core::ResponsesInputRole::User | yo_core::ResponsesInputRole::Assistant
+                    ) =>
+                {
+                    Some((*role, content.as_str()))
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            successor_messages,
+            [
+                (yo_core::ResponsesInputRole::User, "initial durable input"),
+                (yo_core::ResponsesInputRole::Assistant, "first answer"),
+                (yo_core::ResponsesInputRole::User, "durable correction"),
+            ]
+        );
+    }
+
+    let trace = session
+        .request_trace_reader()
+        .read_after(None)
+        .into_entries();
+    let accepted_requests = trace
+        .iter()
+        .filter_map(|entry| match entry.record() {
+            RequestTraceRecord::RequestAccepted { .. } => Some(entry.sequence()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accepted_requests.len(), 2);
+    let latest_request = *accepted_requests.last().unwrap();
+    let latest_anchor = trace
+        .iter()
+        .rev()
+        .find_map(|entry| match entry.record() {
+            RequestTraceRecord::ContinuationAnchor {
+                accepted_request_sequence,
+                ..
+            } => Some((entry.sequence(), *accepted_request_sequence)),
+            _ => None,
+        })
+        .expect("the completed successor request publishes the newest continuation anchor");
+    assert_eq!(latest_anchor.1, latest_request);
+
+    session.shutdown().unwrap();
+    drop(session);
+    let reader = LocalSessionReader::open(&directory.0).unwrap();
+    let history = read_stored_session(&reader, session_id).unwrap();
+    let durable_anchor = history
+        .request_trace()
+        .iter()
+        .rev()
+        .find_map(|entry| match entry.record() {
+            RequestTraceRecord::ContinuationAnchor {
+                accepted_request_sequence,
+                ..
+            } => Some((entry.sequence(), *accepted_request_sequence)),
+            _ => None,
+        })
+        .expect("the newest continuation anchor is stored durably");
+    assert_eq!(durable_anchor, latest_anchor);
+
+    let continuation = read_stored_session_continuation(&reader, session_id).unwrap();
+    assert_eq!(
+        continuation.target().source_anchor_sequence(),
+        Some(latest_anchor.0)
+    );
+    let active_messages = continuation
+        .target()
+        .model_replay()
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            ModelReplayItem::Message { role, content, .. }
+                if matches!(role, ModelReplayRole::User | ModelReplayRole::Assistant) =>
+            {
+                Some((*role, content.as_str()))
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        active_messages,
+        [
+            (ModelReplayRole::User, "initial durable input"),
+            (ModelReplayRole::Assistant, "first answer"),
+            (ModelReplayRole::User, "durable correction"),
+            (ModelReplayRole::Assistant, "second answer"),
+        ]
+    );
+}
+
+// Summary ModelWork가 completed assistant 뒤에서 닫혀도 durable correction과 source 경계를
+// 보존합니다.
+#[test]
+fn durable_summary_reasoning_tail_accepts_steer_and_recovers_exact_replay() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let first_request_released = Arc::new(AtomicBool::new(false));
+    let mut backend = backend_without_profile();
+    backend.connector = Box::new(FirstRequestGateConnector {
+        requests: Arc::clone(&requests),
+        rounds: Mutex::new(
+            vec![
+                reasoning_text_round(
+                    "reasoning-first-response",
+                    "summary thought",
+                    "first answer",
+                ),
+                text_round("reasoning-successor-response", "successor answer"),
+            ]
+            .into(),
+        ),
+        first_request_released: Arc::clone(&first_request_released),
+        starts: AtomicUsize::new(0),
+    });
+
+    let directory = TestDirectory::new();
+    let descriptor = SessionDescriptor::new(
+        WorkspaceHostId::new().unwrap(),
+        HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let session_id = descriptor.session_id();
+    let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
+    let mut session =
+        AgentSession::start_cancellable_with_repository(backend, descriptor, repository, || false)
+            .unwrap()
+            .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let transcript = session.transcript_reader();
+
+    let initial_id = SubmissionId::new().unwrap();
+    dispatch_until_queued(
+        &mut session,
+        AgentIntent::Submit(InputSubmission::new(
+            initial_id,
+            UserInput::from("reasoned durable input"),
+        )),
+        deadline,
+    );
+    await_accepted_submission(&mut session, initial_id, deadline);
+    let turn = loop {
+        let turn = transcript
+            .read_after(None)
+            .entries()
+            .iter()
+            .find_map(|entry| match entry.record() {
+                TranscriptRecord::EventCommitted(AgentEvent::TurnStarted { turn }) => Some(*turn),
+                _ => None,
+            });
+        if let Some(turn) = turn {
+            break turn;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reasoned durable Turn did not start"
+        );
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(requests.lock().unwrap().len(), 1);
+
+    let correction_id = SubmissionId::new().unwrap();
+    dispatch_until_queued(
+        &mut session,
+        AgentIntent::Steer {
+            turn,
+            submission: InputSubmission::new(
+                correction_id,
+                UserInput::from("correction between responses"),
+            ),
+        },
+        deadline,
+    );
+    await_accepted_submission(&mut session, correction_id, deadline);
+    first_request_released.store(true, Ordering::Release);
+    wait_for_completed_turns(&mut session, &transcript, 1, deadline);
+
+    let entries = transcript.read_after(None).into_entries();
+    let reasoning_activity = entries
+        .iter()
+        .find_map(|entry| match entry.record() {
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated {
+                activity,
+                update: yo_core::ActivityUpdate::TextDelta(text),
+            }) if text == "summary thought" => Some(*activity),
+            _ => None,
+        })
+        .expect("Summary reasoning produces a ModelWork update");
+    let assistant_activity = entries
+        .iter()
+        .find_map(|entry| match entry.record() {
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::AgentMessage,
+            }) => Some(*activity),
+            _ => None,
+        })
+        .expect("visible assistant opens an AgentMessage activity");
+    let assistant_finished =
+        entries
+            .iter()
+            .find_map(|entry| match entry.record() {
+                TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
+                    activity, ..
+                }) if *activity == assistant_activity => Some(entry.sequence()),
+                _ => None,
+            })
+            .expect("visible assistant activity is completed");
+    let reasoning_finished =
+        entries
+            .iter()
+            .find_map(|entry| match entry.record() {
+                TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
+                    activity, ..
+                }) if *activity == reasoning_activity => Some(entry.sequence()),
+                _ => None,
+            })
+            .expect("Summary ModelWork activity is completed");
+    assert!(assistant_finished < reasoning_finished);
+    let correction_committed = entries
+        .iter()
+        .find_map(|entry| match entry.record() {
+            TranscriptRecord::CommandCommitted(AgentCommand::SteerTurn {
+                turn: committed_turn,
+                input,
+            }) if *committed_turn == turn && input.as_str() == "correction between responses" => {
+                Some(entry.sequence())
+            },
+            _ => None,
+        })
+        .expect("the public correction is durably committed");
+    assert!(correction_committed < assistant_finished);
+
+    {
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        assert_eq!(
+            visible_request_messages(&captured[0]),
+            [(
+                yo_core::ResponsesInputRole::User,
+                "reasoned durable input".to_owned()
+            )]
+        );
+        assert_eq!(
+            visible_request_messages(&captured[1]),
+            [
+                (
+                    yo_core::ResponsesInputRole::User,
+                    "reasoned durable input".to_owned()
+                ),
+                (
+                    yo_core::ResponsesInputRole::Assistant,
+                    "first answer".to_owned()
+                ),
+                (
+                    yo_core::ResponsesInputRole::User,
+                    "correction between responses".to_owned()
+                ),
+            ]
+        );
+    }
+
+    let accepted_requests = session
+        .request_trace_reader()
+        .read_after(None)
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry.record() {
+            RequestTraceRecord::RequestAccepted { .. } => Some(entry.sequence()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accepted_requests.len(), 2);
+    assert!(reasoning_finished < accepted_requests[1]);
+
+    session.shutdown().unwrap();
+    drop(session);
+    let reader = LocalSessionReader::open(&directory.0).unwrap();
+    let history = read_stored_session(&reader, session_id).unwrap();
+    let durable_anchor = history
+        .request_trace()
+        .iter()
+        .rev()
+        .find_map(|entry| match entry.record() {
+            RequestTraceRecord::ContinuationAnchor {
+                accepted_request_sequence,
+                ..
+            } => Some(*accepted_request_sequence),
+            _ => None,
+        })
+        .expect("the latest completed request has a durable continuation anchor");
+    assert_eq!(durable_anchor, accepted_requests[1]);
+    let continuation = read_stored_session_continuation(&reader, session_id).unwrap();
+    assert_eq!(
+        continuation.target().model_replay().items(),
+        [
+            ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: "reasoned durable input".to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: "first answer".to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: "correction between responses".to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: "successor answer".to_owned(),
+                refusal: None,
+            },
+        ]
+    );
+}
+
+// checkpoint 뒤 입력이 추가되지 않아도 tool suffix와 후속 assistant를 소비하고 복구합니다.
+#[test]
+fn durable_checkpoint_without_steer_recovers_tool_successor_exactly() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let summary = durable_portable_summary();
+    let rounds = vec![
+        text_round("checkpoint-prior-one", "prior answer one"),
+        text_round("checkpoint-prior-two", "prior answer two"),
+        completed_summary_round("checkpoint-summary", &summary),
+        read_file_call_round(),
+        text_round("checkpoint-final-answer", "answer after tool"),
+    ];
+    let config = NativeModelBackendConfig {
+        context_policy: ContextPolicyChanged::try_new(
+            1,
+            true,
+            ContextStrategy::PortableSummaryV1Alpha1,
+            70,
+            80,
+            Some(10),
+            Some(65_536),
+        )
+        .unwrap(),
+        ..NativeModelBackendConfig::default()
+    };
+    let backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(rounds),
+            requests: Arc::clone(&requests),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(SequenceTokenCounter(Mutex::new(VecDeque::from([
+                1, 1, 90, 20, 90, 30, 30, 30,
+            ])))),
+        ),
+        ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        config,
+    )
+    .unwrap();
+
+    let directory = TestDirectory::new();
+    let descriptor = SessionDescriptor::new(
+        WorkspaceHostId::new().unwrap(),
+        HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let session_id = descriptor.session_id();
+    let mut session = AgentSession::start_cancellable_with_repository(
+        backend,
+        descriptor,
+        LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let transcript = session.transcript_reader();
+
+    for (index, input) in ["prior input one", "prior input two"]
+        .into_iter()
+        .enumerate()
+    {
+        let id = SubmissionId::new().unwrap();
+        dispatch_until_queued(
+            &mut session,
+            AgentIntent::Submit(InputSubmission::new(id, UserInput::from(input))),
+            deadline,
+        );
+        await_accepted_submission(&mut session, id, deadline);
+        wait_for_completed_turns(&mut session, &transcript, index + 1, deadline);
+    }
+
+    let active_submission = SubmissionId::new().unwrap();
+    dispatch_until_queued(
+        &mut session,
+        AgentIntent::Submit(InputSubmission::new(
+            active_submission,
+            UserInput::from("current checkpoint input"),
+        )),
+        deadline,
+    );
+    await_accepted_submission(&mut session, active_submission, deadline);
+    loop {
+        let checkpoint_committed = transcript.read_after(None).entries().iter().any(|entry| {
+            matches!(
+                entry.record(),
+                TranscriptRecord::ContextCheckpointCommitted(_)
+            )
+        });
+        if checkpoint_committed && requests.lock().unwrap().len() >= 4 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "durable active checkpoint did not dispatch its tool-bearing successor"
+        );
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    wait_for_completed_turns(&mut session, &transcript, 3, deadline);
+
+    let entries = transcript.read_after(None).into_entries();
+    let checkpoint_sequence = entries
+        .iter()
+        .find_map(|entry| {
+            matches!(
+                entry.record(),
+                TranscriptRecord::ContextCheckpointCommitted(_)
+            )
+            .then_some(entry.sequence())
+        })
+        .expect("the active Turn committed its checkpoint");
+    assert!(!entries.iter().any(|entry| {
+        entry.sequence() > checkpoint_sequence
+            && matches!(
+                entry.record(),
+                TranscriptRecord::CommandCommitted(AgentCommand::SteerTurn { .. })
+            )
+    }));
+
+    let tool_result_activity = entries
+        .iter()
+        .find_map(|entry| match entry.record() {
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::ToolResult,
+            }) => Some(*activity),
+            _ => None,
+        })
+        .expect("automatic tool execution emits a ToolResult activity");
+    let tool_result_finished =
+        entries
+            .iter()
+            .find_map(|entry| match entry.record() {
+                TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
+                    activity, ..
+                }) if *activity == tool_result_activity => Some(entry.sequence()),
+                _ => None,
+            })
+            .expect("tool result is durably completed before the next request");
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 5);
+    let expected_context_messages = [
+        (yo_core::ResponsesInputRole::User, summary.as_str()),
+        (yo_core::ResponsesInputRole::User, "prior input two"),
+        (yo_core::ResponsesInputRole::Assistant, "prior answer two"),
+        (
+            yo_core::ResponsesInputRole::User,
+            "current checkpoint input",
+        ),
+    ];
+    assert_eq!(
+        visible_request_messages(&captured[3]),
+        expected_context_messages
+            .iter()
+            .map(|(role, content)| (*role, (*content).to_owned()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        visible_request_messages(&captured[4]),
+        expected_context_messages
+            .iter()
+            .map(|(role, content)| (*role, (*content).to_owned()))
+            .collect::<Vec<_>>()
+    );
+    let completed_tool_items = captured[4]
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            ModelConnectorInputItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => Some(("call", call_id.as_str(), name.as_str(), arguments.as_str())),
+            ModelConnectorInputItem::FunctionCallOutput { call_id, output } => {
+                Some(("output", call_id.as_str(), "", output.as_str()))
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        completed_tool_items,
+        [
+            (
+                "call",
+                "durable-checkpoint-call",
+                "read_file",
+                r#"{"path":"checkpoint.txt"}"#,
+            ),
+            (
+                "output",
+                "durable-checkpoint-call",
+                "",
+                r#"{"contents":"ok"}"#,
+            ),
+        ]
+    );
+    drop(captured);
+
+    let accepted_requests = session
+        .request_trace_reader()
+        .read_after(None)
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry.record() {
+            RequestTraceRecord::RequestAccepted { .. } => Some(entry.sequence()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accepted_requests.len(), 4);
+    assert!(checkpoint_sequence < accepted_requests[2]);
+    assert!(tool_result_finished < accepted_requests[3]);
+
+    session.shutdown().unwrap();
+    drop(session);
+    let reader = LocalSessionReader::open(&directory.0).unwrap();
+    let history = read_stored_session(&reader, session_id).unwrap();
+    let durable_anchor = history
+        .request_trace()
+        .iter()
+        .rev()
+        .find_map(|entry| match entry.record() {
+            RequestTraceRecord::ContinuationAnchor {
+                accepted_request_sequence,
+                ..
+            } => Some(*accepted_request_sequence),
+            _ => None,
+        })
+        .expect("the final post-tool request has a durable continuation anchor");
+    assert_eq!(durable_anchor, accepted_requests[3]);
+    let continuation = read_stored_session_continuation(&reader, session_id).unwrap();
+    assert_eq!(
+        continuation.target().model_replay().items(),
+        [
+            ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: summary,
+                refusal: None,
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: "prior input two".to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: "prior answer two".to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: "current checkpoint input".to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::FunctionCall {
+                call_id: "durable-checkpoint-call".to_owned(),
+                name: "read_file".to_owned(),
+                arguments: r#"{"path":"checkpoint.txt"}"#.to_owned(),
+            },
+            ModelReplayItem::FunctionCallOutput {
+                call_id: "durable-checkpoint-call".to_owned(),
+                output: r#"{"contents":"ok"}"#.to_owned(),
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: "answer after tool".to_owned(),
+                refusal: None,
+            },
+        ]
+    );
+}
+
+// 실제 durable worker의 connector start 중 제출한 보정이 이미 전송된 R2에
+// 소급 연결되지 않고, 다음 R3의 입력과 Journal 경계에만 반영됨을 검증합니다.
+#[test]
+fn durable_request_acceptance_precedes_steer_queued_during_dispatch() {
+    let race = Arc::new(RequestDispatchRace {
+        requests: Mutex::new(Vec::new()),
+        first_stream_released: Arc::new(AtomicBool::new(false)),
+        second_start_entered: AtomicBool::new(false),
+        second_start_released: AtomicBool::new(false),
+        second_stream_released: Arc::new(AtomicBool::new(false)),
+    });
+    let config = NativeModelBackendConfig {
+        context_policy: ContextPolicyChanged::try_new(
+            1,
+            true,
+            ContextStrategy::PortableSummaryV1Alpha1,
+            1,
+            99,
+            Some(10),
+            Some(65_536),
+        )
+        .unwrap(),
+        ..NativeModelBackendConfig::default()
+    };
+    let backend = NativeModelBackend::with_connector(
+        Box::new(RequestDispatchRaceConnector {
+            race: Arc::clone(&race),
+            rounds: Mutex::new(
+                vec![
+                    text_round("race-first-response", "first answer"),
+                    text_round("race-second-response", "second answer"),
+                    text_round("race-third-response", "third answer"),
+                ]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        config,
+    )
+    .unwrap();
+
+    let directory = TestDirectory::new();
+    let descriptor = SessionDescriptor::new(
+        WorkspaceHostId::new().unwrap(),
+        HostWorkspacePath::normalize_local(env::current_dir().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let mut session = AgentSession::start_cancellable_with_repository(
+        backend,
+        descriptor,
+        LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(4);
+    let transcript = session.transcript_reader();
+
+    let initial_id = SubmissionId::new().unwrap();
+    dispatch_until_queued(
+        &mut session,
+        AgentIntent::Submit(InputSubmission::new(
+            initial_id,
+            UserInput::from("initial race input"),
+        )),
+        deadline,
+    );
+    await_accepted_submission(&mut session, initial_id, deadline);
+    let turn = loop {
+        let turn = transcript
+            .read_after(None)
+            .entries()
+            .iter()
+            .find_map(|entry| match entry.record() {
+                TranscriptRecord::EventCommitted(AgentEvent::TurnStarted { turn }) => Some(*turn),
+                _ => None,
+            });
+        if let Some(turn) = turn {
+            break turn;
+        }
+        assert!(Instant::now() < deadline, "durable race Turn did not start");
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    };
+
+    let first_steer_id = SubmissionId::new().unwrap();
+    dispatch_until_queued(
+        &mut session,
+        AgentIntent::Steer {
+            turn,
+            submission: InputSubmission::new(first_steer_id, UserInput::from("correction A")),
+        },
+        deadline,
+    );
+    await_accepted_submission(&mut session, first_steer_id, deadline);
+    while !race.requests.lock().unwrap().iter().any(|request| {
+        visible_request_messages(request)
+            .iter()
+            .any(|(_, content)| content == "initial race input")
+    }) {
+        assert!(
+            Instant::now() < deadline,
+            "initial connector request did not start"
+        );
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    race.first_stream_released.store(true, Ordering::Release);
+
+    while !race.second_start_entered.load(Ordering::Acquire) {
+        assert!(
+            Instant::now() < deadline,
+            "successor connector dispatch did not begin"
+        );
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    let second_request_before_steer = race.requests.lock().unwrap()[1].clone();
+    assert_eq!(
+        visible_request_messages(&second_request_before_steer),
+        [
+            (
+                yo_core::ResponsesInputRole::User,
+                "initial race input".to_owned()
+            ),
+            (
+                yo_core::ResponsesInputRole::Assistant,
+                "first answer".to_owned()
+            ),
+            (yo_core::ResponsesInputRole::User, "correction A".to_owned()),
+        ]
+    );
+
+    let second_steer_id = SubmissionId::new().unwrap();
+    let pending = match session
+        .dispatch(AgentIntent::Steer {
+            turn,
+            submission: InputSubmission::new(
+                second_steer_id,
+                UserInput::from("correction B during dispatch"),
+            ),
+        })
+        .unwrap()
+    {
+        CommandAdmission::Backpressured(pending) => pending,
+        other => {
+            panic!("connector dispatch 중 correction B는 backpressure되어야 합니다: {other:?}")
+        },
+    };
+    race.second_start_released.store(true, Ordering::Release);
+    let mut admission = session.retry(pending).unwrap();
+    loop {
+        match admission {
+            CommandAdmission::Queued => break,
+            CommandAdmission::Backpressured(pending) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "connector dispatch 해제 뒤에도 correction B가 backpressure 상태입니다"
+                );
+                let _ = session.poll().unwrap();
+                thread::yield_now();
+                admission = session.retry(pending).unwrap();
+            },
+            CommandAdmission::Rejected { rejection, .. } => {
+                panic!(
+                    "durable correction B가 거부되었습니다: {}",
+                    rejection.message()
+                )
+            },
+        }
+    }
+    await_accepted_submission(&mut session, second_steer_id, deadline);
+
+    let second_request_acceptance = session
+        .request_trace_reader()
+        .read_after(None)
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry.record() {
+            RequestTraceRecord::RequestAccepted { .. } => Some(entry.sequence()),
+            _ => None,
+        })
+        .nth(1)
+        .expect("the dispatched R2 request is durably accepted before queued steering");
+    let steer_b_commit = transcript
+        .read_after(None)
+        .entries()
+        .iter()
+        .find_map(|entry| match entry.record() {
+            TranscriptRecord::CommandCommitted(AgentCommand::SteerTurn {
+                turn: committed_turn,
+                input,
+            }) if *committed_turn == turn && input.as_str() == "correction B during dispatch" => {
+                Some(entry.sequence())
+            },
+            _ => None,
+        })
+        .expect("the second correction is durably committed");
+    assert!(
+        second_request_acceptance < steer_b_commit,
+        "R2 acceptance must commit before correction B, which was queued during connector dispatch"
+    );
+
+    race.second_stream_released.store(true, Ordering::Release);
+    loop {
+        let finished = transcript.read_after(None).entries().iter().any(|entry| {
+            matches!(
+                entry.record(),
+                TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+                    outcome: TurnOutcome::Completed,
+                    ..
+                })
+            )
+        });
+        if finished {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "durable race Turn did not finish"
+        );
+        let _ = session.poll().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let captured = race.requests.lock().unwrap();
+    assert_eq!(captured.len(), 3);
+    assert_eq!(
+        visible_request_messages(&captured[1]),
+        [
+            (
+                yo_core::ResponsesInputRole::User,
+                "initial race input".to_owned()
+            ),
+            (
+                yo_core::ResponsesInputRole::Assistant,
+                "first answer".to_owned()
+            ),
+            (yo_core::ResponsesInputRole::User, "correction A".to_owned()),
+        ]
+    );
+    assert_eq!(
+        visible_request_messages(&captured[2]),
+        [
+            (
+                yo_core::ResponsesInputRole::User,
+                "initial race input".to_owned()
+            ),
+            (
+                yo_core::ResponsesInputRole::Assistant,
+                "first answer".to_owned()
+            ),
+            (yo_core::ResponsesInputRole::User, "correction A".to_owned()),
+            (
+                yo_core::ResponsesInputRole::Assistant,
+                "second answer".to_owned()
+            ),
+            (
+                yo_core::ResponsesInputRole::User,
+                "correction B during dispatch".to_owned(),
+            ),
+        ]
+    );
+    drop(captured);
+
+    let accepted_requests = session
+        .request_trace_reader()
+        .read_after(None)
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry.record() {
+            RequestTraceRecord::RequestAccepted { .. } => Some(entry.sequence()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accepted_requests.len(), 3);
+    assert!(steer_b_commit < accepted_requests[2]);
+    let pressure_observation_between_requests = transcript
+        .read_after(None)
+        .entries()
+        .iter()
+        .find_map(|entry| match entry.record() {
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityStarted {
+                kind: ActivityKind::ModelWork,
+                ..
+            }) if steer_b_commit < entry.sequence() && entry.sequence() < accepted_requests[2] => {
+                Some(entry.sequence())
+            },
+            _ => None,
+        });
+    assert!(
+        pressure_observation_between_requests.is_some(),
+        "R2 context-pressure observations remain queued while its acceptance is correlated before B"
+    );
+    let newest_anchor = session
+        .request_trace_reader()
+        .read_after(None)
+        .entries()
+        .iter()
+        .rev()
+        .find_map(|entry| match entry.record() {
+            RequestTraceRecord::ContinuationAnchor {
+                accepted_request_sequence,
+                ..
+            } => Some(*accepted_request_sequence),
+            _ => None,
+        })
+        .expect("the completed R3 request publishes the latest durable anchor");
+    assert_eq!(newest_anchor, accepted_requests[2]);
+    session.shutdown().unwrap();
 }
 
 fn resume_through_durable_agent_session(

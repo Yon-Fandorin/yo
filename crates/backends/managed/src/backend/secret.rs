@@ -253,6 +253,7 @@ impl NativeModelBackend {
             call_id: awaiting.call_id.clone(),
             output: value.clone(),
         });
+        items.extend(state.armed_steers.iter().map(replay_input));
         let prepared = self.admitted_request(
             items,
             RequestToolExposure::disabled(),
@@ -280,6 +281,7 @@ impl NativeModelBackend {
         state.prepared_secret_request = Some(PreparedSecretRequest {
             request: Some(request_payload),
             comparison: value,
+            correction_count: state.armed_steers.len(),
             armed: false,
         });
         state.terminal_secret_request = true;
@@ -344,6 +346,7 @@ impl NativeModelBackend {
                 "terminal secret request was polled before durable commit",
             ));
         }
+        let correction_count = prepared.correction_count;
         let request = prepared.request.take().ok_or_else(|| {
             failure(
                 BackendFailureKind::Protocol,
@@ -369,6 +372,16 @@ impl NativeModelBackend {
                 ));
             },
         };
+        for _ in 0..correction_count {
+            let correction = state
+                .armed_steers
+                .pop_front()
+                .expect("the protected request freezes the armed correction prefix");
+            state.armed_steer_encoded_bytes = state
+                .armed_steer_encoded_bytes
+                .checked_sub(correction.encoded_len())
+                .expect("the armed correction byte total matches its FIFO");
+        }
         state.stream = Some(stream);
         state.round += 1;
         state.response_id = None;

@@ -1,17 +1,23 @@
 #[cfg(test)]
 use std::array;
+use std::sync::{Arc, Mutex};
 
 use super::{activity, runtime_with_active_turn, session, submission, turn};
 #[cfg(test)]
-use crate::journal::CommittedCommand;
+use crate::journal::{CommittedCommand, SessionJournal};
 use crate::{
-    ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, AgentRuntime,
+    ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, AgentRuntime, BackendAdapter,
     BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
-    BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
-    BackendRequestEvidence, BackendScriptStep, ContextCheckpointProposal, ContextPolicyChanged,
-    ContextStrategy, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    ReplayExecutor, ReplayProfile, RuntimeError, ScriptedBackend, TurnOutcome, UserInput,
+    BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, BackendPoll,
+    BackendRequestEvidence, BackendResumeTarget, BackendScriptStep, BackendStopHandle,
+    ContextCheckpointProposal, ContextPolicyChanged, ContextStrategy, ModelReplayContract,
+    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReplayExecutor, ReplayProfile,
+    RuntimeError, ScriptedBackend, TurnOutcome, UserInput,
     journal::SemanticRecord,
+    session_repository::{
+        AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
+        RepositorySequence, SessionRepository,
+    },
 };
 
 // Runtime의 공개 경계도 Start/Steer와 SubmissionId를 분리해서 받을 수 없게 막아,
@@ -523,11 +529,33 @@ fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
         },
     ];
     let second_group = group(inputs[1], "second answer");
-    let active_group = vec![ModelReplayItem::Message {
-        role: ModelReplayRole::User,
-        content: inputs[2].to_owned(),
-        refusal: None,
-    }];
+    let steer_commands = [
+        AgentCommand::SteerTurn {
+            turn: turns[2],
+            input: UserInput::new("first correction"),
+        },
+        AgentCommand::SteerTurn {
+            turn: turns[2],
+            input: UserInput::new("second correction"),
+        },
+    ];
+    let active_group = vec![
+        ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: inputs[2].to_owned(),
+            refusal: None,
+        },
+        ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "first correction".to_owned(),
+            refusal: None,
+        },
+        ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "second correction".to_owned(),
+            refusal: None,
+        },
+    ];
     let policy = ContextPolicyChanged::try_new(
         1,
         true,
@@ -557,7 +585,7 @@ fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
         body,
         vec![first_group.clone()],
         vec![second_group.clone()],
-        active_group,
+        active_group.clone(),
         serde_json::json!({
             "schema": "yo.model-usage-receipt/v1",
             "response_id": "summary-1",
@@ -615,6 +643,14 @@ fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
             evidence: BackendOutcomeEvidence::without_identity().with_replay(second_delta),
         }),
         BackendScriptStep::AcceptCommand(starts[2].clone()),
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: steer_commands[0].clone(),
+            evidence: BackendCommandEvidence::SubmissionPrepared,
+        },
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: steer_commands[1].clone(),
+            evidence: BackendCommandEvidence::SubmissionPrepared,
+        },
         BackendScriptStep::Emit(BackendEvent::ContextCheckpointPrepared { proposal }),
         BackendScriptStep::Emit(BackendEvent::ModelRequestAccepted {
             turn: turns[2],
@@ -626,7 +662,14 @@ fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
         }),
         BackendScriptStep::Shutdown(Ok(())),
     ];
-    let mut runtime = AgentRuntime::new(ScriptedBackend::new(steps));
+    let mut journal = SessionJournal::with_repository_and_descriptor(
+        Box::new(RuntimeTestRepository::default()),
+        crate::fixture_descriptor(session_id),
+    );
+    journal.initialize_durability();
+    let backend =
+        ScriptedBackend::new(steps).with_capabilities(BackendCapabilities::none().with_steer());
+    let mut runtime = AgentRuntime::with_journal(backend, journal);
     let transcript = runtime.journal().transcript_reader();
 
     runtime.execute_command(create).unwrap();
@@ -642,6 +685,11 @@ fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
     runtime
         .execute_submission(starts[2].clone(), submission(22))
         .unwrap();
+    for (index, steer) in steer_commands.iter().enumerate() {
+        runtime
+            .execute_submission(steer.clone(), submission(23 + index as u8))
+            .unwrap();
+    }
     assert_eq!(runtime.poll_event().unwrap(), crate::RuntimePoll::Pending);
     let checkpoint_index = runtime
         .journal()
@@ -657,6 +705,22 @@ fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
             unreachable!()
         };
         assert_eq!(checkpoint.artifact_receipts().len(), 1);
+        let final_steer_sequence = checkpoint_entries
+            .iter()
+            .find(|entry| {
+                matches!(
+                    entry.record(),
+                    SemanticRecord::CommandCommitted(command)
+                        if command.command() == &steer_commands[1]
+                )
+            })
+            .expect("the second correction is durably recorded")
+            .sequence();
+        assert_eq!(checkpoint.source_journal_boundary(), final_steer_sequence);
+        assert_eq!(
+            checkpoint.retained_groups().last().unwrap().items(),
+            active_group.as_slice()
+        );
     }
     let observation = transcript
         .read_after(None)
@@ -947,4 +1011,353 @@ fn request_evidence() -> BackendRequestEvidence {
         BackendIdentity::new("scripted/exchange/v1", "exchange-1"),
         BackendIdentity::new("scripted/request/v1", "request-1"),
     )
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct PreparedCommandState {
+    prepared: bool,
+    arm_count: usize,
+    abort_count: usize,
+    active_turn: Option<crate::TurnRef>,
+    report_completion: bool,
+}
+
+struct PreparedSteeringBackend {
+    state: Arc<Mutex<PreparedCommandState>>,
+    misreport_start: bool,
+}
+
+impl BackendAdapter for PreparedSteeringBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
+    fn stop_handle(&self) -> BackendStopHandle {
+        BackendStopHandle::no_op()
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::none().with_steer()
+    }
+
+    fn execute_command(
+        &mut self,
+        command: Self::Command,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        match command {
+            AgentCommand::CreateSession { .. } => {
+                Ok(BackendCommandEvidence::BindingOpened(binding_evidence()))
+            },
+            AgentCommand::StartTurn { turn, .. } if self.misreport_start => {
+                let mut state = self.state.lock().unwrap();
+                state.prepared = true;
+                state.active_turn = Some(turn);
+                Ok(BackendCommandEvidence::SubmissionPrepared)
+            },
+            AgentCommand::StartTurn { turn, .. } => {
+                self.state.lock().unwrap().active_turn = Some(turn);
+                Ok(BackendCommandEvidence::RequestAccepted(request_evidence()))
+            },
+            AgentCommand::SteerTurn { .. } => {
+                self.state.lock().unwrap().prepared = true;
+                Ok(BackendCommandEvidence::SubmissionPrepared)
+            },
+            _ => Ok(BackendCommandEvidence::None),
+        }
+    }
+
+    fn commit_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        let mut state = self.state.lock().unwrap();
+        if !state.prepared {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Protocol,
+                "no prepared steering input is available",
+            ));
+        }
+        state.prepared = false;
+        state.arm_count += 1;
+        state.report_completion = true;
+        Ok(())
+    }
+
+    fn abort_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        let mut state = self.state.lock().unwrap();
+        if state.prepared {
+            state.prepared = false;
+            state.abort_count += 1;
+        }
+        Ok(())
+    }
+
+    fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
+        let mut state = self.state.lock().unwrap();
+        if state.report_completion {
+            state.report_completion = false;
+            return Ok(BackendPoll::Event(BackendEvent::ResumableTurnFinished {
+                turn: state
+                    .active_turn
+                    .expect("an armed steer follows an active Turn"),
+                evidence: BackendOutcomeEvidence::without_identity(),
+            }));
+        }
+        Ok(BackendPoll::Pending)
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RuntimeTestRepository {
+    entries: Vec<RepositoryEntry>,
+}
+
+impl SessionRepository for RuntimeTestRepository {
+    fn append(
+        &mut self,
+        _session_id: crate::SessionId,
+        record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        let sequence = RepositorySequence::new(
+            u64::try_from(self.entries.len()).expect("test repository fits u64") + 1,
+        );
+        self.entries.push(RepositoryEntry::new(sequence, record));
+        Ok(AppendReceipt::new(sequence))
+    }
+
+    fn read_after(
+        &self,
+        _session_id: crate::SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        let after = sequence.map_or(0, RepositorySequence::get);
+        Ok(self
+            .entries
+            .iter()
+            .filter(|entry| entry.sequence().get() > after)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+}
+
+// 내구성 Journal이 없는 Runtime은 준비된 조향 입력을 대기열에 넣지 않고, 제출 기록도 남기지 않아야
+// 합니다.
+#[test]
+fn aborts_prepared_steering_when_submission_publication_is_not_durable() {
+    let session_id = session(20);
+    let active_turn = turn(session_id, 1);
+    let state = Arc::new(Mutex::new(PreparedCommandState::default()));
+    let backend = PreparedSteeringBackend {
+        state: Arc::clone(&state),
+        misreport_start: false,
+    };
+    let mut runtime = AgentRuntime::with_journal(backend, SessionJournal::new());
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("initial"),
+            },
+            submission(20),
+        )
+        .unwrap();
+    let before = runtime.journal().entries();
+
+    let error = runtime
+        .execute_submission(
+            AgentCommand::SteerTurn {
+                turn: active_turn,
+                input: UserInput::from("correction"),
+            },
+            submission(21),
+        )
+        .expect_err("a volatile Journal cannot authorize a prepared steering input");
+
+    assert!(matches!(
+        error,
+        RuntimeError::Backend { ref failure, .. }
+            if failure.kind() == BackendFailureKind::Session
+    ));
+    assert_eq!(runtime.journal().entries(), before);
+    assert_eq!(
+        *state.lock().unwrap(),
+        PreparedCommandState {
+            prepared: false,
+            arm_count: 0,
+            abort_count: 1,
+            active_turn: Some(active_turn),
+            report_completion: false,
+        }
+    );
+    runtime.shutdown().unwrap();
+}
+
+// SubmissionPrepared 증거는 StartTurn과 짝지을 수 없으며, 잘못된 쌍의 backend 준비 상태를 폐기해야
+// 합니다.
+#[test]
+fn aborts_prepared_submission_evidence_for_a_start_command() {
+    let session_id = session(21);
+    let active_turn = turn(session_id, 1);
+    let state = Arc::new(Mutex::new(PreparedCommandState::default()));
+    let backend = PreparedSteeringBackend {
+        state: Arc::clone(&state),
+        misreport_start: true,
+    };
+    let mut runtime = AgentRuntime::with_journal(backend, SessionJournal::new());
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+
+    let error = runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("initial"),
+            },
+            submission(22),
+        )
+        .expect_err("prepared steering evidence cannot accept StartTurn");
+
+    assert!(matches!(
+        error,
+        RuntimeError::Backend { ref failure, .. }
+            if failure.kind() == BackendFailureKind::Protocol
+    ));
+    assert_eq!(runtime.active_turn(), None);
+    assert!(runtime.journal().entries().iter().all(|entry| {
+        !matches!(
+            entry.record(),
+            SemanticRecord::CommandCommitted(command)
+                if matches!(command.command(), AgentCommand::StartTurn { .. })
+        )
+    }));
+    assert_eq!(
+        *state.lock().unwrap(),
+        PreparedCommandState {
+            prepared: false,
+            arm_count: 0,
+            abort_count: 1,
+            active_turn: Some(active_turn),
+            report_completion: false,
+        }
+    );
+    runtime.shutdown().unwrap();
+}
+
+// Runtime은 backend에 전달하기 전에 exact Turn 대상을 확인하므로 잘못된 target은 준비·기록 없이
+// 거절됩니다.
+#[test]
+fn rejects_a_wrong_steering_target_before_backend_preparation() {
+    let session_id = session(23);
+    let active_turn = turn(session_id, 1);
+    let other_turn = turn(session_id, 2);
+    let state = Arc::new(Mutex::new(PreparedCommandState::default()));
+    let backend = PreparedSteeringBackend {
+        state: Arc::clone(&state),
+        misreport_start: false,
+    };
+    let mut runtime = AgentRuntime::with_journal(backend, SessionJournal::new());
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("initial"),
+            },
+            submission(25),
+        )
+        .unwrap();
+    let before = runtime.journal().entries();
+
+    let error = runtime
+        .execute_submission(
+            AgentCommand::SteerTurn {
+                turn: other_turn,
+                input: UserInput::from("wrong target"),
+            },
+            submission(26),
+        )
+        .expect_err("the Runtime rejects steering a different Turn before backend preparation");
+
+    assert!(matches!(error, RuntimeError::CommandRejected(_)));
+    assert_eq!(runtime.journal().entries(), before);
+    assert_eq!(
+        *state.lock().unwrap(),
+        PreparedCommandState {
+            prepared: false,
+            arm_count: 0,
+            abort_count: 0,
+            active_turn: Some(active_turn),
+            report_completion: false,
+        }
+    );
+    runtime.shutdown().unwrap();
+}
+
+// 준비된 조향 명령은 정확한 ID로 먼저 내구성 기록되고, 후속 실제 요청 증거 전까지 이전 request
+// anchor를 무효화합니다.
+#[test]
+fn durably_records_prepared_steer_and_rejects_completion_on_the_older_request() {
+    let session_id = session(22);
+    let active_turn = turn(session_id, 1);
+    let mut journal = SessionJournal::with_repository_and_descriptor(
+        Box::new(RuntimeTestRepository::default()),
+        crate::fixture_descriptor(session_id),
+    );
+    journal.initialize_durability();
+    let state = Arc::new(Mutex::new(PreparedCommandState::default()));
+    let backend = PreparedSteeringBackend {
+        state: Arc::clone(&state),
+        misreport_start: false,
+    };
+    let mut runtime = AgentRuntime::with_journal(backend, journal);
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("initial"),
+            },
+            submission(23),
+        )
+        .unwrap();
+    let steer = AgentCommand::SteerTurn {
+        turn: active_turn,
+        input: UserInput::from("same-turn correction"),
+    };
+
+    runtime
+        .execute_submission(steer.clone(), submission(24))
+        .expect("the durable Journal authorizes the prepared correction");
+
+    assert!(runtime.journal().entries().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            SemanticRecord::CommandCommitted(command)
+                if command.command() == &steer && command.submission_id() == Some(submission(24))
+        )
+    }));
+    assert_eq!(state.lock().unwrap().arm_count, 1);
+    let error = runtime
+        .poll_event()
+        .expect_err("the earlier request cannot anchor a Turn after a committed steer");
+    assert!(error.to_string().contains("without an accepted request"));
+    assert!(
+        runtime
+            .journal()
+            .entries()
+            .iter()
+            .all(|entry| !matches!(entry.record(), SemanticRecord::ContinuationAnchor(_)))
+    );
+    runtime.shutdown().unwrap();
 }

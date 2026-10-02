@@ -1,6 +1,7 @@
 #[cfg(test)]
 use std::str;
 use std::{
+    iter,
     num::NonZeroU64,
     sync::{Arc, Mutex},
 };
@@ -8,15 +9,16 @@ use std::{
 use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
     AccountId, ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, ApiDialect,
-    BackendCommandEvidence, BackendEvent, BackendPoll, EffectiveModelBinding, ModelConnectorEvent,
-    ModelConnectorTerminal, ModelContextProfile, ModelId, ModelProfileLayer,
-    ModelProfileParameters, ModelReplayItem, ModelReplayRole, NormalizedEndpoint, ProviderId,
+    BackendCommandEvidence, BackendEvent, BackendFailureKind, BackendPoll, EffectiveModelBinding,
+    ModelConnectorEvent, ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorTerminal,
+    ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters, ModelReplayDelta,
+    ModelReplayItem, ModelReplayRole, NormalizedEndpoint, ProviderId,
     ProviderPrivateReplayEnvelope, ReasoningChannel, ReplayProfile, ToolApprovalRequirement,
     TurnOutcome, UserInput, VersionedProfileId,
 };
 
 use super::support::{
-    ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, completed,
+    ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, binding, completed,
     context_profile, drain_until_turn, event_rounds,
     kimi::{kimi_admission, kimi_binding, kimi_profile, private_envelope, visible_message},
     mock_tokenization_payload, registry, turn,
@@ -62,6 +64,484 @@ fn kimi_k27_profile() -> yo_core::EffectiveModelProfile {
         VersionedProfileId::new("kimi-private-local-plaintext/v1").unwrap(),
     ));
     yo_core::EffectiveModelProfile::resolve(None, &layer).unwrap()
+}
+
+fn answer_events(response_id: &str, answer: &str) -> Vec<ModelConnectorEvent> {
+    vec![
+        ModelConnectorEvent::ResponseCreated {
+            response_id: response_id.to_owned(),
+        },
+        ModelConnectorEvent::TextDelta {
+            output_index: 0,
+            item_id: format!("{response_id}-message"),
+            content_index: 0,
+            delta: answer.to_owned(),
+        },
+        ModelConnectorEvent::MessageDone {
+            output_index: 0,
+            item_id: format!("{response_id}-message"),
+        },
+        completed(response_id),
+    ]
+}
+
+fn started_steering_backend(
+    rounds: Vec<Vec<ModelConnectorEvent>>,
+    starts: Arc<Mutex<usize>>,
+) -> (
+    NativeModelBackend,
+    Arc<Mutex<Vec<yo_core::ModelConnectorRequest>>>,
+) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(rounds),
+            requests: Arc::clone(&requests),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::with_start_counter(starts)),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("initial request"),
+        })
+        .unwrap();
+    (backend, requests)
+}
+
+fn commit_steer(backend: &mut NativeModelBackend, input: impl Into<UserInput>) {
+    let evidence = backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: turn(),
+            input: input.into(),
+        })
+        .expect("the exact live Turn admits this correction");
+    assert_eq!(evidence, BackendCommandEvidence::SubmissionPrepared);
+    backend
+        .commit_prepared_command()
+        .expect("the durable submission arms the correction");
+}
+
+fn drain_with_events(backend: &mut NativeModelBackend) -> (BackendEvent, Vec<BackendEvent>) {
+    let mut events = Vec::new();
+    for _ in 0..200 {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(
+                event @ (BackendEvent::TurnFinished { .. }
+                | BackendEvent::ResumableTurnFinished { .. }),
+            ) => return (event, events),
+            BackendPoll::Event(event) => events.push(event),
+            BackendPoll::Pending => {},
+            BackendPoll::Closed => panic!("backend closed before finishing the Turn"),
+        }
+    }
+    panic!("backend did not finish within the deterministic poll budget")
+}
+
+// 완료 assistant 뒤에 durable steer를 FIFO 그대로 두어 같은 Turn의 실제 successor request에
+// 보냅니다.
+#[test]
+fn committed_steers_follow_the_finished_assistant_group_fifo_in_successor_request() {
+    let (mut backend, requests) = started_steering_backend(
+        vec![
+            answer_events("first-response", "first answer"),
+            answer_events("last-response", "done"),
+        ],
+        Arc::new(Mutex::new(0)),
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    commit_steer(&mut backend, "same correction");
+    commit_steer(&mut backend, "same correction");
+
+    let (completion, events) = drain_with_events(&mut backend);
+    let BackendEvent::ResumableTurnFinished { evidence, .. } = completion else {
+        panic!("the corrected Turn must finish with its replay evidence")
+    };
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let first_request_messages = requests[0]
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            ModelConnectorInputItem::Message { role, content, .. }
+                if matches!(
+                    role,
+                    ModelConnectorInputRole::User | ModelConnectorInputRole::Assistant
+                ) =>
+            {
+                Some((role.as_str().to_owned(), content.clone()))
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        first_request_messages,
+        [("user".to_owned(), "initial request".to_owned())]
+    );
+    let successor_messages = requests[1]
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            ModelConnectorInputItem::Message { role, content, .. }
+                if matches!(
+                    role,
+                    ModelConnectorInputRole::User | ModelConnectorInputRole::Assistant
+                ) =>
+            {
+                Some((role.as_str().to_owned(), content.clone()))
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        successor_messages,
+        [
+            ("user".to_owned(), "initial request".to_owned()),
+            ("assistant".to_owned(), "first answer".to_owned()),
+            ("user".to_owned(), "same correction".to_owned()),
+            ("user".to_owned(), "same correction".to_owned()),
+        ]
+    );
+    let replay_messages = evidence
+        .model_replay()
+        .unwrap()
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            ModelReplayItem::Message { role, content, .. }
+                if matches!(role, ModelReplayRole::User | ModelReplayRole::Assistant) =>
+            {
+                Some((
+                    match role {
+                        ModelReplayRole::User => "user",
+                        ModelReplayRole::Assistant => "assistant",
+                        _ => unreachable!("the filter admitted only visible conversation roles"),
+                    }
+                    .to_owned(),
+                    content.clone(),
+                ))
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        replay_messages,
+        [
+            ("user".to_owned(), "initial request".to_owned()),
+            ("assistant".to_owned(), "first answer".to_owned()),
+            ("user".to_owned(), "same correction".to_owned()),
+            ("user".to_owned(), "same correction".to_owned()),
+            ("assistant".to_owned(), "done".to_owned()),
+        ]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, BackendEvent::ModelRequestAccepted { turn: accepted_turn, .. } if *accepted_turn == turn()))
+            .count(),
+        1
+    );
+}
+
+// 완료 assistant 뒤 delivery 전에 commit된 correction도 source 경계에 FIFO로 들어갑니다.
+#[test]
+fn suffix_delivery_includes_corrections_committed_after_assistant_processing() {
+    let (mut backend, requests) = started_steering_backend(
+        vec![
+            answer_events("suffix-first-response", "first answer"),
+            answer_events("suffix-second-response", "done"),
+        ],
+        Arc::new(Mutex::new(0)),
+    );
+    commit_steer(&mut backend, "queued before response completion");
+
+    for _ in 0..100 {
+        let _ = backend.poll_event().unwrap();
+        if backend
+            .events
+            .iter()
+            .any(|event| matches!(event, BackendEvent::ContextActiveSuffixCompleted { .. }))
+        {
+            break;
+        }
+    }
+    assert!(
+        backend
+            .events
+            .iter()
+            .any(|event| matches!(event, BackendEvent::ContextActiveSuffixCompleted { .. }))
+    );
+    commit_steer(&mut backend, "committed before suffix delivery");
+
+    let suffix = (0..100)
+        .find_map(|_| match backend.poll_event().unwrap() {
+            BackendPoll::Event(BackendEvent::ContextActiveSuffixCompleted { items, .. }) => {
+                Some(items)
+            },
+            BackendPoll::Event(_) | BackendPoll::Pending => None,
+            BackendPoll::Closed => panic!("backend closed before suffix delivery"),
+        })
+        .expect("the closed suffix is delivered");
+    let suffix_users = suffix
+        .iter()
+        .filter_map(|item| match item {
+            ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content,
+                ..
+            } if content != "initial request" => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        suffix_users,
+        [
+            "queued before response completion",
+            "committed before suffix delivery"
+        ]
+    );
+
+    let _ = drain_until_turn(&mut backend);
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    let successor_users = captured[1]
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            ModelConnectorInputItem::Message {
+                role: ModelConnectorInputRole::User,
+                content,
+                ..
+            } if content != "initial request" => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        successor_users,
+        [
+            "queued before response completion",
+            "committed before suffix delivery"
+        ]
+    );
+}
+
+// 이미 반환된 multicall batch가 끝난 뒤에만 steer가 실제 Connector 입력에 합쳐집니다.
+#[test]
+fn committed_steer_waits_for_every_serial_tool_result() {
+    let calls = vec![
+        ModelConnectorEvent::ResponseCreated {
+            response_id: "tool-batch".to_owned(),
+        },
+        ModelConnectorEvent::FunctionCallStarted {
+            output_index: 0,
+            item_id: "call-item-1".to_owned(),
+            call_id: "call-1".to_owned(),
+            name: "read_file".to_owned(),
+        },
+        ModelConnectorEvent::FunctionCallDone {
+            output_index: 0,
+            item_id: "call-item-1".to_owned(),
+            call_id: "call-1".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: r#"{"path":"first.txt"}"#.to_owned(),
+        },
+        ModelConnectorEvent::FunctionCallStarted {
+            output_index: 1,
+            item_id: "call-item-2".to_owned(),
+            call_id: "call-2".to_owned(),
+            name: "read_file".to_owned(),
+        },
+        ModelConnectorEvent::FunctionCallDone {
+            output_index: 1,
+            item_id: "call-item-2".to_owned(),
+            call_id: "call-2".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: r#"{"path":"second.txt"}"#.to_owned(),
+        },
+        completed("tool-batch"),
+    ];
+    let starts = Arc::new(Mutex::new(0));
+    let (mut backend, requests) = started_steering_backend(
+        vec![calls, answer_events("tool-final", "finished")],
+        Arc::clone(&starts),
+    );
+    commit_steer(&mut backend, "after batch");
+    let (completion, _) = drain_with_events(&mut backend);
+    assert!(matches!(
+        completion,
+        BackendEvent::ResumableTurnFinished { .. }
+    ));
+    assert_eq!(*starts.lock().unwrap(), 2);
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let handoff = requests[1]
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            ModelConnectorInputItem::FunctionCall { call_id, .. } => {
+                Some(format!("call:{call_id}"))
+            },
+            ModelConnectorInputItem::FunctionCallOutput { call_id, .. } => {
+                Some(format!("output:{call_id}"))
+            },
+            ModelConnectorInputItem::Message {
+                role: ModelConnectorInputRole::User,
+                content,
+                ..
+            } if content == "after batch" => Some("steer:after batch".to_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        handoff,
+        [
+            "call:call-1",
+            "call:call-2",
+            "output:call-1",
+            "output:call-2",
+            "steer:after batch",
+        ]
+    );
+}
+
+// completion이 backend에 먼저 도착하면 exact-turn steer를 거부해도 이미 큐에 든 finish를
+// 보존합니다.
+#[test]
+fn late_steer_rejection_preserves_queued_turn_completion() {
+    let (mut backend, requests) = started_steering_backend(
+        vec![answer_events("finished-response", "done")],
+        Arc::new(Mutex::new(0)),
+    );
+    for _ in 0..100 {
+        let _ = backend.poll_event().unwrap();
+        if backend.turn.is_none() {
+            break;
+        }
+    }
+    assert!(backend.turn.is_none());
+    let error = backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: turn(),
+            input: UserInput::from("too late"),
+        })
+        .expect_err("a completed backend Turn cannot accept a steer");
+    assert_eq!(error.kind(), BackendFailureKind::CommandRejected);
+    let completion = drain_until_turn(&mut backend);
+    assert!(matches!(
+        completion,
+        BackendEvent::ResumableTurnFinished { .. }
+    ));
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
+// 다음 요청 전 interrupt는 대기 중 보정을 보내지 않고 활성 Turn을 취소합니다.
+#[test]
+fn interrupt_discards_armed_steers_without_a_successor_request() {
+    let (mut backend, requests) = started_steering_backend(
+        vec![answer_events("interrupted-response", "partial")],
+        Arc::new(Mutex::new(0)),
+    );
+    commit_steer(&mut backend, "do not send after interrupt");
+    backend
+        .execute_command(AgentCommand::InterruptTurn { turn: turn() })
+        .unwrap();
+    let completion = drain_until_turn(&mut backend);
+    assert!(matches!(
+        completion,
+        BackendEvent::TurnFinished {
+            outcome: TurnOutcome::Interrupted,
+            ..
+        }
+    ));
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
+// 첫 byte 초과는 volatile append나 durable prepare 없이 초안을 보존합니다.
+#[test]
+fn steer_capacity_rejects_the_first_excess_without_staging() {
+    let (mut backend, requests) = started_steering_backend(
+        vec![answer_events("capacity-response", "done")],
+        Arc::new(Mutex::new(0)),
+    );
+    let base_items = backend.turn.as_ref().unwrap().delta.clone();
+    let contract = backend
+        .replay
+        .contract()
+        .is_none()
+        .then(|| backend.contract.clone());
+    let empty = UserInput::from("").model_replay_item();
+    let with_empty = ModelReplayDelta::prospective_encoded_len(
+        contract.as_ref(),
+        base_items.iter().chain(iter::once(&empty)),
+    )
+    .unwrap();
+    let largest_accepted_text_bytes = ModelReplayDelta::MAX_ENCODED_BYTES - with_empty;
+    let input = "x".repeat(largest_accepted_text_bytes);
+    let accepted = backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: turn(),
+            input: UserInput::from(input.clone()),
+        })
+        .expect("the exact maximum encoded replay delta remains admissible");
+    assert_eq!(accepted, BackendCommandEvidence::SubmissionPrepared);
+    let exact = UserInput::from(input).model_replay_item();
+    assert_eq!(
+        ModelReplayDelta::prospective_encoded_len(
+            contract.as_ref(),
+            base_items.iter().chain(iter::once(&exact)),
+        ),
+        Some(ModelReplayDelta::MAX_ENCODED_BYTES)
+    );
+    backend.abort_prepared_command().unwrap();
+
+    let error = backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: turn(),
+            input: UserInput::from(format!("{}x", "x".repeat(largest_accepted_text_bytes))),
+        })
+        .expect_err("the first encoded byte beyond the existing replay bound is rejected");
+    assert_eq!(error.kind(), BackendFailureKind::CommandRejected);
+    assert!(backend.turn.as_ref().unwrap().prepared_steer.is_none());
+    assert!(backend.turn.as_ref().unwrap().armed_steers.is_empty());
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
+// 기존 replay item 수 한도에서 첫 추가 correction을 받지 않습니다.
+#[test]
+fn steer_capacity_rejects_the_first_excess_item() {
+    let (mut backend, requests) = started_steering_backend(
+        vec![answer_events("item-capacity-response", "done")],
+        Arc::new(Mutex::new(0)),
+    );
+    let state = backend.turn.as_mut().unwrap();
+    state.delta = vec![UserInput::from("x").model_replay_item(); ModelReplayDelta::MAX_ITEMS];
+
+    let error = backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: turn(),
+            input: UserInput::from("first excess item"),
+        })
+        .expect_err("the first replay item beyond the existing item limit is rejected");
+    assert_eq!(error.kind(), BackendFailureKind::CommandRejected);
+    assert!(backend.turn.as_ref().unwrap().prepared_steer.is_none());
+    assert!(backend.turn.as_ref().unwrap().armed_steers.is_empty());
+    assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
 fn started_private_backend() -> NativeModelBackend {
@@ -371,7 +851,7 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
     );
     assert!(requests[1].input().iter().any(|item| matches!(
         item,
-        yo_core::ModelConnectorInputItem::ProviderPrivateAssistant { envelope }
+        ModelConnectorInputItem::ProviderPrivateAssistant { envelope }
             if str::from_utf8(envelope.payload()).unwrap().contains("hidden-1")
     )));
 }

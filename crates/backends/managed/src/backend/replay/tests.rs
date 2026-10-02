@@ -58,8 +58,8 @@ fn native_backend_bounds_complete_semantic_and_private_replay_before_retention()
     };
 
     let empty_private = item(0);
-    let fixed_bytes = backend
-        .prospective_replay_delta_encoded_len(&state, Some((1, &empty_private)))
+    let (_, fixed_bytes) = backend
+        .prospective_replay_delta_usage(&state, Some((1, &empty_private)))
         .unwrap();
     let accepted = super::ModelReplayDelta::MAX_ENCODED_BYTES - fixed_bytes;
     backend
@@ -144,8 +144,8 @@ fn terminal_secret_private_item_ignores_irrelevant_replay_delta_capacity() {
         item(accepted).encoded_len(),
         super::ModelReplayDelta::MAX_ENCODED_BYTES
     );
-    let combined_bytes = backend
-        .prospective_replay_delta_encoded_len(&state, Some((1, &item(accepted))))
+    let (_, combined_bytes) = backend
+        .prospective_replay_delta_usage(&state, Some((1, &item(accepted))))
         .unwrap();
     assert!(combined_bytes > super::ModelReplayDelta::MAX_ENCODED_BYTES);
 

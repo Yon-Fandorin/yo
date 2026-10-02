@@ -4,8 +4,8 @@ use super::super::{
     BindingCloseReason, ContextPolicyChanged, ForkItemOrigin, OperationId, VersionedIdentity,
 };
 use crate::{
-    BackendBindingEvidence, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
-    SessionId, TurnId,
+    ActivityKind, ActivityRef, BackendBindingEvidence, ContinuationStrategy, JournalSequence,
+    ModelReplay, ModelReplayItem, SessionId, TurnId,
 };
 
 mod binding;
@@ -26,7 +26,11 @@ pub(super) struct CorrelationRecovery {
     submission_commands: BTreeMap<OperationId, TurnId>,
     active_turn_starts: BTreeMap<TurnId, JournalSequence>,
     submitted_inputs: BTreeMap<JournalSequence, ModelReplayItem>,
-    completed_activity_boundaries: BTreeSet<JournalSequence>,
+    submitted_input_turns: BTreeMap<JournalSequence, TurnId>,
+    closed_activity_boundaries: BTreeMap<JournalSequence, (TurnId, ActivityKind)>,
+    interrupted_activity_boundaries: BTreeMap<JournalSequence, TurnId>,
+    started_activities: BTreeMap<ActivityRef, (JournalSequence, ActivityKind)>,
+    completed_activity_boundaries: BTreeMap<JournalSequence, (TurnId, ActivityKind)>,
     latest_request_exchange: BTreeMap<(u64, OperationId), JournalSequence>,
     latest_accepted_request: BTreeMap<(u64, TurnId), JournalSequence>,
     completed_turns: BTreeMap<TurnId, JournalSequence>,

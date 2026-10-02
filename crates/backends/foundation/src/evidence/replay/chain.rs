@@ -18,6 +18,8 @@ pub struct ModelReplayDelta {
 }
 
 impl ModelReplayDelta {
+    /// 하나의 replay delta에 허용되는 최대 item 수.
+    pub const MAX_ITEMS: usize = MAX_REPLAY_ITEMS;
     pub const MAX_ENCODED_BYTES: usize = MAX_REPLAY_DELTA_BYTES;
 
     pub fn new(contract: Option<ModelReplayContract>, items: Vec<ModelReplayItem>) -> Self {

@@ -1,7 +1,7 @@
 use yo_core::{
     BackendEvent, BackendFailure, BackendFailureKind, ContextCheckpointProposal,
     ModelConnectorEvent, ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorTerminal,
-    ModelReplay, ModelReplayItem, ModelReplayRole, RequestToolExposure,
+    ModelReplay, ModelReplayItem, ModelReplayRole,
 };
 
 use super::{
@@ -104,9 +104,9 @@ impl NativeModelBackend {
                 usage,
             } => {
                 let Some(CompactionState::Summarizing {
-                    input_tokens_before,
                     summarized_groups,
                     retained_groups,
+                    input_output_cap,
                     body,
                     response_id: created_response_id,
                     message_done,
@@ -148,66 +148,13 @@ impl NativeModelBackend {
                     state.round.saturating_add(1),
                     &usage,
                 )?;
-                let mut checkpoint_items = vec![ModelReplayItem::Message {
-                    role: ModelReplayRole::User,
-                    content: body.clone(),
-                    refusal: None,
-                }];
-                checkpoint_items.extend(retained_groups.iter().flatten().cloned());
-                checkpoint_items.extend(state.delta.iter().cloned());
-                let replay = ModelReplay::from_checkpoint(self.contract.clone(), checkpoint_items)
-                    .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
-
-                let mut successor_items = vec![ModelConnectorInputItem::Message {
-                    role: ModelConnectorInputRole::System,
-                    content: self.contract.system_prompt().to_owned(),
-                    refusal: None,
-                }];
-                successor_items.extend(replay.items().iter().map(replay_input));
-                let tool_exposure = if self.tool_exposure_enabled {
-                    RequestToolExposure::enabled(self.registry.function_tools().map_err(
-                        |error| failure(BackendFailureKind::Initialization, error.to_string()),
-                    )?)
-                } else {
-                    RequestToolExposure::disabled()
-                };
-                let (_, input_tokens_after) =
-                    self.admitted_request(successor_items, tool_exposure, state.turn.session_id())?;
-                if !matches!(
-                    context::admit_pressure(
-                        &self.config.context_policy,
-                        input_tokens_after.planning_tokens(),
-                        self.model_context.input_token_limit(),
-                        true,
-                    ),
-                    context::PressureAdmission::Admit { .. }
-                ) {
-                    return Err(failure(
-                        BackendFailureKind::ContextExhausted,
-                        "context_exhausted: compacted context still reaches the configured trigger",
-                    ));
-                }
-                let proposal = ContextCheckpointProposal::new(
-                    Some(state.turn),
-                    self.config.context_policy.policy_revision(),
-                    self.model_context.input_token_limit(),
-                    input_tokens_before.planning_tokens(),
-                    input_tokens_after.planning_tokens(),
-                    self.contract.clone(),
-                    body,
+                state.compaction = Some(CompactionState::CompletedSummary {
                     summarized_groups,
                     retained_groups,
-                    state.delta.clone(),
+                    input_output_cap,
+                    body,
                     summary_usage,
-                )
-                .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
-                self.observe_model_request(state.turn, yo_core::ModelRequestOutcome::Succeeded);
-                let proposal =
-                    input_tokens_before.bind_checkpoint(proposal, &input_tokens_after)?;
-                self.events
-                    .push_back(BackendEvent::ContextCheckpointPrepared { proposal });
-                state.compaction = Some(CompactionState::AwaitingCheckpoint { replay });
-                state.compaction_attempted = true;
+                });
             },
             ModelConnectorEvent::RefusalDelta { .. }
             | ModelConnectorEvent::FunctionCallStarted { .. }
@@ -220,5 +167,93 @@ impl NativeModelBackend {
             },
         }
         Ok(())
+    }
+
+    pub(in crate::backend) fn finalize_active_checkpoint(
+        &mut self,
+        state: &mut TurnState,
+    ) -> Result<BackendEvent, BackendFailure> {
+        let Some(CompactionState::CompletedSummary {
+            summarized_groups,
+            retained_groups,
+            input_output_cap,
+            body,
+            summary_usage,
+        }) = state.compaction.take()
+        else {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "active context checkpoint finalized before its summary completed",
+            ));
+        };
+
+        // 요약 관찰 이벤트가 전달되는 동안 commit된 보정도 이 제안에 포함합니다.
+        // 체크포인트는 이 poll에서 바로 반환하므로 스냅샷과 core publication 사이에
+        // 다른 보정이 끼어들 수 없습니다.
+        let mut active_group = state.delta.clone();
+        active_group.extend(state.armed_steers.iter().cloned());
+        let input_tokens_before = self.count_turn_input(state, &active_group, input_output_cap)?;
+
+        let mut checkpoint_items = vec![ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: body.clone(),
+            refusal: None,
+        }];
+        checkpoint_items.extend(retained_groups.iter().flatten().cloned());
+        checkpoint_items.extend(active_group.iter().cloned());
+        let replay = ModelReplay::from_checkpoint(self.contract.clone(), checkpoint_items)
+            .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
+
+        let mut successor_items = vec![ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::System,
+            content: self.contract.system_prompt().to_owned(),
+            refusal: None,
+        }];
+        successor_items.extend(replay.items().iter().map(replay_input));
+        let (_, input_tokens_after) = self.admitted_request(
+            successor_items,
+            self.turn_tool_exposure()?,
+            state.turn.session_id(),
+        )?;
+        if !matches!(
+            context::admit_pressure(
+                &self.config.context_policy,
+                input_tokens_after.planning_tokens(),
+                self.model_context.input_token_limit(),
+                true,
+            ),
+            context::PressureAdmission::Admit { .. }
+        ) {
+            return Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "context_exhausted: compacted context still reaches the configured trigger",
+            ));
+        }
+        let proposal = ContextCheckpointProposal::new(
+            Some(state.turn),
+            self.config.context_policy.policy_revision(),
+            self.model_context.input_token_limit(),
+            input_tokens_before.planning_tokens(),
+            input_tokens_after.planning_tokens(),
+            self.contract.clone(),
+            body,
+            summarized_groups,
+            retained_groups,
+            active_group,
+            summary_usage,
+        )
+        .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
+        let proposal = input_tokens_before.bind_checkpoint(proposal, &input_tokens_after)?;
+
+        self.observe_model_request(state.turn, yo_core::ModelRequestOutcome::Succeeded);
+        let included_steers = state.armed_steers.len();
+        let included_steer_encoded_bytes = state.armed_steer_encoded_bytes;
+        state.compaction = Some(CompactionState::AwaitingCheckpoint {
+            replay,
+            included_steers,
+            included_steer_encoded_bytes,
+        });
+        state.compaction_attempted = true;
+        Ok(BackendEvent::ContextCheckpointPrepared { proposal })
     }
 }

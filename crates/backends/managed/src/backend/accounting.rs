@@ -11,6 +11,7 @@ use super::{NativeModelBackend, failure, map_connector_turn};
 pub(super) struct InputCount {
     tokens: u64,
     accounting: Option<ContextAccounting>,
+    max_output_tokens: Option<u64>,
 }
 
 impl InputCount {
@@ -19,6 +20,10 @@ impl InputCount {
     }
     pub(super) fn accounting(&self) -> Option<&ContextAccounting> {
         self.accounting.as_ref()
+    }
+
+    pub(super) const fn max_output_tokens(&self) -> Option<u64> {
+        self.max_output_tokens
     }
 
     pub(super) fn bind_checkpoint(
@@ -67,6 +72,7 @@ impl NativeModelBackend {
             text_tokens,
             request.image_count(),
             self.image_accounting.as_ref(),
+            request.max_output_tokens(),
         )
     }
 }
@@ -75,11 +81,13 @@ fn request_count(
     text_tokens: u64,
     image_count: usize,
     image_accounting: Option<&VersionedProfileId>,
+    max_output_tokens: Option<u64>,
 ) -> Result<InputCount, BackendFailure> {
     let Some(policy) = image_accounting else {
         return Ok(InputCount {
             tokens: text_tokens,
             accounting: None,
+            max_output_tokens,
         });
     };
     let estimate = u64::try_from(image_count)
@@ -102,6 +110,7 @@ fn request_count(
     Ok(InputCount {
         tokens: accounting.planning_tokens(),
         accounting: Some(accounting),
+        max_output_tokens,
     })
 }
 
@@ -115,23 +124,28 @@ mod tests {
     // 전체 요청에 한 번만 reserve를 더하며 이미지가 없어도 선택된 추정 정책은 유지한다.
     #[test]
     fn counts_occurrences_and_charges_one_reserve() {
-        let count = request_count(300, 3, Some(&policy())).unwrap();
+        let count = request_count(300, 3, Some(&policy()), Some(100)).unwrap();
         assert_eq!(count.planning_tokens(), 7324);
         assert_eq!(count.accounting().unwrap().input_estimate(), 6300);
         assert_eq!(count.accounting().unwrap().reserve_tokens(), 1024);
-        let empty = request_count(300, 0, Some(&policy())).unwrap();
+        let empty = request_count(300, 0, Some(&policy()), Some(100)).unwrap();
         assert_eq!(empty.planning_tokens(), 300);
         assert_eq!(empty.accounting().unwrap().reserve_tokens(), 0);
-        assert!(request_count(300, 0, None).unwrap().accounting().is_none());
+        assert!(
+            request_count(300, 0, None, Some(100))
+                .unwrap()
+                .accounting()
+                .is_none()
+        );
     }
 
     // 추정값과 reserve의 첫 초과도 조용히 포화시키지 않고 요청 전에 거절한다.
     #[test]
     fn rejects_estimate_and_reserve_overflow() {
-        assert!(request_count(u64::MAX, 1, Some(&policy())).is_err());
-        assert!(request_count(u64::MAX - 2000, 1, Some(&policy())).is_err());
+        assert!(request_count(u64::MAX, 1, Some(&policy()), Some(100)).is_err());
+        assert!(request_count(u64::MAX - 2000, 1, Some(&policy()), Some(100)).is_err());
         assert_eq!(
-            request_count(u64::MAX, 0, Some(&policy()))
+            request_count(u64::MAX, 0, Some(&policy()), Some(100))
                 .unwrap()
                 .planning_tokens(),
             u64::MAX

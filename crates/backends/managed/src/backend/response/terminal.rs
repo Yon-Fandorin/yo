@@ -252,7 +252,17 @@ pub(super) fn terminal(
         ModelConnectorTerminal::Completed if state.pending_calls.is_empty() => {
             if completed_round_has_assistant {
                 backend.observe_model_request(state.turn, ModelRequestOutcome::Succeeded);
-                backend.complete_turn(state)?;
+                if state.armed_steers.is_empty() {
+                    backend.complete_turn(state)?;
+                } else {
+                    backend
+                        .events
+                        .push_back(BackendEvent::ContextActiveSuffixCompleted {
+                            turn: state.turn,
+                            items: state.delta.clone(),
+                        });
+                    state.start_next_round = true;
+                }
             } else {
                 backend.observe_model_request(
                     state.turn,

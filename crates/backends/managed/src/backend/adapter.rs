@@ -48,11 +48,21 @@ impl BackendAdapter for NativeModelBackend {
     }
 
     fn commit_prepared_command(&mut self) -> Result<(), BackendFailure> {
-        self.commit_secret_request()
+        if self
+            .turn
+            .as_ref()
+            .is_some_and(|state| state.prepared_steer.is_some())
+        {
+            self.commit_prepared_steer()
+        } else {
+            self.commit_secret_request()
+        }
     }
 
     fn abort_prepared_command(&mut self) -> Result<(), BackendFailure> {
-        self.abort_secret_request();
+        if !self.abort_prepared_steer() {
+            self.abort_secret_request();
+        }
         Ok(())
     }
 

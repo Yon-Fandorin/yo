@@ -96,6 +96,54 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
     if backend.turn.as_ref().is_some_and(|state| {
         matches!(
             state.compaction,
+            Some(CompactionState::CompletedSummary { .. })
+        )
+    }) {
+        let mut state = backend
+            .turn
+            .take()
+            .expect("completed-summary Turn was checked");
+        match backend.finalize_active_checkpoint(&mut state) {
+            Ok(event) => {
+                backend.turn = Some(state);
+                return Ok(BackendPoll::Event(event));
+            },
+            Err(error) => {
+                backend.observe_model_request(
+                    state.turn,
+                    yo_core::ModelRequestOutcome::Failed(
+                        yo_core::ModelRequestFailureKind::ResponseLimit,
+                    ),
+                );
+                backend.context_exhausted = true;
+                backend.exhaust_turn(
+                    &mut state,
+                    if error.kind() == BackendFailureKind::ContextExhausted {
+                        error.to_string()
+                    } else {
+                        format!("context_exhausted: context checkpoint failed: {error}")
+                    },
+                );
+                if backend.turn.is_none()
+                    && !backend.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            BackendEvent::TurnFinished { .. }
+                                | BackendEvent::ResumableTurnFinished { .. }
+                        )
+                    })
+                {
+                    backend.turn = Some(state);
+                }
+            },
+        }
+        return Ok(backend
+            .pop_event()
+            .map_or(BackendPoll::Pending, BackendPoll::Event));
+    }
+    if backend.turn.as_ref().is_some_and(|state| {
+        matches!(
+            state.compaction,
             Some(CompactionState::AwaitingCheckpoint { .. })
         )
     }) {
@@ -103,22 +151,49 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
             .turn
             .take()
             .expect("checkpoint-ready Turn was checked");
-        let Some(CompactionState::AwaitingCheckpoint { replay }) = state.compaction.take() else {
+        let Some(CompactionState::AwaitingCheckpoint {
+            replay,
+            included_steers,
+            included_steer_encoded_bytes,
+        }) = state.compaction.take()
+        else {
             unreachable!("checkpoint-ready compaction state was checked")
         };
         backend.replay = replay;
         backend.replay_groups = vec![backend.replay.items().to_vec()];
         state.delta.clear();
+        let mut removed_steer_bytes = 0usize;
+        for _ in 0..included_steers {
+            let item = state
+                .armed_steers
+                .pop_front()
+                .expect("the checkpointed steer prefix remains armed until swap");
+            let encoded_bytes = item.encoded_len();
+            removed_steer_bytes = removed_steer_bytes.saturating_add(encoded_bytes);
+            state.armed_steer_encoded_bytes = state
+                .armed_steer_encoded_bytes
+                .saturating_sub(encoded_bytes);
+        }
+        debug_assert_eq!(included_steer_encoded_bytes, removed_steer_bytes);
+        debug_assert_eq!(
+            state.armed_steer_encoded_bytes,
+            state
+                .armed_steers
+                .iter()
+                .map(yo_core::ModelReplayItem::encoded_len)
+                .sum::<usize>()
+        );
         state.compaction_attempted = true;
         if let Err(error) = backend.start_model_round(&mut state) {
             backend.fail_or_exhaust_turn(&mut state, error);
+        } else if state.compaction.is_none() && state.stream.is_some() {
+            let event = BackendEvent::ModelRequestAccepted {
+                turn: state.turn,
+                evidence: backend.request_evidence(state.turn),
+            };
+            backend.turn = Some(state);
+            return Ok(BackendPoll::Event(event));
         } else {
-            backend
-                .events
-                .push_back(BackendEvent::ModelRequestAccepted {
-                    turn: state.turn,
-                    evidence: backend.request_evidence(state.turn),
-                });
             backend.turn = Some(state);
         }
     } else if backend.turn.as_ref().is_some_and(|state| {
@@ -139,13 +214,12 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
                     .to_owned(),
             );
         } else {
-            backend
-                .events
-                .push_back(BackendEvent::ModelRequestAccepted {
-                    turn: state.turn,
-                    evidence: backend.request_evidence(state.turn),
-                });
+            let event = BackendEvent::ModelRequestAccepted {
+                turn: state.turn,
+                evidence: backend.request_evidence(state.turn),
+            };
             backend.turn = Some(state);
+            return Ok(BackendPoll::Event(event));
         }
     } else if backend
         .turn
@@ -205,12 +279,12 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
             backend.fail_or_exhaust_turn(&mut state, error);
         } else {
             if state.compaction.is_none() && state.stream.is_some() {
-                backend
-                    .events
-                    .push_back(BackendEvent::ModelRequestAccepted {
-                        turn: state.turn,
-                        evidence: backend.request_evidence(state.turn),
-                    });
+                let event = BackendEvent::ModelRequestAccepted {
+                    turn: state.turn,
+                    evidence: backend.request_evidence(state.turn),
+                };
+                backend.turn = Some(state);
+                return Ok(BackendPoll::Event(event));
             }
             backend.turn = Some(state);
         }

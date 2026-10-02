@@ -70,8 +70,8 @@ pub trait BackendAdapter {
         command: Self::Command,
     ) -> Result<BackendCommandEvidence, BackendFailure>;
 
-    /// Authorizes a previously prepared protected-input command after its
-    /// payload-free semantic receipt was committed durably.
+    /// 내구성 있는 의미 기록을 마친 준비 명령을 처리 대기열에 공개합니다.
+    /// 조향 제출과 보호 입력 모두에서 이 호출 전에는 준비된 입력을 소비할 수 없습니다.
     fn commit_prepared_command(&mut self) -> Result<(), BackendFailure> {
         Ok(())
     }

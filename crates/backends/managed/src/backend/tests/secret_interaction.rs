@@ -5,10 +5,11 @@ use std::{
 
 use yo_backend::BackendAdapter;
 use yo_core::{
-    ActivityKind, ActivityRequestRef, ActivityResponse, ActivityUpdate, AgentCommand,
-    BackendCommandEvidence, BackendEvent, BackendPoll, ModelConnectorEvent,
-    ModelConnectorInputItem, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    NATIVE_SECRET_INTERACTION_NAME, SecretInput, SecretStorageRecommendation,
+    AccountId, ActivityKind, ActivityRequestRef, ActivityResponse, ActivityUpdate, AgentCommand,
+    ApiDialect, BackendCommandEvidence, BackendEvent, BackendFailureKind, BackendPoll,
+    EffectiveModelBinding, ModelConnectorEvent, ModelConnectorInputItem, ModelConnectorInputRole,
+    ModelId, ModelReplayDelta, ModelReplayItem, ModelReplayRole, NATIVE_SECRET_INTERACTION_NAME,
+    NormalizedEndpoint, ProviderId, SecretInput, SecretStorageRecommendation,
     ToolApprovalRequirement, TurnOutcome, UserInput,
 };
 
@@ -181,13 +182,24 @@ fn started_backend_with_rounds(
     NativeModelBackend,
     Arc<Mutex<Vec<yo_core::ModelConnectorRequest>>>,
 ) {
+    started_backend_with_binding(super::support::binding(), input, rounds)
+}
+
+fn started_backend_with_binding(
+    binding: EffectiveModelBinding,
+    input: String,
+    rounds: Vec<Vec<ModelConnectorEvent>>,
+) -> (
+    NativeModelBackend,
+    Arc<Mutex<Vec<yo_core::ModelConnectorRequest>>>,
+) {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut backend = NativeModelBackend::with_connector(
         Box::new(MockConnector {
             rounds: event_rounds(rounds),
             requests: Arc::clone(&requests),
         }),
-        super::support::binding(),
+        binding,
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
             Box::new(yo_core::admit_standard_complete_binding),
@@ -211,6 +223,16 @@ fn started_backend_with_rounds(
         })
         .unwrap();
     (backend, requests)
+}
+
+fn chat_binding() -> EffectiveModelBinding {
+    EffectiveModelBinding::new(
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("default").unwrap(),
+        ModelId::new("deepseek-v4-flash-0731").unwrap(),
+        ApiDialect::OpenAiChatCompletions,
+        NormalizedEndpoint::parse("https://example.invalid/v1").unwrap(),
+    )
 }
 
 fn poll_secret_request(
@@ -316,6 +338,138 @@ fn native_secret_request_waits_for_commit_and_finishes_without_replay() {
         requests[1].input().last(),
         Some(ModelConnectorInputItem::FunctionCallOutput { call_id, output })
             if call_id == "secret-call" && output == "canary-value"
+    ));
+}
+
+// secret call이 인식되기 전의 공개 steer는 call output 바로 뒤와 FIFO 순서로 한 번만 protected
+// request에 들어갑니다.
+#[test]
+fn chat_secret_request_appends_durable_corrections_after_the_exact_tool_output() {
+    let (mut backend, requests) = started_backend_with_binding(
+        chat_binding(),
+        "use the credential".to_owned(),
+        vec![secret_round(), answer_round("done")],
+    );
+    let prepared = backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: turn(),
+            input: UserInput::from("public correction"),
+        })
+        .unwrap();
+    assert_eq!(prepared, BackendCommandEvidence::SubmissionPrepared);
+    backend.commit_prepared_command().unwrap();
+
+    let (request, _, _) = poll_secret_request(&mut backend);
+    let late = backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: turn(),
+            input: UserInput::from("must remain a draft"),
+        })
+        .expect_err("a live secret question closes the steer admission phase");
+    assert_eq!(late.kind(), BackendFailureKind::CommandRejected);
+    assert_eq!(
+        backend.turn.as_ref().unwrap().armed_steers.len(),
+        1,
+        "a rejected later draft does not change the frozen correction FIFO"
+    );
+
+    let evidence = backend
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::SecretInput(SecretInput::new("canary-value").unwrap()),
+        })
+        .unwrap();
+    assert_eq!(evidence, BackendCommandEvidence::ProtectedInputPrepared);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    let after_prepare = backend
+        .execute_command(AgentCommand::SteerTurn {
+            turn: turn(),
+            input: UserInput::from("must also remain a draft"),
+        })
+        .expect_err("the prepared secret request admits no later steer");
+    assert_eq!(after_prepare.kind(), BackendFailureKind::CommandRejected);
+
+    let prepared_request = backend
+        .turn
+        .as_ref()
+        .unwrap()
+        .prepared_secret_request
+        .as_ref()
+        .unwrap()
+        .request
+        .as_ref()
+        .unwrap();
+    assert!(prepared_request.has_protected_terminal_input());
+    assert!(prepared_request.tools().is_none());
+    let call_index = prepared_request
+        .input()
+        .iter()
+        .position(|item| {
+            matches!(item, ModelConnectorInputItem::FunctionCall { call_id, name, .. }
+                if call_id == "secret-call" && name == NATIVE_SECRET_INTERACTION_NAME)
+        })
+        .unwrap();
+    let output_index = prepared_request
+        .input()
+        .iter()
+        .position(|item| {
+            matches!(item, ModelConnectorInputItem::FunctionCallOutput { call_id, output }
+                if call_id == "secret-call" && output == "canary-value")
+        })
+        .unwrap();
+    assert_eq!(output_index, call_index + 1);
+    assert!(matches!(
+        prepared_request.input().get(output_index + 1),
+        Some(ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::User,
+            content,
+            ..
+        }) if content == "public correction"
+    ));
+    assert_eq!(
+        prepared_request
+            .input()
+            .iter()
+            .filter(|item| matches!(item, ModelConnectorInputItem::FunctionCallOutput { .. }))
+            .count(),
+        1
+    );
+
+    backend.commit_prepared_command().unwrap();
+    for _ in 0..100 {
+        if requests.lock().unwrap().len() == 2 {
+            break;
+        }
+        let _ = backend.poll_event().unwrap();
+    }
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    let completion = (0..1_000)
+        .find_map(|_| match backend.poll_event().unwrap() {
+            BackendPoll::Event(event @ BackendEvent::TurnFinished { .. }) => Some(event),
+            BackendPoll::Event(BackendEvent::ResumableTurnFinished { .. }) => {
+                panic!("secret terminal Turns are not resumable")
+            },
+            BackendPoll::Event(_) | BackendPoll::Pending => None,
+            BackendPoll::Closed => panic!("backend closed before terminal completion"),
+        })
+        .expect("secret terminal request did not complete within the bounded poll budget");
+    assert!(matches!(
+        completion,
+        BackendEvent::TurnFinished {
+            outcome: TurnOutcome::Completed,
+            ..
+        }
+    ));
+    let requests = requests.lock().unwrap();
+    assert!(requests[1].has_protected_terminal_input());
+    assert!(requests[1].tools().is_none());
+    assert!(matches!(
+        requests[1].input().get(output_index + 1),
+        Some(ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::User,
+            content,
+            ..
+        }) if content == "public correction"
     ));
 }
 
