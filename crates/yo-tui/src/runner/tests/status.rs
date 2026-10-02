@@ -49,6 +49,7 @@ fn status_shows_live_session_identity_without_dispatch() {
         output.contains("No completed usage observation"),
         "{output}"
     );
+    assert!(!output.contains("This observation may predate"), "{output}");
 }
 
 // 압축 요청이 진행 중일 때 /status는 Turn 유휴를 세션 유휴로 잘못 표시하지 않는다.

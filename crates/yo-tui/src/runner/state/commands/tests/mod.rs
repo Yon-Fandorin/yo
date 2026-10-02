@@ -28,6 +28,11 @@ fn status_document_bounds_and_escapes_host_labels() {
             .contains("\\`\\~\\~workspace\\~\\~ \\&copy;\\`")
     );
     assert!(document.markdown.contains("Last: 3 in / 2 out"));
+    assert!(
+        document
+            .markdown
+            .contains("This observation may predate the current model.")
+    );
 }
 
 fn completed_answer(state: &mut TuiState, number: u64, text: String) {

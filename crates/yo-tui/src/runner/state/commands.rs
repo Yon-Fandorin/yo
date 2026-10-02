@@ -796,6 +796,11 @@ fn status_document(info: &TuiSessionInfo, state: &str, usage: Option<&str>) -> A
     } else {
         bounded_status_label(info.workspace())
     };
+    let usage_note = if usage.is_some() {
+        "\n\nThis observation may predate the current model."
+    } else {
+        ""
+    };
     let usage = usage.map_or_else(
         || "No completed usage observation available.".to_owned(),
         bounded_status_label,
@@ -806,7 +811,7 @@ fn status_document(info: &TuiSessionInfo, state: &str, usage: Option<&str>) -> A
     ActivityDocument {
         title: "Session status".to_owned(),
         markdown: format!(
-            "Session ID: {session}\n\n- Backend: {backend}\n- Workspace: {workspace}\n- State: {state}\n\n## Latest completed usage observation\n{usage}\n\nThis observation may predate the current model.{usage_command}"
+            "Session ID: {session}\n\n- Backend: {backend}\n- Workspace: {workspace}\n- State: {state}\n\n## Latest completed usage observation\n{usage}{usage_note}{usage_command}"
         ),
     }
 }
