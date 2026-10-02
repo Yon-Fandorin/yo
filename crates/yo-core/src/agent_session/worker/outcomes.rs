@@ -46,6 +46,7 @@ pub(in crate::agent_session) fn submission_rejection(
                 AgentRejection::TurnNotActive { .. } | AgentRejection::SessionMismatch { .. } => {
                     SubmissionRejectionKind::StaleReference
                 },
+                AgentRejection::UnsupportedSteer => SubmissionRejectionKind::UnsupportedSteer,
                 _ => SubmissionRejectionKind::Incompatible,
             },
             rejection.to_string(),

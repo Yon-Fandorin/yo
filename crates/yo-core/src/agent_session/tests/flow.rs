@@ -290,9 +290,14 @@ fn rejected_steer_preserves_the_active_turn_and_session() {
             submission,
         })
         .unwrap();
+        let expected_rejection = if provider_rejects {
+            SubmissionRejectionKind::Incompatible
+        } else {
+            SubmissionRejectionKind::UnsupportedSteer
+        };
         assert!(
             matches!(wait_for_submission_outcome(&mut app), SubmissionOutcome::Rejected { id, rejection }
-            if id == rejected_id && rejection.kind() == SubmissionRejectionKind::Incompatible)
+            if id == rejected_id && rejection.kind() == expected_rejection)
         );
         app.dispatch(AgentIntent::Interrupt).unwrap();
         app.wait_until_no_active_turn();

@@ -118,7 +118,7 @@ pub(super) fn paint(
                 styles.mode,
             ));
         }
-        candidates.push(vec![StyledSpan::new(interrupt, styles.key_hint)]);
+        candidates.push(vec![StyledSpan::new(interrupt.as_str(), styles.key_hint)]);
         candidates
     } else {
         let mut candidates = Vec::new();
@@ -162,15 +162,7 @@ pub(super) fn paint(
         }
         candidates
     };
-    let queue_key = key_notation(
-        if newline_binding.matches(KeyModifiers::ALT) {
-            KeyCode::Character('q')
-        } else {
-            KeyCode::Enter
-        },
-        KeyModifiers::ALT,
-        false,
-    );
+    let queue_key = key_notation(KeyCode::Character('q'), KeyModifiers::ALT, false);
     let recall_key = key_notation(KeyCode::Character('r'), KeyModifiers::ALT, false);
     if snapshot.queued_messages > 0 {
         let queue = format!(
@@ -201,12 +193,21 @@ pub(super) fn paint(
             )],
         );
     } else if snapshot.turn_active {
+        let mut actions = vec![
+            (queue_key.as_str(), "queue"),
+            (interrupt.as_str(), "interrupt"),
+            (newline.as_str(), "newline"),
+        ];
+        if exit_available {
+            actions.push((exit.as_str(), "exit"));
+        }
+        candidates.insert(0, action_spans(&actions, styles.key_hint, styles.mode));
         candidates.insert(
-            0,
+            1,
             action_spans(
                 &[
                     (queue_key.as_str(), "queue"),
-                    (&interrupt_notation(), "interrupt"),
+                    (interrupt.as_str(), "interrupt"),
                 ],
                 styles.key_hint,
                 styles.mode,

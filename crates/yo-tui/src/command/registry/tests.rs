@@ -61,6 +61,8 @@ fn help_document_uses_registry_and_explains_interaction() {
         "Ctrl+-",
         "Ctrl+F",
         "Ctrl+R",
+        "Alt+Q",
+        "Alt+R",
         "Shift+Tab",
     ] {
         assert!(document.markdown.contains(shortcut));

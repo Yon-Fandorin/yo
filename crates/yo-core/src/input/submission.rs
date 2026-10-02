@@ -94,6 +94,8 @@ pub enum SubmissionRejectionKind {
     RequiredAssetUnavailable,
     OverBudget,
     TargetChanged,
+    /// 선택한 backend가 활성 Turn에 입력을 적용할 수 없음.
+    UnsupportedSteer,
 }
 
 impl InputSubmission {

@@ -358,7 +358,7 @@ fn heterogeneous_marker_frames_keep_the_working_column_stable() {
     ));
 }
 
-// 충분한 폭의 하단 도움말은 예약·중단 키를 공통 관례 표기로 보여주고,
+// 충분한 폭의 하단 도움말은 명시적 예약·중단 키를 공통 관례 표기로 보여주고,
 // 현재 presentation mode는 같은 행 오른쪽에 남겨 입력창 아래 정보를 한눈에 읽게 한다.
 #[test]
 fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
@@ -381,7 +381,9 @@ fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
     .unwrap();
 
     let footer = row(&surface);
-    assert!(footer.starts_with("M-Enter queue  ·  Esc/^C interrupt"));
+    assert!(footer.starts_with("M-q queue  ·  Esc/^C interrupt"));
+    assert!(footer.contains("S-Enter newline"));
+    assert!(footer.contains("^D exit"));
     assert!(footer.ends_with("inline"));
 }
 
@@ -408,7 +410,7 @@ fn footer_omits_ctrl_d_exit_while_the_prompt_has_a_draft() {
     .unwrap();
 
     let footer = row(&surface);
-    assert!(footer.contains("M-Enter queue"));
+    assert!(footer.contains("M-q queue"));
     assert!(!footer.contains("exit"));
     assert!(footer.ends_with("inline"));
 }

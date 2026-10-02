@@ -15,6 +15,7 @@ use crate::{
         state::{StateEffect, TuiState},
         unix::retained_session_output,
     },
+    transcript::TranscriptBody,
 };
 
 // 종료용 출력은 저널에 확정된 Chat만 포함하고 아직 작성 중인 prompt는 섞지 않는다.
@@ -322,9 +323,9 @@ fn pending_manual_admission_cannot_consume_a_recalled_follow_up() {
     assert_eq!(state.editor().text(), "same");
 }
 
-// 일반 steer 거절도 사용자의 수정 지시가 적용되지 않은 상태이므로 남은 예약을 자동 실행하지 않는다.
+// 미지원 steer 초안은 Alt+Q로만 예약하며, 회수한 기존 예약은 Ctrl+U로 버릴 수 있다.
 #[test]
-fn rejected_manual_steer_pauses_waiting_follow_ups() {
+fn rejected_manual_steer_guides_queue_and_discard_without_claiming_finished_work_runs() {
     let mut state = TuiState::new();
     state
         .observe(AgentEvent::TurnStarted { turn: turn() })
@@ -343,19 +344,94 @@ fn rejected_manual_steer_pauses_waiting_follow_ups() {
         .observe_submission_outcome(SubmissionOutcome::Rejected {
             id: submission.id(),
             rejection: SubmissionRejection::new(
-                SubmissionRejectionKind::Incompatible,
-                "steer unavailable",
+                SubmissionRejectionKind::UnsupportedSteer,
+                "opaque backend detail",
             ),
         })
         .unwrap();
+    assert!(state.turn_active());
+    assert_eq!(state.editor().text(), "adjust");
+    let TranscriptBody::Message(notice) = state.transcript().items().last().unwrap().body();
+    assert!(notice.text().contains("cannot update a running task"));
+    assert!(notice.text().contains("Press Alt+Q"));
+    assert!(!notice.text().contains("opaque backend detail"));
+    assert!(state.next_follow_up().unwrap().is_none());
+
+    state
+        .handle(
+            key(KeyCode::Character('q'), KeyModifiers::ALT),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(state.editor().text(), "");
+    state
+        .handle(
+            key(KeyCode::Character('r'), KeyModifiers::ALT),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(state.editor().text(), "later");
+    state
+        .handle(
+            key(KeyCode::Character('u'), KeyModifiers::CONTROL),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(state.editor().text(), "");
+    state
+        .handle(
+            key(KeyCode::Character('q'), KeyModifiers::ALT),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert!(state.next_follow_up().unwrap().is_none());
     state
         .observe(AgentEvent::TurnFinished {
             turn: turn(),
             outcome: TurnOutcome::Completed,
         })
         .unwrap();
+    assert!(!state.turn_active());
+    let Some(AgentAction::Submit(queued)) = state.next_follow_up().unwrap() else {
+        panic!("explicitly queued steer draft must start as a later Turn");
+    };
+    assert_eq!(queued.input().as_str(), "adjust");
     assert!(state.next_follow_up().unwrap().is_none());
-    assert_eq!(state.editor().text(), "adjust");
+
+    let mut raced = TuiState::new();
+    raced
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    queue_message(&mut raced, "later");
+    raced
+        .handle(InputEvent::Paste("adjust".to_owned()), Duration::ZERO)
+        .unwrap();
+    let StateEffect::Dispatch(AgentAction::Steer { submission, .. }) = raced
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("manual steer before the completion race");
+    };
+    raced
+        .observe(AgentEvent::TurnFinished {
+            turn: turn(),
+            outcome: TurnOutcome::Completed,
+        })
+        .unwrap();
+    raced
+        .observe_submission_outcome(SubmissionOutcome::Rejected {
+            id: submission.id(),
+            rejection: SubmissionRejection::new(
+                SubmissionRejectionKind::UnsupportedSteer,
+                "opaque backend detail",
+            ),
+        })
+        .unwrap();
+    let TranscriptBody::Message(notice) = raced.transcript().items().last().unwrap().body();
+    assert!(notice.text().contains("Your draft was kept"));
+    assert!(!notice.text().contains("task is still running"));
+    assert_eq!(raced.editor().text(), "adjust");
+    assert!(raced.next_follow_up().unwrap().is_none());
 }
 
 // 실제 후보 선택의 신원은 거절·예약·회수·재제출을 거쳐 유지된다. 수락 뒤 같은 문자열을

@@ -3,8 +3,8 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use yo_core::{
-    InputSubmission, SubmissionId, SubmissionOutcome, UserInput, interview::InterviewError,
-    secret_store::RetentionPolicy,
+    InputSubmission, SubmissionId, SubmissionOutcome, SubmissionRejectionKind, UserInput,
+    interview::InterviewError, secret_store::RetentionPolicy,
 };
 
 use super::{FOLLOW_UP_BYTES, FOLLOW_UP_LIMIT, PendingRequest, StateEffect, StateError, TuiState};
@@ -1187,8 +1187,13 @@ impl TuiState {
                     self.starting_submission = None;
                 }
                 self.follow_ups_paused = true;
-                self.chat
-                    .push_notice(format!("Submission rejected: {}", rejection.message()))?;
+                let notice = if rejection.kind() == SubmissionRejectionKind::UnsupportedSteer {
+                    "The selected backend cannot update a running task. Your draft was kept. Press Alt+Q to queue your draft for the next turn."
+                        .to_owned()
+                } else {
+                    format!("Submission rejected: {}", rejection.message())
+                };
+                self.chat.push_notice(notice)?;
                 if self.active_turn.is_none()
                     && self.pending_submissions.is_empty()
                     && !self.has_pending_request()
