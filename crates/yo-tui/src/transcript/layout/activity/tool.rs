@@ -261,16 +261,22 @@ fn tool_markdown(output: &ToolOutput, preview: Option<(NonZeroU16, u16)>) -> Str
     let mut truncation_presented = false;
     let mut progress_presented = false;
     if let Some(arguments) = &output.arguments {
+        let native_local_mutation = matches!(output.tool.as_str(), "edit_file" | "write_file");
+        let proposal_markdown = native_local_mutation
+            .then(|| tool_files::local_file_proposal_markdown(output))
+            .flatten();
         let pattern = is_search
             .then(|| arguments.get("pattern").and_then(Value::as_str))
             .flatten();
         let command = is_shell
             .then(|| arguments.get("command").and_then(Value::as_str))
             .flatten();
-        let content = is_write
+        let content = (is_write && proposal_markdown.is_none())
             .then(|| arguments.get("content").and_then(|value| value.as_str()))
             .flatten();
-        let edits = is_edit.then(|| edit_markdown(arguments)).flatten();
+        let edits = (is_edit && proposal_markdown.is_none())
+            .then(|| edit_markdown(arguments))
+            .flatten();
         let mut displayed_arguments = arguments.clone();
         if let Some(pattern) = pattern {
             displayed_arguments
@@ -304,6 +310,19 @@ fn tool_markdown(output: &ToolOutput, preview: Option<(NonZeroU16, u16)>) -> Str
         {
             fields.remove("content");
         }
+        if proposal_markdown.is_some()
+            && let Some(fields) = displayed_arguments.as_object_mut()
+        {
+            match output.tool.as_str() {
+                "edit_file" => {
+                    fields.remove("edits");
+                },
+                "write_file" => {
+                    fields.remove("content");
+                },
+                _ => {},
+            }
+        }
         if !displayed_arguments
             .as_object()
             .is_some_and(|fields| fields.is_empty())
@@ -333,6 +352,9 @@ fn tool_markdown(output: &ToolOutput, preview: Option<(NonZeroU16, u16)>) -> Str
         }
         if let Some((edits, _)) = edits {
             sections.push(format!("**Proposed replacements**\n\n{edits}"));
+        }
+        if let Some(proposal_markdown) = proposal_markdown {
+            sections.push(proposal_markdown);
         }
         if let Some(content) = content {
             sections.push(format!(

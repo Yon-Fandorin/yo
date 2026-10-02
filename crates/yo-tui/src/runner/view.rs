@@ -178,7 +178,7 @@ impl ObservabilityViews {
         self.state.selected_change_key = Some((item, 0));
     }
 
-    pub(super) fn focused_change(&self, chat: TranscriptSlice<'_>) -> Option<TranscriptItemId> {
+    pub(super) fn focused_detail(&self, chat: TranscriptSlice<'_>) -> Option<TranscriptItemId> {
         if self.state.active != ObservabilityView::Chat || self.state.chat.pending_scroll.is_some()
         {
             return None;
@@ -186,11 +186,7 @@ impl ObservabilityViews {
         let focused = self.state.focused_activity?;
         chat.items().iter().find_map(|item| {
             let TranscriptBody::Message(message) = item.body();
-            (item.id() == focused
-                && message
-                    .file_change()
-                    .is_some_and(|change| !change.body.is_empty()))
-            .then_some(focused)
+            (item.id() == focused && changes::can_open(message)).then_some(focused)
         })
     }
 
@@ -543,7 +539,7 @@ impl ObservabilityViews {
                 Point::new(0, 0)
             },
             ObservabilityView::Changes => {
-                let sections = changes::sections(chat);
+                let sections = self.changes_view.sections(chat);
                 next.change_count = sections.len();
                 if let Some(index) = sections
                     .iter()
@@ -552,9 +548,8 @@ impl ObservabilityViews {
                     next.selected_change = index;
                 }
                 next.selected_change = next.selected_change.min(sections.len().saturating_sub(1));
-                let selected = sections.get(next.selected_change).copied();
-                change_section = selected;
-                next.selected_change_key = selected.map(|section| section.key);
+                change_section = sections.get(next.selected_change).cloned();
+                next.selected_change_key = change_section.as_ref().map(|section| section.key);
                 after_measure();
                 let columns = appearance
                     .transcript_config()
@@ -562,7 +557,7 @@ impl ObservabilityViews {
                     .map_or(width, |max| max.min(width));
                 self.changes_view
                     .render(
-                        selected,
+                        change_section.as_ref(),
                         &mut body,
                         columns,
                         appearance.styles().transcript,
@@ -605,7 +600,7 @@ impl ObservabilityViews {
                 next.selected_change,
                 next.change_count,
                 size.width,
-                change_section,
+                change_section.as_ref(),
             )
         } else {
             status_line(next.active, context, self.records.len(), width)?

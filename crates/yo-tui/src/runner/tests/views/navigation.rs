@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::json;
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, AgentEvent, DurabilityGapCause,
-    JournalDurability, ToolOutput, TranscriptRecord, UserInput,
+    Failure, JournalDurability, ToolOutput, TranscriptRecord, UserInput,
     session_repository::{DurableCutoff, RepositorySequence},
 };
 
@@ -33,6 +33,56 @@ fn open_focused_change(state: &mut TuiState, size: Size) {
             .unwrap(),
         StateEffect::Redraw
     );
+}
+
+fn observe_tool_output(
+    state: &mut TuiState,
+    id: u64,
+    kind: ActivityKind,
+    output: ToolOutput,
+    outcome: Option<ActivityOutcome>,
+) {
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: activity(id),
+            kind,
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: activity(id),
+            update: ActivityUpdate::TextSnapshot(output.to_snapshot().unwrap()),
+        })
+        .unwrap();
+    if let Some(outcome) = outcome {
+        state
+            .observe(AgentEvent::ActivityFinished {
+                activity: activity(id),
+                outcome,
+            })
+            .unwrap();
+    }
+}
+
+fn has_visible_graphemes(state: &mut TuiState, size: Size, expected: &[&str]) -> bool {
+    let frame = state
+        .prepare_frame(size, &AppearanceState::default().pin())
+        .unwrap();
+    let found = (0..size.height).any(|y| {
+        let graphemes = (0..size.width)
+            .filter_map(
+                |x| match frame.surface.cell(Point::new(x, y)).unwrap().content() {
+                    CellContent::Grapheme { text, .. } => Some(text.as_ref()),
+                    CellContent::Blank | CellContent::Continuation { .. } => None,
+                },
+            )
+            .collect::<Vec<_>>();
+        graphemes
+            .windows(expected.len())
+            .any(|window| window == expected)
+    });
+    state.commit_frame(&frame);
+    found
 }
 
 // 작성 중인 여러 줄 초안의 방향키는 편집 커서를 움직인다. 기록 스크롤은 PageUp으로
@@ -460,9 +510,9 @@ fn changes_review_navigates_files_without_dispatching_input() {
     assert_eq!(render_and_commit(&mut state, size), chat);
 }
 
-// 상세 변경 단축키는 마지막으로 표시된 파일 변경 문맥에만 반응하고 이동 중 초안을 보존한다.
+// 상세 변경 단축키는 마지막으로 표시된 파일 변경 문맥만 사용하고 이동 중 초안을 보존한다.
 #[test]
-fn alt_d_requires_a_committed_file_change_context() {
+fn alt_d_requires_a_committed_file_detail_context() {
     let mut state = TuiState::new();
     for (id, kind, text) in [
         (1, ActivityKind::FileChange, "update: target.rs\n-old\n+new"),
@@ -519,6 +569,365 @@ fn alt_d_requires_a_committed_file_change_context() {
     );
     assert_eq!(state.views().active(), ObservabilityView::Changes);
     assert_eq!(state.editor().text(), "keep draft");
+}
+
+// ToolCall과 ToolResult는 독립 관찰로 유지하고, 결과 쪽 상세 화면에는 제안과 원래 결과를 함께
+// 둡니다.
+#[test]
+fn alt_d_opens_the_managed_tool_result_proposal_and_restores_chat() {
+    let args = json!({"path":"src/main.rs","edits":[
+        {"oldText":"let title = \"old\";","newText":"let title = \"한글 👩‍💻\";\n"}
+    ]});
+    let call = ToolOutput {
+        tool: "edit_file".to_owned(),
+        server: None,
+        arguments: Some(args.clone()),
+        result: None,
+        content_items: None,
+        error: None,
+        plain_text: format!("edit_file · call-1\nArguments:\n{args:#}"),
+    };
+    let result_text = r#"{"path":"src/main.rs","status":"ok","replacements":1}"#;
+    let result = ToolOutput {
+        tool: "edit_file".to_owned(),
+        server: None,
+        arguments: Some(args.clone()),
+        result: Some(json!({
+            "content":[{"type":"text","text":result_text}],
+            "call_id":"call-1",
+            "tool_id":"edit-file",
+            "execution_host":"workspace",
+            "outcome":"completed",
+            "truncated":false,
+            "isError":false
+        })),
+        content_items: None,
+        error: None,
+        plain_text: format!(
+            "edit_file · call-1\ncompleted\nArguments:\n{args:#}\nResult:\n{result_text}"
+        ),
+    };
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        1,
+        ActivityKind::ToolCall,
+        call,
+        Some(ActivityOutcome::Completed),
+    );
+    observe_tool_output(
+        &mut state,
+        2,
+        ActivityKind::ToolResult,
+        result,
+        Some(ActivityOutcome::Completed),
+    );
+    state
+        .handle(InputEvent::Paste("keep this draft".into()), Duration::ZERO)
+        .unwrap();
+    let size = Size::new(80, 30);
+    let chat = render_and_commit(&mut state, size);
+    assert!(chat.contains("src/main.rs"), "{chat}");
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let detail = render_and_commit(&mut state, size);
+    assert!(detail.contains("src/main.rs"), "{detail}");
+    assert!(detail.contains("Tool result proposal"), "{detail}");
+    assert!(detail.contains("Proposed replacements"), "{detail}");
+    assert!(detail.contains("Activity outcome: Completed"), "{detail}");
+    assert!(detail.contains("let title = \"old\";"), "{detail}");
+    assert!(
+        has_visible_graphemes(&mut state, size, &["한", "글", " ", "👩‍💻"]),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("Old text has no trailing newline"),
+        "{detail}"
+    );
+    assert!(detail.contains("Recorded result"), "{detail}");
+    assert!(detail.contains("call-1"), "{detail}");
+    assert!(detail.contains("replacements"), "{detail}");
+    assert!(!detail.contains("diff --git"), "{detail}");
+    state
+        .handle(function(1, KeyAction::Press), Duration::ZERO)
+        .unwrap();
+    assert_eq!(render_and_commit(&mut state, size), chat);
+    assert_eq!(state.editor().text(), "keep this draft");
+}
+
+// 같은 이름의 실패 관찰이 이어져도 상세 화면은 선택한 ToolResult의 근거만 보존합니다.
+#[test]
+fn alt_d_keeps_the_focused_failed_tool_result_error_and_activity_detail() {
+    let neighbor_args = json!({"path":"src/neighbor.rs","edits":[
+        {"oldText":"neighbor old","newText":"neighbor new"}
+    ]});
+    let neighbor = ToolOutput {
+        tool: "edit_file".to_owned(),
+        server: None,
+        arguments: Some(neighbor_args.clone()),
+        result: Some(json!({"marker":"neighbor result marker"})),
+        content_items: None,
+        error: Some(json!({"marker":"neighbor error marker"})),
+        plain_text: format!("edit_file · neighbor-call\nArguments:\n{neighbor_args:#}"),
+    };
+    let target_args = json!({"path":"src/target.rs","edits":[
+        {"oldText":"target old","newText":"target new"}
+    ]});
+    let target = ToolOutput {
+        tool: "edit_file".to_owned(),
+        server: None,
+        arguments: Some(target_args.clone()),
+        result: Some(json!({"marker":"target result marker"})),
+        content_items: None,
+        error: Some(json!({"message":"target recorded error marker"})),
+        plain_text: format!("edit_file · target-call\nArguments:\n{target_args:#}"),
+    };
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        1,
+        ActivityKind::ToolResult,
+        neighbor,
+        Some(ActivityOutcome::Failed(Failure::new(
+            "neighbor failure marker",
+        ))),
+    );
+    observe_tool_output(
+        &mut state,
+        2,
+        ActivityKind::ToolResult,
+        target,
+        Some(ActivityOutcome::Failed(Failure::new(
+            "target activity failure reason",
+        ))),
+    );
+    state
+        .handle(
+            InputEvent::Paste("preserve failed-result draft".into()),
+            Duration::ZERO,
+        )
+        .unwrap();
+    let size = Size::new(80, 24);
+    let chat = render_and_commit(&mut state, size);
+    assert!(chat.contains("src/target.rs"), "{chat}");
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('d'), KeyModifiers::ALT),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let detail = render_and_commit(&mut state, size);
+    assert!(detail.contains("src/target.rs"), "{detail}");
+    assert!(detail.contains("target old"), "{detail}");
+    assert!(detail.contains("target new"), "{detail}");
+    assert!(detail.contains("target result marker"), "{detail}");
+    assert!(detail.contains("target recorded error marker"), "{detail}");
+    assert!(
+        detail.contains("target activity failure reason"),
+        "{detail}"
+    );
+    assert!(!detail.contains("src/neighbor.rs"), "{detail}");
+    assert!(!detail.contains("neighbor old"), "{detail}");
+    assert!(!detail.contains("neighbor result marker"), "{detail}");
+    assert!(!detail.contains("neighbor error marker"), "{detail}");
+    assert!(!detail.contains("neighbor failure marker"), "{detail}");
+    state
+        .handle(function(1, KeyAction::Press), Duration::ZERO)
+        .unwrap();
+    assert_eq!(render_and_commit(&mut state, size), chat);
+    assert_eq!(state.editor().text(), "preserve failed-result draft");
+}
+
+// 결과가 없는 ToolCall의 완료 상태는 준비 관찰로만 표시하며, 파일 생성 결과로 해석하지 않습니다.
+#[test]
+fn alt_d_opens_empty_write_proposals_with_the_recorded_activity_outcome() {
+    let cases = [
+        (None, "Pending"),
+        (Some(ActivityOutcome::Completed), "Completed"),
+        (
+            Some(ActivityOutcome::Failed(Failure::new("not executed"))),
+            "Failed",
+        ),
+        (Some(ActivityOutcome::Interrupted), "Interrupted"),
+    ];
+    for (id, (outcome, status)) in cases.into_iter().enumerate() {
+        let args = json!({"path":"notes/empty.txt","content":""});
+        let output = ToolOutput {
+            tool: "write_file".to_owned(),
+            server: None,
+            arguments: Some(args.clone()),
+            result: None,
+            content_items: None,
+            error: None,
+            plain_text: format!("write_file · call-{id}\nArguments:\n{args:#}"),
+        };
+        let mut state = TuiState::new();
+        observe_tool_output(
+            &mut state,
+            id as u64 + 1,
+            ActivityKind::ToolCall,
+            output,
+            outcome,
+        );
+        state
+            .handle(InputEvent::Paste("keep draft".into()), Duration::ZERO)
+            .unwrap();
+        let size = Size::new(50, 14);
+        let chat = render_and_commit(&mut state, size);
+        assert_eq!(
+            state
+                .handle(
+                    key(KeyCode::Character('d'), KeyModifiers::ALT),
+                    Duration::ZERO
+                )
+                .unwrap(),
+            StateEffect::Redraw
+        );
+        let detail = render_and_commit(&mut state, size);
+        assert!(detail.contains("Prepared proposal"), "{detail}");
+        assert!(detail.contains("Proposed file content"), "{detail}");
+        assert!(detail.contains("notes/empty.txt"), "{detail}");
+        assert!(detail.contains("(empty file)"), "{detail}");
+        assert!(
+            detail.contains(&format!("Activity outcome: {status}")),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("No execution result in this observation"),
+            "{detail}"
+        );
+        if status == "Failed" {
+            assert!(detail.contains("not executed"), "{detail}");
+        }
+        assert!(!detail.contains("Applied replacements"), "{detail}");
+        state
+            .handle(function(1, KeyAction::Press), Duration::ZERO)
+            .unwrap();
+        assert_eq!(render_and_commit(&mut state, size), chat);
+        assert_eq!(state.editor().text(), "keep draft");
+    }
+}
+
+// 잘못되었거나 용량을 넘긴 제안은 열리지 않고 이전 FileChange 문맥도 재사용하지 않습니다.
+#[test]
+fn alt_d_rejects_unadmitted_proposals_without_reusing_an_older_change() {
+    let replacement = json!({"oldText":"old","newText":"new"});
+    let cases = [
+        json!({"path":"src/main.rs","edits":vec![replacement.clone();257]}),
+        json!({"path":"src/main.rs","edits":[{"oldText":"x".repeat(256*1024+1),"newText":""}]}),
+        json!({"path":"src/main.rs","edits":[replacement.clone()],"extra":true}),
+        json!({"path":"[redacted]","edits":[replacement]}),
+        json!({"path":"src/main.rs"}),
+    ];
+    for (index, args) in cases.into_iter().enumerate() {
+        let mut state = TuiState::new();
+        state
+            .observe(AgentEvent::ActivityStarted {
+                activity: activity(1),
+                kind: ActivityKind::FileChange,
+            })
+            .unwrap();
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: activity(1),
+                update: ActivityUpdate::TextSnapshot("update: older.rs\n-old\n+new".into()),
+            })
+            .unwrap();
+        let output = ToolOutput {
+            tool: "edit_file".to_owned(),
+            server: None,
+            arguments: Some(args.clone()),
+            result: None,
+            content_items: None,
+            error: None,
+            plain_text: format!("edit_file · invalid-{index}\nArguments:\n{args:#}"),
+        };
+        observe_tool_output(
+            &mut state,
+            2,
+            ActivityKind::ToolCall,
+            output,
+            Some(ActivityOutcome::Completed),
+        );
+        state
+            .handle(InputEvent::Paste("stay here".into()), Duration::ZERO)
+            .unwrap();
+        render_and_commit(&mut state, Size::new(60, 16));
+        assert_ne!(
+            state
+                .handle(
+                    key(KeyCode::Character('d'), KeyModifiers::ALT),
+                    Duration::ZERO
+                )
+                .unwrap(),
+            StateEffect::Redraw
+        );
+        assert_eq!(state.views().active(), ObservabilityView::Chat);
+        assert_eq!(state.editor().text(), "stay here");
+    }
+}
+
+// 긴 쓰기 제안에서 스크롤 위치를 폭 변경 후 복원하며 원문 끝도 유지합니다.
+#[test]
+fn proposal_detail_restores_scrolled_source_after_resize() {
+    let mut content = (0..60)
+        .map(|line| format!("line-{line:02} 한글 e\u{301} 👩‍💻\n"))
+        .collect::<String>();
+    content.push_str("FINAL without trailing newline");
+    let args = json!({"path":"src/long.txt","content":content});
+    let output = ToolOutput {
+        tool: "write_file".to_owned(),
+        server: None,
+        arguments: Some(args.clone()),
+        result: None,
+        content_items: None,
+        error: None,
+        plain_text: format!("write_file · call-long\nArguments:\n{args:#}"),
+    };
+    let mut state = TuiState::new();
+    observe_tool_output(
+        &mut state,
+        1,
+        ActivityKind::ToolCall,
+        output,
+        Some(ActivityOutcome::Completed),
+    );
+    let wide = Size::new(70, 14);
+    render_and_commit(&mut state, wide);
+    state
+        .handle(
+            key(KeyCode::Character('d'), KeyModifiers::ALT),
+            Duration::ZERO,
+        )
+        .unwrap();
+    let before = render_and_commit(&mut state, wide);
+    for _ in 0..4 {
+        state
+            .handle(InputEvent::MouseScroll(8), Duration::ZERO)
+            .unwrap();
+        render_and_commit(&mut state, wide);
+    }
+    let scrolled = render_and_commit(&mut state, wide);
+    assert_ne!(scrolled, before);
+    let narrow = render_and_commit(&mut state, Size::new(42, 14));
+    assert!(narrow.contains("line-"), "{narrow}");
+    let restored = render_and_commit(&mut state, wide);
+    assert_eq!(restored, scrolled);
+    state
+        .handle(key(KeyCode::End, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    let tail = render_and_commit(&mut state, wide);
+    assert!(tail.contains("FINAL without trailing newline"), "{tail}");
 }
 
 // 긴 파일 경로는 고정 안내에서만 줄이며 폭 변경과 스크롤 뒤에도 파일명을 유지한다.

@@ -449,6 +449,20 @@ includes CJK and emoji to exercise this boundary. Raw Git headers retain the gen
 heading rather than guessing a path from potentially quoted filenames.
 `runner::tests::views::navigation` checks narrow headers, file selection, scroll,
 Chat restoration, and that review input cannot submit a model request.
+Focused native `edit_file` and `write_file` observations also open with Alt+D
+when their complete bounded arguments pass detail admission. Chat uses the same
+proposal formatter for admitted native arguments and retains its existing fallback
+formats for other observations. The detail
+labels proposed replacements or file content and includes only that observation's
+recorded result, error and activity outcome or failure reason. A prepared call
+without a result explicitly says that no execution result exists in this observation;
+its Completed activity does not establish a successful file mutation. Separate call
+and result observations are not joined by tool name or a parsed call identifier.
+Malformed, redacted or excessive proposals cannot open detail or an older unrelated
+change; their existing Chat and literal fallbacks remain. This projection performs no filesystem I/O
+and supplies neither a verified applied diff nor Git status. Tests cover failed
+preparation and results, empty writes, the first excessive edit count/byte,
+same-name observation isolation, draft/F1 return and Unicode resize anchors.
 The selected file now uses `TextPages` with usize row counts and a cached
 item/section/revision/width layout, painting only the visible page. Original logical
 line offsets preserve addition/deletion/hunk styles across wrapping, including row

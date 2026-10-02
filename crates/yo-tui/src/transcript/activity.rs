@@ -241,6 +241,19 @@ impl TranscriptMessage {
         Some(&body[start..])
     }
 
+    pub(crate) fn tool_outcome(&self) -> Option<TranscriptActivityOutcome> {
+        self.tool_kind()?;
+        self.activity?.outcome
+    }
+
+    pub(crate) fn tool_outcome_detail(&self) -> Option<&str> {
+        self.tool_kind()?;
+        let activity = self.activity?;
+        let start = activity.footer_start?;
+        let detail = &self.text[start..];
+        Some(detail.strip_prefix('\n').unwrap_or(detail))
+    }
+
     pub(crate) fn file_change(&self) -> Option<FileChangeView<'_>> {
         let activity = self.activity.filter(|activity| activity.diff)?;
         let header_end = self.text.find('\n').unwrap_or(self.text.len());

@@ -102,6 +102,45 @@ Image preservation and protected-input interaction with public corrections have 
 scripted Linux text journey did not exercise those live paths or physical Mac
 keys and does not establish a complete daily-work replacement.
 
+## Managed file proposal inspection in Linux tmux
+
+On 2026-10-02, the reviewed TUI source based on `ce343cda` completed a
+Fullscreen file-edit/write journey beside the existing Codex window. The
+existing `qwencloud:default:qwen3.8-max` Token Plan used Responses, with
+subscription usage rather than free quota. One Session had two completed Turns
+and eight accepted model requests within the ten-request bound. Two CLI
+processes were used, including a fresh-process resume. The binary SHA-256 was
+`4a9d958028a2b956ecf4a81700d6198f4a57a0effe7c733b02f396f94356a4ae`.
+
+| Journey | Observed result |
+|---|---|
+| Fix inclusive and reversed Python ranges with `edit_file` | Only `ranges.py` changed; the unchanged ten-test suite went from five failures to all passing, confirmed independently |
+| Open the focused edit result with Alt+D | Proposed replacements, Completed activity and that observation's own recorded result were visible |
+| Select the prepared call | Prepared proposal explicitly reported no execution result in that observation |
+| Create and read `README.md` with file tools in the same Session | Written UTF-8 bytes exactly matched the retained proposed content and the result's 2,597-byte count; the Korean example appeared in detail |
+| Resize edit and write detail from 80 to 24 and back | Original detail frames returned; F1 restored the exact Chat frame and unsent draft |
+| Resume the same Session without new input | Stored write proposal and result were inspectable; accepted requests remained eight |
+
+The exact `python3 -m unittest -v` command received one `this tool call only`
+approval. Native edit/write operations used their existing automatic execution
+policy; this was not a new file-approval flow. Independent inspection found only
+the expected Python edit and README, with the test-file bytes unchanged. The
+model omitted the requested final period in the Korean example; Yo preserved
+the actual tool arguments and written bytes exactly. This is not proof of
+literal compliance with every model instruction.
+
+The final unrestricted affected suites passed 1,032 TUI unit tests, four
+rendering-parity tests, and the CLI package including 550 unit tests and real
+PTY consumers. All-target workspace Clippy, test explanations, formatting and
+the current Linux target check passed. Both CLI processes exited with status
+0, only their two windows closed, no process remained in the disposable
+workspace, and the existing user windows plus configuration, credential and
+connection bytes and modes were preserved.
+
+This verifies inspection of retained proposals and their own results. It does
+not supply a captured applied whole-file diff or scan Git state, establish a
+complete daily-work replacement, or repeat physical Mac input validation.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`

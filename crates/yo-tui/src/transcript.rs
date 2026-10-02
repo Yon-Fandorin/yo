@@ -22,9 +22,10 @@ pub use activity::{
 mod viewport;
 
 pub(crate) use layout::{
-    MarkdownStyles, TranscriptActivityStyles, TranscriptLayoutConfig, TranscriptLayoutConfigError,
-    TranscriptMeasure, TranscriptMeasureError, TranscriptPaintError, TranscriptRenderError,
-    TranscriptRenderFrame, TranscriptStyles, measure, paint_indexed_commands, paint_prepared,
+    LocalFileProposal, LocalFileProposalBodyStyle, MarkdownStyles, TranscriptActivityStyles,
+    TranscriptLayoutConfig, TranscriptLayoutConfigError, TranscriptMeasure, TranscriptMeasureError,
+    TranscriptPaintError, TranscriptRenderError, TranscriptRenderFrame, TranscriptStyles,
+    local_file_proposal, local_file_proposal_path, measure, paint_indexed_commands, paint_prepared,
     paint_prepared_commands, prepare, prepare_slice, render, render_commands,
 };
 pub(crate) use viewport::{TranscriptScrollCommand, TranscriptViewMode, TranscriptViewState};

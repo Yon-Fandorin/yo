@@ -8,9 +8,10 @@ mod tool_resources;
 mod tool_shell;
 
 use serde_json::Value;
+pub(crate) use tool_files::{LocalFileProposal, LocalFileProposalBodyStyle};
 use yo_core::{
     ActivityDocument, ActivityKind, ActivityNotice, ActivityPlan, ActivityReasoning,
-    ActivitySummary, NoticeLevel, PlanStepStatus, SummaryKind,
+    ActivitySummary, NoticeLevel, PlanStepStatus, SummaryKind, ToolOutput,
 };
 
 use super::{
@@ -115,6 +116,14 @@ pub(super) fn tool_presentation(
 
 pub(super) fn tool_source_text(message: &TranscriptMessage) -> Option<String> {
     tool::tool_source_text(message)
+}
+
+pub(crate) fn local_file_proposal(output: &ToolOutput) -> Option<LocalFileProposal<'_>> {
+    tool_files::local_file_proposal(output)
+}
+
+pub(crate) fn local_file_proposal_path(output: &ToolOutput) -> Option<&str> {
+    tool_files::local_file_proposal_path(output)
 }
 
 pub(super) fn content_block_markdown(block: &Value, successful: bool) -> String {

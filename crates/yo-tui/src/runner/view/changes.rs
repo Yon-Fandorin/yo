@@ -1,15 +1,19 @@
 //! Read-only file sections from typed, retained Chat change activities.
 
-use std::{cell::RefCell, iter::once, num::NonZeroU16, ops::Range, sync::Arc};
+use std::{
+    cell::RefCell, collections::HashMap, iter::once, num::NonZeroU16, ops::Range, sync::Arc,
+};
 
 use unicode_segmentation::UnicodeSegmentation;
+use yo_core::{ActivityKind, ToolOutput};
 
 use crate::{
     surface::{Point, Rect, Size, SurfaceView, WriteOutcome, cell_width},
     text::flow::{TextFlowError, TextPages, flow_text},
     transcript::{
-        FileChangeView, TranscriptActivityOutcome, TranscriptBody, TranscriptItemId,
-        TranscriptScrollCommand, TranscriptSlice, TranscriptStyles,
+        FileChangeView, LocalFileProposal, LocalFileProposalBodyStyle, TranscriptActivityOutcome,
+        TranscriptBody, TranscriptItemId, TranscriptMessage, TranscriptScrollCommand,
+        TranscriptSlice, TranscriptStyles, local_file_proposal, local_file_proposal_path,
     },
 };
 
@@ -17,16 +21,12 @@ pub(super) fn header(
     selected: usize,
     count: usize,
     width: u16,
-    section: Option<Section<'_>>,
+    section: Option<&Section<'_>>,
 ) -> String {
     let index = if count == 0 { 0 } else { selected + 1 };
+    let label = section.map_or("Changes", Section::header_label);
     let path = section
-        .and_then(|section| section.change.body.lines().next())
-        .and_then(|line| {
-            ["add: ", "update: ", "delete: "]
-                .into_iter()
-                .find_map(|prefix| line.strip_prefix(prefix))
-        })
+        .and_then(Section::path)
         .filter(|path| !path.is_empty() && !path.chars().any(char::is_control));
     if let Some((path, path_width)) =
         path.and_then(|path| cell_width(path).ok().map(|width| (path, width)))
@@ -34,7 +34,7 @@ pub(super) fn header(
         let columns = usize::from(width);
         for (prefix, suffix) in [
             (
-                format!("Changes {index}/{count} | "),
+                format!("{label} {index}/{count} | "),
                 " | Left/Right files | F1 Chat",
             ),
             (format!("{index}/{count} "), " F1"),
@@ -62,11 +62,11 @@ pub(super) fn header(
         }
     }
     [
-        format!("Changes {index}/{count} | Left/Right files | F1 Chat"),
-        format!("Changes {index}/{count} | <> | F1 Chat"),
-        format!("Changes {index}/{count} F1 Chat"),
-        format!("Changes {index}/{count}"),
-        "Changes".to_owned(),
+        format!("{label} {index}/{count} | Left/Right files | F1 Chat"),
+        format!("{label} {index}/{count} | <> | F1 Chat"),
+        format!("{label} {index}/{count} F1 Chat"),
+        format!("{label} {index}/{count}"),
+        label.to_owned(),
         "D".to_owned(),
     ]
     .into_iter()
@@ -74,56 +74,64 @@ pub(super) fn header(
     .unwrap_or_default()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct Section<'a> {
     pub(super) key: (TranscriptItemId, usize),
     pub(super) revision: u64,
-    pub(super) change: FileChangeView<'a>,
+    source: SectionSource<'a>,
 }
 
-pub(super) fn sections(chat: TranscriptSlice<'_>) -> Vec<Section<'_>> {
-    let mut sections = Vec::new();
-    for item in chat.items() {
-        let TranscriptBody::Message(message) = item.body();
-        let Some(change) = message.file_change() else {
-            continue;
-        };
-        let mut start = 0;
-        let mut offset = 0;
-        let mut index = 0;
-        let explicit_files = change.body.lines().any(is_file_header);
-        let mut saw_file = false;
-        for line in change.body.split_inclusive('\n') {
-            let file_header = if explicit_files {
-                is_file_header(line)
-            } else {
-                line.starts_with("diff --git ")
-            };
-            if file_header && saw_file && offset > start {
-                sections.push(Section {
-                    key: (item.id(), index),
-                    revision: item.revision(),
-                    change: FileChangeView {
-                        body: &change.body[start..offset],
-                        ..change
-                    },
-                });
-                start = offset;
-                index += 1;
-            }
-            saw_file |= file_header;
-            offset += line.len();
+#[derive(Clone)]
+enum SectionSource<'a> {
+    Reported(FileChangeView<'a>),
+    Proposal {
+        message: &'a TranscriptMessage,
+        path: String,
+    },
+}
+
+impl Section<'_> {
+    fn header_label(&self) -> &'static str {
+        match &self.source {
+            SectionSource::Reported(_) => "Changes",
+            SectionSource::Proposal { .. } => "Proposed",
         }
-        sections.push(Section {
-            key: (item.id(), index),
-            revision: item.revision(),
-            change: FileChangeView {
-                body: &change.body[start..],
-                ..change
-            },
-        });
     }
-    sections
+
+    fn path(&self) -> Option<&str> {
+        match &self.source {
+            SectionSource::Reported(change) => change.body.lines().next().and_then(|line| {
+                ["add: ", "update: ", "delete: "]
+                    .into_iter()
+                    .find_map(|prefix| line.strip_prefix(prefix))
+            }),
+            SectionSource::Proposal { path, .. } => Some(path),
+        }
+    }
+}
+
+pub(super) fn can_open(message: &TranscriptMessage) -> bool {
+    message
+        .file_change()
+        .is_some_and(|change| !change.body.is_empty())
+        || proposal_path(message).is_some()
+}
+
+fn proposal_path(message: &TranscriptMessage) -> Option<String> {
+    if !matches!(
+        message.tool_kind(),
+        Some(ActivityKind::ToolCall | ActivityKind::ToolResult)
+    ) {
+        return None;
+    }
+    let output = ToolOutput::from_snapshot(message.tool_source()?)?;
+    local_file_proposal_path(&output).map(str::to_owned)
+}
+
+#[derive(Clone, Debug, Default)]
+struct ProposalIndex {
+    signature: Vec<(TranscriptItemId, u64)>,
+    paths: HashMap<TranscriptItemId, (u64, Option<String>)>,
 }
 
 fn is_file_header(line: &str) -> bool {
@@ -150,6 +158,7 @@ struct Cache {
     lines: Vec<usize>,
     body: Range<usize>,
     label: Range<usize>,
+    body_style: LocalFileProposalBodyStyle,
     outcome: Option<TranscriptActivityOutcome>,
     pages: TextPages,
 }
@@ -157,12 +166,107 @@ struct Cache {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ChangesView {
     cache: RefCell<Option<Arc<Cache>>>,
+    proposal_index: RefCell<Option<ProposalIndex>>,
 }
 
 impl ChangesView {
+    pub(super) fn sections<'a>(&self, chat: TranscriptSlice<'a>) -> Vec<Section<'a>> {
+        let proposal_paths = self.proposal_paths(chat);
+        let mut sections = Vec::new();
+        for item in chat.items() {
+            let TranscriptBody::Message(message) = item.body();
+            if let Some(change) = message.file_change() {
+                let mut start = 0;
+                let mut offset = 0;
+                let mut index = 0;
+                let explicit_files = change.body.lines().any(is_file_header);
+                let mut saw_file = false;
+                for line in change.body.split_inclusive('\n') {
+                    let file_header = if explicit_files {
+                        is_file_header(line)
+                    } else {
+                        line.starts_with("diff --git ")
+                    };
+                    if file_header && saw_file && offset > start {
+                        sections.push(Section {
+                            key: (item.id(), index),
+                            revision: item.revision(),
+                            source: SectionSource::Reported(FileChangeView {
+                                body: &change.body[start..offset],
+                                ..change
+                            }),
+                        });
+                        start = offset;
+                        index += 1;
+                    }
+                    saw_file |= file_header;
+                    offset += line.len();
+                }
+                sections.push(Section {
+                    key: (item.id(), index),
+                    revision: item.revision(),
+                    source: SectionSource::Reported(FileChangeView {
+                        body: &change.body[start..],
+                        ..change
+                    }),
+                });
+                continue;
+            }
+            if let Some((revision, Some(path))) = proposal_paths.get(&item.id())
+                && *revision == item.revision()
+            {
+                sections.push(Section {
+                    key: (item.id(), 0),
+                    revision: item.revision(),
+                    source: SectionSource::Proposal {
+                        message,
+                        path: path.clone(),
+                    },
+                });
+            }
+        }
+        sections
+    }
+
+    fn proposal_paths(
+        &self,
+        chat: TranscriptSlice<'_>,
+    ) -> HashMap<TranscriptItemId, (u64, Option<String>)> {
+        let signature = chat
+            .items()
+            .iter()
+            .map(|item| (item.id(), item.revision()))
+            .collect::<Vec<_>>();
+        let mut cached = self.proposal_index.borrow_mut();
+        if cached
+            .as_ref()
+            .is_none_or(|index| index.signature != signature)
+        {
+            let previous = cached.take().unwrap_or_default();
+            let mut paths = HashMap::new();
+            for item in chat.items() {
+                if let Some((revision, path)) = previous.paths.get(&item.id())
+                    && *revision == item.revision()
+                {
+                    paths.insert(item.id(), (*revision, path.clone()));
+                    continue;
+                }
+                let TranscriptBody::Message(message) = item.body();
+                let path = proposal_path(message);
+                paths.insert(item.id(), (item.revision(), path));
+            }
+            *cached = Some(ProposalIndex { signature, paths });
+        }
+        cached
+            .as_ref()
+            .expect("proposal index was populated")
+            .paths
+            .clone()
+    }
+
     pub(super) fn render(
         &self,
-        selected: Option<Section<'_>>,
+        selected: Option<&Section<'_>>,
         view: &mut SurfaceView<'_>,
         width: NonZeroU16,
         styles: TranscriptStyles,
@@ -179,41 +283,69 @@ impl ChangesView {
                 .as_ref()
                 .is_none_or(|cache| cache.key != key || cache.width != columns)
             {
-                let (source, body, label, outcome) = if let Some(section) = selected {
-                    let change = section.change;
-                    let added = change
-                        .body
-                        .lines()
-                        .filter(|line| line.starts_with('+') && !line.starts_with("+++ "))
-                        .count();
-                    let removed = change
-                        .body
-                        .lines()
-                        .filter(|line| line.starts_with('-') && !line.starts_with("--- "))
-                        .count();
-                    let mut source = format!("{} · +{added} -{removed}\n", change.heading);
-                    let label_start = source.len();
-                    source.push_str("diff\n");
-                    let start = source.len();
-                    source.push_str(change.body.strip_suffix('\n').unwrap_or(change.body));
-                    let end = source.len();
-                    if let Some(footer) = change.footer.filter(|footer| !footer.is_empty()) {
-                        source.push('\n');
-                        source.push_str(footer);
+                let (source, body, label, outcome, body_style) = if let Some(section) = selected {
+                    match &section.source {
+                        SectionSource::Reported(change) => {
+                            let added = change
+                                .body
+                                .lines()
+                                .filter(|line| line.starts_with('+') && !line.starts_with("+++ "))
+                                .count();
+                            let removed = change
+                                .body
+                                .lines()
+                                .filter(|line| line.starts_with('-') && !line.starts_with("--- "))
+                                .count();
+                            let mut source = format!("{} · +{added} -{removed}\n", change.heading);
+                            let label_start = source.len();
+                            source.push_str("diff\n");
+                            let start = source.len();
+                            source.push_str(change.body.strip_suffix('\n').unwrap_or(change.body));
+                            let end = source.len();
+                            if let Some(footer) = change.footer.filter(|footer| !footer.is_empty())
+                            {
+                                source.push('\n');
+                                source.push_str(footer);
+                            }
+                            (
+                                source,
+                                start..end,
+                                label_start..start,
+                                change.outcome,
+                                LocalFileProposalBodyStyle::Diff,
+                            )
+                        },
+                        SectionSource::Proposal { message, path } => {
+                            let output = ToolOutput::from_snapshot(
+                                message
+                                    .tool_source()
+                                    .expect("a proposed section retains its tool source"),
+                            )
+                            .expect("a proposed section retains a complete tool output");
+                            let proposal = local_file_proposal(&output)
+                                .expect("a proposed section retains its admitted arguments");
+                            debug_assert_eq!(proposal.path, path.as_str());
+                            proposal_source(message, &output, &proposal)
+                        },
                     }
-                    (source, start..end, label_start..start, change.outcome)
                 } else {
                     (
                         "No file changes were reported in this conversation.\nThis view does not inspect the Git worktree.\nF1 returns to Chat.".to_owned(),
                         0..0,
                         0..0,
                         None,
+                        LocalFileProposalBodyStyle::Diff,
                     )
                 };
                 let pages = TextPages::with_escaped_fallback(
                     &source,
                     columns,
-                    "Escaped diff (unrenderable cells)",
+                    match body_style {
+                        LocalFileProposalBodyStyle::Diff => "Escaped diff (unrenderable cells)",
+                        LocalFileProposalBodyStyle::Plain => {
+                            "Escaped proposed content (unrenderable cells)"
+                        },
+                    },
                 )?;
                 let lines = once(0)
                     .chain(source.match_indices('\n').map(|(offset, _)| offset + 1))
@@ -225,6 +357,7 @@ impl ChangesView {
                     lines,
                     body,
                     label,
+                    body_style,
                     outcome,
                     pages,
                 }));
@@ -299,7 +432,12 @@ impl ChangesView {
                 .unwrap_or(cache.source.len());
             let in_body = cache.body.contains(&start);
             let style = if in_body {
-                styles.markdown.diff_line_style(&cache.source[start..end])
+                match cache.body_style {
+                    LocalFileProposalBodyStyle::Diff => {
+                        styles.markdown.diff_line_style(&cache.source[start..end])
+                    },
+                    LocalFileProposalBodyStyle::Plain => styles.activity.body,
+                }
             } else if cache.label.contains(&start) {
                 styles.markdown.code_label
             } else {
@@ -322,6 +460,85 @@ impl ChangesView {
     }
 }
 
+fn proposal_source(
+    message: &TranscriptMessage,
+    output: &ToolOutput,
+    proposal: &LocalFileProposal<'_>,
+) -> (
+    String,
+    Range<usize>,
+    Range<usize>,
+    Option<TranscriptActivityOutcome>,
+    LocalFileProposalBodyStyle,
+) {
+    let kind = message
+        .tool_kind()
+        .expect("a proposed section is a typed tool observation");
+    let outcome = message.tool_outcome();
+    let prepared = kind == ActivityKind::ToolCall
+        && output.result.is_none()
+        && output.content_items.is_none()
+        && output.error.is_none();
+    let mut source = format!(
+        "{}\nPath: {}\nActivity outcome: {}\n",
+        if prepared {
+            "Prepared proposal"
+        } else if kind == ActivityKind::ToolCall {
+            "Tool call proposal"
+        } else {
+            "Tool result proposal"
+        },
+        proposal.path,
+        activity_outcome_label(outcome),
+    );
+    let label_start = source.len();
+    source.push_str(proposal.label());
+    let label_end = source.len();
+    source.push_str("\n\n");
+    let body = proposal.append_detail_body(&mut source);
+    if prepared {
+        source.push_str("\n\nNo execution result in this observation.");
+    } else {
+        if let Some(result) = &output.result {
+            source.push_str("\n\nRecorded result:\n");
+            source.push_str(&result.to_string());
+        } else {
+            source.push_str("\n\nNo result was recorded in this observation.");
+        }
+        if let Some(content_items) = &output.content_items {
+            source.push_str("\n\nRecorded content items:\n");
+            source.push_str(&content_items.to_string());
+        }
+        if let Some(error) = &output.error {
+            source.push_str("\n\nRecorded error:\n");
+            source.push_str(&error.to_string());
+        }
+    }
+    if let Some(detail) = message
+        .tool_outcome_detail()
+        .filter(|detail| !detail.is_empty())
+    {
+        source.push_str("\n\nRecorded activity detail:\n");
+        source.push_str(detail);
+    }
+    (
+        source,
+        body,
+        label_start..label_end,
+        outcome,
+        proposal.body_style,
+    )
+}
+
+fn activity_outcome_label(outcome: Option<TranscriptActivityOutcome>) -> &'static str {
+    match outcome {
+        None => "Pending",
+        Some(TranscriptActivityOutcome::Completed) => "Completed",
+        Some(TranscriptActivityOutcome::Failed) => "Failed",
+        Some(TranscriptActivityOutcome::Interrupted) => "Interrupted",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,12 +554,12 @@ mod tests {
         let section = Section {
             key: (TranscriptItemId::new(1), 0),
             revision: 1,
-            change: FileChangeView {
+            source: SectionSource::Reported(FileChangeView {
                 heading: "Changes",
                 body,
                 outcome: None,
                 footer: None,
-            },
+            }),
         };
         let view = ChangesView::default();
         let mut position = Position::default();
@@ -355,7 +572,7 @@ mod tests {
             let size = Size::new(width, 2);
             let mut surface = Surface::new(size).unwrap();
             view.render(
-                Some(section),
+                Some(&section),
                 &mut surface.view(Rect::new(Point::new(0, 0), size)).unwrap(),
                 NonZeroU16::new(width).unwrap(),
                 styles,
@@ -420,12 +637,12 @@ mod tests {
         let section = Section {
             key: (TranscriptItemId::new(1), 0),
             revision: 1,
-            change: FileChangeView {
+            source: SectionSource::Reported(FileChangeView {
                 heading: "Changes",
                 body: &body,
                 outcome: None,
                 footer: None,
-            },
+            }),
         };
         let view = ChangesView::default();
         let mut position = Position::default();
@@ -438,7 +655,7 @@ mod tests {
             let size = Size::new(width, 2);
             let mut surface = Surface::new(size).unwrap();
             view.render(
-                Some(section),
+                Some(&section),
                 &mut surface.view(Rect::new(Point::new(0, 0), size)).unwrap(),
                 NonZeroU16::new(width).unwrap(),
                 styles,

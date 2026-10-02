@@ -591,7 +591,7 @@ impl TuiState {
                 && matches!(key.code, KeyCode::Character('d' | 'D')))
             && self.views.active() == ObservabilityView::Chat
             && self.overlay.panel().is_none()
-            && let Some(item) = self.views.focused_change(self.chat.transcript().all())
+            && let Some(item) = self.views.focused_detail(self.chat.transcript().all())
         {
             self.views.open_changes_for(item);
             return Ok(StateEffect::Redraw);
