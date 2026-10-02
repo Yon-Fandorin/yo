@@ -227,14 +227,15 @@ impl TranscriptItem {
 }
 
 impl TranscriptMessage {
+    pub(crate) fn tool_kind(&self) -> Option<ActivityKind> {
+        self.activity?
+            .kind
+            .filter(|kind| matches!(kind, ActivityKind::ToolCall | ActivityKind::ToolResult))
+    }
+
     pub(crate) fn tool_source(&self) -> Option<&str> {
+        self.tool_kind()?;
         let activity = self.activity?;
-        if !matches!(
-            activity.kind,
-            Some(ActivityKind::ToolCall | ActivityKind::ToolResult)
-        ) {
-            return None;
-        }
         let body = &self.text[..activity.footer_start.unwrap_or(self.text.len())];
         let start = body.find('\n').map_or(body.len(), |index| index + 1);
         Some(&body[start..])

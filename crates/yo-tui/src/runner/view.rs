@@ -599,7 +599,7 @@ impl ObservabilityViews {
         let status = if let Some(warning) = chrome.storage_warning {
             warning.to_owned()
         } else if next.active == ObservabilityView::Output {
-            next.output_position.header(size.width)
+            self.output.header(next.output_position, size.width)
         } else if next.active == ObservabilityView::Changes {
             changes::header(
                 next.selected_change,

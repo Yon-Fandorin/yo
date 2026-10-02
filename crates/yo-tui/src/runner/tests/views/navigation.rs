@@ -656,6 +656,7 @@ fn retained_output_pages_large_tools_and_keeps_input_local() {
     let size = Size::new(80, 12);
     let first = render_and_commit(&mut state, size);
     assert!(first.contains("Output 2/2"), "{first}");
+    assert!(first.lines().next().unwrap().contains("Result"), "{first}");
     assert!(first.contains("row 00000"), "{first}");
     state
         .handle(key(KeyCode::PageDown, KeyModifiers::NONE), Duration::ZERO)
@@ -680,6 +681,10 @@ fn retained_output_pages_large_tools_and_keeps_input_local() {
         .unwrap();
     let previous = render_and_commit(&mut state, size);
     assert!(previous.contains("first tool body"), "{previous}");
+    assert!(
+        previous.lines().next().unwrap().contains("Call"),
+        "{previous}"
+    );
     assert!(!previous.contains("not tool output"));
     state
         .handle(key(KeyCode::Right, KeyModifiers::NONE), Duration::ZERO)
@@ -699,6 +704,131 @@ fn retained_output_pages_large_tools_and_keeps_input_local() {
         .handle(function(1, KeyAction::Press), Duration::ZERO)
         .unwrap();
     assert_eq!(state.views().active(), ObservabilityView::Chat);
+}
+
+// 호출 안의 결과나 결과 객체 없는 content도 빠뜨리지 않는다. 선택·갱신·폭 변경은
+// 현재 항목의 종류·안전한 도구 이름만 표시하며 긴 이름·제어 문자는 본문을 보존한다.
+#[test]
+fn output_labels_observed_items_without_guessing_call_result_pairs() {
+    let mut state = TuiState::new();
+    for (id, kind, result, content_items, text) in [
+        (1, ActivityKind::ToolCall, None, None, "prepared call"),
+        (
+            2,
+            ActivityKind::ToolCall,
+            Some(json!({"content":[{"type":"text","text":"call output"}]})),
+            None,
+            "call output",
+        ),
+        (
+            3,
+            ActivityKind::ToolResult,
+            None,
+            Some(json!([{"type":"text","text":"content output"}])),
+            "content output",
+        ),
+    ] {
+        state
+            .observe(AgentEvent::ActivityStarted {
+                activity: activity(id),
+                kind,
+            })
+            .unwrap();
+        let output = ToolOutput {
+            tool: "run_command".into(),
+            server: None,
+            arguments: Some(json!({"command":"same arguments"})),
+            result,
+            content_items,
+            error: None,
+            plain_text: text.into(),
+        };
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: activity(id),
+                update: ActivityUpdate::TextSnapshot(output.to_snapshot().unwrap()),
+            })
+            .unwrap();
+    }
+    state
+        .handle(InputEvent::Paste("/output".into()), Duration::ZERO)
+        .unwrap();
+    state
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    for (index, label, body) in [
+        (3, "Result", "content output"),
+        (2, "Call", "call output"),
+        (1, "Call", "prepared call"),
+    ] {
+        let frame = render_and_commit(&mut state, Size::new(80, 5));
+        let header = frame.lines().next().unwrap();
+        assert!(header.contains(&format!("Output {index}/3")), "{frame}");
+        assert!(
+            header.contains(&format!("{label} · run_command")),
+            "{frame}"
+        );
+        assert!(frame.contains(body), "{frame}");
+        if index > 1 {
+            state
+                .handle(key(KeyCode::Left, KeyModifiers::NONE), Duration::ZERO)
+                .unwrap();
+        }
+    }
+    for (tool, show_name) in [
+        ("파일_조회".to_owned(), true),
+        ("x".repeat(256), true),
+        ("x".repeat(257), false),
+        ("unsafe\nname".to_owned(), false),
+        ("unsafe\x1b[2J".to_owned(), false),
+        ("\u{301}".to_owned(), false),
+        ("safe\u{200b}name".to_owned(), false),
+    ] {
+        let output = ToolOutput {
+            tool: tool.clone(),
+            server: None,
+            arguments: None,
+            result: Some(json!({"truncated":true})),
+            content_items: None,
+            error: None,
+            plain_text: "original body\nnext line".into(),
+        };
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: activity(1),
+                update: ActivityUpdate::TextSnapshot(output.to_snapshot().unwrap()),
+            })
+            .unwrap();
+        for width in [320, 24, 1, 80, 320] {
+            let frame = state
+                .prepare_frame(Size::new(width, 5), &AppearanceState::default().pin())
+                .unwrap();
+            let header = (0..width)
+                .filter_map(
+                    |x| match frame.surface.cell(Point::new(x, 0)).unwrap().content() {
+                        CellContent::Grapheme { text, .. } => Some(text.as_ref()),
+                        CellContent::Blank => Some(" "),
+                        CellContent::Continuation { .. } => None,
+                    },
+                )
+                .collect::<String>();
+            state.commit_frame(&frame);
+            assert!(!header.contains("run_command"), "{header}");
+            assert!(header.starts_with(if width == 1 { "!" } else { "Partial" }));
+            if width == 320 {
+                assert!(header.contains("Call"), "{header}");
+                assert_eq!(
+                    header.contains(&format!("Call · {tool}")),
+                    show_name,
+                    "{header}"
+                );
+                assert!(
+                    render_and_commit(&mut state, Size::new(width, 5))
+                        .contains("original body\nnext line")
+                );
+            }
+        }
+    }
 }
 
 // 구조화 도구는 JSON envelope 대신 보관된 plain_text를 읽고 마지막 행을 넘는 입력도

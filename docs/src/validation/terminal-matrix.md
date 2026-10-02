@@ -25,6 +25,50 @@ cargo test -p yo-cli execution::process::termination::tests
 These host-integrated checks are part of the ordinary package test run. Their
 passing result does not imply that tmux or SSH behavior ran.
 
+## Managed coding journey alongside Codex in Linux tmux
+
+On 2026-10-02, `9b4dc882` completed one disposable Fullscreen Session beside
+the existing Codex window. The existing QwenCloud `qwen3.8-max` Token Plan
+used the Responses connector; this was subscription usage, not free quota.
+All 97 managed-backend, 39 Chat connector and 43 Responses connector tests
+passed before inference. The three permitted Turns produced these results:
+
+| Journey | Observed result |
+|---|---|
+| Create a UTF-8 byte-prefix function and tests | Model used file tools, corrected a failed assertion, and reached 29 passing tests |
+| Extend the same task with keyword-only strict truncation | Model edited the same two files; an independent `python3 -m unittest -q` run passed all 32 tests |
+| Decline a command that would create a marker file | Esc produced a declined approval and failed tool result; the file remained absent, no alternate tool was used, and the Turn completed |
+| Inspect stored output and resize to 80 × 24 | `/output` exposed command stdout/stderr; navigation and the prompt remained usable |
+| Exit and resume the same Session in a fresh process | Stored history, declined command and completed answers appeared; no additional model request was sent |
+
+Four command requests received only their exact one-request approval. The
+Journal projection confirmed the corresponding request, response, tool result
+and completed Turn ordering. Its `durability_continuity=not-observable` value
+is not a continuity proof. The first model-selected test command piped through
+`tail`, so its process status alone did not establish test success; the failing
+suite text and subsequent independent successful runs did.
+
+The output list held 22 activity entries, including managed preparation calls
+and separate results. Those are distinct observations, not proven duplicate
+executions. The header improvement described in the README identifies their
+recorded kind and tool without deduplicating other hosts' output.
+
+The corrected header was then checked against that stored Session in a fresh
+process, without submitting another Turn. The binary SHA-256 was
+`5366716c2862af06036d1be1c67bbd3bbd293251e75d9867f75217918b6d6d90`.
+At 80 columns it showed `Result · run_command` and `Call · run_command` on
+separately selectable entries. A 24-column frame kept `Call`, and restoring
+80 columns preserved selection and the earlier test's stdout/stderr. The
+semantic Journal cutoff remained 611 and usage remained 12 receipts.
+
+The 12 completed usage receipts reported 73,248 input tokens, 9,093 output
+tokens and 82,341 total tokens, including 59,264 cache-read input tokens. Session
+and state paths were isolated under the owned temporary directory. Both test
+windows exited; the existing Codex window stayed open. Probe files and isolated
+Session/state were removed after inspection. This bounded Python task does not
+establish a complete daily-work replacement, automatic safe command approval,
+or restored live questions. Physical Mac input was not repeated here.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`

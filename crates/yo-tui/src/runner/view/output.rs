@@ -2,10 +2,10 @@
 
 use std::{cell::RefCell, num::NonZeroU16, sync::Arc};
 
-use yo_core::ToolOutput;
+use yo_core::{ActivityKind, ToolOutput};
 
 use crate::{
-    surface::{Style, SurfaceView, WriteOutcome},
+    surface::{Style, SurfaceView, WriteOutcome, cell_width},
     text::flow::{TextFlowError, TextPages, flow_text},
     transcript::{TranscriptBody, TranscriptItemId, TranscriptScrollCommand, TranscriptSlice},
 };
@@ -22,6 +22,7 @@ pub(super) struct Position {
     width: Option<NonZeroU16>,
     revision: Option<u64>,
     truncated: bool,
+    kind: Option<ActivityKind>,
 }
 
 impl Position {
@@ -51,7 +52,7 @@ impl Position {
         true
     }
 
-    pub(super) fn header(self, width: u16) -> String {
+    fn header(self, width: u16, tool: Option<&str>) -> String {
         let index = if self.count == 0 {
             0
         } else {
@@ -63,31 +64,50 @@ impl Position {
         } else {
             "Output"
         };
-        [
-            format!(
-                "{label} {index}/{} | row {row}/{} | Up/Down PgUp/PgDn | <> tools | F1 Chat",
-                self.count, self.rows
-            ),
-            format!(
-                "{label} {index}/{} | {row}/{} | <> tools | F1 Chat",
-                self.count, self.rows
-            ),
-            if self.truncated {
-                format!("Partial {index}/{} | F1 Chat", self.count)
-            } else {
-                format!("Output {index}/{} F1 Chat", self.count)
-            },
-            format!(
-                "{} {index}/{}",
-                if self.truncated { "Partial" } else { "Output" },
-                self.count
-            ),
-            if self.truncated { "Partial" } else { "Output" }.to_owned(),
-            if self.truncated { "!" } else { "O" }.to_owned(),
-        ]
-        .into_iter()
-        .find(|text| text.len() <= usize::from(width))
-        .unwrap_or_default()
+        let kind = match self.kind {
+            Some(ActivityKind::ToolCall) => "Call",
+            Some(ActivityKind::ToolResult) => "Result",
+            _ => "",
+        };
+        let identity = tool.map_or_else(|| kind.to_owned(), |tool| format!("{kind} · {tool}"));
+        let identified = (!kind.is_empty()).then(|| {
+            [
+                format!(
+                    "{label} {index}/{} | {identity} | row {row}/{} | <> items | F1 Chat",
+                    self.count, self.rows
+                ),
+                format!("{label} {index}/{} | {identity} | F1 Chat", self.count),
+                format!("{label} {index}/{} | {kind} | F1 Chat", self.count),
+                format!("{label} {index}/{} | {kind}", self.count),
+            ]
+        });
+        identified
+            .into_iter()
+            .flatten()
+            .chain([
+                format!(
+                    "{label} {index}/{} | row {row}/{} | Up/Down PgUp/PgDn | <> items | F1 Chat",
+                    self.count, self.rows
+                ),
+                format!(
+                    "{label} {index}/{} | {row}/{} | <> items | F1 Chat",
+                    self.count, self.rows
+                ),
+                if self.truncated {
+                    format!("Partial {index}/{} | F1 Chat", self.count)
+                } else {
+                    format!("Output {index}/{} F1 Chat", self.count)
+                },
+                format!(
+                    "{} {index}/{}",
+                    if self.truncated { "Partial" } else { "Output" },
+                    self.count
+                ),
+                if self.truncated { "Partial" } else { "Output" }.to_owned(),
+                if self.truncated { "!" } else { "O" }.to_owned(),
+            ])
+            .find(|text| cell_width(text).is_ok_and(|cells| cells <= usize::from(width)))
+            .unwrap_or_default()
     }
 }
 
@@ -97,6 +117,7 @@ struct Cache {
     width: NonZeroU16,
     pages: TextPages,
     truncated: bool,
+    tool: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -105,6 +126,19 @@ pub(super) struct OutputView {
 }
 
 impl OutputView {
+    pub(super) fn header(&self, position: Position, width: u16) -> String {
+        let cache = self.cache.borrow();
+        let tool = cache
+            .as_ref()
+            .filter(|cache| {
+                cache.key.is_some_and(|(id, revision)| {
+                    Some(id) == position.key && Some(revision) == position.revision
+                })
+            })
+            .and_then(|cache| cache.tool.as_deref());
+        position.header(width, tool)
+    }
+
     pub(super) fn render(
         &self,
         chat: TranscriptSlice<'_>,
@@ -131,6 +165,10 @@ impl OutputView {
         }
         position.selected = position.selected.min(tools.len().saturating_sub(1));
         let selected = tools.get(position.selected);
+        position.kind = selected.and_then(|(item, _)| {
+            let TranscriptBody::Message(message) = item.body();
+            message.tool_kind()
+        });
         let selected_key = selected.map(|(item, _)| item.id());
         if position.key != selected_key {
             position.source_anchor = None;
@@ -146,6 +184,17 @@ impl OutputView {
             {
                 let source = selected.map_or("No retained tool output yet.", |(_, source)| *source);
                 let output = ToolOutput::from_snapshot(source);
+                // 헤더의 이름은 표시 전용이다. 큰 이름이나 렌더링 불가 문자는 생략하고 본문을
+                // 보존한다.
+                let tool = output
+                    .as_ref()
+                    .map(|output| output.tool.as_str())
+                    .filter(|tool| {
+                        tool.len() <= 256
+                            && !tool.chars().any(char::is_control)
+                            && flow_text(tool, NonZeroU16::MAX).is_ok()
+                    })
+                    .map(str::to_owned);
                 // Only typed boolean observations establish omission. A path or words
                 // in tool text do not prove either completeness or local availability.
                 let truncated = output
@@ -180,6 +229,7 @@ impl OutputView {
                         "Escaped output (unrenderable cells)",
                     )?,
                     truncated,
+                    tool,
                 }));
             }
             Arc::clone(cached.as_ref().expect("selected output was cached"))
