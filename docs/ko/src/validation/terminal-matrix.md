@@ -24,6 +24,19 @@ cargo test -p yo-cli execution::process::termination::tests
 이 호스트 통합 검사는 일반 package test에 포함된다. 통과했다고 해서 tmux나
 SSH 동작까지 실행되었다는 뜻은 아니다.
 
+## Linux tmux의 오프라인 도구 출력
+
+2026-10-03에 `31a6f5e6`의 잠금된 의존성을 사용한 오프라인 `chat_preview`
+예제를 전용 tmux 서버의 Fullscreen에서 80 × 24와 40 × 24로 확인했다.
+`long-tools`는 접힌 상태에서 처음과 마지막 검사를 표시했고, `Ctrl+O`로
+중간 행을 펼칠 수 있었다. PageUp과 End로 기록과 최신 출력 사이를 이동했다.
+종료된 `shell-progress` fixture는 두 너비에서 명령, 종료 코드, stdout과
+stderr를 표시했다. 프리뷰에서 돌아온 뒤 `Ctrl+D`로 종료했고 종료 코드는 0이었다.
+
+이는 모의 ToolCall fixture이며 셸 명령이나 모델 요청은 실행하지 않았다.
+내장 ToolResult 생명주기나 실제 서비스의 작업 연속성을 검증한 결과가 아니며,
+Mac, SSH, Inline 또는 중첩 tmux도 포함하지 않는다.
+
 ## Linux tmux에서 Codex와 함께한 관리형 코딩 검증
 
 2026-10-02에 `9b4dc882`로 기존 Codex 창 옆의 임시 Fullscreen Session

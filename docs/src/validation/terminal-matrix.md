@@ -25,6 +25,19 @@ cargo test -p yo-cli execution::process::termination::tests
 These host-integrated checks are part of the ordinary package test run. Their
 passing result does not imply that tmux or SSH behavior ran.
 
+## Offline tool output in Linux tmux
+
+On 2026-10-03, the locked offline `chat_preview` example from `31a6f5e6` ran
+Fullscreen in an owned tmux server at 80 × 24 and 40 × 24. `long-tools` kept
+the first and last checks when folded; `Ctrl+O` exposed the intermediate rows,
+and PageUp and End navigated history and the latest output. The settled
+`shell-progress` fixture showed its command, exit status, stdout and stderr at
+both widths. After leaving preview, `Ctrl+D` exited the example with status 0.
+
+These are simulated ToolCall fixtures: no shell command or model request ran.
+They do not exercise the native ToolResult lifecycle, establish actual-service
+continuity, or cover Mac, SSH, Inline or nested tmux.
+
 ## Managed coding journey alongside Codex in Linux tmux
 
 On 2026-10-02, `9b4dc882` completed one disposable Fullscreen Session beside
