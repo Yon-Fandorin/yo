@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.observability-001
-    revision: sha256:fcd536edc2e6696af8e414c3e7ce7dc4b972e89d76b07f067fde6fa493596774
+    revision: sha256:224ba8da11132f47a2c784729c5afa54f3ce085ad13d4292651793e36c9e86bd
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -397,3 +397,20 @@ preview, transcript, chat, export, log or diagnostic. This restriction does not
 claim control over intentional backend delivery, backend/provider retention,
 later model/tool output, clipboard ownership, swap, process memory or crash
 dumps.
+
+## Ordinary single-question provenance
+
+A native ordinary `ask_user` request and its accepted response MUST use genuine
+correlated UserInputRequest/UserInputResponse Activities. Its ordinary
+ActivityQuestion snapshot is readable presentation, not an interview batch
+capture, model-call identity or promise of restart recovery. Completed model
+replay MUST separately retain the exact function call and one original-call-id
+result. Neither rendered question text nor a saved draft may reconstruct them.
+
+A successfully admitted QuestionUnanswered command MUST retain its exact request
+correlation and a readable response identifying that the user supplied no answer.
+Frontends MUST preserve that provenance and MUST NOT display it as a selected
+choice, accepted text, secret submission or task cancellation. It MUST NOT create
+an interview accepted-answer capture, durable answer seal or completed batch from
+an ordinary single-question snapshot. Historical interview capture and working-copy
+profiles, secret receipts and existing Journal event kinds remain unchanged.

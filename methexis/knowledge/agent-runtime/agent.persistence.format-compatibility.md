@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:976ca7ceaabda0a031bf2134046c5efff214d51084c50bfa822883cbb963ac19
+    revision: sha256:746e872e22773897ed738a23c0d892155e872b095fd708890676c8ef7dc6ca31
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -159,6 +159,31 @@ references, zero or multiple selected skills, and absent or invalid instructions
 MUST fail closed. Activity user-input responses retain v1 only: v2 at that
 command position MUST be rejected by both live admission and persistence codecs.
 This extension does not authorize typed skill execution in question responses.
+
+### Ordinary unanswered Activity-response extension
+
+This additive pre-release extension of the same anchored-session semantic v1
+adds `type: question_unanswered` to the closed
+`respond_to_activity.response` discriminator. That response object MUST contain
+exactly the `type` field: no input, text, choice, notes or nullable placeholder.
+It is the explicit ordinary response for the enclosing exact ActivityRequestRef,
+never a secret receipt or a replayable answer string. Unknown fields and malformed
+variants MUST fail closed. The runtime and owning backend validate live admission;
+durable recovery preserves the actual response provenance without synthesizing
+an answer, permission or restored live request.
+
+The existing `yo.activity-question/v1` presentation may add optional boolean
+`allow_unanswered`. Absence means false; writers MUST omit false to preserve
+existing snapshot bytes. A true value is valid only for a nonsecret question.
+Null, nonboolean values and secret/true combinations MUST reject typed question
+interpretation. This presentation does not itself grant response authority.
+
+The physical and semantic outer envelopes, existing response variants and
+sequence rules remain unchanged. Current readers accept historical absence.
+Preceding closed readers reject the new response discriminator or presentation
+field; no migration, downgrade shim, empty-text alias or automatic state reset
+is introduced. Completed native question calls and versioned function results
+use existing exact replay items and their original call correlation.
 
 ### Redacted secret Activity-response extension
 

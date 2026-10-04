@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.chrome-001
-    revision: sha256:061077b5eb85cff5badfc29f3c0de10092e5f7bdde42347894b03b649084bb38
+    revision: sha256:0b4781851a93d1a2cd72b38a73919ac3315de806ca0f1732582f8184bcda40c0
 relations:
   depends_on:
     - agent.runtime.active-turn-input
@@ -29,12 +29,19 @@ so a Turn lifecycle change changes its content rather than moving the prompt.
 When the terminal is too short for every region, the shell MUST preserve the
 prompt plus a readable transcript floor before optional chrome detail.
 
-While a Turn is active, the completed input stack MUST expose both plain `Esc`
-and `Ctrl+C` as interruption affordances and both keys MUST dispatch the same
-interrupt intent. When the footer row fits, it MUST carry those affordances;
+While a Turn is active outside an unanswered-capable ordinary question
+context, the completed input stack MUST expose both plain `Esc` and `Ctrl+C`
+as interruption affordances and both keys MUST dispatch the same interrupt
+intent. In Chat with an exactly outstanding nonsecret question that advertises
+`allow_unanswered`, question help MUST instead expose `Esc` as no answer and
+`Ctrl+C` as interruption. Esc MUST dispatch the exact QuestionUnanswered
+response even when no question panel fits, while Ctrl+C keeps the interrupt
+intent. Visible local overlay dismissal retains its existing first refusal.
+When the footer row fits, it MUST carry those affordances;
 otherwise the transient work row MUST carry them before decorative motion.
-If height or width leaves neither row able to show both labels, the visual hint
-MAY be omitted while both input gestures MUST continue to dispatch normally.
+If height or width leaves neither row able to show both labels, the visual
+hint MAY be omitted while the current context-specific gestures MUST continue
+to dispatch normally; geometry MUST NOT change no answer into interruption.
 
 Input policy MUST expose semantic availability for interrupt, configured
 newline, and empty-prompt exit actions. TUI presentation MUST format those

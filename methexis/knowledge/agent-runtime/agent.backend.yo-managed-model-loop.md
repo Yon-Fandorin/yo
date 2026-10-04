@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:a94f9dfd9fdf2cef787605c67437d208efae70241a11eebbb9b02a9b5ff50ca6
+    revision: sha256:f918df553e76ad01bedc026162323766da4ac1aee44a750c6f5e75cb69f2f331
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -24,7 +24,7 @@ relations:
 
 The Yo-managed Agent Backend MUST live in the independent `yo-backend-managed` crate, implement the existing `AgentBackend` semantic port, and own the model loop, tool execution coordination, and model-visible context. `yo-core` MUST own the shared semantic, model-service, Connector, and tool types and ports without owning or depending on the concrete loop. The effective binding MUST select one admitted Model Connector and exact API dialect before a Turn starts. A Model Connector MUST own remote request and stream protocol and MAY additionally own only its explicitly contracted provider-private replay codec and validation; it MUST translate both dialect events and any validated private visible projection into connector-neutral observations consumed by the loop. Neither `yo-cli`, a frontend, nor the connector may become the agent-loop owner. The same loop admits the separately contracted OpenAI Responses, provider-neutral OpenAI Chat Completions, and Kimi Chat Completions connectors through their dialect-derived identities. It MUST NOT probe another dialect, fall back to another connector, or branch on Provider identity.
 
-For each accepted Turn, the backend MUST project the committed semantic Session history plus the new user input into the selected API dialect. Text deltas MUST become `ModelWork` Activities through the existing message segmentation and terminal-seal path. A model function call MUST preserve its wire call identity, function name, and exact accumulated argument bytes. It MUST become a correlated Tool Activity even when validation rejects it; invalid JSON, schema mismatch, unknown or duplicate identity, unavailable tool, and argument-bound failure MUST terminate that Activity with the typed validation failure and no effect. Validation MUST succeed before approval, admission, or dispatch. Approval and execution MUST use the frozen registry, admission policy, and execution-host boundary; the model service MUST NOT directly execute local workspace tools.
+For each accepted Turn, the backend MUST project the committed semantic Session history plus the new user input into the selected API dialect. Text deltas MUST become `ModelWork` Activities through the existing message segmentation and terminal-seal path. A model function call MUST preserve its wire call identity, function name, and exact accumulated argument bytes. A local execution function call MUST become a correlated Tool Activity even when validation rejects it; invalid JSON, schema mismatch, unknown or duplicate identity, unavailable tool, and argument-bound failure MUST terminate that Activity with the typed validation failure and no effect. Validation MUST succeed before approval, admission, or dispatch. Approval and execution MUST use the frozen registry, admission policy, and execution-host boundary; the model service MUST NOT directly execute local workspace tools.
 
 The backend MUST record each function call and its exact tool outcome before submitting a corresponding function-call output through the selected dialect in the next model request. Multiple calls returned by one response MAY execute concurrently only when the tool scheduler proves their approval and mutable resource leases independent; otherwise they MUST execute in model order. Results MUST be returned in stable call order regardless of execution completion order. A missing, duplicate, or mis-correlated call or result MUST fail the Turn.
 
@@ -57,6 +57,43 @@ Local input or replay-capacity exhaustion before a final assistant answer, inclu
 Tool arguments and outputs MUST pass the local tool boundary's semantic-admission gate before they become Activities, later model input, or a replay delta. A provider-private assistant item MUST come only from the selected Connector's successfully completed, correlated response. The Connector alone MUST decode and validate the provider-private schema and return the bounded opaque envelope together with a connector-neutral validated visible projection. Without decoding Provider fields, the backend MUST validate the envelope's declared schema identity, binding epoch, and bounds and MUST compare the Connector-supplied projection exactly with the semantic replay group; any mismatch fails before acceptance. The backend MUST persist visible and private replay together as one semantic replay record and MUST NOT attach either payload to the payload-free resumable-outcome correlation record. Private bytes remain in the user-only local Session Repository, are not encrypted by the first implementation, and MUST be excluded from Transcript, Request trace, debug formatting, logs, errors, and diagnostics.
 
 A future `managed_server` executor MAY load the same validated replay prefix and assemble the next model request on a Yo-managed Session service. It does not define a second replay meaning and MUST use the same replay contract, ordering, bounds, and Anchor boundary as `local_client`. It remains deferred until its remote repository, identity, digest, availability, and retention evidence has an independently reviewed implementation. The current backend MUST NOT advertise it.
+
+## Native ordinary-question continuation
+
+When its exact frozen contract includes `ask_user`, the managed backend MUST
+recognize that function call before local-tool admission. It MUST validate the
+complete successful response, sole-call rule, exact identity and bounded public
+arguments before publishing one typed nonsecret UserInputRequest. The question
+MUST permit ordinary free text and, when choices exist, choice-plus-notes. Its
+typed presentation MUST advertise the separately contracted unanswered capability.
+The question module owns its schema, presentation, waiting state and response
+construction; lifecycle adapters only route it. It MUST NOT create local tool
+approval, dispatch a tool or infer that a secret interaction rule applies.
+
+Outstanding state MUST bind the exact ActivityRequestRef and function `call_id`.
+While waiting, polling MUST start neither a model request nor local execution.
+Only exactly correlated ordinary text, valid choice-plus-notes, or typed
+QuestionUnanswered may satisfy it. Stale or duplicate responses, invalid choice
+ordinals, oversized text, images, resolved skills, secret input and previous
+navigation MUST reject without consuming or replacing the live waiting request.
+
+Before reporting response acceptance, the backend MUST validate and prepare the
+complete bounded function result and its replay additions without losing the
+waiting state on error. It MUST append exactly one FunctionCallOutput for the
+original `call_id`, finish the request, and emit a readable correlated
+UserInputResponse. Unanswered text MUST identify that the user supplied no answer;
+it MUST NOT appear as an accepted choice or invented answer. The result and command
+follow ordinary semantic commit and capacity rules. No transport may start within
+response-command handling. Only later polling after successful durable command
+commit may continue the same Turn; a commit failure MUST stop continuation.
+
+The next model round retains normal tools, accounting, context admission and
+compaction. Question and result form one complete indivisible replay group,
+including any required provider-private envelope. The question does not latch the
+Session terminal, disable tools or create another Turn. Ctrl+C cancellation keeps
+the existing interrupted outcome and MUST NOT synthesize unanswered. After process
+death, an uncompleted request or saved presentation does not restore a live request,
+repeat an answer or bypass the existing uncertain-request read-only boundary.
 
 ## Native secret-request terminal continuation
 

@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.backend-008
-revision: sha256:a94f9dfd9fdf2cef787605c67437d208efae70241a11eebbb9b02a9b5ff50ca6
+revision: sha256:f918df553e76ad01bedc026162323766da4ac1aee44a750c6f5e75cb69f2f331
 payload:
   kind: decision
   content: |-
@@ -142,3 +142,5 @@ payload:
     activate with its exact compatible service-binding and Chat Connector revisions.
 
     A new tool-enabled local-client Session may expose one backend-owned request_secret_input interaction outside local execution. The exact selected Provider and Model are disclosed before explicit entry. Secret command acceptance only prepares one tools-disabled request in memory; after the runtime durably commits the payload-free receipt, a later poll may start its no-redirect, no-retry transport. The typed Connector-only result never becomes replay or diagnostics, and that receipt is the durable non-resumable barrier whether transport starts, fails or returns a visible final answer.
+
+    The separately contracted native ask_user interaction opens one bounded nonsecret UserInputRequest only after its complete sole-call response is admitted. Exact ActivityRequestRef/call_id correlation binds ordinary text, choice-plus-notes or explicit QuestionUnanswered. Invalid or stale responses preserve waiting state. Accepted results join normal exact replay, are visibly recorded with actual provenance, and continue the same Turn only in polling after successful durable response-command commit. Waiting starts no model or local work; failures do not consume the request or dispatch a continuation lacking durable answer evidence. Ordinary questions retain normal tools/accounting/compaction and never inherit secret Session-terminal rules. Pending requests are not resurrected on restart.

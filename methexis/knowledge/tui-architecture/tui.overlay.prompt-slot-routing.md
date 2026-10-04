@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.overlay-002
-    revision: sha256:f4ae70eb71c66fa1b713e175002e9bc9314f1eb920a95032c28bec30db2327b6
+    revision: sha256:9b349f32d097cff6ec99497392c02577a07a53df62e80348c55052f75df09074
 relations:
   depends_on:
     - tui.overlay.selection-panel
@@ -80,8 +80,12 @@ to a visibly presented slot before transcript navigation, editor handling, or
 active-Turn interruption. Dismiss MUST close the matching visible panel and
 consume its event, so one configured `Esc` cannot also interrupt the Turn. An
 instance that has never been presented or is hidden for insufficient geometry
-MUST yield these actions, leaving existing chrome and active-Turn Esc semantics
-unchanged. These local overlay actions MUST remain responsive while an agent
+MUST yield these actions to the current context. In Chat with an outstanding
+nonsecret question advertising `allow_unanswered`, that context sends the exact
+QuestionUnanswered response on Esc, including notes editing and geometry-hidden
+question panels; otherwise the existing active-Turn Esc semantics remain. A
+visible local panel still consumes its own dismissal before question response.
+These local overlay actions MUST remain responsive while an agent
 dispatch is backpressured.
 `Ctrl+C` MUST be reserved from provider and overlay bindings and MUST continue
 to dispatch active-Turn interruption while a panel is visible. Ordinary input

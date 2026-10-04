@@ -1,9 +1,7 @@
-schema: methexis.approval/v1alpha1
+schema: methexis.approval/v1alpha2
 knowledge_id: tui.chrome.input-stack
-revision: sha256:29de6d2133f29312fe6ab737fb17aca8e2294e7e15ffff62cbd615685f981054
+revision: sha256:611b18a54339467ed467942c1bfca77d37a6650cf705cf2c49ad9cb897b73250
 reviewer: tui-architecture
-reviewed_at: 2026-08-04T12:44:38Z
-projection_profile: ko-review/v1alpha1
-projection_compiler: methexis/0.0.0
-projection_hash: sha256:21988d0a614bcceae4b3356cbbc9b03cf6ed4a9fa9d41007d47c5261d0d9e0ce
-request_hash: sha256:c2d577bb23c6bacd882d717c33f9c3e0261a1801ad8c8bffebd597ede75291a9
+reviewed_at: 2026-10-04T11:22:08Z
+review_basis: canonical
+request_hash: sha256:8f1aa51d5b3cddb2892dee1afd8c935a510791a74db2eb7c9f8c6dcf72b1d0a7

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.tool-001
-    revision: sha256:ee0558670b03ba9993dd6506facc1c8ce3aa4ff0505d44602bea7480b940b198
+    revision: sha256:b9f9bb220df1538463fa6df8c46f1a12051b48a28f62c0be1ffd69361615d7c8
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -490,8 +490,8 @@ revision may close it.
 ## Backend-owned secret interaction tool
 
 The native secret interaction is model-visible but is not a local execution
-tool. For a newly created Session admitted under `local-tools/v1`, Yo MUST append
-exactly one interaction definition after every frozen local or configured tool
+tool. New `local-tools/v1` Sessions use the two-definition native interaction
+suffix specified below; `request_secret_input` remains its final definition
 in both request exposure and the ModelReplayContract. Its exact wire name is
 `request_secret_input`; its exact description is `Ask the user for one secret value that Yo sends only to the current provider and model. Use only when the task cannot continue without it.` Its schema version is `yo.tool-schema/v1` and
 its exact structural parameter schema is
@@ -527,11 +527,11 @@ schema
 It remains a known historical projection and implies no storage offer.
 Because the replay contract has no independent
 interaction-revision field, absence alone MUST NOT be treated as proof that a
-new projection lost the definition. When a recorded projection contains either
-known interaction definition, it MUST contain one exact final definition; a
-reordered, duplicated, altered or non-final definition makes that projection
-unknown. Configured-command execution-definition manifests continue to cover
-only local execution tools, so the appended interaction does not change or
+new projection lost the definition. A historical secret-only projection MUST
+retain its one exact final secret definition. The closed current and historical suffix rules below
+also admit the new ordinary-question interaction; a reordered, duplicated,
+altered or otherwise unknown suffix MUST remain unknown. Configured-command
+execution-definition manifests continue to cover only local execution tools, so the appended interaction does not change or
 enter their digest.
 
 A response may use the interaction only as the sole function call in that model
@@ -541,6 +541,69 @@ local effect. The correlated secret value returned to the model follows the
 managed loop's connector-only terminal-continuation contract and is expressly
 excluded from the ordinary rule that local tool outputs become semantic replay.
 The user's local retention selection is never included in that result.
+
+## Backend-owned ordinary question interaction
+
+For newly created tool-enabled `local-tools/v1` Sessions, the exact ordered
+native interaction suffix MUST be `ask_user` followed by the current
+`request_secret_input` definition. Both follow every frozen local or configured
+tool in request exposure and the ModelReplayContract. The exact `ask_user`
+description is `Ask the user one question and wait for a response. Use for a missing preference or decision. Unanswered provides no answer or permission; answer-dependent decisions remain unresolved.`. Its schema version is `yo.tool-schema/v1` and
+its exact structural parameter schema is
+`{"type":"object","properties":{"title":{"type":"string","description":"Short public title for the question."},"question":{"type":"string","description":"Question to show the user."},"choices":{"type":"array","description":"Optional ordered choices; the user can always answer with text.","items":{"type":"object","properties":{"label":{"type":"string","description":"Short choice label."},"description":{"type":"string","description":"Public explanation of the choice."}},"required":["label","description"],"additionalProperties":false}}},"required":["title","question"],"additionalProperties":false}`.
+
+`ask_user` is a backend-owned ordinary interaction, not a local execution tool.
+It has no ToolId, effect, approval, execution host or command-manifest digest
+entry. Its wire name and corresponding identity MUST be reserved against local
+and configured tools. Its public arguments contain no secret or default answer.
+The tool imposes no question-frequency rule; the model chooses when and what to
+ask from task context.
+
+The complete UTF-8 argument string MUST contain at most 16,384 bytes. `title`
+MUST contain 1–80 UTF-8 bytes and no control character. `question` MUST contain
+1–4096 UTF-8 bytes; each choice `description` MAY be empty and MUST contain at
+most 512 UTF-8 bytes. Those text fields MUST contain no NUL or control character
+other than tab, LF or CR. A present `choices` MUST be an array of zero through
+eight objects with exactly `label` and `description`; labels MUST be distinct,
+each contain 1–80 UTF-8 bytes and contain no control character. Omission or an
+empty array means free text. Null, unknown fields and the first excess byte or
+choice MUST reject before any question opens or local effect occurs.
+
+`ask_user` MUST be the sole function call in its complete successful model
+response. A mixed local-tool/question or secret/question response MUST fail
+before any local execution or question admission. Ordinary visible assistant
+content and a valid required provider-private replay envelope remain admitted.
+The same Turn MAY ask another question in a later model round. The interaction
+is absent from `no-tools/v1` and summary requests.
+
+The returned function output is compact UTF-8 JSON with exactly one of these
+closed shapes, preserving the original function `call_id` through the existing
+FunctionCallOutput item:
+
+- Free text: `{"schema":"yo.ask-user-result/v1","status":"answered","kind":"text","text":"<exact submitted text>"}`.
+- Choice: `{"schema":"yo.ask-user-result/v1","status":"answered","kind":"choice","choice":1,"label":"<exact chosen label>","notes":"<exact submitted notes>"}`;
+  `choice` is the valid one-based ordinal of that outstanding question.
+- No answer: `{"schema":"yo.ask-user-result/v1","status":"unanswered"}`, with
+  no text, choice, label, notes, permission or nullable placeholder.
+
+Free-text answers MUST contain 1–16,384 UTF-8 bytes; notes MAY be empty and MUST
+contain at most 16,384 UTF-8 bytes. These are ordinary user text: preserve their
+exact bytes, without trimming or interpreting them as commands. Images, resolved
+skills, secrets and previous-question navigation are unsupported. No answer
+supplies no decision or permission; answer-dependent decisions remain unresolved.
+The model may continue independent work, but Yo does not claim to determine
+semantic independence. There is no implicit timeout or automatic choice.
+
+The closed replay suffix set is exactly: no interaction; the preceding
+title/question/purpose-only secret definition; the current secret-only
+definition; or exact `ask_user` followed by the current secret definition.
+Each suffix MUST match complete ordered definitions, including descriptions and
+structural schemas, after a known exact local-registry prefix. Resume, fork and
+binding replacement MUST preserve the selected recorded form and MUST NOT inject
+`ask_user` into a historical Session. Duplicate, reordered, changed, unknown or
+partial suffixes MUST reject. Configured command digests remain local-execution
+only. The absence of an interaction-revision field does not authorize inferring
+the age of a suffix or relabeling a historical manifest.
 
 ## User-configured command tools
 

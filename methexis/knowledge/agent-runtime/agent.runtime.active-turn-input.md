@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-004
-    revision: sha256:a7e1e03e0f654b5c0aaf3dc97f10ac88a2094fce4751b7c8c9edf791d5c4760f
+    revision: sha256:83e9fcffbb654865b1150a62faa3ca898b0eadce22bbce220fa85b5335beb970
 relations:
   depends_on:
     - agent.runtime.command-event-boundary
@@ -42,6 +42,31 @@ prevents scheduling and polling races from changing temporal intent. Explicit
 steer, Activity-response, and queue meanings also prevent hidden backend
 capability from deciding whether text corrects current work or starts later
 work.
+
+## Explicit unanswered ordinary questions
+
+A backend-owned ordinary question MAY advertise the typed `allow_unanswered`
+capability. Its absence or false value keeps prior behavior. It MUST be false
+for secret questions. Only an outstanding nonsecret question whose owning backend
+admits it may accept the payload-free ActivityResponse::QuestionUnanswered;
+presentation alone never grants response authority. The exact request identity
+and ordinary Activity-response admission rules remain controlling.
+
+In Chat question context, plain Esc MUST send that exact unanswered response,
+while Ctrl+C MUST interrupt the active Turn. A concretely visible local palette
+or picker keeps first refusal to dismiss itself; a subsequent Esc returns to the
+unchanged question. An unpresented or geometry-hidden question panel MUST NOT
+change Esc into interruption. The distinction also applies while editing choice
+notes. Dispatch backpressure preserves the same response intent and request; a
+rejected response MUST leave the question available for correction.
+
+Unanswered means the user supplied no answer, choice or permission. It is neither
+empty text, approval decline, steer, queued input, new Turn nor task cancellation.
+The owning managed model may continue work it considers independent while all
+answer-dependent decisions remain unresolved; the runtime imposes no questioning
+frequency and makes no claim to enforce semantic independence. It MUST NOT choose
+an option or infer consent from elapsed time. Delegated and secret question flows
+retain their prior gestures until their own backend advertises this capability.
 
 ## Contextual unfinished interview drafts
 
