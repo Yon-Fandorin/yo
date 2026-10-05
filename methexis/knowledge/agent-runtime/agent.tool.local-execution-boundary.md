@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.tool-001
-    revision: sha256:b9f9bb220df1538463fa6df8c46f1a12051b48a28f62c0be1ffd69361615d7c8
+    revision: sha256:42fcac7712701d2e96c65d833f4e7c4fb3b2b158d785e03ce0a7451f9feb4bf4
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -96,8 +96,10 @@ The first concrete workspace-file surface under effective `local-tools/v1` is
 the distinct registry revision `yo.local-tool-registry/basic-files/v1`. It MUST
 expose exact wire names `list_files`, `read_files`, `edit_file`, `write_file`,
 and `run_command` in that order. Their exact ToolIds in the same order are
-`list-files`, `read-files`, `edit-file`, `write-file`, and `run-command`. A
-newly created Session without admitted configured command tools uses this revision.
+`list-files`, `read-files`, `edit-file`, `write-file`, and `run-command`.
+Sessions recorded under this `yo.local-tool-registry/basic-files/v1` revision
+retain this exact manifest; future Session selection is defined by the
+versioned successor below.
 The immediately preceding three-tool registry is named
 `yo.local-tool-registry/legacy-read-file/v1` and continues to expose only
 `read_file`, `list_files`, and `run_command`. Its trusted manifest is the exact
@@ -155,11 +157,12 @@ publication, the common bounded-output owner replaces the tail on a Unicode
 scalar boundary so the complete output is at most 4,194,304 bytes and ends in
 exact `\n[yo: tool output truncated]`. No metadata-stability snapshot is
 claimed for this frozen legacy reader. Historical and future results still pass
-the common semantic-output gate. `list_files` and `run_command`
-retain their existing behavior. `read_files` is `ReadOnly` and automatic;
-`edit_file` and `write_file` are `WorkspaceWrite` and automatic; `run_command`
-remains `Process` and approval-required. File deletion and `apply_patch` are
-deferred and MUST NOT be inferred from these tools.
+the common semantic-output gate. `list_files` and
+`run_command` retain their existing v1 behavior. `read_files` is
+`ReadOnly` and automatic;
+`edit_file` and `write_file` are `WorkspaceWrite` and automatic; in these v1 registries `run_command`
+remains `Process` and approval-required. File deletion and
+`apply_patch` are deferred and MUST NOT be inferred from these file tools.
 
 The basic registry's exact model-visible tool descriptions are:
 
@@ -759,6 +762,222 @@ against uncoordinated publishers after final verification. A stalled kernel file
 operation is likewise not made preemptible by a user-space elapsed-time check. These are
 explicit host-environment limits, not hidden safety guarantees or permission to skip
 cancellation between reads and before spawn.
+
+## Versioned OS-confined command execution
+
+This section confines processes launched by the v2 command runner, including
+its configured-command children. It does not change the other BasicFiles
+execution hosts or create agent-wide Git, credential, or Session protection.
+Those file tools retain their preceding contracts. In particular, the command
+runner's secret-path and IPC exclusions MUST NOT be claimed for every tool or
+for the agent as a whole.
+
+The preceding legacy-read-file/v1, basic-files/v1, command-tools/v1, and
+execution-definition-manifest/v1 contracts remain exact historical profiles.
+Their ordered definitions, approval values, model-visible bytes, digest domain,
+and execution semantics MUST NOT be rewritten or inferred from a successor.
+Resume selects the exact recorded profile; an unknown or unavailable profile
+opens read-only rather than upgrading or falling back.
+
+Future tool-enabled Sessions without configured command tools use
+`yo.local-tool-registry/basic-files/v2`. It retains the ordered five BasicFiles
+ToolIds, wire names, schemas, and all definitions except `run_command`.
+The v2 `run_command` description is exactly
+`Run one shell command in the current workspace. Commands needing broader access or risky changes require approval.`;
+its effect is `Process` and its approval requirement is `Planned`. The v1
+description and `Required` approval value remain unchanged. Future Sessions
+with configured commands use `yo.local-tool-registry/command-tools/v2`, whose
+ordered tools are the same five v2 built-ins followed by the existing explicit
+one-to-sixteen configured commands. Configured commands remain `Process` and
+`Required`; their schemas, executable identity, argument handling, and fixed
+launch semantics remain unchanged.
+
+For `command-tools/v2`, the closed manifest retains the v1 object shape
+`profile`, `registry`, `tools`, and `protocols`, and each tool retains the v1
+fields and value framing. The profile is exactly
+`yo.execution-definition-manifest/v2`; the registry is exactly
+`yo.local-tool-registry/command-tools/v2`. Its built-ins equal the trusted
+BasicFiles/v2 definitions. `approval` admits exactly `Automatic`, `Required`,
+and `Planned` in v2; configured commands remain `Required`. Protocols are
+exactly
+`{stdin:"yo.command-json-stdin/v1",output:"yo.command-text-output/v1",environment:"yo.command-safe-environment/v2",runner:"yo.command-execution/workspace-confined-v2"}`.
+The digest preimage begins with exact ASCII
+`yo.execution-definition-manifest/v2` and one zero byte, followed by the
+existing recursively framed manifest value. The v1 prefix, framing, and
+digest remain byte-for-byte unchanged. A profile or registry version is
+selected explicitly from the recorded complete manifest; no mixed profile,
+implicit migration, or v1-to-v2 digest reuse is permitted. The BasicFiles/v2
+registry identity carries the same runner revision for Sessions without
+configured commands.
+
+`Planned` means the execution host prepares one immutable command plan before
+any approval or spawn and returns exactly one of: automatic with that plan,
+approval-required with that plan, or unavailable with a stable failure code.
+The plan fixes the exact normalized command, workspace and cwd identity,
+platform adapter/profile and classifier revisions, read-only and writable roots,
+secret-read exclusions, environment, inherited
+descriptors, IPC/network capabilities, and process/cancellation scope. The approval binds the existing Turn, call,
+ToolId, normalized argument digest, effect, and execution-host identity plus
+the complete plan identity. The approval view names every requested scope
+extension, including external paths or network access. Approval executes this
+same plan once; it MUST NOT recalculate, widen, or replace the plan. Configured
+commands keep their existing always-required approval and bind the plan too.
+
+The baseline plan grants writes in the selected workspace except at
+secret-read exclusions and uses private per-call home and temporary
+directories. It exposes only explicitly admitted operating-system, runtime,
+toolchain, and cache roots read-only. Automatic writable caches MUST reside
+inside the admitted workspace or private per-call directories. Writing an
+existing cache outside those roots requires the same exact external-root
+approval as any other outside-workspace write; identifying a cache in a
+frozen plan does not exempt it from approval. The baseline does not expose
+the user's general home directory or inherited credential-bearing environment.
+
+The workspace `.git` entry and resolved Git directory and common directory
+(including linked-worktree metadata) follow the same write-root boundary as
+other workspace data. Metadata inside the selected workspace is writable in
+the baseline, permitting ordinary `git add`, `git commit`, and non-destructive
+Git operations without approval when no other recognized risk or scope
+extension is present. Any resolved Git directory or common directory outside
+the selected workspace is admitted read-only for status, diff, and metadata
+inspection; writing it requires an explicit per-call approval for those exact
+resolved roots. No parent directory or other repository is implicitly granted.
+An unresolved `.git` pointer or Git-directory identity makes the plan
+unavailable. Root grants never override secret-read exclusions. Destructive
+Git forms independently require approval as specified in the classifier table.
+This is ordinary command execution under the same frozen plan, not a separate
+Git execution service.
+
+Non-secret Yo configuration may be exposed read-only only when its secret
+subpaths are separately identified. Secret-read exclusions include
+credential stores and helper endpoints, Keychain or equivalent credential
+services, Yo authentication tokens and runtime secrets, and active Session
+journals, history, attachments, indexes, locks, and control sockets. These
+paths and endpoints are not readable or writable and are not inherited through
+environment variables, descriptors, or sockets. The general home directory
+remains hidden apart from private per-call `HOME` and explicitly admitted
+support or cache roots. Secret-read exclusions take precedence over every
+readable, writable, or user-approved root; approval cannot make them visible.
+If a secret path cannot be reliably separated from a proposed readable root,
+that root is hidden, or the plan is unavailable when it is required.
+
+Network access is disabled in the baseline. A recognized request for network
+or remote transfer can produce an approval-required plan that includes the
+network capability for that call; the approval view states that capability.
+A recognized write or delete outside the workspace can produce an
+approval-required plan containing only the exact normalized target roots.
+Such a root MUST be resolved before approval, MUST preserve all secret-read
+exclusions, and MUST be representable by the selected OS adapter as a scoped
+grant. An ambiguous, broad, secret-exposing, or
+unsupported requested scope is unavailable.
+A scope denial, setup failure, or missing OS capability MUST NOT select an
+unrestricted runner or automatically retry with another profile. A command
+that has started is never retried or widened after any possible effect.
+Neither approval nor an external-root grant can relax secret-read exclusions.
+A network grant does not inherit host authentication: credential files,
+credential helpers, SSH-agent sockets, and equivalent host authentication
+services remain excluded. This contract does not promise that every
+authenticated external command can execute.
+
+The recognized-risk classifier is owned by the CLI execution host. Its
+versioned minimum deletion policy is `yo.command-risk/workspace-v2`. It MUST
+recognize the following direct command forms, including a literal executable
+path whose final component is the named command. The table assumes targets
+are inside baseline writable roots; any requested outside-root write still
+requires an exact scope grant, and secret-read exclusions remain absolute.
+
+| Recognized form | Required disposition |
+| --- | --- |
+| `rm` without `-r`, `-R`, or `--recursive`, with exactly one literal file operand; or `unlink` with exactly one literal file operand | Automatic when the whole call has no other recognized risk or scope extension. `-f`, quoting a literal name, and `--` alone do not change this disposition. |
+| `rm` with a recursive option, including combined short options such as `-rf` | Approval-required, even for one literal directory. |
+| More than one deletion operand in a call's recognized `rm` or `unlink` commands, or a deletion operand containing an active shell glob | Approval-required. Multiple simple deletion commands within one call count together; a quoted or escaped literal glob character is not an active glob. |
+| A recognized `rm` or `unlink` operand whose value depends on parameter, command, or arithmetic expansion | Approval-required because the single-literal-file case is not established; this alone grants no external root. |
+| `find` with `-delete`, or `find -exec` / `-execdir` directly invoking `rm` or `unlink` | Approval-required, including both `;` and `+` terminators and a literal executable path. |
+| `xargs` directly invoking `rm` or `unlink` | Approval-required, including invocation on a pipeline. |
+| Mutating `git clean` | Approval-required; an explicitly dry-run or help-only invocation remains automatic when no other risk is present. |
+| `git reset --hard`; `git checkout` or `git switch` with `-f`, `--force`, or `--discard-changes`; path-checkout forms of `git checkout`; and `git restore` that writes the worktree | Approval-required for recognized discarding of worktree changes, regardless of target count. Help-only invocations are excluded. `git restore --staged` without a worktree write is not this trigger. |
+| Ordinary `git add`, `git commit`, and Git operations with no recognized destructive form | Automatic when all required writable metadata is inside the selected workspace and no other risk is present. A resolved external gitdir/common-dir write requires its exact per-call root grant. |
+
+The minimum syntax coverage includes simple commands separated by `;`, newline,
+`&&`, `||`, or pipelines; shell quoting and escaping; leading literal
+assignments; and option terminators. Recognized Git forms remain recognizable
+with literal global options such as `-C`, `--git-dir`, `--work-tree`, and `-c`;
+those options cannot implicitly expand the frozen root grants. A recognized
+checkout form that cannot be distinguished from a discarding path checkout
+without executing Git requires approval rather than being labeled an ordinary
+branch switch. Classification inspects all such commands before any spawn
+and preserves whether an operand is literal or expanded.
+It MUST NOT run shell expansion, execute a command, or delete anything to
+classify a call. The host must publish its bounded syntax and recognition
+coverage alongside the versioned profile and test every minimum row. Nested
+interpreters, dynamically constructed command names, shell functions, and
+arbitrary script or executable internals are not recursively interpreted by
+this minimum classifier. Literal appearances in comments or quoted data are
+not independently executable commands.
+
+These are command-form triggers, not a count of filesystem entries discovered
+by expansion or a promise that every destructive program is recognized. A
+recognized risk uses an approval-required baseline plan when it needs no
+additional roots; if an outside-root request cannot be resolved to an exact
+admissible grant, that extension is unavailable. Normal edits, formatting,
+builds, tests, single-literal-file deletions, and unfamiliar executables may
+run automatically within the baseline plan. An unfamiliar executable or
+unrecognized syntax alone MUST NOT force approval or make the command
+unavailable. OS confinement limits its filesystem and network access; denied
+unrecognized access is not retried with wider privileges. Unrecognized or
+program-internal deletion or Git-metadata damage inside an admitted writable
+root is not guaranteed to prompt. Allowing in-workspace Git metadata writes
+also allows an unfamiliar program to modify that metadata within the same
+root; the classifier is not an integrity guarantee for Git objects, refs,
+index, configuration, or hooks. This policy does not provide copy-on-write
+execution, an
+original-workspace snapshot, or automatic restore.
+
+The process receives only stdin, stdout, and stderr descriptors. The runner
+clears inherited environment values and supplies only its explicit safe
+environment, including private `HOME` and `TMPDIR`; it does not pass host
+agent, SSH, credential, desktop, or Session sockets. The per-call profile
+must deny access to host agent, credential, and Session IPC endpoints,
+including pathname and abstract UNIX sockets and Mach service or task-port
+access. Approved network access does not grant host IPC. Process visibility,
+signaling, child inheritance, cancellation, termination, reap, and output
+drain are platform capabilities that must be qualified with call-scoped
+fixtures; a platform/version without demonstrated required behavior returns
+unavailable before spawn. Local sockets created inside an admitted writable
+root remain possible only where the frozen plan and platform policy permit
+them.
+
+The Linux adapter uses an isolated Bubblewrap-style mount/user/PID/IPC
+profile, a private network namespace when network is absent, read-only
+support roots, scoped writable binds, and private temporary/home paths. It
+requires every isolation primitive needed by the frozen plan before spawn;
+no additional Landlock dependency is implied.
+
+A macOS Seatbelt adapter using `/usr/bin/sandbox-exec` is a practical
+candidate, not an asserted support guarantee.
+Binary presence and successful policy parsing are insufficient qualification.
+For each admitted macOS release, actual sandbox-child tests MUST demonstrate
+workspace writes, automatic in-workspace Git-metadata writes, resolved external
+Git-metadata reads with unapproved writes denied, exact approved external
+gitdir/common-dir writes, secret-root read denial, other exact approved-root
+grants, outside-root denial,
+network denial and approved-network behavior, descriptor/environment
+sanitization, and denial of host UNIX-socket, Mach-lookup, Mach-task, and
+credential/Session IPC access. Tests MUST also show that child processes
+inherit the restrictions and that the runner can observe, cancel, terminate,
+reap, and drain the tested descendant tree within its bounded cleanup policy.
+A failure or unavailable Seatbelt capability in any required behavior makes
+the affected profile unavailable before spawn for that OS release; it does
+not establish that another release or future adapter cannot meet the contract.
+
+Filesystem path confinement protects the named paths and roots. It does not
+establish an exhaustive inode-level guarantee against a pre-existing hard link
+inside a writable root that aliases a read-only or secret-excluded file
+outside that root.
+Known credential device/inode exclusions remain required where the worker
+directly opens a protected credential, but such checks do not prove that all
+hard-link aliases were found. The contract MUST NOT describe protected path
+denial as protection against every possible alias.
 
 ## Rationale
 
