@@ -33,6 +33,6 @@ pub use context::{ContextPolicyChanged, ContextStrategy};
 pub(crate) use correlation::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
     BackendResumableOutcome, BindingCloseReason, BindingTransition, CacheState, ContinuationAnchor,
-    DetailAvailability, ExchangeDirection, ExchangeKind, ModelReplayDeltaRecord, OperationId,
-    TransitionMode, VersionedIdentity,
+    DetailAvailability, ExchangeDirection, ExchangeKind, LocalFailureSource,
+    ModelReplayDeltaRecord, OperationId, TransitionMode, VersionedIdentity,
 };

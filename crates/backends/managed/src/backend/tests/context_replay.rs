@@ -6,6 +6,7 @@ mod fork;
 mod idle;
 mod idle_outcomes;
 mod idle_resume;
+mod local_failure;
 mod replay_capacity;
 mod source;
 mod summary_events;

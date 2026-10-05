@@ -4,8 +4,9 @@ use super::super::{
     BindingCloseReason, ContextPolicyChanged, ForkItemOrigin, OperationId, VersionedIdentity,
 };
 use crate::{
-    ActivityKind, ActivityRef, BackendBindingEvidence, ContinuationStrategy, JournalSequence,
-    ModelReplay, ModelReplayItem, SessionId, TurnId,
+    ActivityKind, ActivityQuestion, ActivityRef, ActivityRequestRef, ActivityResponse,
+    BackendBindingEvidence, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
+    RequestId, SessionId, TurnId,
 };
 
 mod binding;
@@ -31,9 +32,19 @@ pub(super) struct CorrelationRecovery {
     interrupted_activity_boundaries: BTreeMap<JournalSequence, TurnId>,
     started_activities: BTreeMap<ActivityRef, (JournalSequence, ActivityKind)>,
     completed_activity_boundaries: BTreeMap<JournalSequence, (TurnId, ActivityKind)>,
+    question_text: BTreeMap<ActivityRef, Option<String>>,
+    ordinary_questions: BTreeMap<ActivityRequestRef, ActivityQuestion>,
+    answered_questions: BTreeMap<ActivityRequestRef, (ActivityQuestion, ActivityResponse)>,
+    completed_questions: BTreeMap<(TurnId, RequestId), (ActivityQuestion, ActivityResponse)>,
+    question_response_boundaries:
+        BTreeMap<JournalSequence, (TurnId, ActivityQuestion, ActivityResponse)>,
     latest_request_exchange: BTreeMap<(u64, OperationId), JournalSequence>,
     latest_accepted_request: BTreeMap<(u64, TurnId), JournalSequence>,
     completed_turns: BTreeMap<TurnId, JournalSequence>,
+    failed_turns: BTreeMap<TurnId, (JournalSequence, JournalSequence)>,
+    accepted_request_history: BTreeMap<JournalSequence, (u64, TurnId)>,
+    secret_submission_barrier: bool,
+    active_checkpoint_boundaries: BTreeMap<JournalSequence, (TurnId, JournalSequence)>,
     session_id: Option<SessionId>,
     session_created: bool,
     open_epoch: Option<u64>,

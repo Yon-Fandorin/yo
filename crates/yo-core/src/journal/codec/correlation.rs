@@ -409,6 +409,18 @@ impl BackendRequestAccepted {
     }
 }
 
+/// 실패한 요청보다 앞선, Core가 검증한 누적 문맥의 Journal 좌표.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LocalFailureSource {
+    ActiveSuffix {
+        first_sequence: JournalSequence,
+        last_sequence: JournalSequence,
+    },
+    Checkpoint {
+        checkpoint_sequence: JournalSequence,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BackendResumableOutcome {
     epoch: u64,
@@ -417,6 +429,7 @@ pub(crate) struct BackendResumableOutcome {
     accepted_request_sequence: JournalSequence,
     outcome_identity: Option<VersionedIdentity>,
     replay_delta_sequence: Option<JournalSequence>,
+    local_failure_source: Option<LocalFailureSource>,
 }
 
 impl BackendResumableOutcome {
@@ -434,7 +447,31 @@ impl BackendResumableOutcome {
             accepted_request_sequence,
             outcome_identity,
             replay_delta_sequence,
+            local_failure_source: None,
         }
+    }
+
+    pub(crate) const fn local_failure(
+        epoch: u64,
+        context_epoch: u64,
+        turn_id: TurnId,
+        accepted_request_sequence: JournalSequence,
+        replay_delta_sequence: Option<JournalSequence>,
+        source: LocalFailureSource,
+    ) -> Self {
+        Self {
+            epoch,
+            context_epoch: Some(context_epoch),
+            turn_id,
+            accepted_request_sequence,
+            outcome_identity: None,
+            replay_delta_sequence,
+            local_failure_source: Some(source),
+        }
+    }
+
+    pub(crate) const fn local_failure_source(&self) -> Option<LocalFailureSource> {
+        self.local_failure_source
     }
 
     pub(crate) const fn with_context_epoch(mut self, context_epoch: u64) -> Self {

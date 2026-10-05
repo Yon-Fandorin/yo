@@ -378,7 +378,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                     .journal
                     .append_committed_command_transactionally(committed, &events)
                 {
-                    self.ordinary_response_commit_failed = true;
+                    self.continuation_publication_failed = true;
                     let _ = self.backend.abort_prepared_command();
                     return Err(RuntimeError::backend(crate::BackendFailure::new(
                         BackendFailureKind::Session,
@@ -386,7 +386,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                     )));
                 }
                 if self.backend.commit_prepared_command().is_err() {
-                    self.ordinary_response_commit_failed = true;
+                    self.continuation_publication_failed = true;
                     let _ = self.backend.abort_prepared_command();
                     return Err(RuntimeError::backend(crate::BackendFailure::new(
                         BackendFailureKind::Session,

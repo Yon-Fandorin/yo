@@ -357,6 +357,21 @@ managed 디스크 회귀는 거절 직후 종료하고 복구한 binding·epoch�
 다음 입력을 실행한다. 단독 `CompactContext` 기록은 기존 Anchor를 보존한다. 이후 일반 요청이
 수락되면 대응하는 완료 결과와 Anchor가 저장될 때까지 기존 Anchor를 계속 무효화한다.
 
+닫힌 로컬 실패 문맥 검증은 `yo-core::runtime::tests::journal::local_failure`와
+`yo-backend-managed::backend::tests::context_replay::local_failure`가 소유한다.
+`cargo test --locked -p yo-core local_failure`와
+`cargo test --locked -p yo-backend-managed local_failure`를 실행한다.
+Core는 Failed·delta·outcome·Anchor의 원자적 발행, 잘못된 wire와 조작된 source 좌표,
+직접 StartTurn 전에 발생한 발행 실패 latch, secret barrier, checkpoint의 빈 suffix와
+steer-only suffix, 정확한 4096항목 한도와 첫 초과를 검증한다. Managed 검증은 누적 tool
+묶음과 commit된 steer를 포함한 다음 connector 입력 전체를 비교하고 실제 worker·Core·disk
+tool 및 답변한/답변 없는 일반 질문의 cold resume을 실행한다. 질문 증거 변조는 비밀·오형식·
+불일치·미완료 request/response graph를, scalar wire 변조는 객체와 배열 타입을 검증한다.
+거절된 호출과 부분 응답을 제외하고 tool 재실행이 없음을 확인하며,
+정리 불확실성·효과 실행 시도·private profile은 정산하지 않는다. Checkpoint 소비자 검증은
+기존 checkpoint 반환 단계를 주입하고 Core 검증이 별도로 durable source를 확인한다.
+이 제어된 fixture는 인증된 provider·macOS·network-granted 실행 결과를 주장하지 않는다.
+
 타입이 지정된 파일 변경은 `transcript/layout/activity.rs`와 기존 literal diff renderer를
 사용한다. 소스 내부 fence가 Markdown이나 이미지로 해석되지 않는다. 추가·삭제 행 수는
 화면에만 표시한다. 접기 시 glyph와 배경 행을 함께 이동하고 종료 상태를 남긴다. 변경 패널은 경로·hunk·첫

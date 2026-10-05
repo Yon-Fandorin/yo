@@ -268,7 +268,7 @@ pub(super) fn function_call_done(
                 Err(_) => {
                     let message = "tool argument semantic admission was rejected";
                     backend.fail_tool_admission(activity, call_id, name, message);
-                    backend.fail_turn(state, message.to_owned());
+                    backend.reject_tool_arguments(state, message.to_owned());
                     return Ok(());
                 },
             };

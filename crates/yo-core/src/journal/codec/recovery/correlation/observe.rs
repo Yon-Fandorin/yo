@@ -147,6 +147,8 @@ impl CorrelationRecovery {
                 }
                 self.latest_accepted_request
                     .insert((request.epoch(), request.turn_id()), sequence);
+                self.accepted_request_history
+                    .insert(sequence, (request.epoch(), request.turn_id()));
                 self.open_epoch_has_accepted_request = true;
                 if let Some(fork) = &mut self.fork_seed {
                     fork.has_accepted_request = true;
@@ -206,7 +208,7 @@ impl CorrelationRecovery {
                     _,
                     JournalRecord::EventCommitted(AgentEvent::TurnFinished {
                         turn,
-                        outcome: TurnOutcome::Completed,
+                        outcome: TurnOutcome::Completed | TurnOutcome::Failed(_),
                     }),
                 )) = previous_in_commit
                 else {
@@ -275,60 +277,64 @@ impl CorrelationRecovery {
                         "backend_resumable_outcome must reference the latest accepted request",
                     ));
                 }
-                if !self
-                    .completed_turns
-                    .get(&outcome.turn_id())
-                    .is_some_and(|completed| *completed > outcome.accepted_request_sequence())
-                {
-                    return Err(JournalCodecError::new(
-                        "backend_resumable_outcome requires a preceding completed Turn",
-                    ));
-                }
-                match self.open_strategy {
-                    Some(ContinuationStrategy::ExactReplay { .. }) => {
-                        let Some(replay_sequence) = outcome.replay_delta_sequence() else {
-                            return Err(JournalCodecError::new(
-                                "exact-replay outcome requires replay_delta_sequence",
-                            ));
-                        };
-                        let Some((previous_sequence, JournalRecord::ModelReplayDelta(replay))) =
-                            previous_in_commit
-                        else {
-                            return Err(JournalCodecError::new(
-                                "exact-replay outcome must immediately follow its replay delta",
-                            ));
-                        };
-                        if replay_sequence != previous_sequence
-                            || replay.epoch() != outcome.epoch()
-                            || replay.turn_id() != outcome.turn_id()
-                            || replay.accepted_request_sequence()
-                                != outcome.accepted_request_sequence()
-                        {
-                            return Err(JournalCodecError::new(
-                                "exact-replay outcome does not match its replay delta",
-                            ));
-                        }
-                    },
-                    Some(ContinuationStrategy::BackendManagedState) => {
-                        if outcome.replay_delta_sequence().is_some()
-                            || !matches!(
-                                previous_in_commit,
-                                Some((_, JournalRecord::EventCommitted(AgentEvent::TurnFinished {
-                                    turn,
-                                    outcome: TurnOutcome::Completed,
-                                }))) if turn.turn_id() == outcome.turn_id()
-                            )
-                        {
-                            return Err(JournalCodecError::new(
-                                "backend-managed outcome must immediately follow its completed Turn without replay evidence",
-                            ));
-                        }
-                    },
-                    None => {
+                if outcome.local_failure_source().is_some() {
+                    self.validate_local_failure(sequence, outcome, previous_in_commit)?;
+                } else {
+                    if !self
+                        .completed_turns
+                        .get(&outcome.turn_id())
+                        .is_some_and(|completed| *completed > outcome.accepted_request_sequence())
+                    {
                         return Err(JournalCodecError::new(
-                            "backend_resumable_outcome requires a continuation strategy",
+                            "backend_resumable_outcome requires a preceding completed Turn",
                         ));
-                    },
+                    }
+                    match self.open_strategy {
+                        Some(ContinuationStrategy::ExactReplay { .. }) => {
+                            let Some(replay_sequence) = outcome.replay_delta_sequence() else {
+                                return Err(JournalCodecError::new(
+                                    "exact-replay outcome requires replay_delta_sequence",
+                                ));
+                            };
+                            let Some((previous_sequence, JournalRecord::ModelReplayDelta(replay))) =
+                                previous_in_commit
+                            else {
+                                return Err(JournalCodecError::new(
+                                    "exact-replay outcome must immediately follow its replay delta",
+                                ));
+                            };
+                            if replay_sequence != previous_sequence
+                                || replay.epoch() != outcome.epoch()
+                                || replay.turn_id() != outcome.turn_id()
+                                || replay.accepted_request_sequence()
+                                    != outcome.accepted_request_sequence()
+                            {
+                                return Err(JournalCodecError::new(
+                                    "exact-replay outcome does not match its replay delta",
+                                ));
+                            }
+                        },
+                        Some(ContinuationStrategy::BackendManagedState) => {
+                            if outcome.replay_delta_sequence().is_some()
+                                || !matches!(
+                                    previous_in_commit,
+                                    Some((_, JournalRecord::EventCommitted(AgentEvent::TurnFinished {
+                                        turn,
+                                        outcome: TurnOutcome::Completed,
+                                    }))) if turn.turn_id() == outcome.turn_id()
+                                )
+                            {
+                                return Err(JournalCodecError::new(
+                                    "backend-managed outcome must immediately follow its completed Turn without replay evidence",
+                                ));
+                            }
+                        },
+                        None => {
+                            return Err(JournalCodecError::new(
+                                "backend_resumable_outcome requires a continuation strategy",
+                            ));
+                        },
+                    }
                 }
             },
             JournalRecord::ContinuationAnchor(anchor) => {
@@ -364,6 +370,11 @@ impl CorrelationRecovery {
                         .completed_turns
                         .get(&delta.turn_id)
                         .copied()
+                        .or_else(|| {
+                            self.failed_turns
+                                .get(&delta.turn_id)
+                                .map(|(_, finish)| *finish)
+                        })
                         .ok_or_else(|| {
                             JournalCodecError::new(
                                 "continuation_anchor replay group has no completed Turn boundary",
@@ -493,7 +504,93 @@ impl CorrelationRecovery {
         Ok(())
     }
 
+    // durable message의 검증된 revision/segment를 읽어 질문의 실제 snapshot만 복원합니다.
+    // 이것은 validation 근거이며 provider replay나 새 journal event를 만들지 않습니다.
+    pub(in super::super) fn observe_question_message(&mut self, record: &JournalRecord) {
+        match record {
+            JournalRecord::MessageReset(reset) => {
+                if matches!(
+                    self.started_activities.get(&reset.activity()),
+                    Some((_, crate::ActivityKind::UserInputRequest { .. }))
+                ) {
+                    self.question_text
+                        .insert(reset.activity(), Some(String::new()));
+                    self.observe_question_snapshot(reset.activity(), "");
+                }
+            },
+            JournalRecord::MessageSegment(segment) => self.observe_question_segment(segment),
+            JournalRecord::MessageEnded(terminal) => {
+                if let Some(segment) = terminal.final_segment() {
+                    self.observe_question_segment(segment);
+                }
+                self.question_text.remove(&terminal.ended().activity());
+            },
+            _ => {},
+        }
+    }
+
+    fn observe_question_segment(&mut self, segment: &super::super::super::MessageSegment) {
+        let Some((_, crate::ActivityKind::UserInputRequest { .. })) =
+            self.started_activities.get(&segment.activity())
+        else {
+            return;
+        };
+        let buffer = self
+            .question_text
+            .entry(segment.activity())
+            .or_insert_with(|| Some(String::new()));
+        let Some(text) = buffer.as_mut() else {
+            return;
+        };
+        if text.len().saturating_add(segment.text().len()) > crate::ToolOutput::MAX_SNAPSHOT_BYTES {
+            // 초과 snapshot은 reset 전까지 유효한 질문이 될 수 없습니다.
+            *buffer = None;
+            self.ordinary_questions
+                .retain(|request, _| request.activity() != segment.activity());
+            return;
+        }
+        text.push_str(segment.text());
+        let snapshot = text.clone();
+        self.observe_question_snapshot(segment.activity(), &snapshot);
+    }
+
+    fn observe_question_snapshot(&mut self, activity: crate::ActivityRef, snapshot: &str) {
+        if let Some((_, crate::ActivityKind::UserInputRequest { request_id })) =
+            self.started_activities.get(&activity)
+        {
+            let request = crate::ActivityRequestRef::new(activity, *request_id);
+            if let Some(question) = crate::ActivityQuestion::from_snapshot(snapshot)
+                .filter(|question| question.allow_unanswered && !question.is_secret)
+            {
+                self.ordinary_questions.insert(request, question);
+            } else {
+                self.ordinary_questions.remove(&request);
+            }
+        }
+    }
+
     fn observe_command(&mut self, sequence: JournalSequence, command: &CommittedCommand) {
+        if matches!(
+            command.command(),
+            AgentCommand::RespondToActivity {
+                response: crate::ActivityResponse::SecretInputSubmitted,
+                ..
+            }
+        ) {
+            self.secret_submission_barrier = true;
+        }
+        if let AgentCommand::RespondToActivity {
+            request,
+            response:
+                response @ (crate::ActivityResponse::UserInput(_)
+                | crate::ActivityResponse::QuestionAnswer { .. }
+                | crate::ActivityResponse::QuestionUnanswered),
+        } = command.command()
+            && let Some(question) = self.ordinary_questions.get(request)
+        {
+            self.answered_questions
+                .insert(*request, (question.clone(), response.clone()));
+        }
         let Some(submission_id) = command.submission_id() else {
             return;
         };
@@ -527,7 +624,13 @@ impl CorrelationRecovery {
                 self.session_created = true;
             },
             AgentEvent::TurnFinished { turn, outcome } => {
-                self.active_turn_starts.remove(&turn.turn_id());
+                let start = self.active_turn_starts.remove(&turn.turn_id());
+                self.failed_turns.remove(&turn.turn_id());
+                if matches!(outcome, TurnOutcome::Failed(_))
+                    && let Some(start) = start
+                {
+                    self.failed_turns.insert(turn.turn_id(), (start, sequence));
+                }
                 if matches!(outcome, TurnOutcome::Completed) {
                     self.completed_turns.insert(turn.turn_id(), sequence);
                 } else {
@@ -539,6 +642,29 @@ impl CorrelationRecovery {
             },
             AgentEvent::ActivityFinished { activity, outcome } => {
                 if let Some((_, kind)) = self.started_activities.remove(activity) {
+                    if let crate::ActivityKind::UserInputRequest { request_id } = kind {
+                        let request = crate::ActivityRequestRef::new(*activity, request_id);
+                        self.ordinary_questions.remove(&request);
+                        self.question_text.remove(activity);
+                        let response = self.answered_questions.remove(&request);
+                        if matches!(outcome, ActivityOutcome::Completed)
+                            && let Some(response) = response
+                        {
+                            self.completed_questions
+                                .insert((activity.turn_id(), request_id), response);
+                        }
+                    }
+                    if let crate::ActivityKind::UserInputResponse { request_id } = kind {
+                        let response = self
+                            .completed_questions
+                            .remove(&(activity.turn_id(), request_id));
+                        if matches!(outcome, ActivityOutcome::Completed)
+                            && let Some((question, response)) = response
+                        {
+                            self.question_response_boundaries
+                                .insert(sequence, (activity.turn_id(), question, response));
+                        }
+                    }
                     if matches!(outcome, ActivityOutcome::Interrupted) {
                         self.interrupted_activity_boundaries
                             .insert(sequence, activity.turn_id());
@@ -555,6 +681,10 @@ impl CorrelationRecovery {
             AgentEvent::ActivityStarted { activity, kind } => {
                 self.started_activities.insert(*activity, (sequence, *kind));
             },
+            AgentEvent::ActivityUpdated {
+                activity,
+                update: crate::ActivityUpdate::TextSnapshot(snapshot),
+            } => self.observe_question_snapshot(*activity, snapshot),
             AgentEvent::ActivityUpdated { .. } => {},
         }
     }

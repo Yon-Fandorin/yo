@@ -73,6 +73,7 @@ pub(super) fn shutdown(backend: &mut NativeModelBackend) -> Result<(), BackendFa
     {
         result = Err(map_tool_cleanup(error));
     }
+    backend.pending_failure_context = None;
     backend.events.clear();
     backend.open_activities.clear();
     backend.closed = true;

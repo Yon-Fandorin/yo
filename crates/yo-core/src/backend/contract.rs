@@ -66,6 +66,13 @@ pub enum BackendEvent {
         turn: TurnRef,
         outcome: TurnOutcome,
     },
+    /// 인자 의미 검증의 거절 뒤 자원 정리가 성공하고 열린 응답 묶음의 실행이 없었던 실패.
+    /// Core는 제안된 suffix를 이미 검증한 원본과 비교하고 Failed와 함께 영속 확정합니다.
+    LocalArgumentRejectionPrepared {
+        turn: TurnRef,
+        failure: crate::Failure,
+        replay: Option<crate::ModelReplayDelta>,
+    },
     /// A completed Turn whose backend binding can continue from the accepted request.
     ResumableTurnFinished {
         turn: TurnRef,

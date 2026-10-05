@@ -1839,3 +1839,5 @@ fn question_unanswered_active_suffix_rejects_untrusted_question_boundaries() {
         runtime.shutdown().unwrap();
     }
 }
+
+mod local_failure;

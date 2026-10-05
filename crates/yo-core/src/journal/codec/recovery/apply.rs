@@ -23,6 +23,7 @@ pub(super) fn validate_commit_prefix(
             "semantic Journal cutoff moved backwards",
         ));
     }
+    super::super::wire::validate_correlation_commit_order(commit)?;
     validate_checkpoint_commit_boundary(commit)
 }
 
@@ -85,6 +86,9 @@ pub(super) fn apply_commit(
             &mut recovered.ended_messages,
             &mut recovered.submission_ids,
         )?;
+        recovered
+            .correlation
+            .observe_question_message(entry.record());
         recovered.records.push(entry.clone());
         recovered.head = Some(entry.sequence());
         previous_in_commit = entry

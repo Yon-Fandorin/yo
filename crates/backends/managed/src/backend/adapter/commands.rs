@@ -16,6 +16,13 @@ pub(super) fn execute_command(
             "native backend is closed",
         ));
     }
+    backend.promote_failure_context();
+    if backend.pending_failure_context.is_some() {
+        return Err(failure(
+            BackendFailureKind::Session,
+            "local failure context is awaiting serialized publication",
+        ));
+    }
     match command {
         AgentCommand::CreateSession { session_id } => {
             if backend.session.is_some() {

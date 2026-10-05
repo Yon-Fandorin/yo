@@ -1,13 +1,19 @@
-use std::num::NonZeroU64;
+use std::{
+    fmt::{self, Formatter},
+    num::NonZeroU64,
+};
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    de::{Error as DeError, MapAccess, Visitor, value::MapAccessDeserializer},
+};
 
 use super::JournalCodecError;
 use crate::{
     ContinuationStrategy, JournalSequence, ReplayExecutor, TurnId, backend,
     journal::codec::{
         BindingCloseReason, BindingTransition, CacheState, DetailAvailability, ExchangeDirection,
-        ExchangeKind, OperationId, TransitionMode, VersionedIdentity,
+        ExchangeKind, LocalFailureSource, OperationId, TransitionMode, VersionedIdentity,
     },
 };
 
@@ -73,10 +79,41 @@ pub(super) enum WireBindingCloseReason {
     Exhausted,
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum WireResumableStatus {
     Completed,
+    Failed,
+}
+
+impl<'de> Deserialize<'de> for WireResumableStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Completed의 기존 reader 표현은 유지하지만 새 Failed는 문자열만 받습니다.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum HistoricalCompleted {
+            Completed,
+        }
+        struct StatusVisitor;
+        impl<'de> Visitor<'de> for StatusVisitor {
+            type Value = WireResumableStatus;
+            fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+                formatter.write_str("completed or failed status string")
+            }
+            fn visit_str<E: DeError>(self, value: &str) -> Result<Self::Value, E> {
+                match value {
+                    "completed" => Ok(WireResumableStatus::Completed),
+                    "failed" => Ok(WireResumableStatus::Failed),
+                    _ => Err(E::unknown_variant(value, &["completed", "failed"])),
+                }
+            }
+            fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
+                HistoricalCompleted::deserialize(MapAccessDeserializer::new(map))
+                    .map(|_| WireResumableStatus::Completed)
+            }
+        }
+        deserializer.deserialize_any(StatusVisitor)
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -473,5 +510,118 @@ impl From<WireBindingCloseReason> for BindingCloseReason {
             WireBindingCloseReason::Revoked => Self::Revoked,
             WireBindingCloseReason::Exhausted => Self::Exhausted,
         }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WireLocalFailureSettlement {
+    profile: WireLocalFailureProfile,
+    cause: WireLocalFailureCause,
+    cleanup: WireLocalFailureCleanup,
+    source: WireLocalFailureSource,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(try_from = "String")]
+enum WireLocalFailureProfile {
+    #[serde(rename = "yo.local-failure-context/v1")]
+    V1,
+}
+impl TryFrom<String> for WireLocalFailureProfile {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value == "yo.local-failure-context/v1" {
+            Ok(Self::V1)
+        } else {
+            Err("unsupported local failure settlement scalar")
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(try_from = "String")]
+#[serde(rename_all = "snake_case")]
+enum WireLocalFailureCause {
+    ToolArgumentSemanticAdmissionRejected,
+}
+impl TryFrom<String> for WireLocalFailureCause {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value == "tool_argument_semantic_admission_rejected" {
+            Ok(Self::ToolArgumentSemanticAdmissionRejected)
+        } else {
+            Err("unsupported local failure settlement scalar")
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(try_from = "String")]
+#[serde(rename_all = "snake_case")]
+enum WireLocalFailureCleanup {
+    Succeeded,
+}
+impl TryFrom<String> for WireLocalFailureCleanup {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value == "succeeded" {
+            Ok(Self::Succeeded)
+        } else {
+            Err("unsupported local failure settlement scalar")
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum WireLocalFailureSource {
+    ActiveSuffix {
+        first_sequence: u64,
+        last_sequence: u64,
+    },
+    Checkpoint {
+        checkpoint_sequence: u64,
+    },
+}
+
+impl WireLocalFailureSettlement {
+    pub(super) fn encode(source: LocalFailureSource) -> Self {
+        Self {
+            profile: WireLocalFailureProfile::V1,
+            cause: WireLocalFailureCause::ToolArgumentSemanticAdmissionRejected,
+            cleanup: WireLocalFailureCleanup::Succeeded,
+            source: match source {
+                LocalFailureSource::ActiveSuffix {
+                    first_sequence,
+                    last_sequence,
+                } => WireLocalFailureSource::ActiveSuffix {
+                    first_sequence: first_sequence.get(),
+                    last_sequence: last_sequence.get(),
+                },
+                LocalFailureSource::Checkpoint {
+                    checkpoint_sequence,
+                } => WireLocalFailureSource::Checkpoint {
+                    checkpoint_sequence: checkpoint_sequence.get(),
+                },
+            },
+        }
+    }
+
+    pub(super) fn decode(self) -> Result<LocalFailureSource, JournalCodecError> {
+        Ok(match self.source {
+            WireLocalFailureSource::ActiveSuffix {
+                first_sequence,
+                last_sequence,
+            } => LocalFailureSource::ActiveSuffix {
+                first_sequence: sequence(first_sequence, "first_sequence")?,
+                last_sequence: sequence(last_sequence, "last_sequence")?,
+            },
+            WireLocalFailureSource::Checkpoint {
+                checkpoint_sequence,
+            } => LocalFailureSource::Checkpoint {
+                checkpoint_sequence: sequence(checkpoint_sequence, "checkpoint_sequence")?,
+            },
+        })
     }
 }

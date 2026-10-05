@@ -227,6 +227,8 @@ struct TurnState {
     turn: TurnRef,
     round: usize,
     delta: Vec<ModelReplayItem>,
+    closed_source: Option<Vec<ModelReplayItem>>,
+    open_group_effect_attempted: bool,
     stream: Option<Box<dyn ModelConnectorStreamPort>>,
     response_id: Option<String>,
     assistant_activities: BTreeMap<usize, ActivityRef>,
@@ -287,6 +289,7 @@ pub struct NativeModelBackend {
     context_policy_active: bool,
     turn: Option<TurnState>,
     idle_compaction: Option<IdleCompactionState>,
+    pending_failure_context: Option<(ModelReplay, Option<Vec<ModelReplayItem>>)>,
     events: VecDeque<BackendEvent>,
     open_activities: HashSet<ActivityRef>,
     next_activity_id: u64,
@@ -476,6 +479,7 @@ impl NativeModelBackend {
             context_policy_active: false,
             turn: None,
             idle_compaction: None,
+            pending_failure_context: None,
             events: VecDeque::new(),
             open_activities: HashSet::new(),
             next_activity_id: 1,
@@ -694,9 +698,9 @@ impl NativeModelBackend {
                 BackendEvent::ActivityFinished { activity, .. } => {
                     activities.remove(activity);
                 },
-                BackendEvent::TurnFinished { .. } | BackendEvent::ResumableTurnFinished { .. } => {
-                    activities.clear()
-                },
+                BackendEvent::TurnFinished { .. }
+                | BackendEvent::ResumableTurnFinished { .. }
+                | BackendEvent::LocalArgumentRejectionPrepared { .. } => activities.clear(),
                 BackendEvent::ActivityUpdated { .. }
                 | BackendEvent::ContextPolicyChanged { .. }
                 | BackendEvent::ContextCheckpointPrepared { .. }
@@ -710,9 +714,11 @@ impl NativeModelBackend {
     fn pop_event(&mut self) -> Option<BackendEvent> {
         let mut event = self.events.pop_front()?;
         if let BackendEvent::ContextActiveSuffixCompleted { turn, items } = &mut event
-            && let Some(state) = self.turn.as_ref().filter(|state| state.turn == *turn)
+            && let Some(state) = self.turn.as_mut().filter(|state| state.turn == *turn)
         {
             items.extend(state.armed_steers.iter().cloned());
+            state.closed_source = Some(items.clone());
+            state.open_group_effect_attempted = false;
         }
         match &event {
             BackendEvent::ActivityStarted { activity, .. } => {
@@ -721,7 +727,9 @@ impl NativeModelBackend {
             BackendEvent::ActivityFinished { activity, .. } => {
                 self.open_activities.remove(activity);
             },
-            BackendEvent::TurnFinished { .. } | BackendEvent::ResumableTurnFinished { .. } => {
+            BackendEvent::TurnFinished { .. }
+            | BackendEvent::ResumableTurnFinished { .. }
+            | BackendEvent::LocalArgumentRejectionPrepared { .. } => {
                 self.open_activities.clear();
             },
             BackendEvent::ActivityUpdated { .. }

@@ -138,6 +138,8 @@ impl NativeModelBackend {
             )
         })?;
         let request = self.tool_execution_request(state, &call);
+        // 시작이 실패해도 효과의 불확실성은 남으므로 호출 전에 시도 사실을 기록합니다.
+        state.open_group_effect_attempted = true;
         match self.tool_host.start_prepared(request, plan) {
             Ok(execution) => {
                 state.active_tool = Some(ActiveTool {

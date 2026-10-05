@@ -126,6 +126,23 @@ attributes each terminal response's usage to its exact Provider, Account,
 Model, connector, endpoint, and complete resolved profile. The process host owns startup
 selection and assembly of these inputs and concrete local tools.
 
+A typed local tool-argument semantic-admission rejection may preserve the current
+Turn's earlier closed context under `yo.local-failure-context/v1`. The managed
+backend requires successful connector/tool cleanup and no attempted effect in
+the rejected open response group, and keeps the candidate pending. Core compares
+the exact cumulative suffix, including committed steering, against its active
+source and atomically writes the Failed Turn, optional nonempty replay delta,
+local settlement outcome and Anchor. The outcome names the latest failed request;
+its separate source names the earlier closed boundary. A checkpoint root is
+retained once: an empty successor suffix carries no delta, while a steering-only
+suffix carries exactly that accepted input. The next poll or an earlier direct
+StartTurn promotes context only after Core publication succeeds. Failed append
+or invalid source latches public poll, commands, submissions and replacement.
+Rejected calls, partial current responses, secret barriers, private replay and
+uncertain cleanup remain outside continuation; no automatic request, tool
+reexecution, approval reuse or binding transition is added. The Turn remains
+Failed, including print-mode failure status.
+
 Every new local-client exact-replay Session commits its closed context policy
 before the first model request. The default reports pressure at 85 percent and
 selects portable-summary compaction at 90 percent from the exact complete

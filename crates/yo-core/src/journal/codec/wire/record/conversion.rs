@@ -8,8 +8,8 @@ use super::{
         correlation,
         correlation::{
             WireBindingCloseReason, WireBindingTransition, WireContinuationStrategy,
-            WireDetailAvailability, WireExchangeDirection, WireExchangeKind, WireResumableStatus,
-            WireVersionedIdentity,
+            WireDetailAvailability, WireExchangeDirection, WireExchangeKind,
+            WireLocalFailureSettlement, WireResumableStatus, WireVersionedIdentity,
         },
         descriptor::WireSessionDescriptor,
         event::WireEvent,
@@ -29,8 +29,8 @@ use crate::{
         CONTEXT_CHECKPOINT_PROFILE, CONTEXT_POLICY_PROFILE, ContextArtifactReceipt,
         ContextCheckpoint, ContextPolicyChanged, ContextStrategy, ContextSummaryUsage,
         ContinuationAnchor, ForkHistoryCoordinate, ForkSeed, ForkSource,
-        IMAGE_CONTEXT_CHECKPOINT_PROFILE, InitialForkSeed, JournalRecord, MessageEnded,
-        MessageReset, MessageSegment, MessageTerminal, ModelReplayDeltaRecord,
+        IMAGE_CONTEXT_CHECKPOINT_PROFILE, InitialForkSeed, JournalRecord, LocalFailureSource,
+        MessageEnded, MessageReset, MessageSegment, MessageTerminal, ModelReplayDeltaRecord,
         SequencedJournalRecord,
     },
 };
@@ -102,15 +102,33 @@ pub(in super::super) enum WireRecord {
     BackendResumableOutcome {
         journal_sequence: u64,
         epoch: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "non_null_accounting_field"
+        )]
         context_epoch: Option<u64>,
         turn_id: u64,
         accepted_request_sequence: u64,
         status: WireResumableStatus,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "non_null_accounting_field"
+        )]
         outcome_identity: Option<WireVersionedIdentity>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "non_null_accounting_field"
+        )]
         replay_delta_sequence: Option<u64>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "non_null_accounting_field"
+        )]
+        settlement: Option<WireLocalFailureSettlement>,
     },
     ContinuationAnchor {
         journal_sequence: u64,
@@ -274,12 +292,19 @@ impl TryFrom<&SequencedJournalRecord> for WireRecord {
                 context_epoch: outcome.context_epoch(),
                 turn_id: outcome.turn_id().get().get(),
                 accepted_request_sequence: outcome.accepted_request_sequence().get(),
-                status: WireResumableStatus::Completed,
+                status: if outcome.local_failure_source().is_some() {
+                    WireResumableStatus::Failed
+                } else {
+                    WireResumableStatus::Completed
+                },
                 outcome_identity: outcome
                     .outcome_identity()
                     .map(correlation::encode_identity)
                     .transpose()?,
                 replay_delta_sequence: outcome.replay_delta_sequence().map(JournalSequence::get),
+                settlement: outcome
+                    .local_failure_source()
+                    .map(WireLocalFailureSettlement::encode),
             },
             JournalRecord::ContinuationAnchor(anchor) => Self::ContinuationAnchor {
                 journal_sequence: required_journal_sequence(entry)?.get(),
@@ -525,31 +550,65 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                 context_epoch,
                 turn_id,
                 accepted_request_sequence,
-                status: WireResumableStatus::Completed,
+                status,
                 outcome_identity,
                 replay_delta_sequence,
+                settlement,
             } => {
                 correlation::positive(epoch, "epoch")?;
-                Ok((
-                    Some(correlation::sequence(journal_sequence, "journal_sequence")?),
-                    JournalRecord::BackendResumableOutcome(with_context_epoch(
+                let turn_id = correlation::turn_id(turn_id)?;
+                let accepted_request_sequence =
+                    correlation::sequence(accepted_request_sequence, "accepted_request_sequence")?;
+                let replay_delta_sequence = replay_delta_sequence
+                    .map(|value| correlation::sequence(value, "replay_delta_sequence"))
+                    .transpose()?;
+                let outcome = match (status, settlement) {
+                    (WireResumableStatus::Completed, None) => with_context_epoch(
                         BackendResumableOutcome::new(
                             epoch,
-                            correlation::turn_id(turn_id)?,
-                            correlation::sequence(
-                                accepted_request_sequence,
-                                "accepted_request_sequence",
-                            )?,
+                            turn_id,
+                            accepted_request_sequence,
                             outcome_identity
                                 .map(correlation::decode_identity)
                                 .transpose()?,
-                            replay_delta_sequence
-                                .map(|value| correlation::sequence(value, "replay_delta_sequence"))
-                                .transpose()?,
+                            replay_delta_sequence,
                         ),
                         context_epoch,
                         BackendResumableOutcome::with_context_epoch,
-                    )?),
+                    )?,
+                    (WireResumableStatus::Failed, Some(settlement))
+                        if outcome_identity.is_none() =>
+                    {
+                        let context_epoch = context_epoch.ok_or_else(|| {
+                            JournalCodecError::new("local failure requires context_epoch")
+                        })?;
+                        correlation::positive(context_epoch, "context_epoch")?;
+                        let source = settlement.decode()?;
+                        if matches!(source, LocalFailureSource::ActiveSuffix { .. })
+                            != replay_delta_sequence.is_some()
+                        {
+                            return Err(JournalCodecError::new(
+                                "local failure replay delta does not match its source kind",
+                            ));
+                        }
+                        BackendResumableOutcome::local_failure(
+                            epoch,
+                            context_epoch,
+                            turn_id,
+                            accepted_request_sequence,
+                            replay_delta_sequence,
+                            source,
+                        )
+                    },
+                    _ => {
+                        return Err(JournalCodecError::new(
+                            "resumable status and local settlement fields are inconsistent",
+                        ));
+                    },
+                };
+                Ok((
+                    Some(correlation::sequence(journal_sequence, "journal_sequence")?),
+                    JournalRecord::BackendResumableOutcome(outcome),
                 ))
             },
             WireRecord::ContinuationAnchor {

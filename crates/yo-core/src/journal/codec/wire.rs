@@ -394,6 +394,40 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
                 if let Some(identity) = outcome.outcome_identity() {
                     correlation::encode_identity(identity)?;
                 }
+                if let Some(source) = outcome.local_failure_source() {
+                    use super::LocalFailureSource;
+                    if outcome.context_epoch().is_none()
+                        || outcome.outcome_identity().is_some()
+                        || matches!(source, LocalFailureSource::ActiveSuffix { .. })
+                            != outcome.replay_delta_sequence().is_some()
+                    {
+                        return Err(JournalCodecError::new(
+                            "local failure fields do not match its source",
+                        ));
+                    }
+                    match source {
+                        LocalFailureSource::ActiveSuffix {
+                            first_sequence,
+                            last_sequence,
+                        } => {
+                            correlation::positive(first_sequence.get(), "first_sequence")?;
+                            correlation::positive(last_sequence.get(), "last_sequence")?;
+                            if first_sequence > last_sequence {
+                                return Err(JournalCodecError::new(
+                                    "local failure source range is reversed",
+                                ));
+                            }
+                        },
+                        LocalFailureSource::Checkpoint {
+                            checkpoint_sequence,
+                        } => {
+                            correlation::positive(
+                                checkpoint_sequence.get(),
+                                "checkpoint_sequence",
+                            )?;
+                        },
+                    }
+                }
             },
             JournalRecord::ContinuationAnchor(anchor) => {
                 correlation::positive(anchor.epoch(), "epoch")?;
@@ -526,7 +560,9 @@ fn validate_transition(transition: &BindingTransition) -> Result<(), JournalCode
     }
 }
 
-fn validate_correlation_commit_order(commit: &JournalCommit) -> Result<(), JournalCodecError> {
+pub(super) fn validate_correlation_commit_order(
+    commit: &JournalCommit,
+) -> Result<(), JournalCodecError> {
     for (index, entry) in commit.records().iter().enumerate() {
         if let JournalRecord::ModelReplayDelta(replay) = entry.record() {
             let Some((previous, next)) = index
@@ -540,8 +576,9 @@ fn validate_correlation_commit_order(commit: &JournalCommit) -> Result<(), Journ
             };
             if !matches!(
                 previous.record(),
-                JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: crate::TurnOutcome::Completed })
+                JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: public_outcome })
                     if turn.turn_id() == replay.turn_id()
+                        && matches!(next.record(), JournalRecord::BackendResumableOutcome(outcome) if resumable_status_matches(public_outcome, outcome))
             ) {
                 return Err(JournalCodecError::new(
                     "model_replay_delta must immediately follow its completed Turn",
@@ -569,8 +606,8 @@ fn validate_correlation_commit_order(commit: &JournalCommit) -> Result<(), Journ
             let completed_in_commit = commit.records()[..index].iter().any(|candidate| {
                 matches!(
                     candidate.record(),
-                    JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: crate::TurnOutcome::Completed })
-                        if turn.turn_id() == outcome.turn_id()
+                    JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: public_outcome })
+                        if turn.turn_id() == outcome.turn_id() && resumable_status_matches(public_outcome, outcome)
                 )
             });
             if !completed_in_commit {
@@ -587,8 +624,8 @@ fn validate_correlation_commit_order(commit: &JournalCommit) -> Result<(), Journ
                 None => index.checked_sub(1).is_some_and(|previous| {
                     matches!(
                         commit.records()[previous].record(),
-                        JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: crate::TurnOutcome::Completed })
-                            if turn.turn_id() == outcome.turn_id()
+                        JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: public_outcome })
+                            if turn.turn_id() == outcome.turn_id() && resumable_status_matches(public_outcome, outcome)
                     )
                 }),
             };
@@ -633,4 +670,14 @@ fn validate_correlation_commit_order(commit: &JournalCommit) -> Result<(), Journ
         }
     }
     Ok(())
+}
+
+fn resumable_status_matches(
+    public: &crate::TurnOutcome,
+    outcome: &super::BackendResumableOutcome,
+) -> bool {
+    matches!(
+        (public, outcome.local_failure_source()),
+        (crate::TurnOutcome::Completed, None) | (crate::TurnOutcome::Failed(_), Some(_))
+    )
 }

@@ -245,6 +245,86 @@ impl<B: AgentBackend> AgentRuntime<B> {
             self.binding_has_unanchored_request = true;
             return Ok(RuntimePoll::Pending);
         }
+        if let BackendEvent::LocalArgumentRejectionPrepared {
+            turn,
+            failure,
+            replay,
+        } = event.clone()
+        {
+            let settled = (|| {
+                if self.engine.active_turn() != Some(turn)
+                    || self.engine.active_turn_has_open_activity()
+                    || self.secret_input_terminal
+                    || self.secret_diagnostics_redacted
+                    || !matches!(
+                        self.continuation_strategy,
+                        Some(ContinuationStrategy::ExactReplay {
+                            executor: crate::ReplayExecutor::LocalClient,
+                            replay_profile: crate::ReplayProfile::SemanticOnly,
+                        })
+                    )
+                {
+                    return None;
+                }
+                let epoch = self.binding_epoch?;
+                let context_epoch = self.context_epoch?;
+                let accepted = self.accepted_requests.get(&turn).copied()?;
+                let source = self.journal.local_failure_source(
+                    self.active_context_source.as_ref()?,
+                    turn,
+                    epoch,
+                    context_epoch,
+                    accepted,
+                    replay.as_ref(),
+                )?;
+                let mut next_replay = self.model_replay.clone();
+                if let Some(delta) = &replay {
+                    if self.replay_contract_rebind_required {
+                        next_replay.apply_binding_replacement(delta).ok()?;
+                    } else {
+                        next_replay.apply(delta).ok()?;
+                    }
+                }
+                let event = AgentEvent::TurnFinished {
+                    turn,
+                    outcome: TurnOutcome::Failed(failure.clone()),
+                };
+                let group = replay.as_ref().map(|delta| delta.items().to_vec());
+                let anchor = self.journal.commit_local_failure(
+                    &event,
+                    epoch,
+                    context_epoch,
+                    accepted,
+                    source,
+                    replay,
+                )?;
+                self.engine
+                    .finish_turn(turn, TurnOutcome::Failed(failure))
+                    .expect("the active closed Turn was validated before synchronous publication");
+                self.model_replay = next_replay;
+                self.replay_contract_rebind_required = false;
+                if let Some(group) = group {
+                    self.context_replay_groups.push(group);
+                }
+                self.resume_source = Some(BackendResumeSource::ContinuationAnchor(anchor));
+                self.binding_has_unanchored_request = false;
+                self.accepted_requests.remove(&turn);
+                self.accepted_submissions.remove(&turn);
+                self.active_context_source = None;
+                Some(event)
+            })();
+            return match settled {
+                Some(event) => Ok(RuntimePoll::Event(event)),
+                None => {
+                    // 실패한 발행 뒤에는 poll뿐 아니라 직접 명령·교체도 같은 latch로 막습니다.
+                    self.continuation_publication_failed = true;
+                    let _ = self.backend.shutdown();
+                    self.reject_correlation_event(
+                        "local failure context could not be validated and committed durably",
+                    )
+                },
+            };
+        }
         if let BackendEvent::ResumableTurnFinished { turn, evidence } = event.clone() {
             let Some(continuation_strategy) = self.continuation_strategy else {
                 return self.reject_correlation_event(
@@ -352,6 +432,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
             },
             BackendEvent::ModelRequestAccepted { .. } => {
                 unreachable!("request acceptance is handled before generic events")
+            },
+            BackendEvent::LocalArgumentRejectionPrepared { .. } => {
+                unreachable!("local failure settlement is handled before generic events")
             },
             BackendEvent::ResumableTurnFinished { .. } => {
                 unreachable!("resumable completion is handled before generic events")

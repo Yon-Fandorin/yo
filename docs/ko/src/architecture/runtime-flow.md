@@ -122,6 +122,19 @@ admission된 call/result replay만 기록하고, 승인과 실행 시도 Activit
 Provider·Account·Model·connector·endpoint·완전한 resolved profile에 귀속한다. process host가 startup
 선택, 이 입력들의 조립, 구체적인 local tool을 소유한다.
 
+typed 로컬 tool-argument semantic-admission 거절은 `yo.local-failure-context/v1`에 따라
+현재 Turn의 앞서 닫힌 문맥을 보존할 수 있다. Managed backend는 connector·tool 정리가
+성공하고 거절된 열린 응답 묶음에서 효과 실행을 시도하지 않았는지 확인하며 후보를 대기시킨다.
+Core는 commit된 steer를 포함한 정확한 누적 suffix를 active source와 비교하고 Failed Turn,
+비어 있지 않을 때만 replay delta, local settlement outcome, Anchor를 원자적으로 쓴다.
+Outcome은 최신 실패 request를 가리키고 별도 source는 그보다 앞선 닫힌 경계를 가리킨다.
+Checkpoint root는 한 번만 보존하며 빈 successor suffix는 delta를 생략하고 steer-only
+suffix는 정확한 수락 입력만 추가한다. Core 발행 성공 뒤에만 다음 poll 또는 그보다 먼저 온
+직접 StartTurn이 문맥을 승격한다. 추기 실패나 잘못된 source는 공개 poll·command·submission·
+replacement를 latch로 차단한다. 거절된 호출, 현재 부분 응답, secret barrier, private replay,
+불확실한 정리는 continuation에 들어가지 않으며 자동 request·tool 재실행·승인 재사용·binding
+전이를 추가하지 않는다. Print 모드의 실패 상태를 포함해 Turn은 Failed로 유지된다.
+
 새 local-client exact-replay Session은 첫 model request 전에 닫힌 context policy를
 commit한다. 기본값은 정확한 전체 Connector tokenization payload의 85%에서 pressure를
 알리고 90%에서 portable-summary 압축을 선택하며, 보고된 cache-read token은 이 점유량에서

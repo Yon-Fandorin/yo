@@ -201,6 +201,69 @@ impl SessionJournal {
         accepted_sequence
     }
 
+    /// Failed, 선택적 차분, 로컬 정산, Anchor를 한 물리 추기로 확정합니다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn commit_local_failure(
+        &mut self,
+        event: &AgentEvent,
+        epoch: u64,
+        context_epoch: u64,
+        accepted_request_sequence: JournalSequence,
+        source: super::super::codec::LocalFailureSource,
+        replay: Option<crate::ModelReplayDelta>,
+    ) -> Option<JournalSequence> {
+        let AgentEvent::TurnFinished {
+            turn,
+            outcome: TurnOutcome::Failed(_),
+        } = event
+        else {
+            return None;
+        };
+        if matches!(
+            source,
+            super::super::codec::LocalFailureSource::ActiveSuffix { .. }
+        ) != replay.is_some()
+        {
+            return None;
+        }
+        let first = read_state(&self.state).next_sequence();
+        let mut records = vec![SemanticRecord::EventCommitted(event.clone())];
+        let replay_sequence = replay.map(|delta| {
+            records.push(SemanticRecord::ModelReplayDelta(
+                ModelReplayDeltaRecord::new(
+                    epoch,
+                    turn.turn_id(),
+                    accepted_request_sequence,
+                    delta,
+                )
+                .with_context_epoch(context_epoch),
+            ));
+            first.advance_by(1)
+        });
+        let outcome_sequence = first.advance_by(records.len());
+        records.push(SemanticRecord::BackendResumableOutcome(
+            BackendResumableOutcome::local_failure(
+                epoch,
+                context_epoch,
+                turn.turn_id(),
+                accepted_request_sequence,
+                replay_sequence,
+                source,
+            ),
+        ));
+        records.push(SemanticRecord::ContinuationAnchor(
+            ContinuationAnchor::new(
+                epoch,
+                accepted_request_sequence,
+                outcome_sequence,
+                outcome_sequence,
+            )
+            .with_context_epoch(context_epoch),
+        ));
+        self.append_records_transactionally(records)
+            .then_some(outcome_sequence.advance_by(1))
+    }
+
     pub(crate) fn append_resumable_turn(
         &mut self,
         event: &AgentEvent,

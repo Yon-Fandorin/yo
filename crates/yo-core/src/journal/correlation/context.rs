@@ -291,7 +291,7 @@ fn active_suffix_matches(
 
 // ordinary 결과를 생성하지 않고, durable 명령과 typed 선택지가 그 결과의 유일한 근거인지
 // 확인합니다.
-fn question_results_match(
+pub(in crate::journal) fn question_results_match(
     items: &[ModelReplayItem],
     responses: &[(crate::ActivityQuestion, crate::ActivityResponse)],
 ) -> bool {
@@ -473,6 +473,105 @@ impl SessionJournal {
         }
         *source = candidate;
         true
+    }
+
+    /// 보존 원본은 실패 요청 앞의 최신 검증 경계이며 과거 Anchor로 대체하지 않습니다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn local_failure_source(
+        &self,
+        source: &ContextActiveSource,
+        turn: TurnRef,
+        epoch: u64,
+        context_epoch: u64,
+        accepted_request: JournalSequence,
+        replay: Option<&crate::ModelReplayDelta>,
+    ) -> Option<super::super::codec::LocalFailureSource> {
+        use super::super::codec::LocalFailureSource;
+        let entries = self.semantic_entries();
+        if source.turn != turn || source.last_sequence >= accepted_request {
+            return None;
+        }
+        let start = entries
+            .iter()
+            .rev()
+            .find_map(|entry| match entry.record() {
+                SemanticRecord::CommandCommitted(command)
+                    if matches!(command.command(),
+                AgentCommand::StartTurn { turn: candidate, .. } if *candidate == turn) =>
+                {
+                    Some(entry.sequence())
+                },
+                _ => None,
+            })?;
+        let latest_request = entries
+            .iter()
+            .rev()
+            .find_map(|entry| match entry.record() {
+                SemanticRecord::BackendRequestAccepted(request)
+                    if request.epoch() == epoch && request.turn_id() == turn.turn_id() =>
+                {
+                    Some((entry.sequence(), request.context_epoch()))
+                },
+                _ => None,
+            })?;
+        if latest_request != (accepted_request, Some(context_epoch)) || entries.iter().any(|entry| matches!(entry.record(),
+            SemanticRecord::CommandCommitted(command) if matches!(command.command(), AgentCommand::RespondToActivity {
+                response: crate::ActivityResponse::SecretInputSubmitted | crate::ActivityResponse::SecretInput(_), ..
+            }))) {
+            return None;
+        }
+        let checkpoint = entries.iter().rev().find_map(|entry| match entry.record() {
+            SemanticRecord::ContextCheckpoint(checkpoint) if entry.sequence() > start => {
+                Some((entry.sequence(), checkpoint))
+            },
+            _ => None,
+        });
+        let first = checkpoint.map_or(start, |(sequence, _)| sequence);
+        let closed = active_source_evidence(&entries, turn, start, source.last_sequence);
+        if source.first_sequence != first
+            || (closed.last_agent_message_boundary.is_none()
+                && closed.last_tool_call_boundary.is_none()
+                && closed.last_question_response_boundary.is_none())
+        {
+            return None;
+        }
+        if let Some((sequence, checkpoint)) = checkpoint
+            && (checkpoint.epoch() != epoch
+                || checkpoint.successor_context_epoch() != context_epoch
+                || sequence >= accepted_request)
+        {
+            return None;
+        }
+        // 성공한 뒤의 승인된 입력까지 보존합니다. 실패 요청 뒤의 부분 출력은 포함하지 않습니다.
+        if entries.iter().any(|entry| source.last_sequence < entry.sequence() && entry.sequence() < accepted_request && matches!(entry.record(),
+            SemanticRecord::CommandCommitted(command) if matches!(command.command(), AgentCommand::SteerTurn { turn: candidate, .. } if *candidate == turn))) {
+            return None;
+        }
+        if source.items.is_empty() {
+            let (sequence, _) = checkpoint?;
+            let successor = active_source_evidence(&entries, turn, sequence, accepted_request);
+            if source.last_sequence != sequence
+                || replay.is_some()
+                || successor.last_agent_message_boundary.is_some()
+                || successor.last_tool_call_boundary.is_some()
+                || successor.last_question_response_boundary.is_some()
+            {
+                return None;
+            }
+            return Some(LocalFailureSource::Checkpoint {
+                checkpoint_sequence: sequence,
+            });
+        }
+        let replay = replay?;
+        if replay.items() != source.items
+            || !active_suffix_matches(&entries, turn, first, source.last_sequence, &source.items)
+        {
+            return None;
+        }
+        Some(LocalFailureSource::ActiveSuffix {
+            first_sequence: first,
+            last_sequence: source.last_sequence,
+        })
     }
 
     pub(crate) fn append_context_policy(&mut self, policy: ContextPolicyChanged) -> bool {
@@ -1139,7 +1238,15 @@ pub(super) fn context_source_groups(
                 let SemanticRecord::BackendResumableOutcome(outcome) = outcome.record() else {
                     return None;
                 };
-                let replay_sequence = outcome.replay_delta_sequence()?;
+                let Some(replay_sequence) = outcome.replay_delta_sequence() else {
+                    if matches!(
+                        outcome.local_failure_source(),
+                        Some(super::super::codec::LocalFailureSource::Checkpoint { .. })
+                    ) {
+                        continue;
+                    }
+                    return None;
+                };
                 let replay_index = entries
                     .iter()
                     .position(|candidate| candidate.sequence() == replay_sequence)?;
@@ -1152,7 +1259,7 @@ pub(super) fn context_source_groups(
                 if !matches!(
                     first.record(),
                     SemanticRecord::EventCommitted(AgentEvent::TurnFinished {
-                        outcome: TurnOutcome::Completed,
+                        outcome: TurnOutcome::Completed | TurnOutcome::Failed(_),
                         ..
                     })
                 ) || index <= replay_index

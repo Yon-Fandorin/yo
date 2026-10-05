@@ -454,6 +454,25 @@ recovered binding, epoch, Anchor and full replay before continuing. A standalone
 `CompactContext` record preserves the prior Anchor; a later ordinary accepted request
 still invalidates it until a matching completed outcome and Anchor are durable.
 
+Closed local failure-context checks live in
+`yo-core::runtime::tests::journal::local_failure` and
+`yo-backend-managed::backend::tests::context_replay::local_failure`.
+Run `cargo test --locked -p yo-core local_failure` and
+`cargo test --locked -p yo-backend-managed local_failure`.
+Core covers atomic Failed/delta/outcome/Anchor publication, malformed and forged
+wire/source coordinates, publication failure before direct StartTurn, secret
+barriers, checkpoint empty/steering-only suffixes, and the exact 4096-item limit
+plus its first excess. Managed checks compare the next complete connector input,
+including cumulative tool groups and committed steering, and exercise actual
+worker/Core/disk cold resume for tools and answered/unanswered ordinary questions.
+Question evidence mutations cover secret, malformed, mismatched and incomplete
+request/response graphs; scalar wire mutations include object and array types. They exclude rejected calls and partial responses,
+check no tool reexecution, and keep cleanup uncertainty, effect attempts and
+private profiles unsettled. The checkpoint consumer test injects the existing
+checkpoint return phase; Core checks separately validate its durable source.
+These controlled fixtures make no authenticated provider, macOS or
+network-granted execution claim.
+
 Typed file-change activities use `transcript/layout/activity.rs` and the existing
 literal diff renderer. Source fences cannot escape into Markdown or image parsing.
 Added/removed line counts are presentation-only. Folding moves background rows

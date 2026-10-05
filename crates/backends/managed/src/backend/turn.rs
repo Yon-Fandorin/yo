@@ -43,6 +43,8 @@ impl NativeModelBackend {
             turn,
             round: 0,
             delta,
+            closed_source: None,
+            open_group_effect_attempted: false,
             stream: None,
             response_id: None,
             assistant_activities: BTreeMap::new(),
@@ -172,6 +174,9 @@ impl NativeModelBackend {
                     "native Turn input exceeds the pending replay capacity",
                 )
             })?;
+        if let Some(source) = state.closed_source.as_mut() {
+            source.push(item.clone());
+        }
         state.armed_steers.push_back(item);
         Ok(())
     }
@@ -244,6 +249,70 @@ impl NativeModelBackend {
         }
         state.prepared_secret_request = None;
         diagnostics
+    }
+
+    // 기존 checkpoint의 직렬 반환 경계로 Core 확정 후의 호출에서만 승격합니다.
+    pub(super) fn promote_failure_context(&mut self) {
+        if self.events.is_empty()
+            && let Some((replay, group)) = self.pending_failure_context.take()
+        {
+            self.replay = replay;
+            if let Some(group) = group {
+                self.replay_groups.push(group);
+            }
+        }
+    }
+
+    pub(super) fn reject_tool_arguments(&mut self, state: &mut TurnState, message: String) {
+        let candidate = (|| {
+            if self.replay_profile != yo_core::ReplayProfile::SemanticOnly
+                || state.open_group_effect_attempted
+                || state.terminal_secret_request
+                || !state.armed_steers.is_empty()
+                || state.prepared_steer.is_some()
+            {
+                return None;
+            }
+            let items = state.closed_source.as_ref()?;
+            let delta = (!items.is_empty()).then(|| {
+                ModelReplayDelta::new(
+                    self.replay
+                        .contract()
+                        .is_none()
+                        .then(|| self.contract.clone()),
+                    items.clone(),
+                )
+            });
+            let mut replay = self.replay.clone();
+            if let Some(delta) = &delta {
+                replay.apply(delta).ok()?;
+            }
+            Some((replay, delta))
+        })();
+        let Some((replay, delta)) = candidate else {
+            self.fail_turn(state, message);
+            return;
+        };
+        let diagnostics = self.cleanup_turn_resources(state);
+        if !diagnostics.is_empty() {
+            self.fail_turn(state, format!("{message}; {}", diagnostics.join("; ")));
+            return;
+        }
+        for activity in self.projected_open_activities() {
+            self.events.push_back(BackendEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Failed(Failure::new(message.clone())),
+            });
+        }
+        let group = delta.as_ref().map(|delta| delta.items().to_vec());
+        self.pending_failure_context = Some((replay, group));
+        self.events
+            .push_back(BackendEvent::LocalArgumentRejectionPrepared {
+                turn: state.turn,
+                failure: Failure::new(message),
+                replay: delta,
+            });
+        self.turn = None;
     }
 
     pub(super) fn fail_turn(&mut self, state: &mut TurnState, mut message: String) {

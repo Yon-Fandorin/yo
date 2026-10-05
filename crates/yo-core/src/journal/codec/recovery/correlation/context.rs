@@ -15,6 +15,7 @@ use crate::{
     ActivityKind, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
     ModelReplayRole, ReplayProfile,
     backend::{provider_private_schema, validate_provider_private_replay_sequence},
+    journal::correlation::question_results_match,
 };
 
 fn replay_user_inputs(items: &[ModelReplayItem]) -> Vec<ModelReplayItem> {
@@ -261,6 +262,14 @@ impl CorrelationRecovery {
                 .map_err(JournalCodecError::new)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some((turn, _)) = self
+            .active_turn_starts
+            .iter()
+            .find(|(_, start)| **start < checkpoint.source_journal_boundary())
+        {
+            self.active_checkpoint_boundaries
+                .insert(sequence, (*turn, checkpoint.source_journal_boundary()));
+        }
         self.context_epoch = Some(checkpoint.successor_context_epoch());
         self.latest_checkpoint = Some(sequence);
         self.request_after_checkpoint = false;
@@ -619,6 +628,14 @@ impl CorrelationRecovery {
     }
 
     pub(super) fn active_input_group_matches(&self, group: &ContextRetainedGroup) -> bool {
+        self.active_input_group_matches_at_boundary(group, false)
+    }
+
+    fn active_input_group_matches_at_boundary(
+        &self,
+        group: &ContextRetainedGroup,
+        failed: bool,
+    ) -> bool {
         let submitted = self
             .submitted_inputs
             .range(group.first_sequence()..=group.last_sequence())
@@ -641,12 +658,9 @@ impl CorrelationRecovery {
                 return false;
             }
             let request_turns = self
-                .latest_accepted_request
-                .iter()
-                .filter_map(|((_, turn), sequence)| {
-                    (group.first_sequence() <= *sequence && *sequence <= group.last_sequence())
-                        .then_some(*turn)
-                })
+                .accepted_request_history
+                .range(group.first_sequence()..=group.last_sequence())
+                .map(|(_, (_, turn))| *turn)
                 .collect::<BTreeSet<_>>();
             if request_turns.len() != 1 {
                 return false;
@@ -656,7 +670,9 @@ impl CorrelationRecovery {
             };
             turn
         };
-        if !self.active_turn_starts.contains_key(&turn) {
+        if !self.active_turn_starts.contains_key(&turn)
+            && !(failed && self.failed_turns.contains_key(&turn))
+        {
             return false;
         }
         let expected_inputs = submitted
@@ -676,13 +692,10 @@ impl CorrelationRecovery {
             })
             .next_back();
         let accepted_request = self
-            .latest_accepted_request
-            .iter()
-            .filter_map(|((_, accepted_turn), sequence)| {
-                (*accepted_turn == turn
-                    && group.first_sequence() <= *sequence
-                    && *sequence <= group.last_sequence())
-                .then_some(*sequence)
+            .accepted_request_history
+            .range(group.first_sequence()..=group.last_sequence())
+            .filter_map(|(sequence, (_, accepted_turn))| {
+                (*accepted_turn == turn).then_some(*sequence)
             })
             .max();
         let interrupted_after_request = accepted_request.is_some_and(|request| {
@@ -740,10 +753,35 @@ impl CorrelationRecovery {
                 (*activity_turn == turn && *kind == ActivityKind::AgentMessage).then_some(*sequence)
             })
             .next_back();
+        // 새 Failed 경계만 ordinary 질문의 durable call/result 근거를 추가합니다.
+        let question_responses = if failed {
+            self.question_response_boundaries
+                .range(group.first_sequence()..=group.last_sequence())
+                .filter(|(_, (response_turn, _, _))| *response_turn == turn)
+                .map(|(sequence, (_, question, response))| {
+                    (*sequence, (question.clone(), response.clone()))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let completed_question = question_responses.last().map(|(sequence, _)| *sequence);
+        if failed
+            && !question_results_match(
+                group.items(),
+                &question_responses
+                    .into_iter()
+                    .map(|(_, response)| response)
+                    .collect::<Vec<_>>(),
+            )
+        {
+            return false;
+        }
         let activity_end_is_closed_response = last_activity.is_some_and(|(boundary, kind)| {
             let response_precedes_tail = completed_assistant
                 .into_iter()
                 .chain(completed_tool_call)
+                .chain(completed_question)
                 .any(|response| {
                     accepted_request
                         .is_some_and(|request| request < response && response < boundary)
@@ -751,6 +789,9 @@ impl CorrelationRecovery {
             match kind {
                 ActivityKind::AgentMessage => completed_assistant == Some(boundary),
                 ActivityKind::ToolCall => completed_tool_call == Some(boundary),
+                ActivityKind::UserInputResponse { .. } if completed_question == Some(boundary) => {
+                    true
+                },
                 ActivityKind::ToolResult => {
                     completed_tool_call.is_some_and(|tool_call| tool_call < boundary)
                 },
@@ -774,9 +815,12 @@ impl CorrelationRecovery {
                         | ModelReplayItem::FunctionCallOutput { .. }
                 )
             })
-            && accepted_request
-                .zip(completed_tool_call)
-                .is_some_and(|(request, completion)| request < completion)
+            && accepted_request.is_some_and(|request| {
+                completed_tool_call
+                    .into_iter()
+                    .chain(completed_question)
+                    .any(|completion| request < completion)
+            })
             && activity_end_is_closed_response
             && last_activity.is_some_and(|(boundary, _)| {
                 group.last_sequence()
@@ -800,7 +844,9 @@ impl CorrelationRecovery {
                 )
             })
             && (!has_tool_items
-                || (has_tool_call && has_tool_output && completed_tool_call.is_some()))
+                || (has_tool_call
+                    && has_tool_output
+                    && (completed_tool_call.is_some() || completed_question.is_some())))
             && activity_end_is_closed_response
             && last_activity.is_some_and(|(boundary, _)| {
                 group.last_sequence()
@@ -809,6 +855,193 @@ impl CorrelationRecovery {
             && accepted_request
                 .zip(completed_assistant)
                 .is_some_and(|(request, completion)| request < completion)
+    }
+
+    pub(super) fn validate_local_failure(
+        &self,
+        sequence: JournalSequence,
+        outcome: &super::super::super::BackendResumableOutcome,
+        previous: Option<(JournalSequence, &super::super::super::JournalRecord)>,
+    ) -> Result<(), JournalCodecError> {
+        use super::super::super::{JournalRecord, LocalFailureSource};
+        let invalid = || {
+            JournalCodecError::new(
+                "local failure settlement does not match its exact closed source",
+            )
+        };
+        if self.secret_submission_barrier
+            || !matches!(
+                self.open_strategy,
+                Some(ContinuationStrategy::ExactReplay {
+                    executor: crate::ReplayExecutor::LocalClient,
+                    replay_profile: ReplayProfile::SemanticOnly,
+                })
+            )
+            || outcome.outcome_identity().is_some()
+        {
+            return Err(invalid());
+        }
+        let context_epoch = outcome.context_epoch().ok_or_else(invalid)?;
+        let (start, terminal) = self
+            .failed_turns
+            .get(&outcome.turn_id())
+            .copied()
+            .ok_or_else(invalid)?;
+        let accepted = outcome.accepted_request_sequence();
+        if !(start < accepted && accepted < terminal && terminal < sequence) {
+            return Err(invalid());
+        }
+        let checkpoint = self
+            .latest_checkpoint
+            .filter(|checkpoint| *checkpoint > start);
+        if let Some(checkpoint) = checkpoint
+            && !matches!(self.reference_targets.get(&checkpoint), Some(ReferenceTarget::Checkpoint { epoch, context_epoch: root_context, .. })
+                if *epoch == outcome.epoch() && *root_context == context_epoch)
+        {
+            return Err(invalid());
+        }
+        let root = checkpoint.unwrap_or(start);
+        let source = outcome.local_failure_source().ok_or_else(invalid)?;
+        let (boundary, items) = match source {
+            LocalFailureSource::ActiveSuffix {
+                first_sequence,
+                last_sequence,
+            } => {
+                let Some((replay_sequence, JournalRecord::ModelReplayDelta(replay))) = previous
+                else {
+                    return Err(invalid());
+                };
+                if first_sequence != root
+                    || last_sequence < root
+                    || last_sequence >= accepted
+                    || outcome.replay_delta_sequence() != Some(replay_sequence)
+                    || replay.epoch() != outcome.epoch()
+                    || replay.context_epoch() != Some(context_epoch)
+                    || replay.turn_id() != outcome.turn_id()
+                    || replay.accepted_request_sequence() != accepted
+                    || replay.delta().items().is_empty()
+                {
+                    return Err(invalid());
+                }
+                self.validate_source_range(
+                    first_sequence,
+                    last_sequence,
+                    (outcome.epoch(), context_epoch),
+                    "local failure source",
+                )?;
+                let group = ContextRetainedGroup::try_new(
+                    first_sequence,
+                    last_sequence,
+                    replay.delta().items().to_vec(),
+                )
+                .map_err(JournalCodecError::new)?;
+                if !self.active_input_group_matches_at_boundary(&group, true) {
+                    return Err(invalid());
+                }
+                (last_sequence, replay.delta().items())
+            },
+            LocalFailureSource::Checkpoint {
+                checkpoint_sequence,
+            } => {
+                if checkpoint != Some(checkpoint_sequence)
+                    || checkpoint_sequence >= accepted
+                    || outcome.replay_delta_sequence().is_some()
+                    || !matches!(previous, Some((prior, JournalRecord::EventCommitted(crate::AgentEvent::TurnFinished { turn, outcome: crate::TurnOutcome::Failed(_) }))) if prior == terminal && turn.turn_id() == outcome.turn_id())
+                {
+                    return Err(invalid());
+                }
+                (checkpoint_sequence, &[][..])
+            },
+        };
+        let useful_boundary = if let Some(checkpoint) = checkpoint {
+            let (turn, covered) = self
+                .active_checkpoint_boundaries
+                .get(&checkpoint)
+                .copied()
+                .ok_or_else(invalid)?;
+            if turn != outcome.turn_id() {
+                return Err(invalid());
+            }
+            covered.max(boundary)
+        } else {
+            boundary
+        };
+        if !self
+            .completed_activity_boundaries
+            .range(start..=useful_boundary)
+            .any(|(_, (turn, kind))| {
+                *turn == outcome.turn_id()
+                    && matches!(
+                        kind,
+                        ActivityKind::ToolCall
+                            | ActivityKind::AgentMessage
+                            | ActivityKind::UserInputResponse { .. }
+                    )
+            })
+        {
+            return Err(invalid());
+        }
+        // 뒤의 완료된 묶음이나 수락된 입력을 생략한 source는 거절합니다.
+        if self
+            .submitted_input_turns
+            .range(boundary..accepted)
+            .any(|(at, turn)| *at > boundary && *turn == outcome.turn_id())
+            || self
+                .completed_activity_boundaries
+                .range(boundary..accepted)
+                .any(|(at, (turn, kind))| {
+                    *at > boundary
+                        && *turn == outcome.turn_id()
+                        && matches!(
+                            kind,
+                            ActivityKind::ToolCall
+                                | ActivityKind::AgentMessage
+                                | ActivityKind::UserInputResponse { .. }
+                        )
+                })
+        {
+            return Err(invalid());
+        }
+        let expected_calls = self
+            .completed_activity_boundaries
+            .range(root..=boundary)
+            .filter(|(_, (turn, kind))| {
+                *turn == outcome.turn_id()
+                    && matches!(
+                        kind,
+                        ActivityKind::ToolCall | ActivityKind::UserInputResponse { .. }
+                    )
+            })
+            .count();
+        let actual_calls = items
+            .iter()
+            .filter(|item| matches!(item, ModelReplayItem::FunctionCall { .. }))
+            .count();
+        if actual_calls != expected_calls {
+            return Err(invalid());
+        }
+        let mut seen_calls = BTreeSet::new();
+        let mut calls = BTreeSet::new();
+        for item in items {
+            match item {
+                ModelReplayItem::FunctionCall { call_id, .. } => {
+                    if !seen_calls.insert(call_id) || !calls.insert(call_id) {
+                        return Err(invalid());
+                    }
+                },
+                ModelReplayItem::FunctionCallOutput { call_id, .. } => {
+                    if !calls.remove(call_id) {
+                        return Err(invalid());
+                    }
+                },
+                ModelReplayItem::ProviderPrivateAssistant { .. } => return Err(invalid()),
+                _ => {},
+            }
+        }
+        if !calls.is_empty() {
+            return Err(invalid());
+        }
+        Ok(())
     }
 
     pub(super) fn validate_source_range(

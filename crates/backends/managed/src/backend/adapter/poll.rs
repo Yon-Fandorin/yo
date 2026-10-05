@@ -16,6 +16,7 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
     if let Some(event) = backend.pop_event() {
         return Ok(BackendPoll::Event(event));
     }
+    backend.promote_failure_context();
     if backend.closed {
         return Ok(BackendPoll::Closed);
     }
@@ -183,6 +184,9 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
                 .map(yo_core::ModelReplayItem::encoded_len)
                 .sum::<usize>()
         );
+        if state.closed_source.is_some() {
+            state.closed_source = Some(state.armed_steers.iter().cloned().collect());
+        }
         state.compaction_attempted = true;
         if let Err(error) = backend.start_model_round(&mut state) {
             backend.fail_or_exhaust_turn(&mut state, error);
@@ -412,7 +416,9 @@ fn handle_response_event(
         && !backend.events.iter().any(|event| {
             matches!(
                 event,
-                BackendEvent::TurnFinished { .. } | BackendEvent::ResumableTurnFinished { .. }
+                BackendEvent::TurnFinished { .. }
+                    | BackendEvent::ResumableTurnFinished { .. }
+                    | BackendEvent::LocalArgumentRejectionPrepared { .. }
             )
         })
     {

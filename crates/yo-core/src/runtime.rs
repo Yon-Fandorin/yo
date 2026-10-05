@@ -70,8 +70,8 @@ pub struct AgentRuntime<B> {
     secret_diagnostics_redacted: bool,
     /// A protected terminal input was accepted. Only its active Turn may finish.
     secret_input_terminal: bool,
-    /// 응답 commit 실패 뒤 transport와 명령을 영구 차단합니다.
-    ordinary_response_commit_failed: bool,
+    /// 응답 또는 실패 문맥의 발행 실패 뒤 transport와 명령을 영구 차단합니다.
+    continuation_publication_failed: bool,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -110,7 +110,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             interview_backend: None,
             secret_diagnostics_redacted: false,
             secret_input_terminal: false,
-            ordinary_response_commit_failed: false,
+            continuation_publication_failed: false,
         }
     }
 
@@ -155,10 +155,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
     }
 
     fn ensure_response_commit_healthy(&self) -> Result<(), RuntimeError> {
-        if self.ordinary_response_commit_failed {
+        if self.continuation_publication_failed {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
                 crate::BackendFailureKind::Session,
-                "ordinary question response commit failed; continuation is blocked",
+                "semantic publication failed; continuation is blocked",
             )));
         }
         Ok(())
