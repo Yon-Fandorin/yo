@@ -433,6 +433,32 @@ The chain used two native invocations, no reviewer tool calls, automatic retries
 steer or fallback. The completed review reported 70,502 input and 2,077 output
 tokens; host cost was not reported. No finding-resolution round ran.
 
+## Managed public questions in Linux tmux
+
+On 2026-10-05, candidate `91e525bdbb373c69c56318f261377ea88d7bf673`
+completed a Fullscreen `ask_user` journey using the existing paid
+`qwencloud:default:qwen3.8-max` Responses route in an isolated Linux tmux
+terminal. Binary SHA-256:
+`d5de4969225bedc01f5333abcdeacaed044c30a08a842e5b83a25171c88b1b04`.
+The tested tree was accepted unchanged as `3704757bb6f7de1b0232758db5255e123dc5b891`.
+The successful Session completed three Turns with six accepted model requests,
+two per Turn. Including one request from an earlier discarded harness attempt,
+the two runs consumed seven requests.
+
+| Journey | Observed result |
+|---|---|
+| Answer a free-text question | Public response and model reply preserved `정확한 UTF-8 응답 🎯` exactly |
+| Choose the second option and add public notes | Response and model reply preserved ordinal 2, `Change approach`, and `공개 메모 유지 🎯` |
+| Leave a choice unanswered with Esc | First Esc closed the choice palette; the next submitted no answer. The response said `No answer provided. No decision or permission was supplied.` and the model left the decision unresolved |
+| Restart and resume the completed Session | Stored history appeared; ten seconds without new input kept the accepted-request count at six |
+
+Each answer continued its original Turn to completion. Journal public response
+Activities and model replies corroborated the displayed values; the diagnostic
+response-command summary alone does not expose exact answer bytes. Cleanup
+removed the owned live-run resources. This validates the Linux tmux public
+question journey, not restoration of a pending question. The saved Mac was
+inaccessible, so native Mac input remains unverified for this candidate.
+
 ## QwenCloud managed secret input
 
 On 2026-09-22, unchanged candidate `2eace350` and stock Linux binary SHA-256

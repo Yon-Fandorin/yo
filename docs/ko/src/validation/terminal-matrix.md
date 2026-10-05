@@ -409,6 +409,29 @@ Native Codex 0.154.0이 구현 커밋 `d0a627cc`를 `gpt-5.6-sol`, effort `high`
 자동 재시도·steer·fallback은 없었다. 완료된 검토는 입력 70,502·출력 2,077 token을
 보고했으며 호스트 비용은 보고하지 않았다. Finding-resolution round는 없었다.
 
+## Linux tmux의 관리형 공개 질문
+
+2026-10-05 후보 `91e525bdbb373c69c56318f261377ea88d7bf673`에서 기존 유료
+`qwencloud:default:qwen3.8-max` Responses 경로를 사용해 격리된 Linux tmux
+터미널의 Fullscreen `ask_user` 흐름을 완료했다. 바이너리 SHA-256:
+`d5de4969225bedc01f5333abcdeacaed044c30a08a842e5b83a25171c88b1b04`.
+검증한 트리는 변경 없이 `3704757bb6f7de1b0232758db5255e123dc5b891`로 통합했다.
+성공한 Session은 Turn 3개를 완료했고 수락된 모델 요청은 Turn마다 2개씩 총 6개였다.
+앞서 폐기한 harness 시도의 요청 1개를 포함하면 두 실행에서 요청 7개를 사용했다.
+
+| 흐름 | 관찰 결과 |
+|---|---|
+| 자유 텍스트 질문에 답변 | 공개 응답과 모델 답변이 `정확한 UTF-8 응답 🎯`을 정확히 보존 |
+| 두 번째 선택지와 공개 메모 제출 | 응답과 모델 답변이 순번 2, `Change approach`, `공개 메모 유지 🎯`를 보존 |
+| Esc로 선택 질문을 미응답 처리 | 첫 Esc는 선택 팔레트를 닫고 다음 Esc는 미응답을 제출. 응답은 `No answer provided. No decision or permission was supplied.`였고 모델은 결정을 미해결 상태로 유지 |
+| 완료된 Session을 새 프로세스에서 재개 | 저장된 기록이 표시됐고 새 입력 없이 10초를 기다려도 수락된 요청 수는 6개로 유지 |
+
+각 응답은 원래 Turn 안에서 처리를 이어가 완료됐다. Journal의 공개 응답 Activity와
+모델 답변에서 표시된 값을 교차 확인했다. 진단용 응답 command 요약만으로는 정확한
+답변 바이트를 확인할 수 없다. 정리 후 소유한 실제 실행 자원은 제거됐다. 이 검증은
+Linux tmux의 공개 질문 흐름을 확인하며 대기 중 질문의 복원을 입증하지 않는다.
+저장된 Mac에 접근할 수 없어 이 후보의 native Mac 입력은 미검증 상태다.
+
 ## QwenCloud 관리형 비밀 입력
 
 2026-09-22 수정되지 않은 후보 `2eace350`과 Linux 원본 바이너리 SHA-256
