@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:f918df553e76ad01bedc026162323766da4ac1aee44a750c6f5e75cb69f2f331
+    revision: sha256:e823712605f370f5a6fce31b2be7e85ebd2aa919d161adbb0807463afba6d69e
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -50,7 +50,7 @@ The model-generated portable body MUST contain exactly one document heading `Con
 
 When an eligible old large visible tool output belongs to the summarized prefix, the checkpoint MAY record a `yo.context-artifact-receipt/v1alpha1` as non-model-visible disclosure. The receipt MUST bind an exact SHA-256 content hash, positive byte count, bounded ASCII media kind, source context epoch, and exact Journal source sequence. The output leaves successor model input only because its whole prefix is summarized; neither the receipt nor a placeholder replaces it in the synthetic body, retained replay, or Connector payload. Raw bytes MUST remain in the Session Journal and MUST NOT be copied into the summary or checkpoint. The first contract exposes the receipt only to operators under both `local-tools/v1` and `no-tools/v1`; it adds no replay-item variant, model-visible artifact-read tool, frozen-registry change, expiry, path, or cross-Session authority. A later bounded retrieval operation requires a separate tool-registry contract and implementation Slice.
 
-After a valid bounded summary, the backend MUST build and exactly recount the complete successor Connector payload and apply the same trigger once. Pressure admission has exactly three decisions: `Admit`, `Compact`, and `Reject`; warning is a separate observable boolean state and never a fourth decision. This final admission is the hard bound even when the mandatory protected set alone exceeds the optional retained-raw budget; only `Admit` permits the sole semantic writer to commit. A second `Compact` MUST become typed `Reject`, and `Reject` MUST remain rejection. The backend MUST preserve the mandatory set intact rather than truncate it or claim compaction success. The atomic `yo.context-checkpoint/v1alpha1` commit contains the positive successor `context_epoch`, previous context epoch, binding epoch, source Anchor and exact semantic boundary, the exact canonical system and tool replay contract, portable body, exact inline retained replay groups and their source identities, artifact receipts, loss disclosure, exact before/after input counts, summary request usage, and policy revision. Context epoch is Session-global: the initial binding starts at 1, a later binding inherits the current value unchanged, and only this same-binding checkpoint increments it by exactly one. In the reconstructed Connector input, the portable body is exactly one synthetic `user` message followed by the checkpoint's exact inline retained replay groups in their original order under that checkpointed replay contract; it is not an assistant message and therefore requires no provider-private assistant item. The backend MUST swap its model-visible replay and dispatch the next model request only after that durable commit returns. When an active Turn crosses one or more checkpoints, each later request uses the newest successor context epoch. At `TurnFinished(completed)`, its sole `model_replay_delta` MUST use that newest epoch and contain exactly the model-visible suffix committed after the newest checkpoint record, including the final assistant group; it MUST NOT duplicate the checkpoint's replay contract, synthetic body, retained groups, or any earlier Turn item. The delta, resumable outcome, and Anchor MUST reference the latest accepted request in that successor epoch, while earlier accepted requests in the Turn remain historical evidence in their original epochs. A committed checkpoint is sufficient to reconstruct model context before another request. If recovery finds a later accepted request without its completed current-epoch Anchor, it MUST preserve the usual uncertain-request read-only boundary rather than treating the checkpoint as proof that the request is safe to repeat. Compaction changes no Provider, Account, Model, Connector, endpoint, replay profile, complete binding identity, or binding epoch. It also MUST NOT alter binding-transition cache evidence or infer Provider cache preservation or loss; only cache-read tokens reported by a later actual ModelWork usage receipt are evidence of a cache read. Summary failure, malformed output, cancellation before commit, another `Compact`, typed `Reject`, artifact-integrity failure, or checkpoint durability failure MUST leave the prior Journal and context epoch authoritative and MUST cause typed context rejection without another semantic summary request, retry, fallback, Provider or Model change, steer, partial checkpoint, or hidden lossy continuation. The existing request-local output admission, request deadline, transport-progress bounds, cancellation, and cleanup rules apply; compaction introduces no separate deadline or Provider branch.
+After a valid bounded summary, the backend MUST build and exactly recount the complete successor Connector payload and apply the same trigger once. Pressure admission has exactly three decisions: `Admit`, `Compact`, and `Reject`; warning is a separate observable boolean state and never a fourth decision. This final admission is the hard bound even when the mandatory protected set alone exceeds the optional retained-raw budget; only `Admit` permits the sole semantic writer to commit. A second `Compact` MUST become typed `Reject`, and `Reject` MUST remain rejection. The backend MUST preserve the mandatory set intact rather than truncate it or claim compaction success. The atomic `yo.context-checkpoint/v1alpha1` commit contains the positive successor `context_epoch`, previous context epoch, binding epoch, source Anchor and exact semantic boundary, the exact canonical system and tool replay contract, portable body, exact inline retained replay groups and their source identities, artifact receipts, loss disclosure, exact before/after input counts, summary request usage, and policy revision. Context epoch is Session-global: the initial binding starts at 1, a later binding inherits the current value unchanged, and only this same-binding checkpoint increments it by exactly one. In the reconstructed Connector input, the portable body is exactly one synthetic `user` message followed by the checkpoint's exact inline retained replay groups in their original order under that checkpointed replay contract; it is not an assistant message and therefore requires no provider-private assistant item. The backend MUST swap its model-visible replay and dispatch the next model request only after that durable commit returns. When an active Turn crosses one or more checkpoints, each later request uses the newest successor context epoch. At `TurnFinished(completed)`, its sole `model_replay_delta` MUST use that newest epoch and contain exactly the model-visible suffix committed after the newest checkpoint record, including the final assistant group; it MUST NOT duplicate the checkpoint's replay contract, synthetic body, retained groups, or any earlier Turn item. The delta, resumable outcome, and Anchor MUST reference the latest accepted request in that successor epoch, while earlier accepted requests in the Turn remain historical evidence in their original epochs. A committed checkpoint is sufficient to reconstruct model context before another request. If recovery finds a later accepted request without its completed or explicitly locally settled current-epoch Anchor, it MUST preserve the usual uncertain-request read-only boundary rather than treating the checkpoint as proof that the request is safe to repeat. Compaction changes no Provider, Account, Model, Connector, endpoint, replay profile, complete binding identity, or binding epoch. It also MUST NOT alter binding-transition cache evidence or infer Provider cache preservation or loss; only cache-read tokens reported by a later actual ModelWork usage receipt are evidence of a cache read. Summary failure, malformed output, cancellation before commit, another `Compact`, typed `Reject`, artifact-integrity failure, or checkpoint durability failure MUST leave the prior Journal and context epoch authoritative and MUST cause typed context rejection without another semantic summary request, retry, fallback, Provider or Model change, steer, partial checkpoint, or hidden lossy continuation. The existing request-local output admission, request deadline, transport-progress bounds, cancellation, and cleanup rules apply; compaction introduces no separate deadline or Provider branch.
 
 Local input or replay-capacity exhaustion before a final assistant answer, including exhaustion after a tool result or approval decline, MUST fail the current Turn with typed capacity evidence, finish it as non-resumable, and reject a later Turn on that binding. It MUST NOT complete a final-less Turn successfully or lose the terminal Turn record. A Connector-reported incomplete response retains its separately contracted request-failure semantics and does not by itself latch local context admission. If a final assistant answer and every required semantic and provider-private item have already passed their individual validation and bounds, but applying that complete final replay delta to the retained prefix exceeds cumulative replay capacity, the backend MAY preserve the visible Turn as completed and non-resumable without a Continuation Anchor. A missing, malformed, mismatched, or individually unbounded provider-private item remains a pre-acceptance failure and MUST NOT use that exception. Neither path may silently discard, truncate, redact, or summarize required semantic or private state. The preceding context-checkpoint contract is the only lossy compaction path within one binding and advances only its context epoch. Any other lossy or private-state-dropping handoff remains an independently reviewed, user-visible binding transition.
 
@@ -336,6 +336,61 @@ input_tokens field is forbidden in this profile. Bind profile selection to the
 owning accounting policy even when there are zero images; retain legacy pressure
 bytes for bindings without that extension. UI may display planning totals only
 with explicit estimate/quality and reserve rather than measured-usage wording.
+
+## Closed context after local argument rejection
+
+A typed `ToolSemanticAdmissionError` returned by local `admit_arguments` MAY
+settle a failed Turn under `yo.local-failure-context/v1` only for the existing
+managed `local_client` exact-replay binding with effective replay profile
+`semantic-only/v1`. The rejection MUST precede approval, host admission and
+dispatch of that call; no call or other effect in its still-open response group
+may have been dispatched. Connector cancellation/shutdown and tool cleanup MUST
+all succeed, and no protected-secret submission barrier may exist. This cause
+MUST remain distinguishable from invalid admitted JSON, identity/schema errors,
+generic protocol/transport failure, cancellation and capacity rejection. Failure
+text, an absent stream, closed Activities and local cleanup MUST NOT establish
+Provider terminal completion or substitute for typed cause/cleanup evidence.
+
+Core owns the exact eligible replay source: the same Turn's last verified
+`ContextActiveSource` containing a fully closed semantic group and any later
+verified committed steering, including every preceding current-Turn replay item
+since its StartTurn or latest active checkpoint.
+An input-only StartTurn without a prior closed group is insufficient. The latest
+verified boundary MAY be a committed SteerTurn after a fully closed group; all
+exact accepted steering in that verified cumulative source MUST be preserved. After a checkpoint,
+only the successor-epoch suffix is added; the portable body and retained groups
+remain the reconstruction root exactly once. When the latest active checkpoint
+already owns the complete preserved prefix and its successor suffix is empty,
+the persistence contract's checkpoint-only settlement carries no replay delta.
+The preserved boundary MUST precede the latest accepted model request that failed.
+The failed response group is excluded in its entirety, including any locally
+admitted but undispatched sibling; rejected arguments, partial model output,
+unsubmitted steering and provider-private items MUST NOT enter the prefix.
+A checkpoint carrying the prior closed group MAY have a nonempty successor
+suffix containing only exact committed steering. Accepted input that cannot be
+validated within this source MUST NOT be silently dropped or fabricated; no
+settlement may claim an incomplete source.
+
+The backend MUST propose typed local settlement evidence without claiming a
+successful Turn or Provider outcome. It MUST keep candidate context pending
+while core revalidates the exact source and atomically publishes the truthful
+`TurnFinished(Failed)`, optional nonempty replay suffix, explicit local settlement
+outcome and Anchor. Core and backend MUST NOT use it as request input before
+publication succeeds. The existing serialized checkpoint-style return ordering
+MUST support promotion on the next poll or a StartTurn arriving first; no new
+acknowledgement port is required. Publication/validation failure MUST latch the
+public runtime against later poll, command and submission dispatch, and stop the
+pending backend candidate; ordinary worker shutdown alone is insufficient.
+
+The complete reconstructed replay MUST pass existing item, delta, prefix and
+binding/profile bounds without truncation. Cleanup uncertainty, dispatched open
+group effects, absent/stale source, capacity excess, private profile, secret
+barrier or any other failure retains the existing non-resumable failure behavior
+without fallback to an older Anchor. This exception changes neither the Failed
+outcome nor print-mode failure exit/stdout behavior. It adds no automatic model
+request, retry, tool reexecution, approval reuse, recovery command, setting,
+binding transition or model-generated recovery summary. Only later explicit user
+work consumes the committed prefix, including after cold resume.
 
 ## Rationale
 

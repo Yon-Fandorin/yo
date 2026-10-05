@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.observability-001
-    revision: sha256:224ba8da11132f47a2c784729c5afa54f3ce085ad13d4292651793e36c9e86bd
+    revision: sha256:fe059cda915ec669896783bdb87a72b4d304b3677be937b6c8abb1e9c52c7156
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -84,7 +84,8 @@ volatile.
 
 A model replay delta MUST preserve exact visible message roles and bytes, validated
 function calls, bounded function results, and their stable order. It MUST be
-committed after `TurnFinished(completed)` and before the correlated resumable
+committed after `TurnFinished(completed)` (or the explicit closed local
+failure settlement below) and before the correlated resumable
 outcome and Continuation Anchor in the same physical append. It MUST NOT be
 derived from Chat or Transcript presentation. Tool arguments and outputs MUST
 pass semantic redaction admission before they update an Activity, become later
@@ -124,6 +125,46 @@ without a replay delta, provider-private replay item, resumable outcome or
 Continuation Anchor. Recovery MUST show the admitted public history and MUST NOT
 reconstruct the secret result, resend it, open a successor binding or fall back to
 an older Anchor for new work in that Session.
+
+## Closed local failure-context settlement
+
+The sole failed-Turn exception to completed replay settlement is
+`yo.local-failure-context/v1`, owned by the persistence contract. The managed
+backend supplies typed pre-dispatch local argument semantic-admission rejection,
+explicit successful cleanup and no-dispatch evidence; core MUST also validate
+the exact binding/profile, no-secret-barrier condition and current Turn's latest
+closed active source. The writer MUST atomically commit the Failed Turn event,
+any nonempty exact replay suffix, local failure-settlement outcome and Anchor.
+Its preserved replay MUST contain no rejected arguments, partial response group
+or private replay. It MUST invent no Provider terminal outcome; already committed
+public partial message and Activity history remains visible as partial history. The Turn remains Failed in Journal history
+and live observation. Existing successful settlement remains unchanged.
+
+The latest failed accepted-request coordinate and earlier preserved semantic
+boundary are different evidence and MUST remain distinct. The outcome names the
+latest accepted request, while its closed settlement source identifies the
+current Turn's cumulative suffix root and latest verified closed boundary
+(including committed steering after its closed group), or the exact
+latest active checkpoint when its successor suffix is empty. Core MUST retain
+the validated replay bytes directly, never reconstruct them from Transcript,
+ToolOutput, Activity presentation, Request Audit or rejected request bytes.
+The source MUST include a previously closed semantic group, either directly or
+in its active checkpoint root; its final boundary MAY be committed steering.
+Exact accepted steering in that validated source MUST be preserved, including an
+input-only successor suffix over an eligible active checkpoint. The checkpoint's exact replay contract, portable body and
+retained groups apply once; its suffix is never duplicated or replaced by an
+empty delta. The Anchor's journal boundary still names its settlement outcome.
+
+Transactional publication is the only transition from process-local candidate
+to durable continuation authority. A failed append or invalid proposal MUST
+publish no partial continuation chain and MUST block later public runtime poll
+and dispatch, including direct StartTurn. Recovery after an incomplete physical
+append keeps the previously committed history and ordinary uncertain-request
+read-only behavior; it MUST NOT infer settlement or reuse an older Anchor.
+Successful publication permits pending context promotion before the next poll
+or an earlier StartTurn assembles any request. Every other failed/interrupted
+Turn remains outside resumable settlement. Local settlement itself creates no
+model/tool request and consumes no approval again.
 
 ## Rationale
 

@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.backend-008
-revision: sha256:f918df553e76ad01bedc026162323766da4ac1aee44a750c6f5e75cb69f2f331
+revision: sha256:e823712605f370f5a6fce31b2be7e85ebd2aa919d161adbb0807463afba6d69e
 payload:
   kind: decision
   content: |-
@@ -144,3 +144,58 @@ payload:
     A new tool-enabled local-client Session may expose one backend-owned request_secret_input interaction outside local execution. The exact selected Provider and Model are disclosed before explicit entry. Secret command acceptance only prepares one tools-disabled request in memory; after the runtime durably commits the payload-free receipt, a later poll may start its no-redirect, no-retry transport. The typed Connector-only result never becomes replay or diagnostics, and that receipt is the durable non-resumable barrier whether transport starts, fails or returns a visible final answer.
 
     The separately contracted native ask_user interaction opens one bounded nonsecret UserInputRequest only after its complete sole-call response is admitted. Exact ActivityRequestRef/call_id correlation binds ordinary text, choice-plus-notes or explicit QuestionUnanswered. Invalid or stale responses preserve waiting state. Accepted results join normal exact replay, are visibly recorded with actual provenance, and continue the same Turn only in polling after successful durable response-command commit. Waiting starts no model or local work; failures do not consume the request or dispatch a continuation lacking durable answer evidence. Ordinary questions retain normal tools/accounting/compaction and never inherit secret Session-terminal rules. Pending requests are not resurrected on restart.
+
+    ## Closed context after local argument rejection
+
+    A typed `ToolSemanticAdmissionError` returned by local `admit_arguments` MAY
+    settle a failed Turn under `yo.local-failure-context/v1` only for the existing
+    managed `local_client` exact-replay binding with effective replay profile
+    `semantic-only/v1`. The rejection MUST precede approval, host admission and
+    dispatch of that call; no call or other effect in its still-open response group
+    may have been dispatched. Connector cancellation/shutdown and tool cleanup MUST
+    all succeed, and no protected-secret submission barrier may exist. This cause
+    MUST remain distinguishable from invalid admitted JSON, identity/schema errors,
+    generic protocol/transport failure, cancellation and capacity rejection. Failure
+    text, an absent stream, closed Activities and local cleanup MUST NOT establish
+    Provider terminal completion or substitute for typed cause/cleanup evidence.
+
+    Core owns the exact eligible replay source: the same Turn's last verified
+    `ContextActiveSource` containing a fully closed semantic group and any later
+    verified committed steering, including every preceding current-Turn replay item
+    since its StartTurn or latest active checkpoint.
+    An input-only StartTurn without a prior closed group is insufficient. The latest
+    verified boundary MAY be a committed SteerTurn after a fully closed group; all
+    exact accepted steering in that verified cumulative source MUST be preserved. After a checkpoint,
+    only the successor-epoch suffix is added; the portable body and retained groups
+    remain the reconstruction root exactly once. When the latest active checkpoint
+    already owns the complete preserved prefix and its successor suffix is empty,
+    the persistence contract's checkpoint-only settlement carries no replay delta.
+    The preserved boundary MUST precede the latest accepted model request that failed.
+    The failed response group is excluded in its entirety, including any locally
+    admitted but undispatched sibling; rejected arguments, partial model output,
+    unsubmitted steering and provider-private items MUST NOT enter the prefix.
+    A checkpoint carrying the prior closed group MAY have a nonempty successor
+    suffix containing only exact committed steering. Accepted input that cannot be
+    validated within this source MUST NOT be silently dropped or fabricated; no
+    settlement may claim an incomplete source.
+
+    The backend MUST propose typed local settlement evidence without claiming a
+    successful Turn or Provider outcome. It MUST keep candidate context pending
+    while core revalidates the exact source and atomically publishes the truthful
+    `TurnFinished(Failed)`, optional nonempty replay suffix, explicit local settlement
+    outcome and Anchor. Core and backend MUST NOT use it as request input before
+    publication succeeds. The existing serialized checkpoint-style return ordering
+    MUST support promotion on the next poll or a StartTurn arriving first; no new
+    acknowledgement port is required. Publication/validation failure MUST latch the
+    public runtime against later poll, command and submission dispatch, and stop the
+    pending backend candidate; ordinary worker shutdown alone is insufficient.
+
+    The complete reconstructed replay MUST pass existing item, delta, prefix and
+    binding/profile bounds without truncation. Cleanup uncertainty, dispatched open
+    group effects, absent/stale source, capacity excess, private profile, secret
+    barrier or any other failure retains the existing non-resumable failure behavior
+    without fallback to an older Anchor. This exception changes neither the Failed
+    outcome nor print-mode failure exit/stdout behavior. It adds no automatic model
+    request, retry, tool reexecution, approval reuse, recovery command, setting,
+    binding transition or model-generated recovery summary. Only later explicit user
+    work consumes the committed prefix, including after cold resume.

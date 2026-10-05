@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:746e872e22773897ed738a23c0d892155e872b095fd708890676c8ef7dc6ca31
+    revision: sha256:413bfa00c8722c20762c8dc717b25be19fb6fad6218fd2396dc254ad1f5ea2c6
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -550,7 +550,8 @@ epoch. Multiple accepted submissions MAY target one Turn; the request referenced
 by a completed outcome MUST be the latest accepted request for that Turn in the
 same epoch.
 
-A `model_replay_delta` is valid only for an `exact_replay` binding and only
+Except for the closed local failure-context profile below, a
+`model_replay_delta` is valid only for an `exact_replay` binding and only
 after a matching semantic `TurnFinished` with outcome `completed`. A
 `backend_managed_state` binding MUST NOT emit one. It MUST reference the latest accepted
 request for that Turn and epoch. Without a checkpoint in the Turn, it contains
@@ -588,7 +589,8 @@ same projection and bounds. A failed private admission rejects the whole replay
 container and therefore prevents its delta or checkpoint commit and any later
 outcome and Anchor rather than dropping or redacting only the private item.
 
-A `backend_resumable_outcome` is valid only after a matching semantic
+Except for the closed local failure-context profile below, a
+`backend_resumable_outcome` is valid only after a matching semantic
 `TurnFinished` with outcome `completed` and MUST reference the latest accepted
 request for that Turn and epoch. For an `exact_replay` binding,
 `replay_delta_sequence` is required and MUST reference the immediately preceding
@@ -597,11 +599,13 @@ remains payload-free and relies on the binding, accepted-request, outcome, and
 backend-session identities. When a backend exposes a separate stable
 result identity, `outcome_identity` records it. When it does not, omission is
 explicit and the referenced accepted request identity remains the backend
-operation identity; the writer MUST NOT invent a value. Failed or interrupted
-Turns MUST NOT produce a resumable outcome.
+operation identity; the writer MUST NOT invent a value. Interrupted Turns and failed Turns without that explicit local
+settlement MUST NOT produce a resumable outcome.
 
-A `continuation_anchor` MUST immediately follow its referenced resumable
-outcome in the same semantic commit. For an `exact_replay` binding, that outcome
+Under either completed or closed local failure settlement, a
+`continuation_anchor` MUST immediately follow its referenced resumable
+outcome in the same semantic commit. For the completed profile of an
+`exact_replay` binding, that outcome
 MUST immediately follow its referenced replay delta. For a
 `backend_managed_state` binding, the outcome MUST immediately follow the matching
 `TurnFinished(completed)` and no replay delta may intervene. Every `*_sequence`,
@@ -1200,6 +1204,114 @@ sequence, optional required group_index for group-local variants, item_index and
 part_index. The new pressure schema is `yo.context-pressure/v2alpha1` under the
 managed-loop owner; it carries the same closed accounting object and does not
 reinterpret legacy scalar snapshots.
+
+## Local failure-context settlement profile
+
+This additive, closed development extension of the existing anchored-session
+`yo.semantic-journal-commit/v1` uses the existing `backend_resumable_outcome`
+record kind. Its exact nested profile is `yo.local-failure-context/v1`. The
+physical `yo.session-record/v1` envelope, existing record encodings and completed
+outcome bytes remain unchanged. Preceding closed readers reject the new status
+or field; no migration, reset, downgrade or inferred omitted profile is allowed.
+This is the only exception to the completed-only replay/outcome ordering above.
+
+The completed form still has `status: completed`, optional `outcome_identity`
+and its strategy-specific `replay_delta_sequence`; it MUST NOT contain
+`settlement`. The new failed form has exactly these fields in writer order:
+`type: backend_resumable_outcome`, `journal_sequence`, `epoch`, `context_epoch`,
+`turn_id`, `accepted_request_sequence`, `status: failed`, optional
+`replay_delta_sequence`, and required `settlement`. `outcome_identity` is forbidden
+in the failed form: no Provider success or terminal identity is invented.
+All outer numeric fields, including any replay delta reference, are positive
+unsigned 64-bit values in their existing domains. The required closed
+`settlement` object has exactly `profile: yo.local-failure-context/v1`,
+`cause: tool_argument_semantic_admission_rejected`, `cleanup: succeeded`, and
+`source` in that writer order. Its cause and cleanup assert the managed writer's
+typed local result; recovery validates their closed grammar and correlation,
+not an inferred Provider response. The closed `source` union is exactly one of:
+
+- `{kind: active_suffix, first_sequence, last_sequence}` in that order;
+- `{kind: checkpoint, checkpoint_sequence}` in that order.
+
+Every source sequence is a positive unsigned-64-bit current-Session
+JournalSequence, never a ReplaySequence, ancestor coordinate or opaque provider
+identity. Unknown, duplicate, missing, null, wrongly typed or noncanonical
+fields/values fail closed at every new object boundary. Only the explicitly
+declared `local_client` exact-replay strategy with normalized `semantic-only/v1`
+may use this form. Binding identity, epoch and context epoch MUST equal the
+current open binding and latest accepted request. Recovery MUST reject a secret
+submission barrier, provider-private replay, another failure classification,
+or a completed/interrupted Turn paired with this failed form.
+
+For `active_suffix`, `first_sequence` MUST equal this Turn's committed StartTurn
+sequence when it has not crossed a checkpoint, or the exact newest checkpoint
+committed during this active Turn. `last_sequence` MUST equal the latest
+core-verified closed active-source boundary after that root and MUST be strictly
+earlier than `accepted_request_sequence`. It MAY name the last fully closed
+semantic group or a later committed SteerTurn whose exact accepted user input
+extends that closed source. A prior fully closed semantic group MUST exist in
+the current Turn addition or in its active checkpoint root; an initial
+input-only StartTurn without such a group is insufficient. When that group is
+owned by the active checkpoint, a nonempty successor suffix of only exact
+committed steering is valid. It binds the exact cumulative replay
+addition since that root through that boundary, including all preceding closed
+groups and consumed accepted user input. It is not just the final tool pair.
+`replay_delta_sequence` is required and MUST name the immediately preceding
+nonempty `model_replay_delta`. The delta uses the failed Turn, latest accepted
+request and current binding/context epochs; it contains exactly that verified
+cumulative addition with the usual replay-contract placement. After a checkpoint
+it contains only successor-epoch items, never the portable body, retained groups
+or checkpoint contract again. Its item order, exact bytes and whole-group
+call/result relationships MUST validate against the authoritative source and
+reconstruction root. The writer MUST compare to the captured exact source;
+recovery MUST validate its durable source coordinates and closed semantic
+relationships without rebuilding replay bytes from presentation records.
+
+For `checkpoint`, `checkpoint_sequence` MUST name the exact latest checkpoint
+committed during this Turn, after its StartTurn and before the failed accepted
+request, under this same binding and opening the outcome's current context
+epoch. Its source boundary must have covered a verified fully closed active
+group. The core-verified active source MUST be that checkpoint with an empty
+successor suffix; no later complete active group may be omitted. The checkpoint's
+replay root owns the complete preserved prefix. `replay_delta_sequence` and a
+replay delta in this terminal transaction are forbidden; no empty delta or
+duplicate retained group is synthesized. This allows exactly the empty suffix
+produced when core resets its active source after checkpoint commit, not an idle
+checkpoint from a previous Turn or an arbitrary older fallback root.
+
+Both source forms MUST refer to the latest accepted request for the failed Turn
+in the current epochs, although their preserved source ends before that request.
+No earlier successful request may replace it. The failed response group,
+rejected call/arguments, partial model output and unsubmitted steering are
+excluded. All accepted steering admitted into the verified closed active source MUST be
+retained; the writer MUST NOT truncate its source back to the preceding tool
+group. Any dispatched effect in the open failed group, unsuccessful/uncertain
+cleanup or missing/incomplete exact source makes the settlement invalid. Persisted source/request evidence must
+prove these structural constraints where represented; the writer must establish
+typed admission and resource cleanup before constructing the outcome. Local
+cleanup never stands in for Provider completion.
+
+The sole terminal transaction is `TurnFinished(failed)`, nonempty replay delta
+when and only when source is `active_suffix`, this failed resumable outcome,
+then its `continuation_anchor`. They MUST be contiguous semantic records in
+one physical append and atomically published. The Anchor retains its exact
+existing fields and encoding: it immediately follows the outcome, names that
+outcome's JournalSequence as both `resumable_outcome_sequence` and
+`journal_boundary`, and shares the outcome's latest accepted request and epochs.
+The earlier preserved source boundary MUST NOT replace `journal_boundary`.
+Truncated/reordered/mismatched terminal chains MUST NOT establish an Anchor.
+
+Existing complete replay-contract, delta, item and cumulative prefix bounds
+apply to the exact reconstructed root plus suffix, including checkpoint body
+and retained groups. The first excess rejects settlement without truncation or
+older-Anchor fallback. Successful settlement reconstructs the earlier exact
+context but does not relabel the failed request as completed. Snapshots,
+recovery, compaction source groups, exact replacement and fork consumers MUST
+validate the same status-sensitive graph; they MUST NOT infer task success from
+Anchor presence. A checkpoint-only settlement contributes no new context group.
+No validation/append failure or process-local candidate grants executable
+continuation. Ordinary completed and all other failed/interrupted histories keep
+their preceding meanings and bytes.
 
 ## Rationale
 

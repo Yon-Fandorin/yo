@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-001
-    revision: sha256:a48404355f43edd4508b79a881fd01776ab02ef482ea8384f31385c424be92ad
+    revision: sha256:723a56aac1b3880b3ab63cceed13b36612b6df0c7389d1841476a9a7e2d18c21
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -53,7 +53,7 @@ detail MUST NOT be required to construct or validate an Anchor.
 When no durable Continuation Anchor, valid context checkpoint or complete
 initial fork seed exists, yo MUST open the saved Session read-only. A checkpoint with no later
 accepted request may reconstruct its successor context without a
-successor-epoch Anchor. A later accepted request without a completed matching
+successor-epoch Anchor. A later accepted request without a completed or explicitly locally settled matching
 Anchor remains uncertain and MUST open read-only rather than be resent. Yo MAY
 offer an explicitly confirmed empty child Session that
 records its parent and the absence of a source anchor, but it MUST NOT replay
@@ -166,7 +166,8 @@ reconstruction at the explicitly selected point, or the newest complete point
 when no historical selection was made, including the checkpoint root and all
 required deltas effective there. A checkpoint-only source MUST name that
 checkpoint itself, not its older provenance Anchor. Each selected reconstruction
-MUST be quiescent and contain no accepted request lacking matching completion.
+MUST be quiescent and contain no accepted request lacking matching completion or the explicit
+local failure settlement defined below.
 Later committed parent work MUST NOT enter its model seed or inherited history.
 Physical envelopes and every discovery summary through the captured parent
 cutoff MUST be validated before selection; presentation rows and discovery hints
@@ -263,7 +264,7 @@ reject a missing, duplicated, late, mismatched or partial seed. Before the
 child's first accepted request, its complete initial seed is a valid continuation
 root. Afterward, ordinary complete child Anchors and checkpoints supersede it
 according to their reconstruction rules; an accepted child request without a
-matching completed Anchor remains uncertain and MUST NOT be resent.
+matching completed or explicitly locally settled Anchor remains uncertain and MUST NOT be resent.
 
 A Session tree MUST derive ancestry from validated durable fork provenance,
 never matching names, timestamps, backend locator similarity, or model-rebind
@@ -308,6 +309,46 @@ if its own exact validated replay retains it; a later summary cannot manufacture
 missing earlier input. Existing source-boundary,
 latest-parent eligibility, failure-atomic publication and uncertain-request
 rules remain unchanged.
+
+## Continuation after closed local failure settlement
+
+An Anchor may close the latest failed accepted request only under the exact
+`yo.local-failure-context/v1` profile owned by the persistence contract. The
+managed `local_client` `semantic-only/v1` binding may settle only a typed local
+tool-argument semantic-admission rejection before dispatch, with successful
+connector/tool cleanup, no dispatched effect in the failed open group and no
+secret submission barrier. The Turn remains Failed, and local settlement does
+not assert Provider completion. Resume MUST require the newest matching durable
+settlement Anchor; failure text, Activity closure or an older successful Anchor
+is insufficient.
+
+The outcome's accepted-request coordinate identifies the latest failed request,
+while its separate source coordinates identify the earlier closed semantic
+prefix. Resume MUST preserve their distinction and exact binding/context owner.
+It reconstructs the existing root plus the cumulative closed current-Turn suffix
+once, or the latest active checkpoint's portable body and retained groups once
+plus only its successor-epoch suffix. The exact checkpoint-only settlement adds
+no delta. It MUST NOT resend the failed request, rejected call or arguments,
+partial response group or unsubmitted steering. The latest verified source MAY end at committed steering after a closed
+group, including a steering-only successor suffix over an active checkpoint
+that owns the group. Resume MUST retain that exact accepted user input and MUST
+NOT truncate back to the earlier tool boundary or fabricate missing input. Ordinary-question results already inside an eligible closed prefix retain
+their exact existing call/result correlation without recreating a live request.
+
+A later accepted request without its completed or explicitly locally settled
+matching Anchor remains uncertain and read-only. Missing settlement, capacity
+failure, invalid source or failed publication MUST NOT select an older Anchor
+or treat a checkpoint as proof that the failed request can be repeated. Both
+the next poll and an earlier direct StartTurn MUST promote only already committed
+context before request assembly/dispatch; publication failure latches public
+runtime poll and dispatch closed. No retry, approval reuse, automatic request,
+binding/context epoch transition or third reconstruction root is introduced.
+
+Existing fork, historical selection, replacement and compaction consumers MUST
+recognize this explicit settled outcome as a closed continuation boundary while
+retaining the Failed Turn in history. Their remaining newest-parent, idle,
+exact identity/profile, bounded reconstruction and publication requirements are
+unchanged. Anchor presence never proves that the user's task succeeded.
 
 ## Rationale
 
