@@ -21,6 +21,8 @@ use crate::state::config::CommandToolConfig;
 
 const REGISTRY_PROFILE: &str = "yo.local-tool-registry/command-tools/v1";
 const MANIFEST_PROFILE: &str = "yo.execution-definition-manifest/v1";
+const MANIFEST_PROFILE_V2: &str = "yo.execution-definition-manifest/v2";
+const REGISTRY_PROFILE_V2: &str = "yo.local-tool-registry/command-tools/v2";
 
 #[derive(Clone)]
 pub(crate) struct PreparedCommandTools {
@@ -35,31 +37,68 @@ impl PreparedCommandTools {
     pub(crate) fn validate_replay_contract(
         commands: &[CommandToolConfig],
         contract: Option<&ModelReplayContract>,
-    ) -> Result<(), ToolExecutionError> {
+    ) -> Result<LocalToolRegistryRevision, ToolExecutionError> {
         if commands.is_empty() || commands.len() > 16 {
             return Err(invalid(
                 "saved command tools require explicit configuration",
             ));
         }
-        let builtins = registry(LocalToolRegistryRevision::BasicFiles)?.freeze();
-        let registry = configured_registry(&builtins, commands)?;
-        if !contract.is_some_and(|contract| {
-            matches_saved_replay_tools(contract.tools(), &registry.replay_tools(), true)
-        }) {
-            return Err(invalid(
-                "configured command tool projection does not match the saved Session",
-            ));
+        for (builtins_revision, revision) in [
+            (
+                LocalToolRegistryRevision::BasicFiles,
+                LocalToolRegistryRevision::CommandTools,
+            ),
+            (
+                LocalToolRegistryRevision::BasicFilesV2,
+                LocalToolRegistryRevision::CommandToolsV2,
+            ),
+        ] {
+            let builtins = registry(builtins_revision)?.freeze();
+            let registry = configured_registry(&builtins, commands)?;
+            if contract.is_some_and(|contract| {
+                matches_saved_replay_tools(contract.tools(), &registry.replay_tools(), true)
+            }) {
+                return Ok(revision);
+            }
         }
-        Ok(())
+        Err(invalid(
+            "configured command tool projection does not match the saved Session",
+        ))
     }
 
     /// Captures configured artifacts once; empty lists perform no filesystem access.
+    #[cfg(test)]
     pub(crate) fn prepare(
         commands: &[CommandToolConfig],
         workspace: &Path,
         credential_path: &Path,
         cancelled: &mut dyn FnMut() -> bool,
     ) -> Result<Option<Self>, ToolExecutionError> {
+        Self::prepare_revision(
+            LocalToolRegistryRevision::CommandTools,
+            commands,
+            workspace,
+            credential_path,
+            cancelled,
+        )
+    }
+
+    pub(crate) fn prepare_revision(
+        revision: LocalToolRegistryRevision,
+        commands: &[CommandToolConfig],
+        workspace: &Path,
+        credential_path: &Path,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<Self>, ToolExecutionError> {
+        let v2 = match revision {
+            LocalToolRegistryRevision::CommandTools => false,
+            LocalToolRegistryRevision::CommandToolsV2 => true,
+            _ => {
+                return Err(invalid(
+                    "command manifest requires an explicit registry revision",
+                ));
+            },
+        };
         if commands.is_empty() {
             return Ok(None);
         }
@@ -69,7 +108,12 @@ impl PreparedCommandTools {
         let mut pass = VerificationPass::startup(cancelled, None);
         let workspace = pass.workspace(workspace)?;
         let denied = pass.credential(credential_path)?;
-        let builtins = registry(LocalToolRegistryRevision::BasicFiles)?.freeze();
+        let builtins = registry(if v2 {
+            LocalToolRegistryRevision::BasicFilesV2
+        } else {
+            LocalToolRegistryRevision::BasicFiles
+        })?
+        .freeze();
         let registry = configured_registry(&builtins, commands)?;
         let mut prepared = Vec::with_capacity(commands.len());
         for command in commands {
@@ -100,21 +144,24 @@ impl PreparedCommandTools {
                 .map(|command| manifest_tool(&command.definition, command.launch_manifest())),
         );
         let digest = encoding::digest(&json!({
-            "profile": MANIFEST_PROFILE,
-            "registry": REGISTRY_PROFILE,
+            "profile": if v2 { MANIFEST_PROFILE_V2 } else { MANIFEST_PROFILE },
+            "registry": if v2 { REGISTRY_PROFILE_V2 } else { REGISTRY_PROFILE },
             "tools": tools,
             "protocols": {
                 "stdin": "yo.command-json-stdin/v1",
                 "output": "yo.command-text-output/v1",
-                "environment": "yo.command-safe-environment/v1",
-                "runner": "yo.command-execution/v1",
+                "environment": if v2 { "yo.command-safe-environment/v2" } else { "yo.command-safe-environment/v1" },
+                "runner": if v2 { "yo.command-execution/workspace-confined-v2" } else { "yo.command-execution/v1" },
             },
         }))?;
         pass.check()?;
         Ok(Some(Self {
             registry,
             commands: prepared.into(),
-            host_identity: format!("yo.local-workspace-tools/command-tools/v1/{digest}"),
+            host_identity: format!(
+                "yo.local-workspace-tools/command-tools/{}/{digest}",
+                if v2 { "v2" } else { "v1" }
+            ),
             digest,
         }))
     }
@@ -186,7 +233,24 @@ impl PreparedCommand {
         })
     }
 
-    fn launch_manifest(&self) -> Value {
+    /// 고정한 primary artifact만 읽기 전용 support로 제공한다.
+    pub(in crate::execution::tools::command) fn read_only_artifacts(
+        &self,
+    ) -> Vec<(PathBuf, PathBuf)> {
+        let mut paths = vec![(
+            PathBuf::from(&self.executable.resolved),
+            PathBuf::from(&self.executable.configured),
+        )];
+        if let Some(script) = &self.script {
+            paths.push((
+                PathBuf::from(&script.resolved),
+                PathBuf::from(&script.resolved),
+            ));
+        }
+        paths
+    }
+
+    pub(in crate::execution::tools::command) fn launch_manifest(&self) -> Value {
         json!({
             "executable": self.executable.manifest(),
             "script": self.script.as_ref().map(Artifact::manifest),
@@ -218,6 +282,7 @@ fn manifest_tool(definition: &ToolDefinition, launch: Value) -> Value {
         "approval": match definition.approval() {
             ToolApprovalRequirement::Automatic => "Automatic",
             ToolApprovalRequirement::Required => "Required",
+            ToolApprovalRequirement::Planned => "Planned",
         },
         "launch": launch,
     })

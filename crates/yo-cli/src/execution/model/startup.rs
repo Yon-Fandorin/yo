@@ -50,7 +50,13 @@ pub(super) fn resolve(
     if let Some(target) = resume {
         let selection = resolve_resume(config, override_model, target)?;
         if read_only_review
-            && selection.registry_revision() == Some(LocalToolRegistryRevision::CommandTools)
+            && matches!(
+                selection.registry_revision(),
+                Some(
+                    LocalToolRegistryRevision::CommandTools
+                        | LocalToolRegistryRevision::CommandToolsV2
+                )
+            )
         {
             return Err(AppError::message(
                 "read-only execution cannot expose configured command tools",
@@ -69,7 +75,7 @@ pub(super) fn resolve(
     if let StartupBackend::Native {
         registry_revision, ..
     } = &mut selection
-        && *registry_revision == LocalToolRegistryRevision::BasicFiles
+        && *registry_revision == LocalToolRegistryRevision::BasicFilesV2
         && !config.command_tools().is_empty()
     {
         if read_only_review {
@@ -77,7 +83,7 @@ pub(super) fn resolve(
                 "read-only execution cannot expose configured command tools",
             ));
         }
-        *registry_revision = LocalToolRegistryRevision::CommandTools;
+        *registry_revision = LocalToolRegistryRevision::CommandToolsV2;
     }
     Ok(selection)
 }
@@ -153,7 +159,7 @@ fn resolve_new_session_with_tool_restriction(
                 }) {
                 LocalToolRegistryRevision::NoTools
             } else {
-                LocalToolRegistryRevision::BasicFiles
+                LocalToolRegistryRevision::BasicFilesV2
             };
             Ok(native_selection(selection, false, registry_revision))
         },
@@ -204,10 +210,8 @@ fn saved_native_registry_revision(
     contract: Option<&ModelReplayContract>,
 ) -> Result<LocalToolRegistryRevision, AppError> {
     if execution_manifest_digest.is_some() {
-        PreparedCommandTools::validate_replay_contract(config.command_tools(), contract).map_err(
-            |error| AppError::single("selecting the saved command tool registry", error),
-        )?;
-        Ok(LocalToolRegistryRevision::CommandTools)
+        PreparedCommandTools::validate_replay_contract(config.command_tools(), contract)
+            .map_err(|error| AppError::single("selecting the saved command tool registry", error))
     } else {
         revision_for_replay_contract(contract)
             .map_err(|error| AppError::single("selecting the saved local tool registry", error))

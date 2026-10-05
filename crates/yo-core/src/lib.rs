@@ -137,10 +137,10 @@ pub use skill_reference::{
 pub use tool::{
     FrozenToolRegistry, NATIVE_SECRET_INTERACTION_NAME, TOOL_SCHEMA_DIALECT, ToolApprovalBinding,
     ToolApprovalRequirement, ToolDefinition, ToolEffect, ToolExecution, ToolExecutionError,
-    ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionProgress,
-    ToolExecutionRequest, ToolExecutionResult, ToolId, ToolRegistry, ToolRegistryError,
-    ToolSemanticAdmission, ToolSemanticAdmissionError, ToolValidationError, ToolValidationFailure,
-    ValidatedToolCall,
+    ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPlan, ToolExecutionPoll,
+    ToolExecutionPreparation, ToolExecutionProgress, ToolExecutionRequest, ToolExecutionResult,
+    ToolId, ToolPlanUnavailable, ToolRegistry, ToolRegistryError, ToolSemanticAdmission,
+    ToolSemanticAdmissionError, ToolValidationError, ToolValidationFailure, ValidatedToolCall,
 };
 pub use workspace_reference::{
     LocalWorkspaceInputAdmission, LocalWorkspaceReferenceProvider, WorkspaceReference,

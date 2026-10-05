@@ -98,14 +98,43 @@ the typed journal. Durable messages can use separate segments or a final inline 
 match their activity and revision, including superseded streamed revisions. Record
 backend-specific results, cleanup, and any tools or interactive requests observed.
 
+## Linux workspace command qualification
+
+Run the real host fixtures explicitly; the ordinary unit suite does not run ignored
+platform tests:
+
+```sh
+cargo test --locked -p yo-cli linux_qualification -- --ignored --nocapture
+```
+
+They require Linux, Bubblewrap, Python, Git, the installed Rust toolchain and cached
+Cargo dependencies. Missing capabilities fail qualification; a namespace `/bin/true`
+probe alone is not behavioral evidence. Check protected named stream/datagram and
+abstract sockets, private child Unix IPC, late endpoints and ancestor replacement,
+stdio/environment isolation, nested-namespace denial, descendant cancellation and
+output drain. Also exercise offline Cargo with read-only dependency caches,
+automatic Git using non-secret global identity, exact approved external metadata,
+and rejection of changed prepared limits. Compare actual Git behavior with prepared
+approval for consumed option values and effective flags. Verify cancellation and
+deadlines before spawn never create a marker, while real setup errors remain failed.
+With configuration in the workspace root, ordinary writes remain automatic and the
+selected configuration, credential and recovery-key files stay hidden and unwritable.
+Network-granted and macOS profiles remain
+unqualified; these Linux fixtures do not establish support for either.
+
 ## Live managed command approval and recovery
 
 Use an authorized backend with a fresh disposable workspace and repository. Request one
-exact `run_command` that appends a synthetic marker to a file, decline it in the actual
+exact approval-required `run_command` that appends a synthetic marker to a file, decline it in the actual
 TUI, and require the file to remain absent. Request a separate append command and approve
 only its exact arguments, tool ID, effect, and digest. Resizing the approval panel must
 not execute either command. The approved file must contain exactly one marker; append
 rather than replacement makes duplicate execution observable.
+
+For native v2, ordinary append commands are automatic. Use two disposable literal
+deletion operands in the same call to exercise the recognized-risk approval path;
+classify the complete call before any append or deletion. Test ordinary append
+separately for automatic execution.
 
 Correlate each committed response with the request activity, turn and request ID, and
 match the command, call ID, execution host and outcome across the approval text, typed

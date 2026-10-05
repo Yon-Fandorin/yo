@@ -14,6 +14,7 @@ pub struct ToolApprovalBinding {
     argument_digest: [u8; 32],
     effect: ToolEffect,
     execution_host: String,
+    plan_identity: Option<[u8; 32]>,
 }
 
 impl ToolApprovalBinding {
@@ -25,11 +26,28 @@ impl ToolApprovalBinding {
             argument_digest: Sha256::digest(call.normalized_arguments()).into(),
             effect: call.definition().effect(),
             execution_host: execution_host.into(),
+            plan_identity: None,
         }
     }
 
     pub const fn turn(&self) -> TurnRef {
         self.turn
+    }
+
+    /// 기존 호출 식별자에 전체 고정 계획의 digest를 추가한다.
+    pub fn with_plan(mut self, identity: [u8; 32]) -> Self {
+        self.plan_identity = Some(identity);
+        self
+    }
+
+    pub fn matches_plan(
+        &self,
+        turn: TurnRef,
+        call: &ValidatedToolCall,
+        host: &str,
+        identity: &[u8; 32],
+    ) -> bool {
+        self.matches(turn, call, host) && self.plan_identity.as_ref() == Some(identity)
     }
 
     pub fn call_id(&self) -> &str {

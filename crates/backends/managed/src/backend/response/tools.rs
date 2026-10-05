@@ -335,6 +335,7 @@ pub(super) fn function_call_done(
                     PendingCall {
                         call,
                         approval: None,
+                        plan: None,
                     },
                 )
                 .is_some()

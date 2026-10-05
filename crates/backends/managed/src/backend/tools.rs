@@ -9,13 +9,14 @@ use yo_core::{
     ApprovalDecision, BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind,
     Failure, FilePublicationEvidence, FilePublicationEvidenceState,
     FilePublicationEvidenceUnavailableReason, ModelReplayItem, ToolApprovalBinding,
-    ToolApprovalRequirement, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest,
-    ToolExecutionResult, ToolOutput, ToolSemanticAdmission, ToolValidationFailure,
-    ValidatedToolCall,
+    ToolApprovalRequirement, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionPreparation,
+    ToolExecutionRequest, ToolExecutionResult, ToolOutput, ToolSemanticAdmission,
+    ToolValidationFailure, ValidatedToolCall,
 };
 
 use super::{
-    ActiveTool, NativeModelBackend, TOOL_TRUNCATION_MARKER, TurnState, failure, map_tool_cleanup,
+    ActiveTool, NativeModelBackend, PendingCall, TOOL_TRUNCATION_MARKER, TurnState, failure,
+    map_tool_cleanup,
 };
 
 impl NativeModelBackend {
@@ -27,11 +28,29 @@ impl NativeModelBackend {
             state.start_next_round = true;
             return Ok(());
         };
-        if pending.call.definition().approval() == ToolApprovalRequirement::Required {
+        let execution_request = self.tool_execution_request(state, &pending.call);
+        let (plan, needs_approval) = match self.tool_host.prepare(&execution_request) {
+            ToolExecutionPreparation::Automatic(plan) => (plan, false),
+            ToolExecutionPreparation::ApprovalRequired(plan) => (plan, true),
+            ToolExecutionPreparation::Unavailable(reason) => {
+                self.finish_tool_without_execution(
+                    state,
+                    pending.call,
+                    ToolExecutionOutcome::Failed,
+                    json!({"error": "tool unavailable", "code": reason.code()}).to_string(),
+                )?;
+                return Ok(());
+            },
+        };
+        pending.plan = Some(plan);
+        if needs_approval
+            || pending.call.definition().approval() == ToolApprovalRequirement::Required
+        {
             let activity = self.next_activity(state.turn)?;
             let request = ActivityRequestRef::new(activity, self.next_request()?);
             let binding =
-                ToolApprovalBinding::new(state.turn, &pending.call, self.tool_host.identity());
+                ToolApprovalBinding::new(state.turn, &pending.call, self.tool_host.identity())
+                    .with_plan(*pending.plan.as_ref().expect("prepared plan").identity());
             // 실행 원본 대신 이미 의미 보존 정책을 통과한 replay 인자만 표시한다.
             let arguments = state.delta.iter().rev().find_map(|item| match item {
                 ModelReplayItem::FunctionCall {
@@ -49,6 +68,16 @@ impl NativeModelBackend {
                 pending.call.definition().id().as_str(),
                 binding.argument_digest_hex(),
             );
+            let scope = pending
+                .plan
+                .as_ref()
+                .expect("prepared plan")
+                .approval_scope();
+            let approval_text = if scope.is_empty() {
+                approval_text
+            } else {
+                format!("{approval_text}\n\nRequested access:\n{scope}")
+            };
             pending.approval = Some(binding);
             self.queue_activity_text(
                 activity,
@@ -61,7 +90,7 @@ impl NativeModelBackend {
             state.awaiting_approval = Some((request, pending));
             return Ok(());
         }
-        state.ready_tool = Some(pending.call);
+        state.ready_tool = Some(pending);
         Ok(())
     }
 
@@ -98,17 +127,18 @@ impl NativeModelBackend {
     pub(super) fn start_tool_execution(
         &mut self,
         state: &mut TurnState,
-        call: ValidatedToolCall,
+        pending: PendingCall,
         activity: ActivityRef,
     ) -> Result<(), BackendFailure> {
-        let request = ToolExecutionRequest {
-            turn: state.turn,
-            call: call.clone(),
-            maximum_output_bytes: self.config.maximum_tool_output_bytes,
-            maximum_retained_output_bytes: self.config.maximum_retained_tool_output_bytes,
-            absolute_execution_timeout: self.config.absolute_tool_execution_timeout,
-        };
-        match self.tool_host.start(request) {
+        let PendingCall { call, plan, .. } = pending;
+        let plan = plan.ok_or_else(|| {
+            failure(
+                BackendFailureKind::Protocol,
+                "tool execution has no prepared plan",
+            )
+        })?;
+        let request = self.tool_execution_request(state, &call);
+        match self.tool_host.start_prepared(request, plan) {
             Ok(execution) => {
                 state.active_tool = Some(ActiveTool {
                     call,
@@ -139,6 +169,20 @@ impl NativeModelBackend {
             )?,
         }
         Ok(())
+    }
+
+    fn tool_execution_request(
+        &self,
+        state: &TurnState,
+        call: &ValidatedToolCall,
+    ) -> ToolExecutionRequest {
+        ToolExecutionRequest {
+            turn: state.turn,
+            call: call.clone(),
+            maximum_output_bytes: self.config.maximum_tool_output_bytes,
+            maximum_retained_output_bytes: self.config.maximum_retained_tool_output_bytes,
+            absolute_execution_timeout: self.config.absolute_tool_execution_timeout,
+        }
     }
 
     pub(super) fn poll_tool(&mut self) -> Result<(), BackendFailure> {
@@ -566,7 +610,14 @@ impl NativeModelBackend {
         };
         if expected != request
             || !pending.approval.as_ref().is_some_and(|binding| {
-                binding.matches(state.turn, &pending.call, self.tool_host.identity())
+                pending.plan.as_ref().is_some_and(|plan| {
+                    binding.matches_plan(
+                        state.turn,
+                        &pending.call,
+                        self.tool_host.identity(),
+                        plan.identity(),
+                    )
+                })
             })
         {
             state.awaiting_approval = Some((expected, pending));
@@ -593,7 +644,7 @@ impl NativeModelBackend {
             ApprovalDecision::Offered(_) => {
                 unreachable!("offered choices rejected before state mutation")
             },
-            ApprovalDecision::Approved => state.ready_tool = Some(pending.call),
+            ApprovalDecision::Approved => state.ready_tool = Some(pending),
             ApprovalDecision::Declined => {
                 if let Err(error) = self.finish_tool_without_execution(
                     &mut state,

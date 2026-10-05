@@ -2390,3 +2390,140 @@ fn run_large_publication_edit(
     });
     (profile, finished, replay_output, requests.len(), terminal)
 }
+
+// 승인을 기다리는 동안 실행 환경이 바뀌어도 새 계획을 만들지 않고 처음 받은 계획만 한 번 소비한다.
+#[test]
+fn planned_tool_prepares_once_and_dispatches_the_approved_payload() {
+    use yo_core::{
+        ActivityKind, ActivityRequestRef, ActivityResponse, ApprovalDecision, BackendPoll,
+        ToolExecutionPlan, ToolExecutionPreparation,
+    };
+
+    struct PlannedHost {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+    impl ToolExecutionHost for PlannedHost {
+        fn identity(&self) -> &str {
+            "planned-host-v2"
+        }
+        fn is_available(&self, _: &ToolId) -> bool {
+            true
+        }
+        fn prepare(&mut self, request: &ToolExecutionRequest) -> ToolExecutionPreparation {
+            self.events.lock().unwrap().push("prepare".to_owned());
+            ToolExecutionPreparation::ApprovalRequired(ToolExecutionPlan::new(
+                [7; 32],
+                "Write: /exact/root; network: disabled",
+                request.call.normalized_arguments().to_vec(),
+            ))
+        }
+        fn start(
+            &mut self,
+            _: ToolExecutionRequest,
+        ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+            panic!("prepared calls must not use the legacy dispatch boundary")
+        }
+        fn start_prepared(
+            &mut self,
+            request: ToolExecutionRequest,
+            plan: ToolExecutionPlan,
+        ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+            assert_eq!(plan.identity(), &[7; 32]);
+            assert_eq!(
+                plan.into_payload::<Vec<u8>>()?,
+                request.call.normalized_arguments()
+            );
+            self.events.lock().unwrap().push("consume".to_owned());
+            Ok(Box::new(MockExecution {
+                result: Some(ToolExecutionResult::new(
+                    ToolExecutionOutcome::Completed,
+                    "ok",
+                    false,
+                )),
+            }))
+        }
+        fn shutdown(&mut self) -> Result<(), ToolExecutionError> {
+            Ok(())
+        }
+    }
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = backend(
+        vec![
+            vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "r1".to_owned(),
+                },
+                ModelConnectorEvent::FunctionCallStarted {
+                    output_index: 0,
+                    item_id: "i1".to_owned(),
+                    call_id: "c1".to_owned(),
+                    name: "read_file".to_owned(),
+                },
+                ModelConnectorEvent::FunctionCallDone {
+                    output_index: 0,
+                    item_id: "i1".to_owned(),
+                    call_id: "c1".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: r#"{"path":"README.md"}"#.to_owned(),
+                },
+                completed("r1"),
+            ],
+            vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "r2".to_owned(),
+                },
+                completed("r2"),
+            ],
+        ],
+        ToolApprovalRequirement::Planned,
+        Arc::new(Mutex::new(0)),
+    );
+    backend.tool_host = Box::new(PlannedHost {
+        events: Arc::clone(&events),
+    });
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("요청"),
+        })
+        .unwrap();
+    let mut request = None;
+    for _ in 0..100 {
+        if let BackendPoll::Event(BackendEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::ApprovalRequest { request_id },
+        }) = backend.poll_event().unwrap()
+        {
+            request = Some(ActivityRequestRef::new(activity, request_id));
+            break;
+        }
+    }
+    let request = request.expect("planned approval must be emitted");
+    assert_eq!(*events.lock().unwrap(), ["prepare"]);
+    for _ in 0..10 {
+        let _ = backend.poll_event().unwrap();
+    }
+    assert_eq!(*events.lock().unwrap(), ["prepare"]);
+    backend
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::Approval(ApprovalDecision::Approved),
+        })
+        .unwrap();
+    let _ = drain_until_turn(&mut backend);
+    assert_eq!(*events.lock().unwrap(), ["prepare", "consume"]);
+    assert!(
+        backend
+            .execute_command(AgentCommand::RespondToActivity {
+                request,
+                response: ActivityResponse::Approval(ApprovalDecision::Approved)
+            })
+            .is_err()
+    );
+    assert_eq!(*events.lock().unwrap(), ["prepare", "consume"]);
+}

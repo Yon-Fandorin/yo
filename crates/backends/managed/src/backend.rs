@@ -30,8 +30,9 @@ use yo_core::{
     ModelConnector, ModelConnectorCancellation, ModelConnectorStreamPort, ModelContextProfile,
     ModelReplay, ModelReplayContract, ModelReplayItem, ModelReplayTool, ModelTokenCounter,
     ReasoningEffort, ReplayExecutor, ReplayProfile, RequestId, SessionDescriptor, SessionId,
-    ToolApprovalBinding, ToolExecution, ToolExecutionHost, ToolOutput, ToolSemanticAdmission,
-    TurnRef, ValidatedToolCall, session_repository::StoredSessionContinuation,
+    ToolApprovalBinding, ToolExecution, ToolExecutionHost, ToolExecutionPlan, ToolOutput,
+    ToolSemanticAdmission, TurnRef, ValidatedToolCall,
+    session_repository::StoredSessionContinuation,
 };
 
 use self::{accounting::InputCount, identity::native_binding_identity};
@@ -142,6 +143,7 @@ struct SharedStop {
 struct PendingCall {
     call: ValidatedToolCall,
     approval: Option<ToolApprovalBinding>,
+    plan: Option<ToolExecutionPlan>,
 }
 
 struct ActiveTool {
@@ -237,8 +239,8 @@ struct TurnState {
     round_replay: BTreeMap<usize, ModelReplayItem>,
     pending_calls: BTreeMap<usize, PendingCall>,
     active_tool: Option<ActiveTool>,
-    ready_tool: Option<ValidatedToolCall>,
-    dispatch_tool: Option<(ValidatedToolCall, ActivityRef)>,
+    ready_tool: Option<PendingCall>,
+    dispatch_tool: Option<(PendingCall, ActivityRef)>,
     awaiting_approval: Option<(ActivityRequestRef, PendingCall)>,
     question_call_start: Option<InteractionCallStart>,
     pending_question: Option<question::PendingQuestion>,

@@ -22,6 +22,8 @@ pub enum ToolEffect {
 pub enum ToolApprovalRequirement {
     Automatic,
     Required,
+    /// 실행 호스트가 고정한 호출 계획에 따라 승인 여부를 결정한다.
+    Planned,
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

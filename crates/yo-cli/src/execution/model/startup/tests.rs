@@ -878,7 +878,7 @@ fn configured_commands_only_select_the_supported_native_registry() {
         resolve(&config, None, Some("model"), false, false, None)
             .unwrap()
             .registry_revision(),
-        Some(LocalToolRegistryRevision::CommandTools)
+        Some(LocalToolRegistryRevision::CommandToolsV2)
     );
     assert!(resolve(&config, None, Some("model"), false, true, None).is_err());
     let complete = CompleteModelBinding::from_durable_json(

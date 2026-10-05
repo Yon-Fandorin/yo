@@ -106,3 +106,20 @@ fn approval_binding_normalizes_recursive_objects_but_preserves_array_order() {
         r#"{"payload":{"items":[{"b":2,"a":1},{"a":3,"b":4}]}}"#
     );
 }
+
+// 같은 호출이라도 읽기·쓰기 범위가 다른 계획의 승인은 재사용할 수 없다.
+#[test]
+fn approval_binding_includes_the_frozen_execution_plan() {
+    let registry = ToolRegistry::new([definition("read-one", "read_path")])
+        .unwrap()
+        .freeze();
+    let call = registry
+        .validate_call("call-1", "read_path", r#"{"path":"a"}"#, 100)
+        .unwrap();
+    let binding = ToolApprovalBinding::new(turn(1), &call, "local-v2").with_plan([1; 32]);
+    assert!(binding.matches_plan(turn(1), &call, "local-v2", &[1; 32]));
+    assert!(!binding.matches_plan(turn(1), &call, "local-v2", &[2; 32]));
+    assert!(!binding.matches_plan(turn(2), &call, "local-v2", &[1; 32]));
+    let legacy = ToolApprovalBinding::new(turn(1), &call, "local-v2");
+    assert!(!legacy.matches_plan(turn(1), &call, "local-v2", &[1; 32]));
+}

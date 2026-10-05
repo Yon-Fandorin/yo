@@ -8,12 +8,12 @@ use std::{
 use nix::{dir::Dir, fcntl::OFlag};
 use serde_json::Value;
 use yo_core::{
-    ToolDefinition, ToolExecution, ToolExecutionError, ToolExecutionHost, ToolExecutionRequest,
-    ToolId,
+    ToolDefinition, ToolEffect, ToolExecution, ToolExecutionError, ToolExecutionHost,
+    ToolExecutionPlan, ToolExecutionPreparation, ToolExecutionRequest, ToolId,
 };
 
 use super::{
-    command::{CommandExecution, PreparedCommandTools},
+    command::{CommandConfinement, CommandExecution, ConfinedPlan, PreparedCommandTools},
     execution::{ThreadExecution, failed},
 };
 
@@ -51,6 +51,7 @@ pub(crate) struct LocalToolHost {
     mutation_lock: Arc<Mutex<()>>,
     new_file_mode: u32,
     commands: Option<PreparedCommandTools>,
+    confinement: Option<CommandConfinement>,
 }
 
 impl LocalToolHost {
@@ -79,11 +80,17 @@ impl LocalToolHost {
             mutation_lock: Arc::new(Mutex::new(())),
             new_file_mode: descriptor::new_file_mode(),
             commands: None,
+            confinement: None,
         })
     }
 
     pub(crate) fn with_commands(mut self, commands: Option<PreparedCommandTools>) -> Self {
         self.commands = commands;
+        self
+    }
+
+    pub(crate) fn with_confinement(mut self, confinement: Option<CommandConfinement>) -> Self {
+        self.confinement = confinement;
         self
     }
 
@@ -103,9 +110,14 @@ impl LocalToolHost {
 
 impl ToolExecutionHost for LocalToolHost {
     fn identity(&self) -> &str {
-        self.commands
-            .as_ref()
-            .map_or(HOST_IDENTITY, PreparedCommandTools::host_identity)
+        self.commands.as_ref().map_or(
+            if self.confinement.is_some() {
+                "yo.local-workspace-tools/basic-files/v2/workspace-confined-v2"
+            } else {
+                HOST_IDENTITY
+            },
+            PreparedCommandTools::host_identity,
+        )
     }
 
     fn is_available(&self, tool: &ToolId) -> bool {
@@ -123,10 +135,48 @@ impl ToolExecutionHost for LocalToolHost {
             )
     }
 
+    fn prepare(&mut self, request: &ToolExecutionRequest) -> ToolExecutionPreparation {
+        if let Some(confinement) = &self.confinement
+            && request.call.definition().effect() == ToolEffect::Process
+        {
+            let configured = self
+                .commands
+                .as_ref()
+                .and_then(|commands| commands.command(request.call.definition().id()));
+            return confinement.prepare(request, configured);
+        }
+        ToolExecutionPreparation::legacy(request, self.identity())
+    }
+
+    fn start_prepared(
+        &mut self,
+        request: ToolExecutionRequest,
+        plan: ToolExecutionPlan,
+    ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+        if self.confinement.is_some() && request.call.definition().effect() == ToolEffect::Process {
+            return Ok(Box::new(CommandExecution::spawn_confined(
+                plan.into_payload::<ConfinedPlan>()?,
+                &request,
+            )?));
+        }
+        if !plan.matches_legacy(&request, self.identity()) {
+            return Err(ToolExecutionError::new(
+                "execution plan does not match the host",
+            ));
+        }
+        plan.into_payload::<()>()?;
+        self.start(request)
+    }
+
     fn start(
         &mut self,
         request: ToolExecutionRequest,
     ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+        if self.confinement.is_some() && request.call.definition().effect() == ToolEffect::Process {
+            return Err(ToolExecutionError::new(
+                "workspace command requires its frozen execution plan",
+            ));
+        }
         let maximum_output_bytes = request.maximum_output_bytes;
         if let Some(command) = self
             .commands

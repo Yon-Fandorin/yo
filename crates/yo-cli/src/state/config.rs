@@ -136,6 +136,11 @@ impl Config {
             .to_owned()
     }
 
+    /// 실제로 선택한 설정 파일 경로. 기본 Config에는 선택한 파일이 없다.
+    pub(crate) fn source_path(&self) -> Option<&Path> {
+        (!self.source_path.as_os_str().is_empty()).then_some(self.source_path.as_path())
+    }
+
     pub(crate) fn verify_unchanged(&self) -> Result<(), ConfigError> {
         let current = capture_snapshot(&self.source_path)?;
         if current == self.snapshot {

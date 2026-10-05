@@ -95,6 +95,32 @@ assistant 답변과 보존된 frozen input을 확인한다. typed journal과 함
 고려해 activity와 revision을 맞춘다. backend별 결과, 정리 결과, 관찰한 도구 실행이나
 대화형 요청을 기록한다.
 
+## Linux workspace command qualification
+
+실제 호스트 fixture를 명시적으로 실행한다. 일반 unit suite는 ignored 플랫폼 test를
+실행하지 않는다.
+
+```sh
+cargo test --locked -p yo-cli linux_qualification -- --ignored --nocapture
+```
+
+Linux·Bubblewrap·Python·Git·설치된 Rust toolchain·cached Cargo 의존성이 필요하다.
+기능이 없으면 qualification은 실패하며 namespace `/bin/true` probe만으로 동작을
+입증하지 않는다. 보호된 pathname stream/datagram·abstract socket, child의 private Unix
+IPC, 늦게 생성된 endpoint와 ancestor 교체, stdio/environment 격리, nested namespace 차단,
+자손 취소·출력 drain을 확인한다. 읽기 전용 의존성 cache를 쓰는 offline Cargo, 비밀이 아닌
+전역 작성자 정보로 수행하는 자동 Git, 정확히 승인한 외부 metadata, 준비된 제한 변경 거부도
+검증한다. 소비한 option 값과 최종 flag 설정은 실제 Git 동작과 준비된 승인을 함께
+확인한다. Spawn 전 취소·기한 초과에서는 marker가 생기지 않고 실제 setup 오류는 failed로
+남는지 검증한다. Workspace root에 configuration이 있어도 일반 쓰기는 자동이며 선택한
+configuration·credential·recovery-key 파일은 숨겨지고 쓰기 불가능한지 확인한다.
+Network grant와 macOS profile은 아직 검증되지 않았으며 Linux fixture의
+성공으로 두 profile의 지원을 주장하지 않는다.
+
+Native v2의 일반 append는 자동이다. 승인 경로는 같은 호출에 두 disposable literal 삭제
+피연산자를 넣어 검사하며 append·삭제 전에 호출 전체를 분류한다. 일반 append의 자동
+실행도 별도로 검사한다.
+
 ## 실제 managed 명령 승인과 복구
 
 사용이 승인된 backend에서 새 임시 workspace와 저장소를 사용한다. 합성 토큰을 파일에

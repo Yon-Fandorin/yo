@@ -16,8 +16,9 @@ pub use errors::{
     ToolExecutionError, ToolRegistryError, ToolValidationError, ToolValidationFailure,
 };
 pub use execution::{
-    ToolExecution, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
-    ToolExecutionProgress, ToolExecutionRequest, ToolExecutionResult,
+    ToolExecution, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPlan, ToolExecutionPoll,
+    ToolExecutionPreparation, ToolExecutionProgress, ToolExecutionRequest, ToolExecutionResult,
+    ToolPlanUnavailable,
 };
 pub use registry::{
     FrozenToolRegistry, NATIVE_SECRET_INTERACTION_NAME, ToolRegistry, ValidatedToolCall,

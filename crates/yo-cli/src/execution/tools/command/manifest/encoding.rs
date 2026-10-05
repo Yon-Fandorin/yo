@@ -4,7 +4,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use yo_core::ToolExecutionError;
 
-use super::{MANIFEST_PROFILE, invalid};
+use super::{MANIFEST_PROFILE, MANIFEST_PROFILE_V2, invalid};
 
 const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
 
@@ -13,7 +13,14 @@ pub(super) fn digest(value: &Value) -> Result<String, ToolExecutionError> {
         hash: Sha256::new(),
         remaining: MAX_ENCODED_BYTES,
     };
-    encoder.bytes(MANIFEST_PROFILE.as_bytes())?;
+    let profile = value
+        .get("profile")
+        .and_then(Value::as_str)
+        .unwrap_or(MANIFEST_PROFILE);
+    if !matches!(profile, MANIFEST_PROFILE | MANIFEST_PROFILE_V2) {
+        return Err(invalid("unknown command manifest profile"));
+    }
+    encoder.bytes(profile.as_bytes())?;
     encoder.bytes(&[0])?;
     encoder.value(value)?;
     Ok(tagged_hash(encoder.hash))

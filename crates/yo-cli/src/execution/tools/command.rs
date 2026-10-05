@@ -24,16 +24,21 @@ use yo_core::{
 
 use super::execution::{ThreadExecution, failed};
 
+mod confined;
 mod input;
 mod limits;
 mod manifest;
 mod pipe;
 mod process;
 
+pub(crate) use confined::CommandConfinement;
+pub(super) use confined::ConfinedPlan;
 pub(crate) use manifest::{PreparedCommand, PreparedCommandTools};
 
 #[derive(Default)]
 struct LaunchTestHooks {
+    #[cfg(test)]
+    attempt_started: Option<Instant>,
     #[cfg(test)]
     verified: Option<SyncSender<()>>,
     #[cfg(test)]
@@ -47,6 +52,14 @@ struct CommandTestHooks {
 }
 
 impl LaunchTestHooks {
+    fn attempt_started(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(started) = self.attempt_started {
+            return started;
+        }
+        Instant::now()
+    }
+
     #[cfg(test)]
     fn pause_after_verification(&mut self) {
         if let Some(verified) = self.verified.take() {
@@ -63,6 +76,7 @@ impl LaunchTestHooks {
 
 enum CommandPlan {
     Shell(String),
+    Confined(Box<ConfinedPlan>),
     Prepared(Box<PreparedCommand>, Vec<u8>),
 }
 
@@ -78,6 +92,26 @@ pub(super) struct CommandExecution {
 }
 
 impl CommandExecution {
+    pub(super) fn spawn_confined(
+        plan: ConfinedPlan,
+        request: &yo_core::ToolExecutionRequest,
+    ) -> Result<Self, ToolExecutionError> {
+        if !plan.matches(request) {
+            return Err(ToolExecutionError::new(
+                "execution plan does not match its arguments",
+            ));
+        }
+        Self::spawn_plan(
+            plan.workspace().to_owned(),
+            CommandPlan::Confined(Box::new(plan)),
+            request.maximum_output_bytes,
+            CommandExecutionLimits::for_agent(request.absolute_execution_timeout),
+            WaiterTestHooks::default(),
+            LaunchTestHooks::default(),
+            request.maximum_retained_output_bytes,
+        )
+    }
+
     pub(super) fn spawn_prepared(
         workspace: PathBuf,
         command: PreparedCommand,
@@ -293,7 +327,7 @@ fn run_command(
         maximum_retained_output_bytes,
         progress,
     } = output;
-    let attempt_started = Instant::now();
+    let attempt_started = hooks.launch.attempt_started();
     // artifact 검증이 path 기반 단일 spawn 전 마지막 blocking setup이 되도록 waiter를 먼저
     // 준비한다.
     let Ok(mut waiter) = ChildWaiter::spawn(hooks.waiter) else {
@@ -302,6 +336,31 @@ fn run_command(
     let mut launch_hooks = hooks.launch;
     let (mut launch, stdin_bytes) = match command {
         CommandPlan::Shell(command) => (shell_command(workspace, command), Vec::new()),
+        CommandPlan::Confined(plan) => {
+            let deadline = limits
+                .absolute_execution_timeout
+                .and_then(|timeout| attempt_started.checked_add(timeout));
+            match plan.launch(cancelled, deadline) {
+                Ok(launch) => launch,
+                Err(_) => {
+                    return if let Some(reason) = expired_reason(
+                        cancelled,
+                        attempt_started,
+                        Instant::now(),
+                        limits,
+                        Instant::now(),
+                    ) {
+                        ToolExecutionResult::new(
+                            ToolExecutionOutcome::Interrupted,
+                            reason.description(),
+                            false,
+                        )
+                    } else {
+                        failed("workspace command confinement setup failed")
+                    };
+                },
+            }
+        },
         CommandPlan::Prepared(command, arguments) => {
             let deadline = limits
                 .absolute_execution_timeout

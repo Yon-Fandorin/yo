@@ -536,6 +536,7 @@ fn replacement_after_final_verification_retains_documented_path_semantics() {
         LaunchTestHooks {
             verified: Some(verified_tx),
             resume: Some(resume_rx),
+            ..LaunchTestHooks::default()
         },
     );
     verified_rx
@@ -571,6 +572,7 @@ fn cancellation_after_final_verification_still_prevents_spawn() {
         LaunchTestHooks {
             verified: Some(verified_tx),
             resume: Some(resume_rx),
+            ..LaunchTestHooks::default()
         },
     );
     verified_rx
@@ -583,4 +585,49 @@ fn cancellation_after_final_verification_still_prevents_spawn() {
 
     assert_eq!(result.outcome(), ToolExecutionOutcome::Interrupted);
     assert!(!fixture.0.join("executed").exists());
+}
+
+// v2는 명시적 새 projection/digest를 가지며 v1 artifact와 실행 정의를 바꾸지 않는다.
+#[test]
+fn v2_manifest_selects_its_own_projection_and_preserves_frozen_v1() {
+    use yo_core::{ModelReplayContract, ToolApprovalRequirement};
+
+    use crate::execution::tools::registry::LocalToolRegistryRevision;
+    let fixture = Fixture::new();
+    let config = fixture.config("/bin/sh", Some("script.sh"), &[]);
+    let v1 = fixture.prepare(&config);
+    let v2 = PreparedCommandTools::prepare_revision(
+        LocalToolRegistryRevision::CommandToolsV2,
+        config.command_tools(),
+        &fixture.0,
+        &fixture.0.join("credentials.yaml"),
+        &mut || false,
+    )
+    .unwrap()
+    .unwrap();
+    assert_ne!(v1.digest(), v2.digest());
+    assert_eq!(fixture.prepare(&config).digest(), v1.digest());
+    assert_eq!(
+        v1.registry().definitions()[4].approval(),
+        ToolApprovalRequirement::Required
+    );
+    assert_eq!(
+        v2.registry().definitions()[4].approval(),
+        ToolApprovalRequirement::Planned
+    );
+    assert_eq!(
+        v2.registry().definitions()[5].approval(),
+        ToolApprovalRequirement::Required
+    );
+    for (prepared, expected) in [
+        (&v1, LocalToolRegistryRevision::CommandTools),
+        (&v2, LocalToolRegistryRevision::CommandToolsV2),
+    ] {
+        let contract = ModelReplayContract::new("system", prepared.registry().replay_tools());
+        assert_eq!(
+            PreparedCommandTools::validate_replay_contract(config.command_tools(), Some(&contract))
+                .unwrap(),
+            expected
+        );
+    }
 }

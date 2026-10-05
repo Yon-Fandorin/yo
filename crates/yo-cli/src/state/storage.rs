@@ -1,4 +1,7 @@
-use std::{env, error, fmt};
+use std::{
+    env, error, fmt,
+    path::{Path, PathBuf},
+};
 
 use yo_core::{
     LocalWorkspaceHostIdentityError, WorkspaceHostId, interview, secret_store::SecretStore,
@@ -14,6 +17,41 @@ use repository::{open_at, open_host_identity_at, open_reader_at};
 
 #[cfg(test)]
 mod tests;
+
+/// 저장소 소유자가 선택한 상태·세션 위치를 실행 계획의 비밀 제외 범위로 넘긴다.
+pub(crate) fn command_secret_roots() -> Result<Vec<PathBuf>, StorageConfigError> {
+    let state_root = platform_state_root()?;
+    let repository_root = repository_root_from(env::var_os("YO_SESSION_REPOSITORY"), &state_root)?;
+    let current = env::current_dir().map_err(|error| StorageConfigError::InvalidEnvironment {
+        name: "YO_SESSION_REPOSITORY",
+        reason: error.to_string(),
+    })?;
+    Ok(command_secret_roots_from(
+        state_root,
+        repository_root,
+        &current,
+    ))
+}
+
+fn command_secret_roots_from(
+    state_root: PathBuf,
+    repository_root: PathBuf,
+    current: &Path,
+) -> Vec<PathBuf> {
+    vec![
+        state_root,
+        if repository_root.is_absolute() {
+            repository_root
+        } else {
+            current.join(repository_root)
+        },
+    ]
+}
+
+/// 설정 디렉터리에 둔 recovery key의 정확한 비밀 파일 경로.
+pub(crate) fn configuration_recovery_key(config_directory: &Path) -> PathBuf {
+    config_directory.join("secret-recovery.key")
+}
 
 pub(crate) fn open_default() -> Result<LocalStorage, StorageConfigError> {
     let state_root = platform_state_root()?;
@@ -42,7 +80,7 @@ pub(crate) fn open_interviews() -> Result<interview::InterviewRepository, String
     interview::InterviewRepository::open_with_recovery(
         &root.join("interviews"),
         root.join("secret-recovery"),
-        config_parent.join("secret-recovery.key"),
+        configuration_recovery_key(config_parent),
     )
     .map_err(|error| error.to_string())
 }
@@ -54,7 +92,7 @@ pub(crate) fn open_secret_store() -> Result<SecretStore, String> {
         .parent()
         .filter(|parent| parent.is_absolute())
         .ok_or_else(|| "selected Yo configuration path has no absolute parent".to_owned())?;
-    SecretStore::open(root, config_parent.join("secret-recovery.key"))
+    SecretStore::open(root, configuration_recovery_key(config_parent))
         .map_err(|error| error.to_string())
 }
 

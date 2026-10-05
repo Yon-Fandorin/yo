@@ -17,7 +17,11 @@ use super::{
     PreparedNativeFork, StartupBackend,
     tokenizer::{TokenizerRegistry, require_supported_tokenizer},
 };
-use crate::{AppError, execution::tools as local_tools, state::config::Config};
+use crate::{
+    AppError,
+    execution::tools as local_tools,
+    state::{config::Config, storage},
+};
 
 pub(super) fn start_native(
     config: &Config,
@@ -111,7 +115,11 @@ fn create_native(
             ));
         },
     };
-    let commands = if *registry_revision == local_tools::LocalToolRegistryRevision::CommandTools {
+    let commands = if matches!(
+        *registry_revision,
+        local_tools::LocalToolRegistryRevision::CommandTools
+            | local_tools::LocalToolRegistryRevision::CommandToolsV2
+    ) {
         if entry
             .explicit_profile()
             .is_some_and(|profile| profile.tool_capability_policy().as_str() == "no-tools/v1")
@@ -121,7 +129,8 @@ fn create_native(
             ));
         }
         Some(
-            local_tools::PreparedCommandTools::prepare(
+            local_tools::PreparedCommandTools::prepare_revision(
+                *registry_revision,
                 config.command_tools(),
                 workspace,
                 &credential_path,
@@ -153,9 +162,11 @@ fn create_native(
     };
     let semantic_admission =
         local_tools::LocalSemanticAdmission::new(credentials.credentials().clone());
+    let confinement = command_confinement(config, workspace, *registry_revision)?;
     let tool_host = local_tools::LocalToolHost::new(workspace, &credential_path)
         .map_err(|error| AppError::single("starting local workspace tools", error))?
-        .with_commands(commands);
+        .with_commands(commands)
+        .with_confinement(confinement);
     let mut services = NativeModelBackendServices::new(
         Box::new(super::NativeBindingAdmission),
         Some(Box::new(semantic_admission)),
@@ -183,6 +194,37 @@ fn create_native(
     backend
         .map(|backend| (backend, digest))
         .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))
+}
+
+fn command_confinement(
+    config: &Config,
+    workspace: &Path,
+    revision: local_tools::LocalToolRegistryRevision,
+) -> Result<Option<local_tools::CommandConfinement>, AppError> {
+    if !matches!(
+        revision,
+        local_tools::LocalToolRegistryRevision::BasicFilesV2
+            | local_tools::LocalToolRegistryRevision::CommandToolsV2
+    ) {
+        return Ok(None);
+    }
+    let roots = storage::command_secret_roots()
+        .map_err(|error| AppError::single("resolving command secret exclusions", error))?;
+    let mut confinement = local_tools::CommandConfinement::from_environment(workspace, roots)
+        .and_then(|policy| policy.with_protected_file(&config.credential_path()))
+        .and_then(|policy| {
+            policy.with_protected_file(&storage::configuration_recovery_key(
+                &config.state_directory(),
+            ))
+        })
+        .map_err(|error| AppError::single("preparing command confinement", error))?;
+    // config 자체는 숨기되, 같은 디렉터리의 일반 workspace 데이터까지 비밀로 분류하지 않는다.
+    if let Some(path) = config.source_path() {
+        confinement = confinement
+            .with_protected_file(path)
+            .map_err(|error| AppError::single("preparing command confinement", error))?;
+    }
+    Ok(Some(confinement))
 }
 
 fn native_backend_config(
@@ -285,7 +327,7 @@ pub(super) fn open_credentials(path: &Path) -> Result<CredentialSnapshot, AppErr
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs, process, time};
+    use std::{env, fs, path::PathBuf, process, time};
 
     use super::*;
     use crate::state::config;
@@ -500,9 +542,10 @@ mod tests {
         let revision = selection.registry_revision().unwrap();
         assert_eq!(
             revision,
-            local_tools::LocalToolRegistryRevision::CommandTools
+            local_tools::LocalToolRegistryRevision::CommandToolsV2
         );
-        let prepared = local_tools::PreparedCommandTools::prepare(
+        let prepared = local_tools::PreparedCommandTools::prepare_revision(
+            revision,
             config.command_tools(),
             &root,
             &config.credential_path(),
@@ -550,6 +593,169 @@ mod tests {
             error.to_string(),
             "native backend startup requires a native model selection"
         );
+    }
+
+    // 상대 설정 경로는 cwd의 credential 의미를 유지하며 v2 native 조립을 막지 않는다.
+    #[test]
+    fn relative_config_paths_allow_workspace_v2_native_startup() {
+        let directory = env::temp_dir().join(format!(
+            "yo-native-relative-{}-{}",
+            process::id(),
+            time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let relative_config = PathBuf::from(format!(
+            ".local-exclude/yo-native-relative-{}-{}/config.yaml",
+            process::id(),
+            time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut config = config::load_from(&relative_config).unwrap();
+        config.replace_model_catalog(
+            yo_core::ModelCatalog::new(vec![explicit_entry("local-tools/v1")]).unwrap(),
+        );
+        let complete = fixture_complete();
+        let repository =
+            LocalCredentialRepository::new(directory.join("credentials.yaml")).unwrap();
+        let mutation = repository
+            .prepare_set(
+                complete.binding().provider_id(),
+                complete.binding().account_id(),
+            )
+            .unwrap();
+        repository
+            .commit(
+                &mutation,
+                Some(&ApiCredential::new("fixture-only").unwrap()),
+            )
+            .unwrap();
+        let credentials = repository.capture().unwrap();
+        let selection = StartupBackend::Native {
+            provider: complete.binding().provider_id().clone(),
+            account: complete.binding().account_id().clone(),
+            model: complete.binding().model_id().clone(),
+            replace_binding: false,
+            registry_revision: local_tools::LocalToolRegistryRevision::BasicFilesV2,
+            execution_manifest_digest: None,
+        };
+        assert!(!config.credential_path().is_absolute());
+        let (mut backend, digest) =
+            start_native(&config, &credentials, &selection, &directory, &mut || false).unwrap();
+        assert!(digest.is_none());
+        backend.shutdown().unwrap();
+        assert!(!config.credential_path().exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    // 실제 native 조립 policy를 host가 소비하며 같은 workspace의 config·비밀 파일만 숨긴다.
+    #[test]
+    #[ignore = "실제 Linux native config-root 겹침 qualification"]
+    fn linux_qualification_workspace_config_keeps_commands_automatic_and_files_hidden() {
+        use std::{
+            num::NonZeroU64,
+            thread,
+            time::{Duration, Instant},
+        };
+
+        use yo_core::{
+            SessionId, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
+            ToolExecutionPreparation, ToolExecutionRequest, TurnId, TurnRef,
+        };
+
+        let relative = PathBuf::from(format!(
+            ".local-exclude/yo-native-config-root-{}-{}",
+            process::id(),
+            time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        fs::create_dir_all(&relative).unwrap();
+        let workspace = relative.canonicalize().unwrap();
+        let config_path = relative.join("config.yaml");
+        fs::write(&config_path, "{}\n").unwrap();
+        let config = config::load_from(&config_path).unwrap();
+        let credential = config.credential_path();
+        let recovery_key = storage::configuration_recovery_key(&config.state_directory());
+        fs::write(&credential, "synthetic credential\n").unwrap();
+        fs::write(&recovery_key, "synthetic recovery key\n").unwrap();
+        let revision = local_tools::LocalToolRegistryRevision::BasicFilesV2;
+        let confinement = command_confinement(&config, &workspace, revision).unwrap();
+        let mut host = local_tools::LocalToolHost::new(&workspace, &credential)
+            .unwrap()
+            .with_confinement(confinement);
+        let registry = local_tools::registry(revision).unwrap().freeze();
+        let turn = TurnRef::new(
+            SessionId::new().unwrap(),
+            TurnId::new(NonZeroU64::new(1).unwrap()),
+        );
+        for (command, expected) in [
+            (
+                "test ! -s config.yaml && test ! -s credentials.yaml && test ! -s secret-recovery.key && printf workspace > ordinary-output",
+                ToolExecutionOutcome::Completed,
+            ),
+            ("printf changed > config.yaml", ToolExecutionOutcome::Failed),
+            (
+                "printf changed > credentials.yaml",
+                ToolExecutionOutcome::Failed,
+            ),
+            (
+                "printf changed > secret-recovery.key",
+                ToolExecutionOutcome::Failed,
+            ),
+        ] {
+            let request = ToolExecutionRequest {
+                turn,
+                call: registry
+                    .validate_call(
+                        "config-root-call",
+                        "run_command",
+                        &serde_json::json!({"command":command}).to_string(),
+                        4096,
+                    )
+                    .unwrap(),
+                maximum_output_bytes: 4096,
+                maximum_retained_output_bytes: None,
+                absolute_execution_timeout: Some(Duration::from_secs(5)),
+            };
+            let ToolExecutionPreparation::Automatic(plan) = host.prepare(&request) else {
+                panic!("selected config parent must not protect the entire workspace")
+            };
+            let mut execution = host.start_prepared(request, plan).unwrap();
+            let started = Instant::now();
+            while execution.poll().unwrap() != ToolExecutionPoll::Ready {
+                if started.elapsed() >= Duration::from_secs(10) {
+                    execution.cancel();
+                    let _ = execution.shutdown();
+                    panic!("config-root fixture exceeded its bounded deadline")
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            let result = execution.take_result().unwrap();
+            execution.shutdown().unwrap();
+            assert_eq!(result.outcome(), expected, "{command}: {}", result.output());
+        }
+        host.shutdown().unwrap();
+        assert_eq!(
+            fs::read_to_string(workspace.join("ordinary-output")).unwrap(),
+            "workspace"
+        );
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), "{}\n");
+        assert_eq!(
+            fs::read_to_string(&credential).unwrap(),
+            "synthetic credential\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&recovery_key).unwrap(),
+            "synthetic recovery key\n"
+        );
+        fs::remove_dir_all(workspace).unwrap();
     }
 
     // 실제 native startup에서 credential이 없으면 remote connector를 만들기 전에 원래

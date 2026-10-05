@@ -255,8 +255,8 @@ pub(super) fn poll_event(backend: &mut NativeModelBackend) -> Result<BackendPoll
                     activity,
                     ActivityKind::ToolResult,
                     json!({
-                        "call_id": call.call_id(),
-                        "tool_id": call.definition().id().as_str(),
+                        "call_id": call.call.call_id(),
+                        "tool_id": call.call.definition().id().as_str(),
                         "execution_host": backend.tool_host.identity(),
                         "attempt": 1,
                     })

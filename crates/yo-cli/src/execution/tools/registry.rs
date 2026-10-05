@@ -8,15 +8,19 @@ use yo_core::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalToolRegistryRevision {
     BasicFiles,
+    BasicFilesV2,
     LegacyReadFile,
     NoTools,
     CommandTools,
+    CommandToolsV2,
 }
 
 impl LocalToolRegistryRevision {
     pub(crate) const fn maximum_argument_bytes(self) -> usize {
         match self {
-            Self::BasicFiles | Self::CommandTools => 101 * 1024 * 1024,
+            Self::BasicFiles | Self::BasicFilesV2 | Self::CommandTools | Self::CommandToolsV2 => {
+                101 * 1024 * 1024
+            },
             Self::LegacyReadFile | Self::NoTools => 4 * 1024 * 1024,
         }
     }
@@ -27,11 +31,14 @@ pub(crate) fn registry(
 ) -> Result<ToolRegistry, ToolExecutionError> {
     match revision {
         LocalToolRegistryRevision::BasicFiles => basic_registry(),
+        LocalToolRegistryRevision::BasicFilesV2 => {
+            basic_registry_with_command(run_command_definition_v2()?)
+        },
         LocalToolRegistryRevision::LegacyReadFile => legacy_registry(),
         LocalToolRegistryRevision::NoTools => Ok(ToolRegistry::default()),
-        LocalToolRegistryRevision::CommandTools => Err(ToolExecutionError::new(
-            "command tools require a frozen execution manifest",
-        )),
+        LocalToolRegistryRevision::CommandTools | LocalToolRegistryRevision::CommandToolsV2 => Err(
+            ToolExecutionError::new("command tools require a frozen execution manifest"),
+        ),
     }
 }
 
@@ -42,6 +49,7 @@ pub(crate) fn revision_for_replay_contract(
         .ok_or_else(|| ToolExecutionError::new("saved Session has no model replay contract"))?
         .tools();
     for revision in [
+        LocalToolRegistryRevision::BasicFilesV2,
         LocalToolRegistryRevision::BasicFiles,
         LocalToolRegistryRevision::LegacyReadFile,
         LocalToolRegistryRevision::NoTools,
@@ -50,7 +58,10 @@ pub(crate) fn revision_for_replay_contract(
         if matches_saved_replay_tools(
             tools,
             &trusted,
-            revision == LocalToolRegistryRevision::BasicFiles,
+            matches!(
+                revision,
+                LocalToolRegistryRevision::BasicFiles | LocalToolRegistryRevision::BasicFilesV2
+            ),
         ) {
             return Ok(revision);
         }
@@ -88,6 +99,12 @@ pub(crate) fn matches_saved_replay_tools(
 }
 
 fn basic_registry() -> Result<ToolRegistry, ToolExecutionError> {
+    basic_registry_with_command(run_command_definition()?)
+}
+
+fn basic_registry_with_command(
+    command: ToolDefinition,
+) -> Result<ToolRegistry, ToolExecutionError> {
     ToolRegistry::new([
         definition(
             "list-files",
@@ -121,7 +138,7 @@ fn basic_registry() -> Result<ToolRegistry, ToolExecutionError> {
             ToolEffect::WorkspaceWrite,
             ToolApprovalRequirement::Automatic,
         )?,
-        run_command_definition()?,
+        command,
     ])
     .map_err(|error| ToolExecutionError::new(error.to_string()))
 }
@@ -150,10 +167,27 @@ fn legacy_registry() -> Result<ToolRegistry, ToolExecutionError> {
 }
 
 fn run_command_definition() -> Result<ToolDefinition, ToolExecutionError> {
+    command_definition(
+        "Run one shell command in the current workspace after explicit user approval.",
+        ToolApprovalRequirement::Required,
+    )
+}
+
+fn run_command_definition_v2() -> Result<ToolDefinition, ToolExecutionError> {
+    command_definition(
+        "Run one shell command in the current workspace. Commands needing broader access or risky changes require approval.",
+        ToolApprovalRequirement::Planned,
+    )
+}
+
+fn command_definition(
+    description: &str,
+    approval: ToolApprovalRequirement,
+) -> Result<ToolDefinition, ToolExecutionError> {
     definition(
         "run-command",
         "run_command",
-        "Run one shell command in the current workspace after explicit user approval.",
+        description,
         json!({
             "type": "object",
             "properties": {
@@ -166,7 +200,7 @@ fn run_command_definition() -> Result<ToolDefinition, ToolExecutionError> {
             "additionalProperties": false
         }),
         ToolEffect::Process,
-        ToolApprovalRequirement::Required,
+        approval,
     )
 }
 
@@ -347,6 +381,43 @@ mod tests {
             let contract = ModelReplayContract::new("system", frozen.replay_tools());
             assert_eq!(
                 revision_for_replay_contract(Some(&contract)).unwrap(),
+                revision
+            );
+        }
+    }
+
+    // 새 v2만 Planned를 선택하며 나머지 네 정의와 기록된 v1 projection은 정확히 보존한다.
+    #[test]
+    fn v2_registry_changes_only_the_explicit_command_definition() {
+        let v1 = registry(LocalToolRegistryRevision::BasicFiles)
+            .unwrap()
+            .freeze();
+        let v2 = registry(LocalToolRegistryRevision::BasicFilesV2)
+            .unwrap()
+            .freeze();
+        assert_eq!(&v1.definitions()[..4], &v2.definitions()[..4]);
+        assert_eq!(
+            v1.definitions()[4].approval(),
+            ToolApprovalRequirement::Required
+        );
+        assert_eq!(
+            v2.definitions()[4].approval(),
+            ToolApprovalRequirement::Planned
+        );
+        assert_eq!(
+            v1.definitions()[4].input_schema(),
+            v2.definitions()[4].input_schema()
+        );
+        for (frozen, revision) in [
+            (v1, LocalToolRegistryRevision::BasicFiles),
+            (v2, LocalToolRegistryRevision::BasicFilesV2),
+        ] {
+            assert_eq!(
+                revision_for_replay_contract(Some(&ModelReplayContract::new(
+                    "system",
+                    frozen.replay_tools()
+                )))
+                .unwrap(),
                 revision
             );
         }

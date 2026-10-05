@@ -109,3 +109,20 @@ fn read_only_storage_open_does_not_create_missing_paths() {
     assert!(!state_root.exists());
     assert!(!repository_root.exists());
 }
+
+// 상대 Session override도 저장소가 여는 실제 cwd 기준 위치로 비밀 제외 범위에 전달한다.
+#[test]
+fn command_exclusions_capture_nondefault_relative_session_repository() {
+    let state = PathBuf::from("/fixture/state/yo");
+    let cwd = Path::new("/fixture/workspace");
+    let relative = super::repository_root_from(Some("private/sessions".into()), &state).unwrap();
+    assert_eq!(
+        super::command_secret_roots_from(state.clone(), relative, cwd),
+        vec![state.clone(), cwd.join("private/sessions")]
+    );
+    let absolute = super::repository_root_from(Some("/separate/sessions".into()), &state).unwrap();
+    assert_eq!(
+        super::command_secret_roots_from(state.clone(), absolute, cwd),
+        vec![state, PathBuf::from("/separate/sessions")]
+    );
+}

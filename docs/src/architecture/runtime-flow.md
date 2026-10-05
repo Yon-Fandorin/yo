@@ -204,6 +204,38 @@ single spawn. Execution retains the configured path semantics: an uncoordinated 
 that replaces an executable or script after final verification remains outside the
 atomic-identity guarantee and may change what the operating system opens at spawn.
 
+New native Sessions select `basic-files/v2` or `command-tools/v2` explicitly;
+recorded v1 projections, manifest bytes and execution semantics remain unchanged.
+The managed backend prepares each v2 process call once, before presenting approval,
+and moves that same opaque plan into execution. The CLI owns the risk classifier,
+resolved roots, safe environment and Linux adapter; Core carries the plan and binds
+its digest to the existing call approval. Output, retention and time limits are
+also frozen: changing them at consumption rejects execution.
+
+The Linux baseline uses Bubblewrap user, mount, PID, IPC and private network
+namespaces. Workspace writes and ordinary in-workspace Git changes are automatic;
+resolved external Git metadata is read-only until its exact roots are approved.
+The selected configuration file, exact credential and recovery-key files, active
+Session roots and agent endpoints are hidden. Relative paths use their startup
+resolution, and configuration in the workspace leaves ordinary workspace files
+writable. Only stdio is inherited. Private home/temp storage is writable; admitted toolchains and
+dependency caches are read-only. Git author/committer name and email may be captured
+as explicit environment values without exposing global configuration or helpers.
+The boundary protects named paths, not every pre-existing hard-link alias. It
+applies to command children, not the other file tools or the whole agent.
+
+The versioned classifier reads direct simple commands separated by shell operators,
+quotes/escapes, literal assignments and Git global options. Its minimum deletion
+and destructive-Git table lives in the accepted Tool contract. Recognized Git option
+values are consumed before flag classification, effective boolean flags follow
+argument order, and uncertain expanded option values require approval. It does not interpret
+nested programs or arbitrary scripts; unknown programs stay automatic inside the
+same OS boundary. Recognized network requests currently return
+`command_platform_unqualified`: sharing the host network would expose abstract
+host IPC. macOS is likewise unavailable until its real platform fixtures qualify.
+Cancellation and deadlines during setup retain the interrupted outcome and their
+distinct diagnostics. No failure retries with broader roots or an unrestricted runner.
+
 The file host validates concrete item, numeric, path, and content bounds in the
 semantic-admission path before an execution attempt and repeats defensive
 parsing before opening a path. `read_files` captures each regular UTF-8 file

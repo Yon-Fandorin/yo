@@ -184,6 +184,35 @@ Child waiter는 이 최종 검증 전에 초기화되므로 검증과 command �
 설정된 path semantics를 유지한다. 최종 검증 뒤 executable이나 script를 교체하는 조율되지
 않은 publisher는 atomic identity 보장 밖이며 운영체제가 spawn 때 여는 대상을 바꿀 수 있다.
 
+새 native Session은 `basic-files/v2` 또는 `command-tools/v2`를 명시적으로 선택한다.
+기록된 v1 projection·manifest bytes·실행 의미는 그대로 유지한다. Managed backend는
+각 v2 process 호출을 승인 표시 전에 한 번 준비하고 같은 opaque plan을 실행으로 넘긴다.
+CLI가 위험 분류·resolved root·safe environment·Linux adapter를 소유하고, Core는 plan을
+전달하며 기존 호출 승인에 digest를 결합한다. 출력·보관·시간 제한도 고정하므로 소비 시
+제한을 바꾼 요청은 실행하지 않는다.
+
+Linux baseline은 Bubblewrap user·mount·PID·IPC·private network namespace를 쓴다.
+Workspace 쓰기와 내부 Git metadata의 일반 변경은 자동이고, 외부 Git metadata는 정확한
+root 승인을 받기 전까지 읽기 전용이다. 선택한 configuration 파일, 정확한 credential·
+recovery-key 파일, active Session root와 agent endpoint를 숨긴다. 상대 경로는 startup에서
+해석한 위치를 따르며 workspace 안에 configuration이 있어도 일반 workspace 파일은
+쓰기 가능하다. 상속 descriptor는 stdio뿐이다. Private home/temp는 쓰기 가능하고 명시적으로 허용한
+도구 체인·의존성 cache는 읽기 전용이다. Git 작성자·committer 이름과 이메일만 명시적
+환경 값으로 고정할 수 있으며 global config나 helper를 공개하지 않는다. 이 경계는 명명된
+경로를 보호하며 모든 사전 hard-link alias를 차단하지는 않는다. Command child에만
+적용되고 다른 file tool이나 agent 전체의 보호를 주장하지 않는다.
+
+Versioned classifier는 shell 연산자로 나눈 직접 simple command, quoting/escaping,
+literal assignment와 Git global option을 읽는다. 최소 삭제·파괴적 Git 표는 승인된 Tool
+계약이 소유한다. 인식한 Git option 값은 flag 분류 전에 소비하고 boolean flag는 인자
+순서의 최종 설정을 따른다. 확장 때문에 option 값을 확정할 수 없으면 승인을 요구한다.
+중첩 프로그램이나 임의 script 내부를 해석하지 않으며 낯선 프로그램도
+같은 OS 경계 안에서 자동 실행한다. Network 요청은 현재 `command_platform_unqualified`를
+반환한다. Host network를 공유하면 abstract host IPC까지 노출되기 때문이다. macOS도 실제
+플랫폼 fixture로 검증되기 전에는 사용할 수 없다. Setup 중 취소와 기한 초과는 interrupted
+결과와 구별되는 진단을 유지한다. 실패 뒤 더 넓은 root나 unrestricted
+runner로 재시도하지 않는다.
+
 File host는 execution attempt 전에 semantic-admission 경로에서 구체적인 item·number·path·
 content bound를 검증하고 path를 열기 전에 방어적으로 다시 parse한다. `read_files`는 유지한
 workspace directory descriptor 아래의 일반 UTF-8 file을 각각 독립적으로 capture하고,
