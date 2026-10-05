@@ -221,8 +221,8 @@ argument semantic admission and the first Turn ended Failed. The rejected
 arguments were not retained, so this observation does not establish their exact
 path or rejection cause. A new message in the same Session requested a summary
 without tools. That second Turn completed without more execution, but the model
-reported no earlier source or test-result context. The current accepted
-completed-only replay boundary explains this distinction: a completed command
+reported no earlier source or test-result context. The completed-only replay boundary accepted for that candidate explains this
+distinction: a completed command
 does not make its failed enclosing Turn resumable. This is not a successful
 end-to-end coding-task result or evidence that the context was preserved.
 
@@ -254,6 +254,35 @@ authentication were removed, observed CLI/Cargo/test processes were absent and
 normal settings, credentials, user windows and active selections stayed unchanged.
 This verifies the quiet foreground-command journey; it does not fix or revalidate
 the failed-Turn context boundary described above.
+
+## Paid failed-Turn context recovery on Linux
+
+On 2026-10-06, accepted `489b506a` passed one bounded genuine service/Core/disk
+journey using the stored `qwencloud:default:qwen3.8-max` Token Plan Responses
+binding. The harness linked unchanged CLI config, tokenizer, semantic admission,
+confinement and tool owners; it did not run the normal CLI/TUI. Its binary
+SHA-256 was `71b261c5cbaf1893599a530b7bfa325228b2b02c6d8739466e79afb43126a925`.
+
+Within one Turn, a sole automatic confined `cat instructions.txt` completed and
+revealed an unpredictable public nonce and target filename. A separate model
+response requested `read_files` with that filename and limit 401. Actual local
+argument admission rejected it before tool preparation or execution. The Turn
+remained Failed, with its earlier closed context durably preserved.
+
+After actual disk cold recovery at the same binding epoch, a new explicit user
+input requested the nonce without supplying it. The next connector input exactly
+matched the earlier closed input plus that user message; the failed call and
+partial response were absent. The genuine model returned the nonce exactly,
+without tools or reexecution, and completed the new Turn. The command plan was
+prepared and consumed once. Three connector starts were observed; with retries
+disabled and at most one same-origin redirect per start, the proven HTTP-attempt
+upper bound was six within the global bound of eight. HTTP attempts were not
+directly counted. The owned synthetic workspace and disk state were removed.
+
+This establishes the eligible pre-dispatch failure path, not arbitrary failures,
+secret/private replay, detached jobs, normal CLI/TUI usability or Mac behavior.
+The implementation's eight clean checks and independent corrective review are
+separate evidence; no physical Mac test was performed on this candidate.
 
 ## Large-body paging on the saved Mac
 
