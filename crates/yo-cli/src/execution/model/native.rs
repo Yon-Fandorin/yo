@@ -172,11 +172,7 @@ fn create_native(
                 .map_err(|error| error.to_string())
         });
     }
-    let backend_config = NativeModelBackendConfig {
-        maximum_tool_argument_bytes: registry_revision.maximum_argument_bytes(),
-        execution_manifest_digest: digest.clone(),
-        ..NativeModelBackendConfig::default()
-    };
+    let backend_config = native_backend_config(*registry_revision, digest.clone(), &registry);
     if cancelled() {
         return Err(AppError::message("native backend preparation cancelled"));
     }
@@ -187,6 +183,19 @@ fn create_native(
     backend
         .map(|backend| (backend, digest))
         .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))
+}
+
+fn native_backend_config(
+    revision: local_tools::LocalToolRegistryRevision,
+    execution_manifest_digest: Option<String>,
+    registry: &yo_core::FrozenToolRegistry,
+) -> NativeModelBackendConfig {
+    NativeModelBackendConfig {
+        maximum_tool_argument_bytes: revision.maximum_argument_bytes(),
+        execution_manifest_digest,
+        ask_user_enabled: !registry.is_empty(),
+        ..NativeModelBackendConfig::default()
+    }
 }
 
 fn native_connector(
@@ -421,6 +430,98 @@ mod tests {
             .unwrap()
             .is_empty()
         );
+    }
+
+    // startup이 선택한 실제 registry가 backend config로 넘어갈 때만 질문을 켭니다.
+    // 명시적 no-tools와 durable no-tools는 모두 빈 registry를 유지합니다.
+    #[test]
+    fn new_session_question_registry_config_uses_the_resolved_runtime_registry() {
+        for (policy, no_tools, expected) in [
+            ("local-tools/v1", false, true),
+            ("local-tools/v1", true, false),
+            ("no-tools/v1", false, false),
+        ] {
+            let entry = explicit_entry(policy);
+            let mut config = Config::default();
+            config.replace_model_catalog(yo_core::ModelCatalog::new(vec![entry.clone()]).unwrap());
+            let selection =
+                super::super::startup::resolve(&config, None, Some("model"), no_tools, false, None)
+                    .unwrap();
+            let revision = selection.registry_revision().unwrap();
+            let registry = runtime_registry(&entry, revision).unwrap();
+            let backend_config = native_backend_config(revision, None, &registry);
+            assert_eq!(backend_config.ask_user_enabled, expected);
+            assert_eq!(
+                backend_config.maximum_tool_argument_bytes,
+                revision.maximum_argument_bytes()
+            );
+        }
+        let empty = runtime_registry(
+            &explicit_entry("local-tools/v1"),
+            local_tools::LocalToolRegistryRevision::NoTools,
+        )
+        .unwrap();
+        assert!(
+            !native_backend_config(
+                local_tools::LocalToolRegistryRevision::BasicFiles,
+                None,
+                &empty,
+            )
+            .ask_user_enabled
+        );
+    }
+
+    // configured 도구도 준비된 registry를 그대로 handoff하며 질문 활성화는
+    // manifest digest나 로컬 실행 도구의 개수와 내용을 바꾸지 않습니다.
+    #[test]
+    fn new_session_question_registry_config_includes_prepared_command_tools() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = env::temp_dir().canonicalize().unwrap().join(format!(
+            "yo-native-question-command-{}",
+            yo_core::SessionId::new().unwrap(),
+        ));
+        fs::create_dir(&root).unwrap();
+        let executable = root.join("fixture");
+        fs::write(&executable, b"fixture executable bytes\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.join("config.yaml");
+        fs::write(&path, serde_json::json!({"tools":{"commands":[{
+            "id":"configured", "name":"configured", "description":"Run an explicit command.",
+            "executable":executable, "parameters":{"type":"object","properties":{},"additionalProperties":false}
+        }]}}).to_string()).unwrap();
+        let mut config = config::load_from(&path).unwrap();
+        config.replace_model_catalog(
+            yo_core::ModelCatalog::new(vec![explicit_entry("local-tools/v1")]).unwrap(),
+        );
+        let selection =
+            super::super::startup::resolve(&config, None, Some("model"), false, false, None)
+                .unwrap();
+        let revision = selection.registry_revision().unwrap();
+        assert_eq!(
+            revision,
+            local_tools::LocalToolRegistryRevision::CommandTools
+        );
+        let prepared = local_tools::PreparedCommandTools::prepare(
+            config.command_tools(),
+            &root,
+            &config.credential_path(),
+            &mut || false,
+        )
+        .unwrap()
+        .unwrap();
+        let backend_config = native_backend_config(
+            revision,
+            Some(prepared.digest().to_owned()),
+            prepared.registry(),
+        );
+        assert!(backend_config.ask_user_enabled);
+        assert_eq!(
+            backend_config.execution_manifest_digest.as_deref(),
+            Some(prepared.digest())
+        );
+        assert_eq!(prepared.registry().definitions().len(), 6);
+        fs::remove_dir_all(root).unwrap();
     }
 
     // native startup은 Codex 선택을 catalog 해석이나 credential 조회로 보내지 않고,

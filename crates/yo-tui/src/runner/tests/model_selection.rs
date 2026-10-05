@@ -723,6 +723,7 @@ fn pending_activity_keeps_model_selection_local_and_the_next_reply_correlated() 
                     plain_text: "Continue".into(),
                     choices: Vec::new(),
                     allow_notes: false,
+                    allow_unanswered: false,
                     is_secret: false,
                     storage_offer: None,
                     previous_question: false,

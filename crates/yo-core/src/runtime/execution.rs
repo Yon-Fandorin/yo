@@ -48,6 +48,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         mut command: AgentCommand,
         submission_id: Option<SubmissionId>,
     ) -> Result<Vec<AgentEvent>, RuntimeError> {
+        self.ensure_response_commit_healthy()?;
         if self.secret_input_terminal && !matches!(command, AgentCommand::InterruptTurn { .. }) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
                 BackendFailureKind::Session,
@@ -228,6 +229,23 @@ impl<B: AgentBackend> AgentRuntime<B> {
                         "secret input delivery failed with an unknown outcome",
                     )));
                 }
+                if matches!(
+                    command,
+                    AgentCommand::RespondToActivity {
+                        response: ActivityResponse::UserInput(_)
+                            | ActivityResponse::QuestionAnswer { .. }
+                            | ActivityResponse::QuestionUnanswered,
+                        ..
+                    }
+                ) && matches!(
+                    kind,
+                    BackendFailureKind::InputOverBudget | BackendFailureKind::ContextExhausted
+                ) {
+                    return Err(RuntimeError::InputRejected(SubmissionRejection::new(
+                        SubmissionRejectionKind::OverBudget,
+                        failure.message(),
+                    )));
+                }
                 let failure = self.redact_backend_failure(failure);
                 if turn_submission && kind == BackendFailureKind::InputOverBudget {
                     return Err(RuntimeError::InputRejected(SubmissionRejection::new(
@@ -244,6 +262,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 evidence,
                 BackendCommandEvidence::SubmissionPrepared
                     | BackendCommandEvidence::ProtectedInputPrepared
+                    | BackendCommandEvidence::OrdinaryQuestionResponsePrepared
             ) {
                 let _ = self.backend.abort_prepared_command();
             }
@@ -274,6 +293,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                     evidence,
                     BackendCommandEvidence::SubmissionPrepared
                         | BackendCommandEvidence::ProtectedInputPrepared
+                        | BackendCommandEvidence::OrdinaryQuestionResponsePrepared
                 ) {
                     let _ = self.backend.abort_prepared_command();
                 }
@@ -353,6 +373,27 @@ impl<B: AgentBackend> AgentRuntime<B> {
             (None, BackendCommandEvidence::None) => {
                 self.journal.append_committed_command(committed, &events);
             },
+            (None, BackendCommandEvidence::OrdinaryQuestionResponsePrepared) => {
+                if !self
+                    .journal
+                    .append_committed_command_transactionally(committed, &events)
+                {
+                    self.ordinary_response_commit_failed = true;
+                    let _ = self.backend.abort_prepared_command();
+                    return Err(RuntimeError::backend(crate::BackendFailure::new(
+                        BackendFailureKind::Session,
+                        "ordinary question response could not be committed durably",
+                    )));
+                }
+                if self.backend.commit_prepared_command().is_err() {
+                    self.ordinary_response_commit_failed = true;
+                    let _ = self.backend.abort_prepared_command();
+                    return Err(RuntimeError::backend(crate::BackendFailure::new(
+                        BackendFailureKind::Session,
+                        "ordinary question response was committed but backend consumption failed",
+                    )));
+                }
+            },
             (None, BackendCommandEvidence::ProtectedInputPrepared) => {
                 self.secret_input_terminal = true;
                 if !self
@@ -419,6 +460,17 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 matches!(command, AgentCommand::SteerTurn { .. })
                     && submission_id.is_some()
                     && self.binding_epoch.is_some()
+            },
+            BackendCommandEvidence::OrdinaryQuestionResponsePrepared => {
+                matches!(
+                    command,
+                    AgentCommand::RespondToActivity {
+                        response: ActivityResponse::UserInput(_)
+                            | ActivityResponse::QuestionAnswer { .. }
+                            | ActivityResponse::QuestionUnanswered,
+                        ..
+                    }
+                ) && submission_id.is_none()
             },
             BackendCommandEvidence::ProtectedInputPrepared => {
                 matches!(

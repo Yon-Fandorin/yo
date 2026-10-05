@@ -606,6 +606,7 @@ fn question_presentation_profile_preserves_choices_and_exact_bounds() {
     for count in [64, 65] {
         let question = ActivityQuestion {
             allow_notes: false,
+            allow_unanswered: false,
             is_secret: false,
             storage_offer: None,
             previous_question: false,
@@ -623,6 +624,7 @@ fn question_presentation_profile_preserves_choices_and_exact_bounds() {
     }
     let mut question = ActivityQuestion {
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: false,
         storage_offer: None,
         previous_question: false,
@@ -683,6 +685,7 @@ fn secret_question_presentation_is_explicit_closed_and_draft_free() {
         plain_text: "Question 1 of 1\nEnter token".into(),
         choices: Vec::new(),
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: true,
         storage_offer: None,
         previous_question: false,
@@ -718,6 +721,7 @@ fn secret_storage_offer_snapshot_rejects_invalid_policy_and_preserves_legacy_abs
         plain_text: "Enter the credential.".into(),
         choices: Vec::new(),
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: true,
         storage_offer: None,
         previous_question: false,
@@ -811,6 +815,7 @@ fn secret_question_snapshot_is_durable_before_its_payload_free_receipt() {
         plain_text: "Enter the one-time value.".into(),
         choices: Vec::new(),
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: true,
         storage_offer: None,
         previous_question: false,
@@ -1012,6 +1017,7 @@ fn approval_then_interview_responses_remain_durable_through_completion() {
             },
         ],
         allow_notes: true,
+        allow_unanswered: false,
         is_secret: false,
         storage_offer: None,
         previous_question: false,

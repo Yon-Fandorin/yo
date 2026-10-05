@@ -1,27 +1,198 @@
 use std::{env, fs, path::PathBuf, process, time::SystemTime};
 
 use yo_backend_managed::NativeModelBackend;
-use yo_core::{EffectiveModelProfile, ModelProfileParameters, VersionedProfileId};
+use yo_core::{EffectiveModelProfile, ModelProfileParameters, ModelReplayTool, VersionedProfileId};
 
 use super::*;
 use crate::{execution::tools::registry, state::config};
 
-// Resume와 exact fork가 공유하는 durable-target registry 선택 경계에서 두 알려진
-// native 비밀 도구 계약을 로컬 도구로 오인하지 않는다.
+// Resume와 exact fork의 실제 admission 경계는 네 가지 승인된 접미부를 고정 및
+// configured registry에 그대로 복원하며 local-only manifest digest를 바꾸지 않습니다.
 #[test]
-fn saved_native_registry_admits_current_and_historical_secret_profiles() {
-    let config = Config::default();
-    let local = registry(LocalToolRegistryRevision::BasicFiles)
+fn saved_question_registry_preserves_all_known_fixed_and_configured_profiles() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = TestDirectory::new("saved-question-registry");
+    let executable = directory.0.join("fixture");
+    fs::write(&executable, b"fixture executable bytes\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let path = directory.0.join("config.yaml");
+    fs::write(&path, serde_json::json!({"tools":{"commands":[{
+        "id":"configured", "name":"configured", "description":"Run an explicit command.",
+        "executable":executable, "parameters":{"type":"object","properties":{},"additionalProperties":false}
+    }]}}).to_string()).unwrap();
+    let config = config::load_from(&path).unwrap();
+    let prepared = PreparedCommandTools::prepare(
+        config.command_tools(),
+        &directory.0.canonicalize().unwrap(),
+        &config.credential_path(),
+        &mut || false,
+    )
+    .unwrap()
+    .unwrap();
+    let basic = registry(LocalToolRegistryRevision::BasicFiles)
         .unwrap()
-        .freeze()
-        .replay_tools();
-    for secret in NativeModelBackend::known_secret_replay_tools() {
-        let mut tools = local.clone();
-        tools.push(secret);
-        let contract = ModelReplayContract::new("system", tools);
+        .freeze();
+    let [current, historical] = NativeModelBackend::known_secret_replay_tools();
+    let question = NativeModelBackend::known_ask_user_replay_tool();
+    for (local, digest, expected) in [
+        (
+            basic.replay_tools(),
+            None,
+            LocalToolRegistryRevision::BasicFiles,
+        ),
+        (
+            prepared.registry().replay_tools(),
+            Some(prepared.digest()),
+            LocalToolRegistryRevision::CommandTools,
+        ),
+    ] {
+        for suffix in [
+            vec![],
+            vec![historical.clone()],
+            vec![current.clone()],
+            vec![question.clone(), current.clone()],
+        ] {
+            let mut tools = local.clone();
+            tools.extend(suffix);
+            let contract = ModelReplayContract::new("system", tools);
+            assert_eq!(
+                saved_native_registry_revision(&config, digest, Some(&contract)).unwrap(),
+                expected
+            );
+        }
+        for suffix in invalid_question_suffixes(&question, &current, &historical) {
+            let mut tools = local.clone();
+            tools.extend(suffix);
+            assert!(
+                saved_native_registry_revision(
+                    &config,
+                    digest,
+                    Some(&ModelReplayContract::new("system", tools)),
+                )
+                .is_err()
+            );
+        }
+        let mut reordered = local.clone();
+        reordered.swap(0, 1);
+        reordered.extend([question.clone(), current.clone()]);
+        assert!(
+            saved_native_registry_revision(
+                &config,
+                digest,
+                Some(&ModelReplayContract::new("system", reordered)),
+            )
+            .is_err()
+        );
+    }
+    assert_eq!(prepared.registry().definitions().len(), 6);
+    assert!(
+        prepared
+            .registry()
+            .definitions()
+            .iter()
+            .all(|tool| { !matches!(tool.wire_name(), "ask_user" | "request_secret_input") })
+    );
+    let repeated = PreparedCommandTools::prepare(
+        config.command_tools(),
+        &directory.0.canonicalize().unwrap(),
+        &config.credential_path(),
+        &mut || false,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(prepared.digest(), repeated.digest());
+}
+
+fn invalid_question_suffixes(
+    question: &ModelReplayTool,
+    current: &ModelReplayTool,
+    historical: &ModelReplayTool,
+) -> Vec<Vec<ModelReplayTool>> {
+    let mut changed_schema = question.parameters().clone();
+    changed_schema["required"] = serde_json::json!(["title"]);
+    vec![
+        vec![question.clone()],
+        vec![question.clone(), historical.clone()],
+        vec![current.clone(), question.clone()],
+        vec![question.clone(), question.clone(), current.clone()],
+        vec![question.clone(), current.clone(), current.clone()],
+        vec![
+            ModelReplayTool::new(
+                "unknown",
+                question.description(),
+                question.schema_version(),
+                question.parameters().clone(),
+            ),
+            current.clone(),
+        ],
+        vec![
+            ModelReplayTool::new(
+                question.name(),
+                "changed",
+                question.schema_version(),
+                question.parameters().clone(),
+            ),
+            current.clone(),
+        ],
+        vec![
+            ModelReplayTool::new(
+                question.name(),
+                question.description(),
+                "yo.tool-schema/v2",
+                question.parameters().clone(),
+            ),
+            current.clone(),
+        ],
+        vec![
+            ModelReplayTool::new(
+                question.name(),
+                question.description(),
+                question.schema_version(),
+                changed_schema,
+            ),
+            current.clone(),
+        ],
+        vec![
+            question.clone(),
+            ModelReplayTool::new(
+                current.name(),
+                "changed",
+                current.schema_version(),
+                current.parameters().clone(),
+            ),
+        ],
+    ]
+}
+
+// 빈 no-tools 및 구형 registry는 원래 projection만 복원하며 신규 질문 접미부를
+// 붙이면 native Session 시작 전에 거절합니다.
+#[test]
+fn saved_question_registry_rejects_interactions_on_empty_or_legacy_profiles() {
+    let config = Config::default();
+    for revision in [
+        LocalToolRegistryRevision::NoTools,
+        LocalToolRegistryRevision::LegacyReadFile,
+    ] {
+        let mut tools = registry(revision).unwrap().freeze().replay_tools();
         assert_eq!(
-            saved_native_registry_revision(&config, None, Some(&contract)).unwrap(),
-            LocalToolRegistryRevision::BasicFiles
+            saved_native_registry_revision(
+                &config,
+                None,
+                Some(&ModelReplayContract::new("system", tools.clone())),
+            )
+            .unwrap(),
+            revision
+        );
+        tools.push(NativeModelBackend::known_ask_user_replay_tool());
+        tools.push(NativeModelBackend::known_secret_replay_tools()[0].clone());
+        assert!(
+            saved_native_registry_revision(
+                &config,
+                None,
+                Some(&ModelReplayContract::new("system", tools)),
+            )
+            .is_err()
         );
     }
 }

@@ -26,7 +26,24 @@ impl TuiState {
                 self.chat
                     .push_notice(format!("Context compaction was not started.\n{detail}"))?;
             },
-            AgentControlOutcome::ActivityResponseRejected { request, .. } => {
+            AgentControlOutcome::ActivityResponseRejected { request, rejection } => {
+                if self
+                    .chat
+                    .question(request.activity())
+                    .is_some_and(|q| q.allow_unanswered && !q.is_secret)
+                {
+                    self.pending_requests
+                        .retain(|pending| pending.activity() != request.activity());
+                    self.pending_requests
+                        .push_front(PendingRequest::UserInput(request));
+                    self.close_request_overlay();
+                    self.chat.push_notice(format!(
+                        "Question response was rejected; answer again. {}",
+                        rejection.message()
+                    ))?;
+                    self.sync_request_overlay()?;
+                    return Ok(StateEffect::Redraw);
+                }
                 // The worker retains this exact outstanding request. Re-open only its
                 // request-bound secret editor and discard the submitted value before the
                 // next frame can accept another event.

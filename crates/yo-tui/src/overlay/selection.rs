@@ -37,12 +37,18 @@ enum SelectionEntryKind {
     Choice,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RequestHints {
+    Existing { approval: bool },
+    Unanswered { close_palette: bool },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PanelSnapshot {
     wrapped_entries: bool,
     title: String,
     title_status: Option<PanelTitleStatus>,
-    request_is_approval: Option<bool>,
+    request_hints: Option<RequestHints>,
     entries: Vec<SelectionEntry>,
     owning_sections: Vec<Option<usize>>,
     filter_bar: Option<FilterBar>,
@@ -272,7 +278,13 @@ impl PanelSnapshot {
     }
 
     pub(crate) fn for_request(mut self, approval: bool) -> Self {
-        self.request_is_approval = Some(approval);
+        self.request_hints = Some(RequestHints::Existing { approval });
+        self
+    }
+
+    /// 무응답 가능한 질문에서 현재 패널의 Esc 의미를 표시합니다.
+    pub(crate) fn for_unanswered_question(mut self, close_palette: bool) -> Self {
+        self.request_hints = Some(RequestHints::Unanswered { close_palette });
         self
     }
 
@@ -295,7 +307,7 @@ impl PanelSnapshot {
             wrapped_entries: false,
             title: title.into(),
             title_status: None,
-            request_is_approval: None,
+            request_hints: None,
             entries,
             owning_sections,
             filter_bar: None,

@@ -331,3 +331,37 @@ fn file_publication_evidence_round_trip_and_closed_bounds() {
         FilePublicationEvidenceState::Complete { .. }
     ));
 }
+
+// 구형 질문의 false capability는 기존 snapshot 바이트를 유지하고 true만 명시적으로
+// 전달합니다. 비밀 질문이나 null/비불리언 값은 typed 질문으로 해석하지 않습니다.
+#[test]
+fn question_unanswered_presentation_is_additive_and_never_valid_for_secrets() {
+    let historical = r#"{"schema":"yo.activity-question/v1","output":{"plain_text":"Question?","choices":[],"allow_notes":false,"previous_question":false}}"#;
+    let mut question = crate::ActivityQuestion::from_snapshot(historical).unwrap();
+    assert!(!question.allow_unanswered);
+    assert_eq!(question.to_snapshot().unwrap(), historical);
+    question.allow_unanswered = true;
+    let current = question.to_snapshot().unwrap();
+    assert_eq!(
+        crate::ActivityQuestion::from_snapshot(&current),
+        Some(question.clone())
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&current).unwrap()["output"]["allow_unanswered"],
+        true
+    );
+    question.is_secret = true;
+    assert!(question.to_snapshot().is_none());
+    let mut secret: serde_json::Value = serde_json::from_str(&current).unwrap();
+    secret["output"]["is_secret"] = true.into();
+    assert!(crate::ActivityQuestion::from_snapshot(&secret.to_string()).is_none());
+    for invalid in [
+        serde_json::Value::Null,
+        serde_json::json!("true"),
+        serde_json::json!(1),
+    ] {
+        let mut wire: serde_json::Value = serde_json::from_str(&current).unwrap();
+        wire["output"]["allow_unanswered"] = invalid;
+        assert!(crate::ActivityQuestion::from_snapshot(&wire.to_string()).is_none());
+    }
+}

@@ -101,6 +101,7 @@ fn secret_questions_use_a_separate_literal_editor_and_correlated_action() {
         plain_text: "Enter the provider token".into(),
         choices: Vec::<QuestionChoice>::new(),
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: true,
         storage_offer: None,
         previous_question: false,
@@ -201,6 +202,7 @@ fn present_secret_offer(state: &mut TuiState, activity_id: u64) -> ActivityReque
         plain_text: "Token\n\nEnter the token".into(),
         choices: Vec::new(),
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: true,
         storage_offer: Some(SecretStorageOffer {
             scope: "service.token".into(),
@@ -300,6 +302,7 @@ fn rejected_secret_response_reopens_empty_editor_for_the_same_request() {
         plain_text: "Enter the provider token".into(),
         choices: Vec::<QuestionChoice>::new(),
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: true,
         storage_offer: None,
         previous_question: false,
@@ -366,6 +369,7 @@ fn secret_previous_question_navigation_discards_value_and_uses_empty_draft() {
         plain_text: "Enter the provider token".into(),
         choices: Vec::<QuestionChoice>::new(),
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: true,
         storage_offer: None,
         previous_question: true,
@@ -449,6 +453,7 @@ fn malformed_secret_presentation_fails_closed_without_ordinary_fallback() {
             description: "must not be accepted as secret".into(),
         }],
         allow_notes: false,
+        allow_unanswered: false,
         is_secret: false,
         storage_offer: None,
         previous_question: false,
@@ -696,6 +701,7 @@ fn present_plain_question(state: &mut TuiState, activity: yo_core::ActivityRef) 
                     plain_text: "Type your answer".into(),
                     choices: Vec::new(),
                     allow_notes: false,
+                    allow_unanswered: false,
                     is_secret: false,
                     storage_offer: None,
                     previous_question: false,
@@ -763,6 +769,7 @@ fn previous_question_preserves_selected_reference_draft() {
                         description: "Layout".into(),
                     }],
                     allow_notes: true,
+                    allow_unanswered: false,
                     is_secret: false,
                     storage_offer: None,
                     previous_question: true,
@@ -1026,6 +1033,7 @@ fn structured_question_choices_require_presentation_and_preserve_request_identit
         .unwrap();
     let profile = ActivityQuestion {
         allow_notes: true,
+        allow_unanswered: false,
         is_secret: false,
         storage_offer: None,
         previous_question: false,
@@ -1105,6 +1113,7 @@ fn question_notes_keep_selection_and_literal_text_after_narrow_reflow() {
         let request = ActivityRequestRef::new(activity(1), request_id);
         let profile = ActivityQuestion {
             allow_notes,
+            allow_unanswered: false,
             is_secret: false,
             storage_offer: None,
             previous_question: false,
@@ -1193,6 +1202,7 @@ fn question_notes_refresh_and_return_to_choices_preserve_draft_without_stale_sel
         let request = ActivityRequestRef::new(activity(1), request_id);
         let mut profile = ActivityQuestion {
             allow_notes: true,
+            allow_unanswered: false,
             is_secret: false,
             storage_offer: None,
             previous_question: false,
@@ -1816,6 +1826,7 @@ fn request_history_roundtrip_restores_only_unchanged_selection() {
                 .unwrap();
             let profile = ActivityQuestion {
                 allow_notes: false,
+                allow_unanswered: false,
                 is_secret: false,
                 storage_offer: None,
                 previous_question: false,
@@ -1925,6 +1936,7 @@ fn previous_question_requires_fresh_profile_and_preserves_draft() {
                 description: "Readable output".into(),
             }],
             allow_notes: true,
+            allow_unanswered: false,
             is_secret: false,
             storage_offer: None,
             previous_question: supported,
@@ -2044,4 +2056,227 @@ fn previous_question_requires_fresh_profile_and_preserves_draft() {
             );
         }
     }
+}
+
+fn unanswered_question(state: &mut TuiState, choices: bool) -> ActivityRequestRef {
+    let request = ActivityRequestRef::new(activity(1), RequestId::new(nonzero(99)));
+    state
+        .observe(AgentEvent::TurnStarted {
+            turn: activity(1).turn(),
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request.activity(),
+            kind: ActivityKind::UserInputRequest {
+                request_id: request.request_id(),
+            },
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: request.activity(),
+            update: ActivityUpdate::TextSnapshot(
+                ActivityQuestion {
+                    plain_text: "Question".into(),
+                    choices: if choices {
+                        vec![QuestionChoice {
+                            label: "First".into(),
+                            description: "One".into(),
+                        }]
+                    } else {
+                        vec![]
+                    },
+                    allow_notes: true,
+                    allow_unanswered: true,
+                    is_secret: false,
+                    storage_offer: None,
+                    previous_question: false,
+                    draft: None,
+                    draft_choice: None,
+                }
+                .to_snapshot()
+                .unwrap(),
+            ),
+        })
+        .unwrap();
+    request
+}
+
+// 보이는 선택 패널은 첫 Esc만 소비하고, 숨겨진 질문과 두 번째 Esc는 같은 request의 unanswered를
+// 보낸다.
+#[test]
+fn question_unanswered_escape_preserves_overlay_first_refusal_and_hidden_routing() {
+    for visible in [false, true] {
+        let mut state = TuiState::new();
+        let request = unanswered_question(&mut state, true);
+        if visible {
+            present_request(&mut state);
+            assert_eq!(
+                state
+                    .handle(key(KeyCode::Escape, KeyModifiers::NONE), Duration::ZERO)
+                    .unwrap(),
+                StateEffect::Redraw
+            );
+            assert!(state.has_pending_request());
+        }
+        assert_eq!(
+            state
+                .handle(key(KeyCode::Escape, KeyModifiers::NONE), Duration::ZERO)
+                .unwrap(),
+            StateEffect::Dispatch(AgentAction::RespondToQuestionUnanswered { request })
+        );
+        assert!(!state.has_pending_request());
+    }
+}
+
+// ordinary question의 slash 및 앞뒤 공백은 명령으로 해석하지 않고 정확한 답변 byte로 제출한다.
+#[test]
+fn question_unanswered_capability_keeps_exact_text_and_ctrl_c_interrupt() {
+    let mut state = TuiState::new();
+    let request = unanswered_question(&mut state, false);
+    state
+        .handle(InputEvent::Paste("  /exit\n한글  ".into()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToUserInput {
+            request,
+            input: "  /exit\n한글  ".into()
+        })
+    );
+    let mut state = TuiState::new();
+    unanswered_question(&mut state, true);
+    present_request(&mut state);
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('c'), KeyModifiers::CONTROL),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::Interrupt)
+    );
+}
+
+// notes의 Esc는 선택과 notes를 버리고 payload 없는 unanswered를 보내며 거절은 일반 질문을 다시
+// 연다.
+#[test]
+fn question_unanswered_notes_and_rejection_keep_question_identity() {
+    let mut state = TuiState::new();
+    let request = unanswered_question(&mut state, true);
+    present_request(&mut state);
+    state
+        .handle(key(KeyCode::Tab, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    present_request(&mut state);
+    state
+        .handle(InputEvent::Paste("notes".into()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Escape, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToQuestionUnanswered { request })
+    );
+    state
+        .observe_control_outcome(AgentControlOutcome::ActivityResponseRejected {
+            request,
+            rejection: SubmissionRejection::new(SubmissionRejectionKind::OverBudget, "Too long"),
+        })
+        .unwrap();
+    assert!(state.has_pending_request());
+    assert!(!state.is_secret_input());
+}
+
+// 작아진 실제 frame이 선택 패널을 숨기면 첫 Esc부터 unanswered로 가고 이후 Enter 선택은 typed
+// ordinal이다.
+#[test]
+fn question_unanswered_geometry_and_typed_choice_keep_exact_request() {
+    let mut state = TuiState::new();
+    let request = unanswered_question(&mut state, true);
+    present_request(&mut state);
+    let frame = state
+        .prepare_frame(Size::new(24, 5), &AppearanceState::default().pin())
+        .unwrap();
+    assert!(!frame.overlay_presented);
+    state.commit_frame(&frame);
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Escape, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToQuestionUnanswered { request })
+    );
+    let mut state = TuiState::new();
+    let request = unanswered_question(&mut state, true);
+    present_request(&mut state);
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToQuestion {
+            request,
+            choice: 1,
+            notes: String::new()
+        })
+    );
+}
+
+// 질문 전에 선택한 구조화 참조는 ordinary 응답에 섞이지 않고 draft와 질문을 그대로 남긴다.
+#[test]
+fn question_unanswered_capability_does_not_admit_selected_references_or_images() {
+    use yo_core::{
+        WorkspaceReference, WorkspaceReferenceCandidate, WorkspaceReferenceKind,
+        WorkspaceReferenceSearchStatus, WorkspaceReferenceSearchUpdate,
+    };
+    let mut state = TuiState::new();
+    state.enable_workspace_references();
+    let StateEffect::WorkspaceSearch(search) = state
+        .handle(InputEvent::Paste("@src".into()), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("workspace search expected");
+    };
+    let reference = WorkspaceReference::new(
+        "file:one",
+        "host:one",
+        "workspace:one",
+        "root:one",
+        "src/main.rs",
+        WorkspaceReferenceKind::File,
+    )
+    .unwrap();
+    state.observe_workspace_reference_update(WorkspaceReferenceSearchUpdate::final_result(
+        &search,
+        WorkspaceReferenceSearchStatus::Complete,
+        vec![WorkspaceReferenceCandidate::new(reference)],
+    ));
+    present_request(&mut state);
+    state
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap();
+    let draft = state.editor().text().to_owned();
+    unanswered_question(&mut state, false);
+    present_request(&mut state);
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(state.editor().text(), draft);
+    assert!(state.has_pending_request());
+    state.enable_image_preparation();
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Character('v'), KeyModifiers::CONTROL),
+                Duration::ZERO
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert!(state.has_pending_request());
 }

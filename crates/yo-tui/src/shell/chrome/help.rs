@@ -28,6 +28,10 @@ pub(in crate::shell) fn paint_request(
     let (primary, secondary) = match request {
         RequestPrompt::Approval => (("Enter", "confirm"), ("Esc", "decline")),
         RequestPrompt::Answer | RequestPrompt::Choice => (("Enter", "answer"), ("Esc", "cancel")),
+        RequestPrompt::AnswerUnanswered | RequestPrompt::ChoiceUnanswered { .. } => {
+            (("Enter", "answer"), ("Esc", "no answer"))
+        },
+        RequestPrompt::NotesUnanswered => (("Enter", "send both"), ("Esc", "no answer")),
         RequestPrompt::Notes => (("Enter", "send both"), ("Esc", "cancel")),
         RequestPrompt::Secret | RequestPrompt::SecretPrevious => {
             (("Enter", "submit"), ("Esc", "cancel"))
@@ -36,18 +40,53 @@ pub(in crate::shell) fn paint_request(
     };
     let extra = match request {
         RequestPrompt::Approval => ("Up/Down", "choose"),
-        RequestPrompt::Answer => (newline.as_str(), "newline"),
-        RequestPrompt::Choice => ("Tab", "add notes"),
-        RequestPrompt::Notes => ("Tab", "choices"),
+        RequestPrompt::Answer | RequestPrompt::AnswerUnanswered => (newline.as_str(), "newline"),
+        RequestPrompt::Choice | RequestPrompt::ChoiceUnanswered { allow_notes: true } => {
+            ("Tab", "add notes")
+        },
+        RequestPrompt::ChoiceUnanswered { allow_notes: false } => (newline.as_str(), "newline"),
+        RequestPrompt::Notes | RequestPrompt::NotesUnanswered => ("Tab", "choices"),
         RequestPrompt::Secret => ("Ctrl-U", "clear"),
         RequestPrompt::SecretPrevious => ("Shift+Tab", "previous"),
         RequestPrompt::Waiting => ("", ""),
     };
+    if request.allows_unanswered() {
+        let interrupt = key_notation(KeyCode::Character('c'), KeyModifiers::CONTROL, false);
+        let interrupt = (interrupt.as_str(), "interrupt");
+        let candidates = [
+            action_spans(
+                &[primary, extra, secondary, interrupt],
+                styles.key_hint,
+                styles.mode,
+            ),
+            action_spans(
+                &[primary, secondary, interrupt],
+                styles.key_hint,
+                styles.mode,
+            ),
+            action_spans(&[secondary, interrupt], styles.key_hint, styles.mode),
+            action_spans(&[primary], styles.key_hint, styles.mode),
+        ];
+        return paint_candidates(view, &candidates, "", styles.mode);
+    }
     let candidates = [
         action_spans(&[primary, extra, secondary], styles.key_hint, styles.mode),
         action_spans(&[primary, secondary], styles.key_hint, styles.mode),
         action_spans(&[primary], styles.key_hint, styles.mode),
     ];
+    paint_candidates(view, &candidates, "", styles.mode)
+}
+
+pub(super) fn paint_unanswered_shortcuts(
+    view: &mut SurfaceView<'_>,
+    styles: ShellChromeStyles,
+) -> Result<(), ShellChromeError> {
+    let interrupt = key_notation(KeyCode::Character('c'), KeyModifiers::CONTROL, false);
+    let candidates = [action_spans(
+        &[("Esc", "no answer"), (interrupt.as_str(), "interrupt")],
+        styles.key_hint,
+        styles.mode,
+    )];
     paint_candidates(view, &candidates, "", styles.mode)
 }
 

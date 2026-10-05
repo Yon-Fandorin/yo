@@ -1025,6 +1025,7 @@ fn local_grok_probe_completes_model_turn_with_discarded_sample() {
                             plain_text: "Sample input test\n\nEnter a made-up sample value only. Never enter a real password, token, or credential. Yo discards this value and sends only a fixed completion status to Grok.\nEsc interrupts the turn.".into(),
                             choices: Vec::new(),
                             allow_notes: false,
+                            allow_unanswered: false,
                             is_secret: true,
                             storage_offer: None,
                             previous_question: false,

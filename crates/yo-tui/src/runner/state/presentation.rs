@@ -256,20 +256,32 @@ impl TuiState {
                     RequestPrompt::SecretPrevious
                 },
                 PendingRequest::SecretInput(_) => RequestPrompt::Secret,
-                PendingRequest::UserInput(_) if self.question_notes.is_some() => {
-                    RequestPrompt::Notes
+                PendingRequest::UserInput(request) => {
+                    let question = self.chat.question(request.activity());
+                    let allow_unanswered = question
+                        .is_some_and(|question| question.allow_unanswered && !question.is_secret);
+                    if self.question_notes.is_some() {
+                        if allow_unanswered {
+                            RequestPrompt::NotesUnanswered
+                        } else {
+                            RequestPrompt::Notes
+                        }
+                    } else if allow_unanswered
+                        && question.is_some_and(|question| !question.choices.is_empty())
+                    {
+                        RequestPrompt::ChoiceUnanswered {
+                            allow_notes: question.is_some_and(|question| question.allow_notes),
+                        }
+                    } else if question.is_some_and(|question| {
+                        question.allow_notes && !question.choices.is_empty()
+                    }) {
+                        RequestPrompt::Choice
+                    } else if allow_unanswered {
+                        RequestPrompt::AnswerUnanswered
+                    } else {
+                        RequestPrompt::Answer
+                    }
                 },
-                PendingRequest::UserInput(request)
-                    if self
-                        .chat
-                        .question(request.activity())
-                        .is_some_and(|question| {
-                            question.allow_notes && !question.choices.is_empty()
-                        }) =>
-                {
-                    RequestPrompt::Choice
-                },
-                PendingRequest::UserInput(_) => RequestPrompt::Answer,
             }),
             backend: self.session_info.backend(),
             usage: self.chat.latest_usage(),

@@ -361,6 +361,7 @@ fn response_name(response: &ActivityResponse) -> &'static str {
         | ActivityResponse::QuestionAnswer { .. }
         | ActivityResponse::PreviousQuestion { .. }
         | ActivityResponse::SecretInput(_)
+        | ActivityResponse::QuestionUnanswered
         | ActivityResponse::SecretInputSubmitted => "user_input",
     }
 }

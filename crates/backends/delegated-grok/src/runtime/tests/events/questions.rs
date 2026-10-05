@@ -597,3 +597,28 @@ fn exposes_single_select_choices_as_a_public_question() {
     );
     assert!(ActivityQuestion::from_snapshot(&profile.to_snapshot().unwrap()).is_some());
 }
+
+// 광고하지 않은 unanswered는 wire 응답 없이 거절하고 기존 질문의 텍스트 응답은 계속 허용한다.
+#[test]
+fn question_unanswered_is_rejected_without_consuming_grok_question() {
+    let (mut backend, sent, _) =
+        start_question_turn([question_request("question-a", one_question())]);
+    let request = expect_question(&mut backend);
+    let before = sent.0.borrow().len();
+    assert!(
+        backend
+            .execute_command(AgentCommand::RespondToActivity {
+                request,
+                response: ActivityResponse::QuestionUnanswered
+            })
+            .is_err()
+    );
+    assert!(backend.inputs.contains_key(&request));
+    assert_eq!(sent.0.borrow().len(), before);
+    backend
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::UserInput(UserInput::new("Postgres")),
+        })
+        .unwrap();
+}

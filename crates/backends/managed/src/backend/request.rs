@@ -276,6 +276,9 @@ impl NativeModelBackend {
             .registry
             .function_tools()
             .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
+        if self.question_enabled {
+            tools.push(super::question::function_tool()?);
+        }
         if self.secret_interaction_enabled {
             tools.push(super::secret::function_tool(
                 !self.historical_secret_interaction,

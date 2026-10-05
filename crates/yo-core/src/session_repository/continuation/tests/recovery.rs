@@ -227,3 +227,80 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
     assert_eq!(recovered.next_turn_id(), 3);
     assert_eq!(recovered.submission_ids().len(), 2);
 }
+
+// 완성되지 않은 일반 질문의 저장된 표시나 unanswered 명령은 이전 Anchor로 되돌아가 재전송하지
+// 않는다.
+#[test]
+fn unfinished_question_unanswered_recovery_cannot_restore_or_repeat_a_live_request() {
+    for answered in [false, true] {
+        let (mut repository, continuation) = durable_resumable_session();
+        let session_id = continuation.descriptor().session_id();
+        let active_turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
+        let activity = ActivityRef::new(active_turn, ActivityId::new(NonZeroU64::new(1).unwrap()));
+        let request_id = crate::RequestId::new(NonZeroU64::new(1).unwrap());
+        let mut journal = SessionJournal::with_repository_and_continuation(
+            Box::new(repository.clone()),
+            &continuation,
+        );
+        journal.initialize_durability();
+        journal.append_accepted_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::new("question"),
+            },
+            SubmissionId::new().unwrap(),
+            &[AgentEvent::TurnStarted { turn: active_turn }],
+            1,
+            continuation.target().context_epoch(),
+            BackendRequestEvidence::new(
+                "codex.app-server/turn-start/v1",
+                BackendIdentity::new("codex.app-server/json-rpc-request/v1", "4"),
+                BackendIdentity::new(
+                    "codex.app-server/accepted-request/v1",
+                    r#"{"jsonRpcId":4,"turnId":"turn-b"}"#,
+                ),
+            ),
+        );
+        journal.append_events(&[
+            AgentEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::UserInputRequest { request_id },
+            },
+            AgentEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(
+                    crate::ActivityQuestion {
+                        plain_text: "Which path?".into(),
+                        choices: vec![],
+                        allow_notes: true,
+                        allow_unanswered: true,
+                        is_secret: false,
+                        storage_offer: None,
+                        previous_question: false,
+                        draft: None,
+                        draft_choice: None,
+                    }
+                    .to_snapshot()
+                    .unwrap(),
+                ),
+            },
+        ]);
+        if answered {
+            assert!(journal.append_committed_command_transactionally(
+                AgentCommand::RespondToActivity {
+                    request: crate::ActivityRequestRef::new(activity, request_id),
+                    response: crate::ActivityResponse::QuestionUnanswered
+                },
+                &[]
+            ));
+        }
+        drop(journal);
+        let error = recover_stored_session_continuation(&mut repository, session_id).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no newest durable Continuation Anchor"),
+            "{error}"
+        );
+    }
+}

@@ -1,18 +1,22 @@
 #[cfg(test)]
 use std::array;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 use super::{activity, runtime_with_active_turn, session, submission, turn};
 #[cfg(test)]
 use crate::journal::{CommittedCommand, SessionJournal};
 use crate::{
-    ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, AgentRuntime, BackendAdapter,
-    BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
-    BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, BackendPoll,
-    BackendRequestEvidence, BackendResumeTarget, BackendScriptStep, BackendStopHandle,
-    ContextCheckpointProposal, ContextPolicyChanged, ContextStrategy, ModelReplayContract,
-    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReplayExecutor, ReplayProfile,
-    RuntimeError, ScriptedBackend, TurnOutcome, UserInput,
+    ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, ActivityUpdate,
+    AgentCommand, AgentRuntime, BackendAdapter, BackendBindingEvidence, BackendCapabilities,
+    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
+    BackendOutcomeEvidence, BackendPoll, BackendRequestEvidence, BackendResumeTarget,
+    BackendScriptStep, BackendStopHandle, ContextCheckpointProposal, ContextPolicyChanged,
+    ContextStrategy, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+    ReplayExecutor, ReplayProfile, RequestId, RuntimeError, ScriptedBackend, TurnOutcome,
+    UserInput,
     journal::SemanticRecord,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
@@ -1360,4 +1364,478 @@ fn durably_records_prepared_steer_and_rejects_completion_on_the_older_request() 
             .all(|entry| !matches!(entry.record(), SemanticRecord::ContinuationAnchor(_)))
     );
     runtime.shutdown().unwrap();
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct QuestionCommitProbe {
+    fail_append: bool,
+    fail_commit: bool,
+    prepared: bool,
+    commands: usize,
+    polls: usize,
+    commits: usize,
+    aborts: usize,
+    shutdowns: usize,
+    trace: Vec<&'static str>,
+}
+
+struct QuestionRepository {
+    inner: RuntimeTestRepository,
+    probe: Arc<Mutex<QuestionCommitProbe>>,
+}
+
+impl SessionRepository for QuestionRepository {
+    fn append(
+        &mut self,
+        session: crate::SessionId,
+        record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        let mut probe = self.probe.lock().unwrap();
+        if probe.prepared {
+            if probe.fail_append {
+                probe.trace.push("append failed");
+                return Err(AppendError::Repository(RepositoryError::Unavailable {
+                    message: "injected question append failure".into(),
+                }));
+            }
+            probe.trace.push("appended");
+        }
+        self.inner.append(session, record)
+    }
+
+    fn read_after(
+        &self,
+        session: crate::SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        self.inner.read_after(session, sequence, limit)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QuestionBoundary {
+    Complete,
+    CapabilityAbsent,
+    Secret,
+    RequestIncomplete,
+    ResponseIncomplete,
+    WrongResponse,
+    MalformedResult,
+    ExtraResultField,
+    AnsweredResult,
+}
+
+struct PreparedQuestionBackend {
+    probe: Arc<Mutex<QuestionCommitProbe>>,
+    events: VecDeque<BackendEvent>,
+    active_turn: Option<crate::TurnRef>,
+    boundary: QuestionBoundary,
+}
+
+impl PreparedQuestionBackend {
+    fn new(probe: Arc<Mutex<QuestionCommitProbe>>) -> Self {
+        Self {
+            probe,
+            events: VecDeque::new(),
+            active_turn: None,
+            boundary: QuestionBoundary::Complete,
+        }
+    }
+}
+
+impl BackendAdapter for PreparedQuestionBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
+    fn stop_handle(&self) -> BackendStopHandle {
+        BackendStopHandle::no_op()
+    }
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::none().with_steer()
+    }
+
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        self.probe.lock().unwrap().commands += 1;
+        match command {
+            AgentCommand::CreateSession { .. } => {
+                self.events.push_back(BackendEvent::ContextPolicyChanged {
+                    policy: ContextPolicyChanged::try_new(
+                        1,
+                        true,
+                        ContextStrategy::PortableSummaryV1Alpha1,
+                        85,
+                        90,
+                        Some(10),
+                        Some(65_536),
+                    )
+                    .unwrap(),
+                });
+                Ok(BackendCommandEvidence::BindingOpened(
+                    exact_replay_binding_evidence(),
+                ))
+            },
+            AgentCommand::StartTurn { turn, .. } => {
+                self.active_turn = Some(turn);
+                let activity = activity(turn, 1);
+                let question = crate::ActivityQuestion {
+                    plain_text: "Question?".into(),
+                    choices: Vec::new(),
+                    allow_notes: false,
+                    allow_unanswered: !matches!(
+                        self.boundary,
+                        QuestionBoundary::CapabilityAbsent | QuestionBoundary::Secret
+                    ),
+                    is_secret: self.boundary == QuestionBoundary::Secret,
+                    storage_offer: None,
+                    previous_question: false,
+                    draft: None,
+                    draft_choice: None,
+                };
+                self.events.extend([
+                    BackendEvent::ActivityStarted {
+                        activity,
+                        kind: ActivityKind::UserInputRequest {
+                            request_id: RequestId::new(super::id(1)),
+                        },
+                    },
+                    BackendEvent::ActivityUpdated {
+                        activity,
+                        update: ActivityUpdate::TextSnapshot(question.to_snapshot().unwrap()),
+                    },
+                ]);
+                Ok(BackendCommandEvidence::RequestAccepted(request_evidence()))
+            },
+            AgentCommand::RespondToActivity {
+                response: ActivityResponse::QuestionUnanswered,
+                ..
+            } => {
+                let mut probe = self.probe.lock().unwrap();
+                probe.prepared = true;
+                probe.trace.push("prepared");
+                Ok(BackendCommandEvidence::OrdinaryQuestionResponsePrepared)
+            },
+            _ => Ok(BackendCommandEvidence::None),
+        }
+    }
+
+    fn commit_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        let mut probe = self.probe.lock().unwrap();
+        assert!(probe.prepared);
+        probe.commits += 1;
+        probe.trace.push("committed");
+        if probe.fail_commit {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "injected commit failure",
+            ));
+        }
+        probe.prepared = false;
+        let turn = self.active_turn.unwrap();
+        let request_activity = activity(turn, 1);
+        if self.boundary != QuestionBoundary::RequestIncomplete {
+            self.events.push_back(BackendEvent::ActivityFinished {
+                activity: request_activity,
+                outcome: ActivityOutcome::Completed,
+            });
+        }
+        let activity = activity(turn, 2);
+        self.events.extend([
+            BackendEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::UserInputResponse {
+                    request_id: RequestId::new(super::id(
+                        if self.boundary == QuestionBoundary::WrongResponse {
+                            2
+                        } else {
+                            1
+                        },
+                    )),
+                },
+            },
+            BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot("No answer provided.".into()),
+            },
+        ]);
+        if self.boundary != QuestionBoundary::ResponseIncomplete {
+            self.events.push_back(BackendEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Completed,
+            });
+        }
+        self.events.extend([
+            BackendEvent::ContextActiveSuffixCompleted {
+                turn,
+                items: vec![
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::User,
+                        content: "question task".into(),
+                        refusal: None,
+                    },
+                    ModelReplayItem::FunctionCall {
+                        call_id: "question-call".into(),
+                        name: "ask_user".into(),
+                        arguments: r#"{"title":"Question","question":"Question?"}"#.into(),
+                    },
+                    ModelReplayItem::FunctionCallOutput {
+                        call_id: "question-call".into(),
+                        output: match self.boundary {
+                            QuestionBoundary::MalformedResult => "not json",
+                            QuestionBoundary::ExtraResultField => r#"{"schema":"yo.ask-user-result/v1","status":"unanswered","text":null}"#,
+                            QuestionBoundary::AnsweredResult => r#"{"schema":"yo.ask-user-result/v1","status":"answered","kind":"text","text":"invented"}"#,
+                            _ => r#"{"schema":"yo.ask-user-result/v1","status":"unanswered"}"#,
+                        }.into(),
+                    },
+                ],
+            },
+            BackendEvent::TurnFinished {
+                turn,
+                outcome: TurnOutcome::Completed,
+            },
+        ]);
+        Ok(())
+    }
+
+    fn abort_prepared_command(&mut self) -> Result<(), BackendFailure> {
+        let mut probe = self.probe.lock().unwrap();
+        assert!(probe.prepared);
+        probe.prepared = false;
+        probe.aborts += 1;
+        probe.trace.push("aborted");
+        Ok(())
+    }
+
+    fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
+        self.probe.lock().unwrap().polls += 1;
+        Ok(self
+            .events
+            .pop_front()
+            .map_or(BackendPoll::Pending, BackendPoll::Event))
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        self.probe.lock().unwrap().shutdowns += 1;
+        Ok(())
+    }
+}
+
+fn runtime_with_prepared_question(
+    boundary: QuestionBoundary,
+) -> (
+    AgentRuntime<Box<dyn crate::AgentBackend + Send>>,
+    Arc<Mutex<QuestionCommitProbe>>,
+    ActivityRequestRef,
+) {
+    let session_id = session(60);
+    let turn = turn(session_id, 1);
+    let probe = Arc::new(Mutex::new(QuestionCommitProbe::default()));
+    let mut journal = SessionJournal::with_repository_and_descriptor(
+        Box::new(QuestionRepository {
+            inner: RuntimeTestRepository::default(),
+            probe: Arc::clone(&probe),
+        }),
+        crate::fixture_descriptor(session_id),
+    );
+    journal.initialize_durability();
+    let mut backend = PreparedQuestionBackend::new(Arc::clone(&probe));
+    backend.boundary = boundary;
+    let backend: Box<dyn crate::AgentBackend + Send> = Box::new(backend);
+    let mut runtime = AgentRuntime::with_journal(backend, journal);
+    runtime
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    assert_eq!(runtime.poll_event().unwrap(), crate::RuntimePoll::Pending);
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn,
+                input: UserInput::new("question task"),
+            },
+            submission(60),
+        )
+        .unwrap();
+    for _ in 0..2 {
+        assert!(matches!(
+            runtime.poll_event().unwrap(),
+            crate::RuntimePoll::Event(_)
+        ));
+    }
+    let request = ActivityRequestRef::new(activity(turn, 1), RequestId::new(super::id(1)));
+    (runtime, probe, request)
+}
+
+// 실제 repository append 실패 또는 후속 backend commit 실패 뒤에는 공개 실행 API,
+// poll 및 replacement가 backend를 다시 호출하지 않고 준비 응답을 정확히 한 번 폐기합니다.
+#[test]
+fn question_unanswered_failed_commit_blocks_every_continuation_entrypoint() {
+    for fail_backend_commit in [false, true] {
+        let (mut runtime, probe, request) =
+            runtime_with_prepared_question(QuestionBoundary::Complete);
+        {
+            let mut state = probe.lock().unwrap();
+            state.fail_append = !fail_backend_commit;
+            state.fail_commit = fail_backend_commit;
+        }
+        let response = AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::QuestionUnanswered,
+        };
+        assert!(
+            runtime
+                .execute_command(response.clone())
+                .unwrap_err()
+                .to_string()
+                .contains("ordinary question response")
+        );
+        let after_failure = probe.lock().unwrap().clone();
+        assert_eq!(after_failure.commits, usize::from(fail_backend_commit));
+        assert_eq!(after_failure.aborts, 1);
+        assert!(!after_failure.prepared);
+        assert_eq!(
+            after_failure.trace,
+            if fail_backend_commit {
+                vec!["prepared", "appended", "committed", "aborted"]
+            } else {
+                vec!["prepared", "append failed", "aborted"]
+            }
+        );
+        assert_eq!(runtime.journal().entries().iter().any(|entry| matches!(entry.record(), SemanticRecord::CommandCommitted(command) if command.command() == &response)), fail_backend_commit);
+        for error in [
+            runtime
+                .execute_command(AgentCommand::InterruptTurn {
+                    turn: request.activity().turn(),
+                })
+                .unwrap_err(),
+            runtime.execute_command(response).unwrap_err(),
+            runtime
+                .execute_submission(
+                    AgentCommand::SteerTurn {
+                        turn: request.activity().turn(),
+                        input: UserInput::new("continue"),
+                    },
+                    submission(61),
+                )
+                .unwrap_err(),
+            runtime.poll_event().unwrap_err(),
+        ] {
+            assert!(
+                error.to_string().contains("continuation is blocked"),
+                "{error}"
+            );
+        }
+        let candidate_probe = Arc::new(Mutex::new(QuestionCommitProbe::default()));
+        let candidate = Box::new(PreparedQuestionBackend::new(Arc::clone(&candidate_probe)));
+        let replacement = runtime
+            .replace_backend(candidate)
+            .expect_err("replacement must be blocked");
+        assert!(
+            replacement
+                .primary
+                .to_string()
+                .contains("continuation is blocked")
+        );
+        assert_eq!(
+            *candidate_probe.lock().unwrap(),
+            QuestionCommitProbe {
+                shutdowns: 1,
+                ..QuestionCommitProbe::default()
+            }
+        );
+        assert_eq!(*probe.lock().unwrap(), after_failure);
+        runtime.shutdown().unwrap();
+        assert_eq!(probe.lock().unwrap().shutdowns, 1);
+    }
+}
+
+// ordinary 응답은 먼저 Journal에 기록된 뒤 backend를 열며 비밀 terminal latch를 설정하지
+// 않습니다. 질문/응답만 있는 완료 group도 compaction 경계로 인정하고 다음 Turn을 허용합니다.
+#[test]
+fn question_unanswered_durable_commit_precedes_continuation_without_terminalizing_session() {
+    let (mut runtime, probe, request) = runtime_with_prepared_question(QuestionBoundary::Complete);
+    let before_polls = probe.lock().unwrap().polls;
+    let response = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::QuestionUnanswered,
+    };
+    runtime.execute_command(response.clone()).unwrap();
+    {
+        let state = probe.lock().unwrap();
+        assert_eq!(state.trace, ["prepared", "appended", "committed"]);
+        assert_eq!(state.commits, 1);
+        assert_eq!(state.aborts, 0);
+        assert_eq!(state.polls, before_polls);
+    }
+    assert_eq!(runtime.journal().entries().iter().filter(|entry| matches!(entry.record(), SemanticRecord::CommandCommitted(command) if command.command() == &response)).count(), 1);
+    for _ in 0..4 {
+        assert!(matches!(
+            runtime.poll_event().unwrap(),
+            crate::RuntimePoll::Event(_)
+        ));
+    }
+    assert_eq!(runtime.poll_event().unwrap(), crate::RuntimePoll::Pending);
+    assert!(matches!(
+        runtime.poll_event().unwrap(),
+        crate::RuntimePoll::Event(crate::AgentEvent::TurnFinished {
+            outcome: TurnOutcome::Completed,
+            ..
+        })
+    ));
+    let next = turn(request.activity().turn().session_id(), 2);
+    runtime
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: next,
+                input: UserInput::new("next task"),
+            },
+            submission(62),
+        )
+        .unwrap();
+    assert_eq!(runtime.active_turn(), Some(next));
+    runtime.shutdown().unwrap();
+}
+
+// 잘못된 capability, 비밀 요청, 미완료 Activity 또는 다른 request의 응답은
+// 질문 call/result가 있어도 실제 runtime의 active compaction 경계를 통과하지 못합니다.
+#[test]
+fn question_unanswered_active_suffix_rejects_untrusted_question_boundaries() {
+    for boundary in [
+        QuestionBoundary::CapabilityAbsent,
+        QuestionBoundary::Secret,
+        QuestionBoundary::RequestIncomplete,
+        QuestionBoundary::ResponseIncomplete,
+        QuestionBoundary::WrongResponse,
+        QuestionBoundary::MalformedResult,
+        QuestionBoundary::ExtraResultField,
+        QuestionBoundary::AnsweredResult,
+    ] {
+        let (mut runtime, _, request) = runtime_with_prepared_question(boundary);
+        runtime
+            .execute_command(AgentCommand::RespondToActivity {
+                request,
+                response: ActivityResponse::QuestionUnanswered,
+            })
+            .unwrap();
+        let mut rejected = false;
+        for _ in 0..6 {
+            match runtime.poll_event() {
+                Err(_) => {
+                    rejected = true;
+                    break;
+                },
+                Ok(
+                    crate::RuntimePoll::Event(crate::AgentEvent::TurnFinished { .. })
+                    | crate::RuntimePoll::Pending
+                    | crate::RuntimePoll::Closed,
+                ) => panic!("untrusted {boundary:?} crossed its semantic boundary"),
+                Ok(crate::RuntimePoll::Event(_)) => {},
+            }
+        }
+        assert!(rejected, "{boundary:?} must reject before continuation");
+        runtime.shutdown().unwrap();
+    }
 }

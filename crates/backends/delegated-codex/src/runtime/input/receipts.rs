@@ -129,6 +129,7 @@ impl InputQuestions {
         );
         ActivityQuestion {
             allow_notes: !question.is_secret,
+            allow_unanswered: false,
             is_secret: question.is_secret,
             storage_offer: None,
             previous_question: index > 0,

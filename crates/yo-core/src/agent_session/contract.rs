@@ -33,6 +33,11 @@ pub enum AgentIntent {
         /// 사용자의 response text입니다.
         input: String,
     },
+    /// 연결된 일반 질문을 답변 없이 마칩니다.
+    RespondToQuestionUnanswered {
+        /// 답변 없이 마칠 정확한 outstanding request입니다.
+        request: ActivityRequestRef,
+    },
     /// 연결된 secret question에 process-local exact value로 답합니다.
     RespondToSecretInput {
         /// 답변할 outstanding secret request입니다.
@@ -91,7 +96,7 @@ pub enum CommandAdmission {
 pub enum AgentControlOutcome {
     /// 현재 Session 경계에서 manual context compaction을 사용할 수 없습니다.
     ContextCompactionRejected { detail: String },
-    /// 전송 전에 거절된 비밀 응답의 정확한 요청을 새 입력으로 다시 엽니다.
+    /// 전송 전에 거절된 응답의 정확한 요청을 새 입력으로 다시 엽니다.
     ActivityResponseRejected {
         /// 다시 응답할 outstanding request입니다.
         request: ActivityRequestRef,

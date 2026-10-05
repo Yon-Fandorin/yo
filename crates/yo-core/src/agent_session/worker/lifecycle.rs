@@ -189,10 +189,14 @@ impl AgentWorker {
                     let (command, submission_id) = pending.into_parts();
                     let is_context_compaction =
                         matches!(&command, AgentCommand::CompactContext { .. });
-                    let secret_response_request = match &command {
+                    let response_request = match &command {
                         AgentCommand::RespondToActivity {
                             request,
-                            response: crate::ActivityResponse::SecretInput(_),
+                            response:
+                                crate::ActivityResponse::SecretInput(_)
+                                | crate::ActivityResponse::UserInput(_)
+                                | crate::ActivityResponse::QuestionAnswer { .. }
+                                | crate::ActivityResponse::QuestionUnanswered,
                         } => Some(*request),
                         _ => None,
                     };
@@ -222,7 +226,7 @@ impl AgentWorker {
                             }
                         },
                         Err(error) => {
-                            if let Some(request) = secret_response_request
+                            if let Some(request) = response_request
                                 && let AgentSessionError::Runtime(
                                     crate::RuntimeError::InputRejected(rejection),
                                 ) = &error

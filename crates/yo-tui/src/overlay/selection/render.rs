@@ -85,11 +85,16 @@ impl SelectionPanel {
             bindings
                 .hints(turn_active, appearance.glyphs.rich_keys)
                 .into_iter()
-                .filter_map(|hint| match self.snapshot.request_is_approval {
-                    Some(approval) => hint.for_request(
+                .filter_map(|hint| match self.snapshot.request_hints {
+                    Some(super::RequestHints::Existing { approval }) => hint.for_request(
                         approval,
                         self.snapshot.entries.iter().any(|entry| entry.is_enabled()),
                     ),
+                    Some(super::RequestHints::Unanswered { close_palette }) => hint
+                        .for_unanswered_question(
+                            close_palette,
+                            self.snapshot.entries.iter().any(|entry| entry.is_enabled()),
+                        ),
                     None => Some(hint),
                 })
                 .collect(),
@@ -308,7 +313,7 @@ impl SelectionPanel {
     }
 
     fn request_detail(&self, width: NonZeroU16, rows: usize) -> Option<TextFlow> {
-        self.snapshot.request_is_approval?;
+        self.snapshot.request_hints?;
         if rows == 0 {
             return None;
         }

@@ -66,6 +66,10 @@ impl NativeModelBackend {
             ready_tool: None,
             dispatch_tool: None,
             awaiting_approval: None,
+            question_call_start: None,
+            pending_question: None,
+            awaiting_question: None,
+            prepared_question: None,
             secret_call_start: None,
             pending_secret_call: None,
             awaiting_secret_input: None,
@@ -125,7 +129,7 @@ impl NativeModelBackend {
                 "the native secret interaction does not admit steering",
             ));
         }
-        if state.prepared_steer.is_some() {
+        if state.prepared_steer.is_some() || state.prepared_question.is_some() {
             return Err(failure(
                 BackendFailureKind::CommandRejected,
                 "a native Turn input is already awaiting durable commit",

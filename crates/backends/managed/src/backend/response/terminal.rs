@@ -79,7 +79,9 @@ pub(super) fn terminal(
         ));
     }
     let incomplete_function_call = matches!(status, ModelConnectorTerminal::Completed)
-        && (!state.call_activities.is_empty() || state.secret_call_start.is_some());
+        && (!state.call_activities.is_empty()
+            || state.secret_call_start.is_some()
+            || state.question_call_start.is_some());
     if incomplete_function_call && !state.terminal_secret_request {
         return Err(failure(
             BackendFailureKind::Protocol,
@@ -213,6 +215,28 @@ pub(super) fn terminal(
             }
         )
     });
+    if state.pending_question.is_some() {
+        if !state.pending_calls.is_empty()
+            || state.pending_secret_call.is_some()
+            || state
+                .round_replay
+                .values()
+                .filter(|item| matches!(item, ModelReplayItem::FunctionCall { .. }))
+                .count()
+                != 1
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "ordinary question was not the sole function call",
+            ));
+        }
+        state
+            .delta
+            .extend(mem::take(&mut state.round_replay).into_values());
+        backend.observe_model_request(state.turn, ModelRequestOutcome::Succeeded);
+        backend.open_question(state)?;
+        return Ok(());
+    }
     if state.pending_secret_call.is_some() {
         let pending_secret = state
             .pending_secret_call

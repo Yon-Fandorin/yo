@@ -275,7 +275,9 @@ pub(super) fn respond_to_activity<P: JsonMessagePeer>(
                     );
                     (answers, receipt)
                 },
-                ActivityResponse::Approval(_) | ActivityResponse::PreviousQuestion { .. } => {
+                ActivityResponse::Approval(_)
+                | ActivityResponse::QuestionUnanswered
+                | ActivityResponse::PreviousQuestion { .. } => {
                     unreachable!("input response matched above")
                 },
                 ActivityResponse::SecretInput(_) | ActivityResponse::SecretInputSubmitted => {

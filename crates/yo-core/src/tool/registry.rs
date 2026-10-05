@@ -26,9 +26,11 @@ impl ToolRegistry {
         for definition in &definitions {
             if definition.id().as_str() == NATIVE_SECRET_INTERACTION_NAME
                 || definition.wire_name() == NATIVE_SECRET_INTERACTION_NAME
+                || definition.id().as_str() == "ask_user"
+                || definition.wire_name() == "ask_user"
             {
                 return Err(ToolRegistryError::new(
-                    "the native secret interaction identity and wire name are reserved",
+                    "native interaction identities and wire names are reserved",
                 ));
             }
             if ids.insert(definition.id().clone(), ()).is_some() {

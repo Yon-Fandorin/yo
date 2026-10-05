@@ -399,6 +399,7 @@ impl InterviewQuestion {
                     .collect()
             },
             allow_notes: self.allow_notes,
+            allow_unanswered: false,
             previous_question: index > 0,
             draft: None,
             draft_choice: None,

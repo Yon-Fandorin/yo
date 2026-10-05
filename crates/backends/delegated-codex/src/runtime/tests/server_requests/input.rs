@@ -796,3 +796,51 @@ pub(super) fn display_question(text: &str) -> Option<yo_core::ActivityQuestion> 
         _ => None,
     }
 }
+
+// Codex 질문은 unanswered를 광고하지 않으며 거절 뒤 원래 wire request에 계속 답할 수 있다.
+#[test]
+fn question_unanswered_is_rejected_without_consuming_codex_question() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let (mut backend, sent) = backend([
+        thread_start_response(2, "thread-a"),
+        json!({"id":3,"result":{"turn":{"id":"turn-a"}}}),
+        json!({"id":"question-a","method":"item/tool/requestUserInput","params":{"threadId":"thread-a","turnId":"turn-a","itemId":"ask","isBlocking":true,"questions":[{"id":"scope","header":"Scope","question":"Which area?","options":null}]}}),
+    ]);
+    backend.create_session(session_id).unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::new("ask"),
+        })
+        .unwrap();
+    let mut request = None;
+    for _ in 0..20 {
+        if let yo_core::BackendPoll::Event(yo_core::BackendEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        }) = backend.poll_event().unwrap()
+        {
+            request = Some(ActivityRequestRef::new(activity, request_id));
+            break;
+        }
+    }
+    let request = request.unwrap();
+    let before = sent.0.borrow().len();
+    assert!(
+        backend
+            .execute_command(AgentCommand::RespondToActivity {
+                request,
+                response: ActivityResponse::QuestionUnanswered
+            })
+            .is_err()
+    );
+    assert_eq!(sent.0.borrow().len(), before);
+    assert!(!backend.requests[&request].responded);
+    backend
+        .execute_command(AgentCommand::RespondToActivity {
+            request,
+            response: ActivityResponse::UserInput(UserInput::new("UI")),
+        })
+        .unwrap();
+}

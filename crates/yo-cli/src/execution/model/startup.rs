@@ -197,7 +197,7 @@ fn resolve_resume(
     Ok(selection)
 }
 
-// Both resume and exact fork resolve their saved target through this admission boundary.
+// Resume와 exact fork는 이 admission 경계에서 저장된 도구 계약을 동일하게 검증합니다.
 fn saved_native_registry_revision(
     config: &Config,
     execution_manifest_digest: Option<&str>,

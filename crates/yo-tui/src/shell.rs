@@ -323,10 +323,13 @@ pub(crate) fn render_with_measure_hook(
             .subview(prompt_area)
             .expect("vertical layout stays inside the shell view");
         let prompt = match chrome.request {
-            Some(RequestPrompt::Answer | RequestPrompt::Choice) => {
-                prompt.with_placeholder("Type your answer...")
-            },
-            Some(RequestPrompt::Notes) => {
+            Some(
+                RequestPrompt::Answer
+                | RequestPrompt::Choice
+                | RequestPrompt::AnswerUnanswered
+                | RequestPrompt::ChoiceUnanswered { .. },
+            ) => prompt.with_placeholder("Type your answer..."),
+            Some(RequestPrompt::Notes | RequestPrompt::NotesUnanswered) => {
                 prompt.with_placeholder("Add optional notes for the selected answer...")
             },
             Some(RequestPrompt::Approval) => {
@@ -366,7 +369,16 @@ pub(crate) fn render_with_measure_hook(
         let mut mode = view
             .subview(layout.mode)
             .expect("chrome mode area stays inside the shell view");
-        if let Some(request) = chrome.request {
+        if matches!(chrome.request, Some(RequestPrompt::ChoiceUnanswered { .. }))
+            && overlay_area.is_some()
+        {
+            chrome::paint_overlay(
+                &mut mode,
+                overlay_bindings,
+                chrome.turn_active,
+                styles.chrome,
+            )
+        } else if let Some(request) = chrome.request {
             chrome::paint_request(&mut mode, request, styles.chrome, editor.newline_binding())
         } else if overlay_area.is_some() {
             chrome::paint_overlay(

@@ -58,6 +58,7 @@ pub(super) enum WireActivityResponse {
         choice: Option<u32>,
         draft: WireUserInput,
     },
+    QuestionUnanswered {},
     SecretInputSubmitted {},
 }
 
@@ -186,6 +187,7 @@ impl TryFrom<&ActivityResponse> for WireActivityResponse {
                 choice: *choice,
                 draft: WireUserInput::try_from(draft)?,
             },
+            ActivityResponse::QuestionUnanswered => Self::QuestionUnanswered {},
             ActivityResponse::UserInput(input) => Self::UserInput {
                 input: WireUserInput::try_from(input)?,
             },
@@ -213,6 +215,7 @@ impl TryFrom<WireActivityResponse> for ActivityResponse {
                 choice,
                 draft: draft.try_into()?,
             },
+            WireActivityResponse::QuestionUnanswered {} => Self::QuestionUnanswered,
             WireActivityResponse::UserInput { input } => Self::UserInput(input.try_into()?),
             WireActivityResponse::QuestionAnswer { choice, notes } => Self::QuestionAnswer {
                 choice,
@@ -250,6 +253,7 @@ fn parse_submission_id(value: &str) -> Result<SubmissionId, JournalCodecError> {
 fn response_has_images(response: &ActivityResponse) -> bool {
     match response {
         ActivityResponse::Approval(_)
+        | ActivityResponse::QuestionUnanswered
         | ActivityResponse::SecretInput(_)
         | ActivityResponse::SecretInputSubmitted => false,
         ActivityResponse::UserInput(input)

@@ -1751,10 +1751,46 @@ Codex adapter는 전송 전에 원래 선택지에 대한 1부터 시작하는 �
 다시 입력해야 하며, 초안에서 비밀 값을 복원하지 않는다. 제출한 답변은 대화 이력에
 남고, 별도 초안은 내구성 있는 답변 봉인을 확인한 뒤 삭제한다. 아래 인터뷰 초안 절을 따른다.
 
+### 관리형 모델의 네이티브 일반 질문
+
+로컬 도구를 허용한 새 local-client 세션은 설정한 도구 뒤에 정확한 `ask_user`,
+현행 `request_secret_input` 쌍을 추가한다. resume·fork는 새 세션 기본값이 아니라
+저장된 replay 계약을 대조한다. 상호작용 도구가 없던 계약과 정확한 과거·현행
+비밀 도구 전용 계약은 기존 구성을 유지한다. no-tools 프로필과 요약에는 두 함수를
+노출하지 않으며 설정한 도구가 예약 질문 이름이나 identity를 대체할 수 없다.
+
+`ask_user`는 완전히 성공한 모델 응답의 유일한 함수 호출이어야 한다. 닫힌 인자는
+`title`, `question`, 선택적인 순서 있는 `choices`이며 각 선택은 정확한
+`label`·`description` 필드를 가진다. UTF-8 바이트 한도는 전체 인자16,384,
+제목·이름80, 질문4,096, 설명512이며 서로 다른 선택은 최대8개다. 알 수 없는
+필드·null·혼합 호출·미완료 응답은 질문이나 로컬 도구 실행 전에 거절한다.
+
+Enter는 비어 있지 않은 텍스트 원문 또는1부터 시작하는 선택 번호·원래 이름·메모
+원문을 `yo.ask-user-result/v1`로 반환한다. 텍스트와 메모는 각각 UTF-8 최대16,384
+바이트다. `ActivityQuestion.allow_unanswered` 기본값은 false이며 비밀 질문에는
+허용하지 않는다. true인 일반 질문에서 Esc는 답이나 권한 없이 payload가 없는
+`QuestionUnanswered`를 제출한다. 화면에 선택 목록이 있으면 첫 Esc는 목록만 닫으며,
+좁아서 목록을 표시할 수 없으면 그 Esc로 미응답을 제출한다. Ctrl+C는 Turn을
+중단하고, 거절된 응답은 같은 요청을 유지한다.
+
+백엔드는 답변을 소비하기 전에 한도 내 결과 전체를 준비한다. runtime은 응답을
+내구성 있게 기록한 뒤 backend commit과 다음 모델 poll을 허용한다. 기록이나 소비가
+실패하면 해당 프로세스의 직접 실행·poll·교체를 차단한다. 정상 답변은 같은 Turn을
+이어가고 이후 Turn도 허용하며 비밀 입력의 영구 종료 장벽을 켜지 않는다. 완전한
+질문 호출·결과와 필요한 private envelope는 문맥 압축의 질문 전용 완료 경계를
+포함해 하나의 replay 그룹으로 보존한다. 미완료 질문은 재시작 후 복원하거나 재전송하지 않는다.
+
+가까운 회귀 검증은 `yo-backend-managed`의 `question`, `yo-core`·`yo-tui`의
+`question_unanswered`, `yo-cli`의 `new_session_question_registry`와
+`saved_question_registry` 필터를 사용한다. 첫 초과 한도, 정확한 저장 suffix,
+실제 저널 실패와 backend 호출 순서, 공개 runtime 차단, 닫힌 wire·기본값 호환,
+질문 전용 완료 문맥 전달, 실제 선택 목록 표시·숨김 geometry를 검증한다.
+실서비스 모델과 실제 터미널 검증에는 별도 실행 증거가 필요하다.
+
 ### 관리형 모델의 네이티브 비밀 요청
 
-로컬 도구를 허용한 새 local-client 세션은 설정한 도구 뒤에 예약 함수
-`request_secret_input` 하나를 노출한다. 정확히 닫힌 객체에는 공개 문자열 `title`,
+로컬 도구를 허용한 새 local-client 세션은 `ask_user` 뒤에 예약 함수
+`request_secret_input`을 노출한다. 정확히 닫힌 객체에는 공개 문자열 `title`,
 `question`, `purpose`만 들어가며, 해당 응답에서 유일한 함수 호출이어야 한다. 도구를
 사용하지 않는 프로필, 요약, 과거 replay와 이 함수가 생기기 전 replay 계약을 가진 기존
 세션의 도구 표면은 바뀌지 않는다.

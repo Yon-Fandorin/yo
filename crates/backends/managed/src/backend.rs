@@ -5,6 +5,7 @@ mod adapter;
 mod compaction;
 mod context;
 mod identity;
+mod question;
 mod replay;
 mod request;
 mod response;
@@ -42,6 +43,8 @@ const CONTEXT_EXHAUSTED_CODE: &str = "context_exhausted";
 
 #[derive(Clone, Debug)]
 pub struct NativeModelBackendConfig {
+    /// 새 Session에서 ordinary question을 공개하는 지정입니다.
+    pub ask_user_enabled: bool,
     pub system_prompt: String,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub maximum_model_rounds: usize,
@@ -58,6 +61,7 @@ pub struct NativeModelBackendConfig {
 impl Default for NativeModelBackendConfig {
     fn default() -> Self {
         Self {
+            ask_user_enabled: false,
             system_prompt: "You are Yo, a careful software-engineering agent.".to_owned(),
             reasoning_effort: Some(ReasoningEffort::Medium),
             maximum_model_rounds: 32,
@@ -153,7 +157,7 @@ struct CallActivity {
     name: String,
 }
 
-struct SecretCallStart {
+struct InteractionCallStart {
     output_index: usize,
     item_id: String,
     call_id: String,
@@ -236,7 +240,11 @@ struct TurnState {
     ready_tool: Option<ValidatedToolCall>,
     dispatch_tool: Option<(ValidatedToolCall, ActivityRef)>,
     awaiting_approval: Option<(ActivityRequestRef, PendingCall)>,
-    secret_call_start: Option<SecretCallStart>,
+    question_call_start: Option<InteractionCallStart>,
+    pending_question: Option<question::PendingQuestion>,
+    awaiting_question: Option<question::AwaitingQuestion>,
+    prepared_question: Option<question::PreparedQuestion>,
+    secret_call_start: Option<InteractionCallStart>,
     pending_secret_call: Option<PendingSecretCall>,
     awaiting_secret_input: Option<AwaitingSecretInput>,
     prepared_secret_request: Option<PreparedSecretRequest>,
@@ -263,6 +271,9 @@ pub struct NativeModelBackend {
     token_counter: Box<dyn ModelTokenCounter>,
     request_observer: Option<Box<dyn ModelRequestObserver>>,
     contract: ModelReplayContract,
+    question_contract: Option<ModelReplayContract>,
+    current_secret_contract: ModelReplayContract,
+    question_enabled: bool,
     historical_secret_contract: Option<ModelReplayContract>,
     legacy_contract: ModelReplayContract,
     secret_interaction_enabled: bool,
@@ -400,7 +411,22 @@ impl NativeModelBackend {
         if secret_interaction_enabled {
             replay_tools.push(secret::replay_tool(true));
         }
-        let contract = ModelReplayContract::new(config.system_prompt.clone(), replay_tools);
+        let current_secret_contract =
+            ModelReplayContract::new(config.system_prompt.clone(), replay_tools);
+        let question_contract = tool_exposure_enabled.then(|| {
+            let mut tools = registry.replay_tools();
+            tools.push(question::replay_tool());
+            tools.push(secret::replay_tool(true));
+            ModelReplayContract::new(config.system_prompt.clone(), tools)
+        });
+        let question_enabled = tool_exposure_enabled && config.ask_user_enabled;
+        let contract = if question_enabled {
+            question_contract
+                .clone()
+                .expect("tool-enabled question contract")
+        } else {
+            current_secret_contract.clone()
+        };
         if !contract.is_valid()
             || historical_secret_contract
                 .as_ref()
@@ -434,6 +460,9 @@ impl NativeModelBackend {
             token_counter: services.token_counter,
             request_observer: services.request_observer,
             contract,
+            question_contract,
+            current_secret_contract,
+            question_enabled,
             historical_secret_contract,
             legacy_contract,
             secret_interaction_enabled,
@@ -470,6 +499,11 @@ impl NativeModelBackend {
     /// Neither definition is a local executable tool or part of a command manifest.
     pub fn known_secret_replay_tools() -> [ModelReplayTool; 2] {
         [secret::replay_tool(true), secret::replay_tool(false)]
+    }
+
+    /// 시작 검증과 복원에 사용하는 정확한 ordinary question 정의입니다.
+    pub fn known_ask_user_replay_tool() -> ModelReplayTool {
+        question::replay_tool()
     }
 
     /// Prepares an independent exact-replay child without starting a Session or model request.
@@ -540,17 +574,22 @@ impl NativeModelBackend {
         )
     }
 
-    fn secret_interaction_profile(&self, contract: &ModelReplayContract) -> Option<(bool, bool)> {
-        if contract == &self.contract {
-            Some((self.tool_exposure_enabled, false))
+    fn secret_interaction_profile(
+        &self,
+        contract: &ModelReplayContract,
+    ) -> Option<(bool, bool, bool)> {
+        if self.question_contract.as_ref() == Some(contract) {
+            Some((true, false, true))
+        } else if contract == &self.current_secret_contract {
+            Some((self.tool_exposure_enabled, false, false))
         } else if self
             .historical_secret_contract
             .as_ref()
             .is_some_and(|historical| contract == historical)
         {
-            Some((true, true))
+            Some((true, true, false))
         } else if contract == &self.legacy_contract {
-            Some((false, false))
+            Some((false, false, false))
         } else {
             None
         }

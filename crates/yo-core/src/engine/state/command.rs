@@ -205,6 +205,7 @@ fn response_kind(response: &ActivityResponse) -> ResponseKind {
         ActivityResponse::UserInput(_)
         | ActivityResponse::QuestionAnswer { .. }
         | ActivityResponse::PreviousQuestion { .. }
+        | ActivityResponse::QuestionUnanswered
         | ActivityResponse::SecretInput(_)
         | ActivityResponse::SecretInputSubmitted => ResponseKind::UserInput,
     }

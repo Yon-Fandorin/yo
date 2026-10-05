@@ -1,8 +1,8 @@
 use std::{num::NonZeroU16, time::Duration};
 
 use super::{
-    ShellChromeSnapshot, ShellChromeStyles, StatusGroups, StatusSegment, layout, paint_metrics,
-    paint_mode, paint_status_groups, paint_transient,
+    RequestPrompt, ShellChromeSnapshot, ShellChromeStyles, StatusGroups, StatusSegment, layout,
+    paint_metrics, paint_mode, paint_status_groups, paint_transient,
 };
 use crate::{
     appearance::{
@@ -11,7 +11,9 @@ use crate::{
     },
     input,
     input::editor::binding::NewlineBinding,
+    overlay::SelectionPanel,
     runner::PresentationMode,
+    shell::AgentShellFrame,
     surface::{Attributes, CellContent, Color, Point, Rect, Size, Style, Surface},
 };
 
@@ -539,5 +541,153 @@ fn queued_footer_preserves_count_pause_and_newline_binding() {
             assert!(footer.contains("M-r edit/pause"), "{footer}");
             assert!(!footer.contains("M-Enter"));
         }
+    }
+}
+
+fn render_question_chrome(
+    request: RequestPrompt,
+    size: Size,
+    panel: Option<&SelectionPanel>,
+) -> (Surface, AgentShellFrame) {
+    use crate::{
+        input::editor::PromptEditor,
+        overlay::OverlayBindings,
+        shell::{AgentShellRenderOptions, AgentShellViewState, render_with_measure_hook},
+        transcript::TranscriptState,
+    };
+
+    let appearance = AppearanceState::default();
+    let pin = appearance.pin();
+    let appearance = pin.snapshot();
+    let mut chrome = snapshot("native", "~/yo");
+    chrome.request = Some(request);
+    let mut surface = Surface::new(size).unwrap();
+    let frame = render_with_measure_hook(
+        TranscriptState::new().all(),
+        &PromptEditor::new(),
+        &mut surface.view(Rect::new(Point::new(0, 0), size)).unwrap(),
+        AgentShellRenderOptions {
+            transcript_config: appearance.transcript_config(),
+            styles: appearance.styles(),
+            scroll: &[],
+            frame_prompt: true,
+            chrome,
+            activity_motion: ActivityMotionFrame::still("."),
+            overlay: panel,
+            overlay_bindings: &OverlayBindings::default(),
+        },
+        &mut AgentShellViewState::default(),
+        || {},
+    )
+    .unwrap();
+    (surface, frame)
+}
+
+fn all_rows(surface: &Surface) -> String {
+    (0..surface.size().height)
+        .map(|y| {
+            (0..surface.size().width)
+                .map(
+                    |x| match surface.cell(Point::new(x, y)).unwrap().content() {
+                        CellContent::Blank | CellContent::Continuation { .. } => ' ',
+                        CellContent::Grapheme { text, .. } => text.chars().next().unwrap(),
+                    },
+                )
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// 질문 footer가 사라지는 낮은 화면에서는 transient 행이 무응답과 중단을 구분합니다.
+// 두 설명이 함께 맞지 않으면 생략해도 Esc를 중단이나 취소로 잘못 표시하지 않습니다.
+#[test]
+fn question_unanswered_chrome_keeps_distinct_actions_across_geometry() {
+    for request in [
+        RequestPrompt::AnswerUnanswered,
+        RequestPrompt::ChoiceUnanswered { allow_notes: true },
+        RequestPrompt::ChoiceUnanswered { allow_notes: false },
+        RequestPrompt::NotesUnanswered,
+    ] {
+        for size in [
+            Size::new(100, 12),
+            Size::new(30, 12),
+            Size::new(30, 4),
+            Size::new(20, 4),
+            Size::new(8, 4),
+            Size::new(100, 1),
+        ] {
+            let (surface, _) = render_question_chrome(request, size, None);
+            let text = all_rows(&surface);
+            assert!(!text.contains("Esc/^C"), "{request:?} {size:?}: {text}");
+            assert!(!text.contains("Esc cancel"), "{request:?} {size:?}: {text}");
+            if request == (RequestPrompt::ChoiceUnanswered { allow_notes: false }) {
+                assert!(!text.contains("Tab add notes"), "{text}");
+            }
+            if size.width >= 30 && size.height >= 4 {
+                assert!(
+                    text.contains("Esc no answer"),
+                    "{request:?} {size:?}: {text}"
+                );
+                assert!(
+                    text.contains("^C interrupt"),
+                    "{request:?} {size:?}: {text}"
+                );
+            }
+        }
+    }
+}
+
+// 실제로 그려진 선택 palette만 Esc 닫기를 광고하며, 높이 때문에 숨겨진 패널은
+// 일반 질문의 무응답 도움말로 돌아갑니다.
+#[test]
+fn question_unanswered_chrome_switches_from_visible_palette_close_to_hidden_no_answer() {
+    use crate::overlay::{PanelSnapshot, SelectionEntry, SelectionPanel};
+
+    let panel = SelectionPanel::new(
+        PanelSnapshot::new(
+            "Question",
+            vec![SelectionEntry::enabled("1", "First", None)],
+        )
+        .unwrap()
+        .for_unanswered_question(true),
+    );
+    let (visible, frame) = render_question_chrome(
+        RequestPrompt::ChoiceUnanswered { allow_notes: true },
+        Size::new(100, 16),
+        Some(&panel),
+    );
+    assert!(frame.overlay_area.is_some());
+    let text = all_rows(&visible);
+    assert!(text.contains("Esc close"), "{text}");
+    assert!(text.contains("^C interrupt"), "{text}");
+    assert!(!text.contains("no answer"), "{text}");
+    let (hidden, frame) = render_question_chrome(
+        RequestPrompt::ChoiceUnanswered { allow_notes: true },
+        Size::new(30, 4),
+        Some(&panel),
+    );
+    assert!(frame.overlay_area.is_none());
+    let text = all_rows(&hidden);
+    assert!(text.contains("Esc no answer"), "{text}");
+    assert!(text.contains("^C interrupt"), "{text}");
+    assert!(!text.contains("Esc close"), "{text}");
+}
+
+// 기존 false 질문과 비밀 요청의 footer는 취소 의미 및 추가 동작을 그대로 유지합니다.
+#[test]
+fn question_unanswered_chrome_preserves_existing_question_and_secret_hints() {
+    for (request, extra) in [
+        (RequestPrompt::Answer, "newline"),
+        (RequestPrompt::Choice, "Tab add notes"),
+        (RequestPrompt::Notes, "Tab choices"),
+        (RequestPrompt::Secret, "Ctrl-U clear"),
+        (RequestPrompt::SecretPrevious, "Shift+Tab previous"),
+    ] {
+        let (surface, _) = render_question_chrome(request, Size::new(100, 12), None);
+        let text = all_rows(&surface);
+        assert!(text.contains("Esc cancel"), "{request:?}: {text}");
+        assert!(text.contains(extra), "{request:?}: {text}");
+        assert!(!text.contains("no answer"), "{request:?}: {text}");
     }
 }

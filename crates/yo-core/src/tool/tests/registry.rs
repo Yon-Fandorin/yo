@@ -441,3 +441,10 @@ fn current_tool_validation_failure_codes_are_stable_and_distinct() {
         .collect::<HashSet<_>>();
     assert_eq!(unique_codes.len(), expected.len());
 }
+
+// 일반 질문의 wire 이름과 ID도 로컬 실행 도구가 가로채지 못한다.
+#[test]
+fn registry_reserves_question_unanswered_interaction_identity() {
+    assert!(ToolRegistry::new([definition("ask_user", "configured_question")]).is_err());
+    assert!(ToolRegistry::new([definition("configured-question", "ask_user")]).is_err());
+}

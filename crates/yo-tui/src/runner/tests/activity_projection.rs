@@ -794,6 +794,7 @@ fn request_choice_descriptions_remain_readable_after_completion() {
             ActivityQuestion {
                 plain_text: "Original request".into(),
                 allow_notes: false,
+                allow_unanswered: false,
                 is_secret: false,
                 storage_offer: None,
                 previous_question: false,

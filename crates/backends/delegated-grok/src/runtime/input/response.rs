@@ -115,6 +115,7 @@ impl<P: JsonPeer> Backend<P> {
             ActivityResponse::Approval(_)
             | ActivityResponse::PreviousQuestion { .. }
             | ActivityResponse::SecretInput(_)
+            | ActivityResponse::QuestionUnanswered
             | ActivityResponse::SecretInputSubmitted => {
                 return Err(protocol::protocol_failure(
                     "response kind does not match the Grok user question",

@@ -60,19 +60,31 @@ pub(crate) fn revision_for_replay_contract(
     ))
 }
 
-/// A native secret interaction may follow the exact local-tool projection, but it never
-/// becomes a local executable tool or part of a configured-command manifest.
+/// 알려진 backend 상호작용 접미부만 정확한 로컬 도구 projection 뒤에 허용합니다.
+/// 상호작용은 로컬 실행 도구나 configured-command manifest에 포함되지 않습니다.
 pub(crate) fn matches_saved_replay_tools(
     recorded: &[ModelReplayTool],
     trusted_local: &[ModelReplayTool],
-    allow_native_secret: bool,
+    allow_native_interactions: bool,
 ) -> bool {
-    recorded == trusted_local
-        || (allow_native_secret
-            && recorded.split_last().is_some_and(|(last, prefix)| {
-                prefix == trusted_local
-                    && NativeModelBackend::known_secret_replay_tools().contains(last)
-            }))
+    let Some(suffix) = recorded.strip_prefix(trusted_local) else {
+        return false;
+    };
+    if suffix.is_empty() {
+        return true;
+    }
+    if !allow_native_interactions || trusted_local.is_empty() {
+        return false;
+    }
+    let [current_secret, historical_secret] = NativeModelBackend::known_secret_replay_tools();
+    match suffix {
+        [secret] => secret == &current_secret || secret == &historical_secret,
+        [question, secret] => {
+            question == &NativeModelBackend::known_ask_user_replay_tool()
+                && secret == &current_secret
+        },
+        _ => false,
+    }
 }
 
 fn basic_registry() -> Result<ToolRegistry, ToolExecutionError> {

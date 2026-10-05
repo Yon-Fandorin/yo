@@ -54,6 +54,12 @@ impl BackendAdapter for NativeModelBackend {
             .is_some_and(|state| state.prepared_steer.is_some())
         {
             self.commit_prepared_steer()
+        } else if self
+            .turn
+            .as_ref()
+            .is_some_and(|state| state.prepared_question.is_some())
+        {
+            self.commit_question_response()
         } else {
             self.commit_secret_request()
         }
@@ -61,6 +67,9 @@ impl BackendAdapter for NativeModelBackend {
 
     fn abort_prepared_command(&mut self) -> Result<(), BackendFailure> {
         if !self.abort_prepared_steer() {
+            if let Some(state) = self.turn.as_mut() {
+                state.prepared_question = None;
+            }
             self.abort_secret_request();
         }
         Ok(())

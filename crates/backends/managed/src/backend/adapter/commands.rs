@@ -48,10 +48,10 @@ pub(super) fn execute_command(
             request,
             response: ActivityResponse::SecretInput(secret),
         } => backend.respond_to_secret_input(request, secret),
-        AgentCommand::RespondToActivity { .. } => Err(failure(
-            BackendFailureKind::Unsupported,
-            "native model loop only accepts approval responses",
-        )),
+        AgentCommand::RespondToActivity { request, response } => {
+            backend.respond_to_question(request, response)
+        },
+
         AgentCommand::CompactContext { guidance } => {
             backend.start_idle_compaction(guidance)?;
             Ok(BackendCommandEvidence::None)

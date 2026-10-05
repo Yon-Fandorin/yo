@@ -8,8 +8,8 @@ use yo_core::{
 };
 
 use super::super::{
-    CallActivity, NativeModelBackend, PendingCall, PendingSecretCall, SecretCallStart, TurnState,
-    failure,
+    CallActivity, InteractionCallStart, NativeModelBackend, PendingCall, PendingSecretCall,
+    TurnState, failure,
     tools::{durable_tool_validation_message, tool_validation_failure},
 };
 
@@ -27,6 +27,36 @@ pub(super) fn function_call_started(
             "terminal secret response returned a function call".to_owned(),
         );
         return Ok(());
+    }
+    if name == super::super::question::NAME && backend.question_enabled {
+        if state.question_call_start.is_some()
+            || state.pending_question.is_some()
+            || state.secret_call_start.is_some()
+            || state.pending_secret_call.is_some()
+            || !state.call_activities.is_empty()
+            || !state.pending_calls.is_empty()
+            || call_id.is_empty()
+            || call_id.len() > 256
+            || call_id.chars().any(char::is_control)
+            || !state.seen_call_ids.insert(call_id.clone())
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "ordinary question must be the sole function call",
+            ));
+        }
+        state.question_call_start = Some(InteractionCallStart {
+            output_index,
+            item_id,
+            call_id,
+        });
+        return Ok(());
+    }
+    if state.question_call_start.is_some() || state.pending_question.is_some() {
+        return Err(failure(
+            BackendFailureKind::Protocol,
+            "ordinary question must be the sole function call",
+        ));
     }
     if name == NATIVE_SECRET_INTERACTION_NAME && backend.secret_interaction_enabled {
         if state.terminal_secret_request
@@ -50,7 +80,7 @@ pub(super) fn function_call_started(
             );
             return Ok(());
         }
-        state.secret_call_start = Some(SecretCallStart {
+        state.secret_call_start = Some(InteractionCallStart {
             output_index,
             item_id,
             call_id,
@@ -108,6 +138,41 @@ pub(super) fn function_call_done(
             BackendFailureKind::Protocol,
             "terminal secret response returned a function call",
         ));
+    }
+    if name == super::super::question::NAME && backend.question_enabled {
+        let started = state.question_call_start.take().ok_or_else(|| {
+            failure(
+                BackendFailureKind::Protocol,
+                "ordinary question was not started",
+            )
+        })?;
+        if started.output_index != output_index
+            || started.item_id != item_id
+            || started.call_id != call_id
+            || state.pending_question.is_some()
+            || !state.pending_calls.is_empty()
+            || !state.call_activities.is_empty()
+            || state.pending_secret_call.is_some()
+            || state.secret_call_start.is_some()
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "ordinary question call identity or exclusivity changed",
+            ));
+        }
+        let parsed = super::super::question::Arguments::parse(&arguments)?;
+        let item = ModelReplayItem::FunctionCall {
+            call_id: call_id.clone(),
+            name,
+            arguments,
+        };
+        backend.ensure_replay_capacity_with_round_item(state, Some((output_index, &item)))?;
+        state.round_replay.insert(output_index, item);
+        state.pending_question = Some(super::super::question::PendingQuestion {
+            call_id,
+            arguments: parsed,
+        });
+        return Ok(());
     }
     if name == NATIVE_SECRET_INTERACTION_NAME && backend.secret_interaction_enabled {
         let started = state.secret_call_start.take().ok_or_else(|| {

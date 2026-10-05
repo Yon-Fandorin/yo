@@ -759,6 +759,7 @@ impl<P: JsonPeer> Backend<P> {
             plain_text,
             choices: Vec::new(),
             allow_notes: false,
+            allow_unanswered: false,
             is_secret: true,
             storage_offer: None,
             previous_question: false,

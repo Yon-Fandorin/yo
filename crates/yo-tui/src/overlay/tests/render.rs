@@ -486,3 +486,54 @@ fn wrapped_tree_browses_disabled_nodes_and_truncation_without_acceptance() {
     }
     assert_eq!(panel.selected_identity().unwrap().as_str(), "first");
 }
+
+// capability 전용 request header는 choice palette 닫기와 일반 질문 무응답을 구분하고,
+// 좁은 화면에서도 두 필수 키를 함께 유지하거나 패널 전체를 숨깁니다.
+#[test]
+fn question_unanswered_header_preserves_context_specific_escape_and_interrupt() {
+    for (close_palette, entries, escape) in [
+        (true, vec![enabled("1", "First")], "[Esc] close"),
+        (
+            false,
+            vec![enabled("send-notes", "First")],
+            "[Esc] no answer",
+        ),
+        (
+            false,
+            vec![SelectionEntry::status("answer", "Type your answer")],
+            "[Esc] no answer",
+        ),
+    ] {
+        let panel = SelectionPanel::new(snapshot(entries).for_unanswered_question(close_palette));
+        for width in [100, 48] {
+            let (surface, _) = render_for_turn(&panel, Size::new(width, 6), true).unwrap();
+            let header = row(&surface, 0);
+            assert!(header.contains(escape), "width {width}: {header}");
+            assert!(header.contains("[^C] interrupt"), "width {width}: {header}");
+            assert!(!header.contains("cancel"), "width {width}: {header}");
+        }
+        assert!(render_for_turn(&panel, Size::new(24, 6), true).is_none());
+    }
+}
+
+// 기존 request header는 approval 거절과 질문/비밀 취소를 그대로 유지하며
+// 새 capability가 없는 요청에 무응답 동작을 추가하지 않습니다.
+#[test]
+fn question_unanswered_header_preserves_existing_approval_question_and_secret_profiles() {
+    for (approval, entries, expected) in [
+        (true, vec![enabled("once", "Allow once")], "[Esc] decline"),
+        (false, vec![enabled("1", "First")], "[Esc] cancel"),
+        (
+            false,
+            vec![SelectionEntry::status("secret", "Enter a value")],
+            "[Esc] cancel",
+        ),
+    ] {
+        let panel = SelectionPanel::new(snapshot(entries).for_request(approval));
+        let (surface, _) = render_for_turn(&panel, Size::new(100, 6), true).unwrap();
+        let header = row(&surface, 0);
+        assert!(header.contains(expected), "{header}");
+        assert!(!header.contains("no answer"), "{header}");
+        assert!(!header.contains("interrupt"), "{header}");
+    }
+}

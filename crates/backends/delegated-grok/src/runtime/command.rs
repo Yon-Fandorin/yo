@@ -151,6 +151,7 @@ impl<P: JsonPeer> Backend<P> {
             | ActivityResponse::QuestionAnswer { .. }
             | ActivityResponse::PreviousQuestion { .. }
             | ActivityResponse::SecretInput(_)
+            | ActivityResponse::QuestionUnanswered
             | ActivityResponse::SecretInputSubmitted => {
                 return Err(BackendFailure::new(
                     BackendFailureKind::Unsupported,

@@ -371,7 +371,17 @@ impl TuiState {
                         PendingRequest::Approval(request) => {
                             self.approval_response(request, "n".to_owned())
                         },
-                        PendingRequest::UserInput(_) => {
+                        PendingRequest::UserInput(request) => {
+                            if let Some(q) = self
+                                .chat
+                                .question(request.activity())
+                                .filter(|q| q.allow_unanswered)
+                            {
+                                if self.question_notes.is_none() && !q.choices.is_empty() {
+                                    return Ok(StateEffect::Redraw);
+                                }
+                                return self.question_unanswered(request);
+                            }
                             Ok(StateEffect::Dispatch(AgentAction::Interrupt))
                         },
                         PendingRequest::PresentationPending(_)
@@ -555,6 +565,20 @@ impl TuiState {
                         self.sync_request_overlay()?;
                         return Ok(StateEffect::Redraw);
                     }
+                    if self
+                        .chat
+                        .question(request.activity())
+                        .is_some_and(|q| q.allow_unanswered)
+                    {
+                        self.question_notes = Some((
+                            pending,
+                            receipt
+                                .identity()
+                                .parse()
+                                .expect("validated choice ordinal"),
+                        ));
+                        return self.request_response(pending, String::new());
+                    }
                     return self.request_response(pending, receipt.identity().to_owned());
                 }
                 if let Some(command) = self.command_palette.accept(&receipt) {
@@ -571,6 +595,17 @@ impl TuiState {
                 self.accepted_overlays.push_back(receipt);
                 return Ok(StateEffect::Redraw);
             },
+        }
+
+        if self.views.active() == ObservabilityView::Chat
+            && let Some(PendingRequest::UserInput(request)) = self.pending_requests.front().copied()
+            && self
+                .chat
+                .question(request.activity())
+                .is_some_and(|q| q.allow_unanswered && !q.is_secret)
+            && matches!(&input, InputEvent::Key(key) if key.action == KeyAction::Press && key.code == KeyCode::Escape && key.modifiers == KeyModifiers::NONE)
+        {
+            return self.question_unanswered(request);
         }
 
         if let Some(effect) = self.handle_external_editor_key(&input)? {
@@ -664,7 +699,11 @@ impl TuiState {
                 );
                 let assist_eligible =
                     self.views.active() == ObservabilityView::Chat && !self.has_pending_request();
-                let command_eligible = self.views.active() == ObservabilityView::Chat
+                let command_eligible = !self.pending_requests.front().is_some_and(|p| {
+                    self.chat
+                        .question(p.activity())
+                        .is_some_and(|q| q.allow_unanswered)
+                }) && self.views.active() == ObservabilityView::Chat
                     && self.question_notes.is_none()
                     && !(self.restored_question_draft.is_some()
                         && self.restored_question_draft == self.pending_requests.front().copied());
@@ -685,6 +724,24 @@ impl TuiState {
                 )
             },
             EditorEffect::Submitted(text) => {
+                if let Some(pending @ PendingRequest::UserInput(request)) =
+                    self.pending_requests.front().copied()
+                    && self
+                        .chat
+                        .question(request.activity())
+                        .is_some_and(|q| q.allow_unanswered)
+                {
+                    if self.pending_image.is_some() {
+                        self.editor.replace_range(0..0, &text);
+                        self.chat.push_notice("Wait for image preparation before answering; your draft was preserved.".to_owned())?;
+                        return Ok(StateEffect::Redraw);
+                    }
+                    if self.reject_referenced_answer()? {
+                        self.editor.replace_range(0..0, &text);
+                        return Ok(StateEffect::Redraw);
+                    }
+                    return self.request_response(pending, text);
+                }
                 let escaped_palette = self.command_palette.take_escape(&text);
                 let restored_answer = self.restored_question_draft.is_some()
                     && self.restored_question_draft == self.pending_requests.front().copied();

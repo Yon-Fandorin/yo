@@ -131,6 +131,20 @@ impl BindingHint {
         Some(self)
     }
 
+    pub(super) fn for_unanswered_question(
+        mut self,
+        close_palette: bool,
+        choices: bool,
+    ) -> Option<Self> {
+        self.caption = match self.caption {
+            "move" if !choices => return None,
+            "select" => "answer",
+            "close" if !close_palette => "no answer",
+            _ => self.caption,
+        };
+        Some(self)
+    }
+
     pub(crate) fn physical(&self) -> &str {
         &self.physical
     }

@@ -119,7 +119,7 @@ impl TuiState {
                 && let Some(selected) =
                     question.and_then(|question| question.choices.get(choice as usize - 1))
             {
-                return PanelSnapshot::new(
+                let panel = PanelSnapshot::new(
                     "Notes",
                     vec![
                         SelectionEntry::status(
@@ -127,7 +127,7 @@ impl TuiState {
                             if question.is_some_and(|question| question.previous_question) {
                                 "Tab: choices. Shift+Tab: previous question. Enter sends both."
                             } else {
-                                "Tab returns to choices. Enter sends both."
+                                if question.is_some_and(|q| q.allow_unanswered) { "Tab: choices. Enter: send both. Esc: no answer. Ctrl+C: interrupt." } else { "Tab returns to choices. Enter sends both." }
                             },
                         ),
                         SelectionEntry::enabled_with_context(
@@ -138,8 +138,8 @@ impl TuiState {
                         ),
                     ],
                 )
-                .expect("selected question entry already validated")
-                .for_request(false);
+                .expect("selected question entry already validated");
+                return if question.is_some_and(|q| q.allow_unanswered) { panel.for_unanswered_question(false) } else { panel.for_request(false) };
             }
             request.panel(question, self.chat.approval(request.activity()))
         });
@@ -296,6 +296,20 @@ impl TuiState {
             }
         }
         editor
+    }
+
+    pub(super) fn question_unanswered(
+        &mut self,
+        request: ActivityRequestRef,
+    ) -> Result<StateEffect, StateError> {
+        self.pending_requests.pop_front();
+        self.question_notes = None;
+        self.clear_editor();
+        self.close_request_overlay();
+        self.sync_request_overlay()?;
+        Ok(StateEffect::Dispatch(
+            AgentAction::RespondToQuestionUnanswered { request },
+        ))
     }
 
     pub(super) fn request_response(
@@ -497,7 +511,11 @@ impl PendingRequest {
                     let mut entries = vec![SelectionEntry::status(
                         "answer",
                         if question.allow_notes {
-                            "Enter selects. Tab adds notes. Or type an answer."
+                            if question.allow_unanswered {
+                                "Enter selects. Tab: notes. Type an answer. Esc: close choices. Ctrl+C: interrupt."
+                            } else {
+                                "Enter selects. Tab adds notes. Or type an answer."
+                            }
                         } else {
                             "Choose or type your own answer."
                         },
@@ -523,7 +541,11 @@ impl PendingRequest {
                         if question.is_some_and(|question| question.previous_question) {
                             "Type your answer. Shift+Tab: previous question."
                         } else {
-                            "Type a number or your own answer."
+                            if question.is_some_and(|q| q.allow_unanswered) {
+                                "Type your answer. Esc: no answer. Ctrl+C: interrupt."
+                            } else {
+                                "Type a number or your own answer."
+                            }
                         },
                     )]
                 },
@@ -537,6 +559,9 @@ impl PendingRequest {
             ),
         };
         match PanelSnapshot::new(title, entries) {
+            Ok(panel) if question.is_some_and(|q| q.allow_unanswered && !q.is_secret) => {
+                panel.for_unanswered_question(question.is_some_and(|q| !q.choices.is_empty()))
+            },
             Ok(panel) => panel.for_request(matches!(self, Self::Approval(_))),
             Err(_) if question.is_some() => self.panel(None, None),
             Err(_) => unreachable!("static request panel is valid"),

@@ -3,7 +3,7 @@ use std::num::NonZeroU64;
 
 use super::*;
 #[cfg(test)]
-use crate::journal::CommittedCommand;
+use crate::{ActivityRequestRef, ActivityResponse, RequestId, journal::CommittedCommand};
 
 fn committed(command: AgentCommand, submission_id: Option<SubmissionId>) -> JournalRecord {
     let committed = match submission_id {
@@ -729,4 +729,31 @@ fn activity_responses_reject_image_input_without_dropping_snapshots() {
             start_wire["records"][0]["command"]["input"].clone();
         assert!(decode(&wire.to_string()).is_err());
     }
+}
+
+// unanswered 명령은 payload 없는 닫힌 object만 왕복하며 null과 추가 필드를 허용하지 않는다.
+#[test]
+fn question_unanswered_wire_is_closed_and_round_trips() {
+    let command = AgentCommand::RespondToActivity {
+        request: ActivityRequestRef::new(activity(), RequestId::new(NonZeroU64::new(1).unwrap())),
+        response: ActivityResponse::QuestionUnanswered,
+    };
+    let commit = JournalCommit::incremental(sequenced(1, [committed(command, None)]));
+    let encoded = encode(&commit).unwrap();
+    assert_eq!(decode(&encoded).unwrap(), commit);
+    let mut value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(
+        value["records"][0]["command"]["response"],
+        serde_json::json!({"type":"question_unanswered"})
+    );
+    for field in ["input", "text", "choice", "label", "notes", "permission"] {
+        let mut extra = value.clone();
+        extra["records"][0]["command"]["response"][field] = serde_json::Value::Null;
+        assert!(
+            decode(&extra.to_string()).is_err(),
+            "accepted extra {field}"
+        );
+    }
+    value["records"][0]["command"]["response"] = serde_json::Value::Null;
+    assert!(decode(&value.to_string()).is_err());
 }

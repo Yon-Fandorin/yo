@@ -70,6 +70,8 @@ pub struct AgentRuntime<B> {
     secret_diagnostics_redacted: bool,
     /// A protected terminal input was accepted. Only its active Turn may finish.
     secret_input_terminal: bool,
+    /// 응답 commit 실패 뒤 transport와 명령을 영구 차단합니다.
+    ordinary_response_commit_failed: bool,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -108,6 +110,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             interview_backend: None,
             secret_diagnostics_redacted: false,
             secret_input_terminal: false,
+            ordinary_response_commit_failed: false,
         }
     }
 
@@ -149,6 +152,16 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
     pub(crate) fn durability(&self) -> crate::JournalDurability {
         self.journal.transcript_reader().durability()
+    }
+
+    fn ensure_response_commit_healthy(&self) -> Result<(), RuntimeError> {
+        if self.ordinary_response_commit_failed {
+            return Err(RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Session,
+                "ordinary question response commit failed; continuation is blocked",
+            )));
+        }
+        Ok(())
     }
 
     pub(super) fn redact_backend_failure(

@@ -99,6 +99,8 @@ pub enum ActivityResponse {
         /// Additional user text; an empty value submits the choice alone.
         notes: UserInput,
     },
+    /// 텍스트나 선택지를 제공하지 않고 일반 질문을 답변 없이 마칩니다.
+    QuestionUnanswered,
     /// Process-local exact secret answer for the owning outstanding request.
     SecretInput(SecretInput),
     /// Payload-free semantic receipt created by the runtime after backend acceptance.
@@ -108,7 +110,10 @@ pub enum ActivityResponse {
 impl ActivityResponse {
     pub(crate) fn has_images(&self) -> bool {
         match self {
-            Self::Approval(_) | Self::SecretInput(_) | Self::SecretInputSubmitted => false,
+            Self::Approval(_)
+            | Self::QuestionUnanswered
+            | Self::SecretInput(_)
+            | Self::SecretInputSubmitted => false,
             Self::UserInput(input)
             | Self::QuestionAnswer { notes: input, .. }
             | Self::PreviousQuestion { draft: input, .. } => !input.images().is_empty(),
@@ -117,7 +122,10 @@ impl ActivityResponse {
 
     pub(crate) fn has_resolved_skill(&self) -> bool {
         match self {
-            Self::Approval(_) | Self::SecretInput(_) | Self::SecretInputSubmitted => false,
+            Self::Approval(_)
+            | Self::QuestionUnanswered
+            | Self::SecretInput(_)
+            | Self::SecretInputSubmitted => false,
             Self::UserInput(input)
             | Self::QuestionAnswer { notes: input, .. }
             | Self::PreviousQuestion { draft: input, .. } => input.resolved_skill().is_some(),

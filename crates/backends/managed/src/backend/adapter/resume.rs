@@ -34,7 +34,8 @@ pub(super) fn resume_session(
             "durable native model binding or replay contract does not match current configuration",
         ));
     }
-    let (enabled, historical) = profile.expect("validated replay secret profile");
+    let (enabled, historical, questions) = profile.expect("validated replay secret profile");
+    backend.question_enabled = questions;
     backend.secret_interaction_enabled = enabled;
     backend.historical_secret_interaction = historical;
     backend.contract = contract.clone();
@@ -67,7 +68,8 @@ pub(super) fn resume_session_replacing_binding(
             "durable exact replay contract does not match the replacement binding",
         ));
     }
-    let (enabled, historical) = profile.expect("validated replay secret profile");
+    let (enabled, historical, questions) = profile.expect("validated replay secret profile");
+    backend.question_enabled = questions;
     backend.secret_interaction_enabled = enabled;
     backend.historical_secret_interaction = historical;
     backend.contract = contract.clone();

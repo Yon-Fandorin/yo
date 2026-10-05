@@ -1997,10 +1997,51 @@ codec round trips. In the current contextual draft flow, a secret answer is
 Submitted answers remain in conversation history, and their separate drafts are
 removed after a verified durable answer seal, as described under Interview drafts.
 
+### Native managed ordinary questions
+
+New local-client Sessions with local tools append the exact `ask_user`, current
+`request_secret_input` pair after configured tools. Resume and fork match the saved
+replay contract rather than the new-session default: old no-interaction and exact
+historical/current secret-only contracts keep their existing surface. No-tools
+profiles and summaries expose neither function. The reserved question name and
+identity cannot be replaced by a configured tool.
+
+`ask_user` must be the sole function call in a complete successful model response.
+Its closed arguments contain `title`, `question`, and optional ordered `choices`
+with exact `label`/`description` fields. Bounds are 16,384 UTF-8 bytes for arguments,
+80 for title/labels, 4,096 for the question, eight distinct choices and 512 per
+description. Unknown fields, nulls, mixed calls and incomplete responses fail before
+opening a question or executing a local tool.
+
+Enter returns exact nonempty text, or a one-based choice with its original label and
+exact notes, under `yo.ask-user-result/v1`; text and notes each permit at most 16,384
+UTF-8 bytes. `ActivityQuestion.allow_unanswered` defaults false and is invalid for a
+secret question. When true, plain Esc submits payload-free `QuestionUnanswered`
+without an answer or permission; the first Esc on a visible choice palette only
+closes that palette. A palette that cannot be displayed does not consume that first
+Esc. Ctrl+C still interrupts the Turn. Rejected responses retain the same request.
+
+The backend prepares the complete bounded result before consuming the answer.
+Runtime records the response durably before backend commit or the next model poll.
+An append or consumption failure blocks direct execution, polling and replacement
+for that process. Successful ordinary answers continue the same Turn and permit
+later Turns; they do not activate the secret terminal latch. The complete question
+call/result and required private envelope remain one replay group, including the
+question-only boundary accepted for context pressure. Unfinished questions are not
+restored or retransmitted after restart.
+
+Focused regression tests use `question` in `yo-backend-managed`,
+`question_unanswered` in `yo-core` and `yo-tui`, and
+`new_session_question_registry`/`saved_question_registry` in `yo-cli`. They cover
+first-excess bounds, exact saved suffixes, real journal failure and backend-call
+ordering, direct runtime guards, closed wire/default compatibility, completed
+question-only context handoff and actual visible/hidden palette geometry. Live
+model and physical terminal checks require separate execution evidence.
+
 ### Native managed secret requests
 
-New local-client Sessions with local tools expose one reserved function named
-`request_secret_input` after configured tools. Its exact closed object has public
+New local-client Sessions with local tools expose the reserved function named
+`request_secret_input` after `ask_user`. Its exact closed object has public
 `title`, `question`, and `purpose` strings. The call must be the only function call in
 that response. No-tools profiles, summaries, historical replay, and old Sessions whose
 replay contract predates this function keep their existing tool surface.

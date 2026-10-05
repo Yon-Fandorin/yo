@@ -197,6 +197,9 @@ pub enum BackendCommandEvidence {
     /// `BackendAdapter::commit_prepared_command`. No transport is authorized by
     /// this evidence alone.
     ProtectedInputPrepared,
+    /// 일반 질문 응답을 메모리에 준비했으며, 백엔드 소비 전에 공개 명령의
+    /// durable commit이 필요합니다.
+    OrdinaryQuestionResponsePrepared,
 }
 
 /// Provider evidence that a completed Turn is stable enough to resume.

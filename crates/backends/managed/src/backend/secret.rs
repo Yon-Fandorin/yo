@@ -178,6 +178,7 @@ impl NativeModelBackend {
             plain_text,
             choices: Vec::new(),
             allow_notes: false,
+            allow_unanswered: false,
             is_secret: true,
             storage_offer: call.arguments.storage_offer,
             previous_question: false,

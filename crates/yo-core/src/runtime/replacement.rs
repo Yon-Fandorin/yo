@@ -15,6 +15,9 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
         &mut self,
         mut candidate: Box<dyn AgentBackend + Send>,
     ) -> Result<Option<crate::BackendFailure>, BackendReplacementError> {
+        if let Err(error) = self.ensure_response_commit_healthy() {
+            return Err(reject_replacement_candidate(&mut candidate, error));
+        }
         if self.secret_input_terminal {
             return Err(reject_replacement_candidate(
                 &mut candidate,

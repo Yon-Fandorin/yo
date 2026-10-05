@@ -713,3 +713,110 @@ fn failed_protected_receipt_publication_never_attempts_secret_transport() {
     assert_eq!(counters.lock().unwrap().transport_attempts, 0);
     runtime.shutdown().unwrap();
 }
+
+// owning backend의 capability 거절과 오래된 request ID는 현재 질문을 소비하지 않습니다.
+// 같은 정확한 request에 대한 이후 일반 답변은 새 Turn이나 중단 없이 수락됩니다.
+#[test]
+fn question_unanswered_rejection_and_stale_identity_leave_the_question_answerable() {
+    let active_turn = turn(session(1), 1);
+    let request_activity = activity(active_turn, 1);
+    let request = ActivityRequestRef::new(request_activity, RequestId::new(id(1)));
+    let unanswered = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::QuestionUnanswered,
+    };
+    let answered = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::UserInput(UserInput::new("exact answer")),
+    };
+    let (mut runtime, _) = runtime_with_active_turn([
+        BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest {
+                request_id: request.request_id(),
+            },
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+            activity: request_activity,
+            outcome: ActivityOutcome::Completed,
+        }),
+        BackendScriptStep::RejectCommand {
+            command: unanswered.clone(),
+            failure: BackendFailure::new(
+                BackendFailureKind::Protocol,
+                "question does not allow unanswered",
+            ),
+        },
+        BackendScriptStep::AcceptCommand(answered.clone()),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    runtime.poll_event().unwrap();
+    runtime.poll_event().unwrap();
+    let before = runtime.journal().entries();
+    let remaining = runtime.backend().remaining_steps();
+    let stale = AgentCommand::RespondToActivity {
+        request: ActivityRequestRef::new(request_activity, RequestId::new(id(2))),
+        response: ActivityResponse::QuestionUnanswered,
+    };
+    assert!(runtime.execute_command(stale).is_err());
+    assert_eq!(runtime.backend().remaining_steps(), remaining);
+    assert!(
+        runtime
+            .execute_command(unanswered)
+            .unwrap_err()
+            .to_string()
+            .contains("does not allow unanswered")
+    );
+    assert_eq!(runtime.journal().entries(), before);
+    runtime.execute_command(answered).unwrap();
+    assert_eq!(runtime.active_turn(), Some(active_turn));
+    assert_eq!(runtime.backend().remaining_steps(), 1);
+    runtime.shutdown().unwrap();
+}
+
+// 준비 단계의 용량 거절은 응답을 소비하지 않는 InputRejected로 반환되며,
+// 동일한 outstanding request에 더 작은 응답을 제출할 수 있습니다.
+#[test]
+fn question_unanswered_preparation_budget_rejection_is_retryable() {
+    let active_turn = turn(session(1), 1);
+    let request_activity = activity(active_turn, 1);
+    let request = ActivityRequestRef::new(request_activity, RequestId::new(id(1)));
+    let command = AgentCommand::RespondToActivity {
+        request,
+        response: ActivityResponse::QuestionUnanswered,
+    };
+    for kind in [
+        BackendFailureKind::InputOverBudget,
+        BackendFailureKind::ContextExhausted,
+    ] {
+        let (mut runtime, _) = runtime_with_active_turn([
+            BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+                activity: request_activity,
+                kind: ActivityKind::UserInputRequest {
+                    request_id: request.request_id(),
+                },
+            }),
+            BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+                activity: request_activity,
+                outcome: ActivityOutcome::Completed,
+            }),
+            BackendScriptStep::RejectCommand {
+                command: command.clone(),
+                failure: BackendFailure::new(kind, "response cannot fit"),
+            },
+            BackendScriptStep::AcceptCommand(command.clone()),
+            BackendScriptStep::Shutdown(Ok(())),
+        ]);
+        runtime.poll_event().unwrap();
+        runtime.poll_event().unwrap();
+        let before = runtime.journal().entries();
+        assert!(matches!(
+            runtime.execute_command(command.clone()),
+            Err(RuntimeError::InputRejected(_))
+        ));
+        assert_eq!(runtime.journal().entries(), before);
+        runtime.execute_command(command.clone()).unwrap();
+        assert_eq!(runtime.active_turn(), Some(active_turn));
+        runtime.shutdown().unwrap();
+    }
+}

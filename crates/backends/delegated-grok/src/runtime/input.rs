@@ -38,6 +38,7 @@ impl InputQuestions {
             ),
             choices: question.choices.clone(),
             allow_notes: true,
+            allow_unanswered: false,
             previous_question: index > 0,
             draft: (!draft.is_empty()).then(|| draft.clone()),
             draft_choice: *draft_choice,

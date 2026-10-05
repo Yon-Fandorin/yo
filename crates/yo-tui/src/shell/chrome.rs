@@ -75,9 +75,21 @@ pub(crate) enum RequestPrompt {
     Answer,
     Choice,
     Notes,
+    AnswerUnanswered,
+    ChoiceUnanswered { allow_notes: bool },
+    NotesUnanswered,
     Secret,
     SecretPrevious,
     Waiting,
+}
+
+impl RequestPrompt {
+    pub(super) const fn allows_unanswered(self) -> bool {
+        matches!(
+            self,
+            Self::AnswerUnanswered | Self::ChoiceUnanswered { .. } | Self::NotesUnanswered
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -208,11 +220,18 @@ pub(super) fn paint_transient(
         return Ok(None);
     }
     if let Some(request) = snapshot.request {
+        if request.allows_unanswered() && show_shortcuts {
+            help::paint_unanswered_shortcuts(view, styles)?;
+            return Ok(None);
+        }
         let label = match request {
             RequestPrompt::Approval => "Waiting for approval",
             RequestPrompt::Answer
             | RequestPrompt::Choice
             | RequestPrompt::Notes
+            | RequestPrompt::AnswerUnanswered
+            | RequestPrompt::ChoiceUnanswered { .. }
+            | RequestPrompt::NotesUnanswered
             | RequestPrompt::Secret
             | RequestPrompt::SecretPrevious => "Waiting for your answer",
             RequestPrompt::Waiting => "Waiting for question",

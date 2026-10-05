@@ -29,6 +29,8 @@ struct ActiveSourceEvidence {
     last_activity_kind: Option<ActivityKind>,
     last_agent_message_boundary: Option<JournalSequence>,
     last_tool_call_boundary: Option<JournalSequence>,
+    last_question_response_boundary: Option<JournalSequence>,
+    question_responses: Vec<(crate::ActivityQuestion, crate::ActivityResponse)>,
     last_interrupted_activity_boundary: Option<JournalSequence>,
     last_activity_completed: bool,
     has_open_activity: bool,
@@ -42,6 +44,9 @@ fn active_source_evidence(
 ) -> ActiveSourceEvidence {
     let mut evidence = ActiveSourceEvidence::default();
     let mut started_activities = BTreeMap::<ActivityRef, ActivityKind>::new();
+    let mut ordinary_questions = BTreeMap::new();
+    let mut answered_questions = BTreeMap::new();
+    let mut completed_questions = BTreeMap::new();
     for entry in entries.iter().filter(|entry| entry.sequence() <= last) {
         match entry.record() {
             SemanticRecord::BackendRequestAccepted(request)
@@ -53,6 +58,36 @@ fn active_source_evidence(
                 if activity.turn() == turn =>
             {
                 started_activities.insert(*activity, *kind);
+            },
+            SemanticRecord::EventCommitted(AgentEvent::ActivityUpdated {
+                activity,
+                update: crate::ActivityUpdate::TextSnapshot(snapshot),
+            }) if activity.turn() == turn => {
+                if let Some(ActivityKind::UserInputRequest { request_id }) =
+                    started_activities.get(activity)
+                {
+                    let request = crate::ActivityRequestRef::new(*activity, *request_id);
+                    if let Some(question) = crate::ActivityQuestion::from_snapshot(snapshot)
+                        .filter(|question| question.allow_unanswered && !question.is_secret)
+                    {
+                        ordinary_questions.insert(request, question);
+                    } else {
+                        ordinary_questions.remove(&request);
+                    }
+                }
+            },
+            SemanticRecord::CommandCommitted(command) if entry.sequence() >= first => {
+                if let AgentCommand::RespondToActivity {
+                    request,
+                    response:
+                        response @ (crate::ActivityResponse::UserInput(_)
+                        | crate::ActivityResponse::QuestionAnswer { .. }
+                        | crate::ActivityResponse::QuestionUnanswered),
+                } = command.command()
+                    && let Some(question) = ordinary_questions.get(request)
+                {
+                    answered_questions.insert(*request, (question.clone(), response.clone()));
+                }
             },
             SemanticRecord::EventCommitted(AgentEvent::ActivityFinished { activity, outcome })
                 if activity.turn() == turn =>
@@ -74,6 +109,29 @@ fn active_source_evidence(
                                 },
                                 ActivityKind::ToolCall => {
                                     evidence.last_tool_call_boundary = Some(entry.sequence());
+                                },
+                                ActivityKind::UserInputRequest { request_id }
+                                    if answered_questions.contains_key(
+                                        &crate::ActivityRequestRef::new(*activity, request_id),
+                                    ) =>
+                                {
+                                    let response = answered_questions
+                                        .remove(&crate::ActivityRequestRef::new(
+                                            *activity, request_id,
+                                        ))
+                                        .expect("matched ordinary question response");
+                                    completed_questions.insert(request_id, response);
+                                },
+                                ActivityKind::UserInputResponse { request_id }
+                                    if completed_questions.contains_key(&request_id) =>
+                                {
+                                    evidence.last_question_response_boundary =
+                                        Some(entry.sequence());
+                                    evidence.question_responses.push(
+                                        completed_questions
+                                            .remove(&request_id)
+                                            .expect("matched completed question"),
+                                    );
                                 },
                                 _ => {},
                             }
@@ -117,7 +175,7 @@ fn active_suffix_matches(
         return false;
     }
     let evidence = active_source_evidence(entries, turn, first, last);
-    if evidence.has_open_activity {
+    if evidence.has_open_activity || !question_results_match(items, &evidence.question_responses) {
         return false;
     }
     let last_input_sequence = entries
@@ -192,12 +250,18 @@ fn active_suffix_matches(
         .last_agent_message_boundary
         .into_iter()
         .chain(evidence.last_tool_call_boundary)
+        .chain(evidence.last_question_response_boundary)
         .any(|response| request < response && response < last_activity);
     let activity_end_is_closed_response = match evidence.last_activity_kind {
         Some(ActivityKind::AgentMessage) => {
             evidence.last_agent_message_boundary == Some(last_activity)
         },
         Some(ActivityKind::ToolCall) => evidence.last_tool_call_boundary == Some(last_activity),
+        Some(ActivityKind::UserInputResponse { .. })
+            if evidence.last_question_response_boundary == Some(last_activity) =>
+        {
+            true
+        },
         Some(ActivityKind::ToolResult) => evidence
             .last_tool_call_boundary
             .is_some_and(|tool_call| tool_call < last_activity),
@@ -214,11 +278,83 @@ fn active_suffix_matches(
     let tool_call_completed = evidence
         .last_tool_call_boundary
         .is_some_and(|boundary| request < boundary);
+    let question_completed = evidence
+        .last_question_response_boundary
+        .is_some_and(|boundary| request < boundary)
+        && !evidence.question_responses.is_empty();
     has_tool_call
         && has_tool_output
-        && tool_call_completed
+        && (tool_call_completed || question_completed)
         && activity_end_is_closed_response
         && last == last_input_sequence.map_or(last_activity, |input| input.max(last_activity))
+}
+
+// ordinary 결과를 생성하지 않고, durable 명령과 typed 선택지가 그 결과의 유일한 근거인지
+// 확인합니다.
+fn question_results_match(
+    items: &[ModelReplayItem],
+    responses: &[(crate::ActivityQuestion, crate::ActivityResponse)],
+) -> bool {
+    let calls = items
+        .iter()
+        .filter_map(|item| match item {
+            ModelReplayItem::FunctionCall { call_id, name, .. } if name == "ask_user" => {
+                Some(call_id)
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if calls.len() != responses.len() {
+        return false;
+    }
+    let outputs = items
+        .iter()
+        .filter_map(|item| match item {
+            ModelReplayItem::FunctionCallOutput { call_id, output } => Some((call_id, output)),
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    calls
+        .iter()
+        .zip(responses)
+        .all(|(call_id, (question, response))| {
+            let Some(output) = outputs.get(call_id) else {
+                return false;
+            };
+            let Ok(serde_json::Value::Object(value)) = serde_json::from_str(output) else {
+                return false;
+            };
+            let field = |name: &str| value.get(name).and_then(serde_json::Value::as_str);
+            if field("schema") != Some("yo.ask-user-result/v1") {
+                return false;
+            }
+            match response {
+                crate::ActivityResponse::QuestionUnanswered => {
+                    value.len() == 2 && field("status") == Some("unanswered")
+                },
+                crate::ActivityResponse::UserInput(input) => {
+                    value.len() == 4
+                        && field("status") == Some("answered")
+                        && field("kind") == Some("text")
+                        && field("text") == Some(input.as_str())
+                },
+                crate::ActivityResponse::QuestionAnswer { choice, notes } => {
+                    let label = choice
+                        .checked_sub(1)
+                        .and_then(|ordinal| question.choices.get(ordinal as usize))
+                        .map(|choice| choice.label.as_str());
+                    value.len() == 6
+                        && field("status") == Some("answered")
+                        && field("kind") == Some("choice")
+                        && value.get("choice").and_then(serde_json::Value::as_u64)
+                            == Some(u64::from(*choice))
+                        && label.is_some()
+                        && field("label") == label
+                        && field("notes") == Some(notes.as_str())
+                },
+                _ => false,
+            }
+        })
 }
 
 #[derive(Clone)]

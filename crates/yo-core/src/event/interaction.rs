@@ -134,6 +134,9 @@ pub struct ActivityQuestion {
     /// host가 typed choice-plus-notes 응답을 지원하는지 나타냅니다.
     #[serde(default)]
     pub allow_notes: bool,
+    /// 이 ordinary question을 답변 없이 마칠 수 있는지 나타냅니다.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_unanswered: bool,
     /// 이 request가 별도 process-local secret input 경로만 허용하는지 나타냅니다.
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_secret: bool,
@@ -171,6 +174,7 @@ impl ActivityQuestion {
     fn valid(&self) -> bool {
         !self.plain_text.is_empty()
             && self.choices.len() <= 64
+            && (!self.allow_unanswered || !self.is_secret)
             && (!self.is_secret
                 || (self.choices.is_empty()
                     && !self.allow_notes

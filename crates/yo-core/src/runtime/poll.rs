@@ -8,6 +8,7 @@ use crate::{
 
 impl<B: AgentBackend> AgentRuntime<B> {
     pub fn poll_event(&mut self) -> Result<RuntimePoll, RuntimeError> {
+        self.ensure_response_commit_healthy()?;
         if let Some(event) = self.interview_delivery.pop_front() {
             return Ok(RuntimePoll::Event(event));
         }
