@@ -284,6 +284,45 @@ secret/private replay, detached jobs, normal CLI/TUI usability or Mac behavior.
 The implementation's eight clean checks and independent corrective review are
 separate evidence; no physical Mac test was performed on this candidate.
 
+### Stock CLI/TUI cold resume
+
+On 2026-10-06, the unchanged stock CLI at `2de2274a` passed the same eligible
+failure journey through two real Linux Fullscreen TUI processes and the stored
+paid Qwen binding. Its binary SHA-256 was
+`a23c69bee874821b5c851f68450941257dea4751070fa1c3c1c25ce69b8d4755`.
+The successful journey took 19.26 seconds and observed three accepted requests.
+An earlier paid attempt observed two accepted requests and rendered the resumed
+history, but its viewport-dependent readiness check timed out before the second
+user input. The corrected observer used the actual captured screen as a fixture.
+Across those two launches, five accepted requests were observed; neither launch
+used an automatic retry.
+
+The first Turn completed one automatic `cat instructions.txt` through the
+workspace-confined host, with a correlated result containing an unpredictable
+public nonce and target filename. A distinct `read_files` call received the typed
+local semantic-admission rejection. The Turn remained Failed. Its durable delta
+preserved the earlier closed command/result and excluded the rejected call;
+settlement, outcome and continuation anchor were ordered in the public Journal.
+Rejected raw arguments are not retained, so this frontend evidence establishes
+the typed rejection rather than independently proving its raw limit value.
+
+The first CLI exited normally. A separate stock `--resume` process restored the
+history without accepting a new request until explicit user input. That input
+supplied no nonce. The second Turn returned the exact nonce without tools or
+reexecution and completed. A distinct assistant answer row appeared after input;
+its absence beforehand prevents historical tool output from satisfying the
+screen check. The prior 35,398-byte Journal prefix stayed byte-identical. Both
+CLIs exited 0, termios was restored, and owned processes, socket, workspace and
+Session state were removed. Other worktree changes were preserved.
+
+Actual HTTP attempts were not counted. The stock limits allow at most 32 model
+rounds plus one compaction start per Turn; for two explicit Turns, disabled
+retries and up to three same-origin redirects give a conservative managed/native
+HTTP-attempt upper bound of 264 per launch. Installed-host inventory traffic is
+not instrumented or covered by that formula. This is actual Linux CLI/TUI proof,
+not Mac or network-granted profile qualification, arbitrary-failure recovery,
+private replay or detached-job support.
+
 ## Large-body paging on the saved Mac
 
 On 2026-09-13, clean candidate `af16336de8836475af39022d08bf612d13955110`
