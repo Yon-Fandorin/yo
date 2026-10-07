@@ -1305,6 +1305,36 @@ pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다
 획득했다. 중첩 session 종료 뒤 바깥 로컬 PTY도 복원됐다. 이 SSH 관찰은
 실제 원격 host를 사용했으며 일반 test set이 아니라 증거 기록이다.
 
+### 현재 Apple Silicon TUI 검사 (2026-10-07)
+
+승인된 `develop` 후보 `a2a8d699`가 저장된 Darwin arm64 host에서 고정 SSH
+지문을 사용하는 자동 `yo-tui` profile 검사를 통과했다. 9,422,394-byte Git
+bundle에는 커밋된 후보만 포함했고 관련 없는 working-tree 변경은 제외했다.
+SHA-256은
+`64baa06220f68811e9b7b104adcc81975f701130fc60285af8c6a636de1814e5`였다.
+
+| 검사 | 실제 결과 | 소요 시간 |
+|---|---|---|
+| Frame scheduling | unit test 6개 통과 | 최초 컴파일 포함 66초 |
+| 크기 0인 view 재진입 | unit test 2개 통과 | 기록된 1초 미만 |
+| `cargo test --locked -p yo-tui --all-targets` | unit test 1,050개와 integration test 4개 통과; example에는 test 없음 | 186초 |
+| `cargo clippy --locked -p yo-tui --all-targets -- -D warnings` | 통과 | 25초 |
+
+집중 검사는 all-target suite와 겹치므로 추가 coverage로 합산하지 않는다.
+개수는 전체 로그에서 확인했다. summary의 마지막 example 0개 또는 필터된
+integration 결과를 unit test 개수로 대신하지 않았다. 검사는 Cargo build job
+2개와 Rust test thread 1개로 순차 실행했다. 각 검사에는 300초 제한과 그 이후
+process group 종료를 위한 5초 유예를 적용했다. 시간 제한을 넘긴 검사는 없었다.
+runner는 원격 checkout·bundle·runner·summary와 로컬 복사 bundle·임시
+known-hosts 파일의 삭제를 확인한 뒤 status 0으로 종료했다. 재사용 가능한
+bare source cache는 유지했다.
+
+이 결과는 현재 Apple Silicon에서의 자동 TUI 검사를 입증한다. 실제 PTY,
+SSH/tmux 상호작용, 물리 키보드, model service나 일반 질문 journey를 다시
+검증한 결과는 아니다. macOS 자동 명령 또는 network-granted 실행 profile을
+qualify하지 않는다. 설치된 Yo, 일반 설정·인증 정보와 사용자 tmux session은
+변경하지 않았다.
+
 ### Apple Silicon 빌드와 주입 입력 검사 (2026-09-11)
 
 2026-09-11 `f57e61e5` 기반 수정 트리를 macOS 26.6.2 arm64에서 고정된

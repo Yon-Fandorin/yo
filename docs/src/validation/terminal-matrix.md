@@ -1420,6 +1420,36 @@ restored the requested presentation mode. Exiting the nested session also
 restored the outer local PTY. These SSH observations used a real remote host;
 they are evidence records rather than part of the normal test set.
 
+### Current Apple Silicon TUI checks (2026-10-07)
+
+Accepted `develop` candidate `a2a8d699` passed the automated `yo-tui` profile
+on the saved Darwin arm64 host through pinned SSH. A 9,422,394-byte Git bundle
+contained the committed candidate; unrelated working-tree changes were excluded.
+Its SHA-256 was
+`64baa06220f68811e9b7b104adcc81975f701130fc60285af8c6a636de1814e5`.
+
+| Check | Actual result | Duration |
+|---|---|---|
+| Frame scheduling | Six unit tests passed | 66 seconds, including initial compilation |
+| Zero-sized view reentry | Two unit tests passed | Under one recorded second |
+| `cargo test --locked -p yo-tui --all-targets` | 1,050 unit and four integration tests passed; the example contained no tests | 186 seconds |
+| `cargo clippy --locked -p yo-tui --all-targets -- -D warnings` | Passed | 25 seconds |
+
+The focused checks overlap the all-target suite and are not additional coverage.
+Counts came from the complete logs; the summary's final zero-test example or
+filtered integration result did not replace the unit-test counts. Checks ran
+sequentially with two Cargo build jobs and one Rust test thread. Each check had
+a 300-second deadline followed by a five-second process-group termination grace.
+No check exceeded its deadline. The runner exited with status 0 after verifying
+removal of its remote checkout, bundle, runner and summary, and its local copied
+bundle and temporary known-hosts file. The reusable bare source cache remained.
+
+This establishes current automated TUI checks on Apple Silicon. It does not
+repeat real PTY, SSH/tmux interaction, physical keyboard, model-service or ordinary
+question journeys. It does not qualify macOS automatic-command or network-granted
+execution profiles. Installed Yo, normal configuration and credentials, and user
+tmux sessions were not changed.
+
 ### Apple Silicon build and injected-input check (2026-09-11)
 
 On 2026-09-11, the corrected tree based on `f57e61e5` was checked on macOS
