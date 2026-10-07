@@ -1450,6 +1450,27 @@ question journeys. It does not qualify macOS automatic-command or network-grante
 execution profiles. Installed Yo, normal configuration and credentials, and user
 tmux sessions were not changed.
 
+### Native Mac command adapter qualification (2026-10-07)
+
+The accepted practical Seatbelt contract is active, and the native adapter has
+separate ignored qualification fixtures. The production release table remains
+empty, so native Mac `run_command` plans return `command_platform_unqualified`.
+Linux workspace-confined command support is unchanged.
+
+| Boundary | Current evidence |
+|---|---|
+| Native Mac compile | Unverified for this adapter; the saved Mac is currently inaccessible. |
+| Seatbelt filesystem, secret/IPC/network denial and process lifecycle | Unverified for the production adapter; run the [Mac qualification suite](./#mac-workspace-command-qualification) on the actual release. |
+| Production admission | Disabled by the empty compiled qualification table; no public flag or environment bypass. |
+
+Earlier macOS 26.6.2 arm64 lifecycle-only diagnostics reproduced group/session
+escape from the proposed direct-syscall-deny mechanism. They did not exercise
+production filesystem, IPC or network rules and do not qualify that release.
+The accepted named-path and original-process-group scope does not imply atomic
+root binding or cleanup of arbitrary escaped descendants. Native qualification
+must verify the remaining required protections and retain those limitations.
+The earlier native question/file/resume journeys below remain separate evidence.
+
 ### Current native Mac journey attempts (2026-10-07)
 
 After the user replaced the key in Yo's own Mac store, the stock Fullscreen

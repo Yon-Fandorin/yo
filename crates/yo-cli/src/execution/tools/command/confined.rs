@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(any(target_os = "macos", test))]
+mod macos;
 mod risk;
 
 use std::{
@@ -29,6 +31,72 @@ use super::PreparedCommand;
 const PROFILE: &str = "yo.command-execution/workspace-confined-v2";
 const PRIVATE_HOME: &str = "/yo-private/home";
 const PRIVATE_TMP: &str = "/yo-private/tmp";
+
+#[derive(Clone, Copy)]
+enum Platform {
+    #[cfg(not(target_os = "macos"))]
+    Linux,
+    #[cfg(any(target_os = "macos", test))]
+    Macos,
+}
+
+impl Platform {
+    fn native() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            Self::Macos
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Self::Linux
+        }
+    }
+
+    fn is_macos(self) -> bool {
+        match self {
+            #[cfg(not(target_os = "macos"))]
+            Self::Linux => false,
+            #[cfg(any(target_os = "macos", test))]
+            Self::Macos => true,
+        }
+    }
+
+    fn revision(self) -> &'static str {
+        if self.is_macos() {
+            "macos-seatbelt-path-process-group-v1alpha1"
+        } else {
+            "linux-bwrap-private-net-v2"
+        }
+    }
+
+    fn process_scope(self) -> &'static str {
+        if self.is_macos() {
+            "process-group-bounded-cleanup"
+        } else {
+            "private-pid-namespace-and-process-group"
+        }
+    }
+
+    fn support_roots(self) -> &'static [&'static str] {
+        if self.is_macos() {
+            &[
+                "/usr",
+                "/bin",
+                "/sbin",
+                "/System/Library",
+                "/Library/Developer/CommandLineTools",
+                "/Applications/Xcode.app/Contents/Developer",
+                "/opt/homebrew/bin",
+                "/opt/homebrew/lib",
+                "/opt/homebrew/Cellar",
+                "/opt/homebrew/opt",
+                "/opt/homebrew/share",
+            ]
+        } else {
+            &["/usr", "/bin", "/sbin", "/lib", "/lib64"]
+        }
+    }
+}
 
 /// 조립 경계가 실제 저장소 위치와 현재 호스트 에이전트 endpoint를 제공한다.
 pub(crate) struct CommandConfinement {
@@ -65,6 +133,10 @@ pub(in crate::execution::tools) struct ConfinedPlan {
     roots: Vec<PinnedRoot>,
     hidden: Vec<HiddenPath>,
     environment: Vec<(String, String)>,
+    #[cfg(any(target_os = "macos", test))]
+    macos: Option<macos::Plan>,
+    #[cfg(test)]
+    manifest: serde_json::Value,
     payload: Payload,
     request_digest: [u8; 32],
     turn: yo_core::TurnRef,
@@ -96,6 +168,13 @@ impl CommandConfinement {
         ] {
             protected_roots.push(home.join(name));
         }
+        #[cfg(target_os = "macos")]
+        protected_roots.extend([
+            home.join("Library/Keychains"),
+            home.join("Library/Application Support/yo"),
+            PathBuf::from("/Library/Keychains"),
+            PathBuf::from("/System/Library/Keychains"),
+        ]);
         for key in [
             "XDG_RUNTIME_DIR",
             "XDG_CONFIG_HOME",
@@ -221,6 +300,15 @@ impl CommandConfinement {
         if !platform_available() {
             return Err(ToolPlanUnavailable::UnqualifiedPlatform);
         }
+        self.plan_on(request, configured, Platform::native())
+    }
+
+    fn plan_on(
+        &self,
+        request: &ToolExecutionRequest,
+        configured: Option<PreparedCommand>,
+        platform: Platform,
+    ) -> Result<(ConfinedPlan, bool, String, [u8; 32]), ToolPlanUnavailable> {
         let (payload, assessment, configured) = if let Some(command) = configured {
             if command.definition() != request.call.definition() {
                 return Err(ToolPlanUnavailable::UnsupportedProfile);
@@ -247,14 +335,25 @@ impl CommandConfinement {
         if assessment.network {
             return Err(ToolPlanUnavailable::UnqualifiedPlatform);
         }
+        #[cfg(any(target_os = "macos", test))]
+        let mut macos = if platform.is_macos() {
+            Some(macos::Plan::new()?)
+        } else {
+            None
+        };
         let mut roots = vec![pin(&self.workspace, &self.workspace, true)?];
-        for support in ["/usr", "/bin", "/sbin", "/lib", "/lib64"] {
+        for support in platform.support_roots() {
             let path = Path::new(support);
             if path.exists() {
                 roots.push(pin(path, path, false)?);
             }
         }
         for (source, destination) in &self.support_roots {
+            #[cfg(any(target_os = "macos", test))]
+            let destination = &macos.as_mut().map_or_else(
+                || Ok(destination.clone()),
+                |macos| macos.destination(source, destination),
+            )?;
             roots.push(pin(source, destination, false)?);
         }
         if let Payload::Configured(command, _) = &payload {
@@ -400,14 +499,32 @@ impl CommandConfinement {
             }
         }
         let hidden = reduced;
+        #[cfg(any(target_os = "macos", test))]
+        if let Some(macos) = &mut macos {
+            macos.freeze(&roots, &hidden, &self.secret_roots, &self.secret_endpoints)?;
+        }
+        let (home, temporary) = (PRIVATE_HOME.to_owned(), PRIVATE_TMP.to_owned());
+        #[cfg(any(target_os = "macos", test))]
+        let (home, temporary) = match &macos {
+            Some(macos) => (
+                utf8(macos.home())?.to_owned(),
+                utf8(macos.temporary())?.to_owned(),
+            ),
+            None => (home, temporary),
+        };
         let mut environment = vec![
             ("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned()),
-            ("HOME".to_owned(), PRIVATE_HOME.to_owned()),
-            ("TMPDIR".to_owned(), PRIVATE_TMP.to_owned()),
+            ("HOME".to_owned(), home.clone()),
+            ("TMPDIR".to_owned(), temporary),
             ("LANG".to_owned(), "C.UTF-8".to_owned()),
-            ("CARGO_HOME".to_owned(), format!("{PRIVATE_HOME}/.cargo")),
+            ("CARGO_HOME".to_owned(), format!("{home}/.cargo")),
             ("RUSTUP_AUTO_INSTALL".to_owned(), "0".to_owned()),
         ];
+        if platform.is_macos() {
+            environment[0].1 =
+                "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_owned();
+            environment[3].1 = "en_US.UTF-8".to_owned();
+        }
         environment.extend(self.git_identity.clone());
         for (source, destination) in &self.support_roots {
             if source == destination && source.file_name().is_some_and(|name| name == "bin") {
@@ -435,18 +552,30 @@ impl CommandConfinement {
             .map(|hidden| Ok(json!({"path":utf8(&hidden.path)?,"directory":hidden.directory,"ancestors":hidden.ancestors.iter().map(|(path,identity)| (path.to_string_lossy(),identity)).collect::<Vec<_>>()})))
             .collect::<Result<Vec<_>, ToolPlanUnavailable>>()?;
         let request_digest = Sha256::digest(request.call.normalized_arguments()).into();
-        let identity = Sha256::digest(serde_json::to_vec(&json!({
-            "profile":PROFILE,"classifier":risk::REVISION,"platform":"linux-bwrap-private-net-v2",
+        let manifest = json!({
+            "profile":PROFILE,"classifier":risk::REVISION,"platform":platform.revision(),
             "workspace":utf8(&self.workspace)?,"cwd":utf8(&self.workspace)?,
             "arguments":request.call.normalized_arguments(),"tool":request.call.definition().id().as_str(),
             "configured_launch":match &payload { Payload::Configured(command, _) => command.launch_manifest(), Payload::Shell(_) => serde_json::Value::Null },
             "roots":root_manifest,"hidden":hidden_manifest,"environment":environment,
-            "descriptors":[0,1,2],"network":false,"private_unix_ipc":true,
-            "process_scope":"private-pid-namespace-and-process-group",
+            "descriptors":[0,1,2],"network":false,"private_unix_ipc":!platform.is_macos(),
+            "process_scope":platform.process_scope(),
             "maximum_output_bytes":request.maximum_output_bytes,
             "maximum_retained_output_bytes":request.maximum_retained_output_bytes,
             "absolute_execution_timeout":request.absolute_execution_timeout,
-        })).map_err(|_| ToolPlanUnavailable::UnresolvedScope)?).into();
+        });
+        #[cfg(any(target_os = "macos", test))]
+        let manifest = {
+            let mut manifest = manifest;
+            if let Some(macos) = &macos {
+                manifest["macos"] = macos.manifest()?;
+            }
+            manifest
+        };
+        let identity = Sha256::digest(
+            serde_json::to_vec(&manifest).map_err(|_| ToolPlanUnavailable::UnresolvedScope)?,
+        )
+        .into();
         let scope = format!(
             "Workspace: {}\nNetwork: disabled{}{}",
             json!(utf8(&self.workspace)?),
@@ -469,6 +598,10 @@ impl CommandConfinement {
                 roots,
                 hidden,
                 environment,
+                #[cfg(any(target_os = "macos", test))]
+                macos,
+                #[cfg(test)]
+                manifest,
                 payload,
                 request_digest,
                 turn: request.turn,
@@ -486,6 +619,20 @@ impl CommandConfinement {
 }
 
 impl ConfinedPlan {
+    #[cfg(any(target_os = "macos", test))]
+    pub(super) fn finalize(
+        mut self,
+        result: yo_core::ToolExecutionResult,
+        cleanup_grace: Duration,
+    ) -> yo_core::ToolExecutionResult {
+        if let Some(macos) = self.macos.take()
+            && macos.cleanup(cleanup_grace).is_err()
+        {
+            return super::super::execution::failed("workspace command private cleanup failed");
+        }
+        result
+    }
+
     pub(super) fn workspace(&self) -> &Path {
         &self.workspace
     }
@@ -509,7 +656,11 @@ impl ConfinedPlan {
         {
             linux::launch(self, cancelled, deadline)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            macos::launch(self, cancelled, deadline)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (cancelled, deadline);
             Err(error())
@@ -522,7 +673,11 @@ fn platform_available() -> bool {
     {
         linux::available()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::available()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         false
     }

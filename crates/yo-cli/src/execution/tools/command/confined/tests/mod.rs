@@ -23,6 +23,8 @@ use crate::{
     state::config,
 };
 
+mod macos;
+
 fn call(command: &str) -> ToolExecutionRequest {
     let mut request = request(
         &registry(LocalToolRegistryRevision::BasicFilesV2).unwrap(),

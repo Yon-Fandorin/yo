@@ -115,11 +115,45 @@ IPC, 늦게 생성된 endpoint와 ancestor 교체, stdio/environment 격리, nes
 남는지 검증한다. Workspace root에 configuration이 있어도 일반 쓰기는 자동이며 선택한
 configuration·credential·recovery-key 파일은 숨겨지고 쓰기 불가능한지 확인한다.
 Network grant와 macOS profile은 아직 검증되지 않았으며 Linux fixture의
-성공으로 두 profile의 지원을 주장하지 않는다.
+성공으로 두 profile의 지원을 주장하지 않는다. Mac adapter는 아래 별도 qualification을
+사용한다.
 
 Native v2의 일반 append는 자동이다. 승인 경로는 같은 호출에 두 disposable literal 삭제
 피연산자를 넣어 검사하며 append·삭제 전에 호출 전체를 분류한다. 일반 append의 자동
 실행도 별도로 검사한다.
+
+## Mac workspace command qualification
+
+Mac adapter와 ignored native fixture의 소유자는
+[`command/confined/macos.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/tools/command/confined/macos.rs)와
+[`command/confined/tests/macos.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/tools/command/confined/tests/macos.rs)다.
+`/usr/bin/sandbox-exec`, 필요한 shell·Python·Git·`cc`·Rust/Cargo toolchain과 cached
+Cargo 의존성을 갖춘 실제 Mac에서 실행한다. Mach 거부 fixture는 host control로 사용할
+실행 중인 credential service와 sandbox 밖에서 소유한 test process에 대한 성공한
+`task_for_pid` 접근도 필요하다. 필요한 debugger 접근 권한이 없으면 이 qualification
+fixture는 실패한다:
+
+```sh
+CARGO_BUILD_JOBS=2 cargo test --locked -p yo-cli macos_qualification_ -- --ignored --test-threads=1
+```
+
+Suite는 private test-only plan builder를 통해 production Seatbelt policy를
+사용한다. Workspace·Git 쓰기, 읽기 전용 support root, 정확한 external/configured grant,
+secret path·host IPC 차단, network 차단, descriptor/environment 정리, child 상속, 원래 process group 종료와
+bounded output drain을 검사해야 한다. 필수 조건이 없거나 assertion이 실패하면
+qualification은 실패한다. Linux의 policy/resource/path test나 Mac 컴파일 성공만으로
+Seatbelt 강제 또는 release qualification을 입증하지 않는다. Release admission은 native
+Mach credential/task-port 차단과 group/session을 벗어난 뒤에도 유지되는 제한 상속을
+포함한 전체 계약 증거를 요구하며 fixture suite 통과만으로 충분하지 않다.
+
+Production release admission은 비어 있는 compiled table이며 public flag나 environment
+우회 경로는 없다. 따라서 native Mac plan은 계속 `command_platform_unqualified`다.
+Release를 허용하려면 실제 native 증거와 명시적으로 검토한 table 변경이 필요하다.
+선택적 external-root·network 기능도 허용 전에 별도 증거를 요구한다. 승인된 path·
+process-group 한계의 소유자는
+[`agent.tool.local-execution-boundary`](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.tool.local-execution-boundary.md)다.
+미검증 Mac compile/runtime 상태는 [현재 terminal matrix](terminal-matrix.md)를 따른다.
+현재 Mac host에 접근할 수 없다.
 
 ## 실제 managed 명령 승인과 복구
 

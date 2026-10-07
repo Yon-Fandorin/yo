@@ -236,7 +236,7 @@ impl CommandExecution {
         let progress = Arc::new(Mutex::new(ProgressSnapshot::default()));
         let worker_progress = Arc::clone(&progress);
         let inner = ThreadExecution::spawn(move |cancelled| {
-            run_command(
+            let result = run_command(
                 &workspace,
                 &command,
                 CommandOutput {
@@ -251,7 +251,12 @@ impl CommandExecution {
                     waiter: waiter_hooks,
                     launch: launch_hooks,
                 },
-            )
+            );
+            #[cfg(target_os = "macos")]
+            if let CommandPlan::Confined(plan) = command {
+                return plan.finalize(result, limits.cleanup_grace);
+            }
+            result
         });
         Ok(Self {
             inner,

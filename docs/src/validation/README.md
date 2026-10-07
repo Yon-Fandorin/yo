@@ -119,8 +119,46 @@ approval for consumed option values and effective flags. Verify cancellation and
 deadlines before spawn never create a marker, while real setup errors remain failed.
 With configuration in the workspace root, ordinary writes remain automatic and the
 selected configuration, credential and recovery-key files stay hidden and unwritable.
-Network-granted and macOS profiles remain
-unqualified; these Linux fixtures do not establish support for either.
+Network-granted and macOS profiles remain unqualified; these Linux fixtures
+do not establish support for either. Use the separate Mac qualification below
+for its adapter.
+
+## Mac workspace command qualification
+
+The Mac adapter and ignored native fixtures live in
+[`command/confined/macos.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/tools/command/confined/macos.rs)
+and
+[`command/confined/tests/macos.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/tools/command/confined/tests/macos.rs).
+Run the native suite on an actual Mac with `/usr/bin/sandbox-exec`, its required
+shell, Python, Git, `cc`, Rust/Cargo toolchain and cached Cargo dependencies.
+The Mach denial fixture also requires a live credential service and successful
+unsandboxed `task_for_pid` access to the owned test process as host controls.
+Without the required debugger access, that qualification fixture fails:
+
+```sh
+CARGO_BUILD_JOBS=2 cargo test --locked -p yo-cli macos_qualification_ -- --ignored --test-threads=1
+```
+
+The suite uses the production Seatbelt policy through a private test-only plan
+builder. It must exercise workspace and Git writes, read-only support roots,
+exact external/configured grants, secret-path and host-IPC denial, network denial,
+descriptor/environment sanitization, child inheritance, original-process-group cleanup and bounded
+output drain. Missing prerequisites or a failed assertion fail qualification.
+Linux policy/resource/path tests and a successful Mac compile do not establish
+Seatbelt enforcement or release qualification. Release admission still needs
+complete contract evidence, including native Mach credential/task-port denial
+and restriction inheritance after a group/session escape; a passing fixture
+suite alone is insufficient.
+
+Production release admission is an empty compiled table; there is no public
+flag or environment bypass. Native Mac plans therefore remain
+`command_platform_unqualified`. Admitting a release requires actual native
+proof and an explicit reviewed table update. Optional external-root or network
+capabilities need their own proof before admission. The accepted path and
+process-group limits are owned by
+[`agent.tool.local-execution-boundary`](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.tool.local-execution-boundary.md);
+see the [current terminal matrix](terminal-matrix.md) for the unverified Mac
+compile/runtime status. Mac host access is currently unavailable.
 
 ## Live managed command approval and recovery
 

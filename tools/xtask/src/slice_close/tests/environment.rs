@@ -21,7 +21,6 @@ fn git_helpers_ignore_poisoned_hook_environment() {
             "--exact",
             "--ignored",
             "slice_close::tests::environment::poisoned_hook_child",
-            "--nocapture",
         ])
         .env(CHILD_MARKER, "1")
         .env("GIT_DIR", &git_dir)

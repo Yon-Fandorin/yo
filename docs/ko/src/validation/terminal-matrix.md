@@ -1335,6 +1335,26 @@ SSH/tmux 상호작용, 물리 키보드, model service나 일반 질문 journey�
 qualify하지 않는다. 설치된 Yo, 일반 설정·인증 정보와 사용자 tmux session은
 변경하지 않았다.
 
+### Native Mac command adapter qualification (2026-10-07)
+
+승인된 practical Seatbelt 계약은 활성 상태이며 native adapter에는 별도 ignored
+qualification fixture가 있다. Production release table은 계속 비어 있으므로 native Mac
+`run_command` plan은 `command_platform_unqualified`를 반환한다. Linux workspace-confined
+명령 지원은 그대로다.
+
+| 경계 | 현재 증거 |
+|---|---|
+| Native Mac compile | 이 adapter는 미검증 상태이며 저장된 Mac에 현재 접근할 수 없다. |
+| Seatbelt filesystem·secret/IPC/network 차단과 process lifecycle | Production adapter는 미검증 상태다. 실제 release에서 [Mac qualification suite](./#mac-workspace-command-qualification)를 실행한다. |
+| Production admission | 비어 있는 compiled qualification table로 비활성화되어 있으며 public flag나 environment 우회 경로는 없다. |
+
+이전 macOS 26.6.2 arm64 lifecycle-only 진단에서는 제안된 direct-syscall-deny 방식으로도
+process group/session을 벗어날 수 있음을 재현했다. Production filesystem·IPC·network
+rule은 검사하지 않았으므로 그 release의 qualification이 아니다. 승인된 named-path·
+원래 process-group 범위도 atomic root binding이나 임의로 벗어난 자손의 cleanup을
+보장하지 않는다. Native qualification은 나머지 필수 보호를 검증하고 이 한계를 유지해야
+한다. 아래의 이전 native question/file/resume 흐름은 별도 증거다.
+
 ### 현재 native Mac 흐름 시도 (2026-10-07)
 
 사용자가 Yo의 Mac 저장소에서 key를 교체한 뒤 `18d37e1b`의 stock Fullscreen
