@@ -1,0 +1,30 @@
+  yo / 설계 예시                                                                
+  참조 선택                                                                     
+  검색: @parser                                                                 
+                                                                                
+  프로젝트 파일                                                                 
+  > src/parser.rs                                                               
+    tests/parser.rs                                                             
+  사용 가능한 참조                                                              
+  skill  review · project / .agents/skills                                      
+  skill  review · user / ~/.agents/skills                                       
+  prompt  explain-change · 일반 텍스트 삽입                                     
+  첨부  screenshot.png · 준비 중 1/1                                            
+  ! 준비 중 첨부가 있으면 전송 전 완료를 확인합니다.                            
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  PgUp/Dn 1/1                                                                   
+  ----------------------------------------------------------------------------  
+  선택: src/parser.rs                                                           
+  Enter 참조 삽입                                                               
+  Esc 검색 닫기                                                                 
+                                                                                

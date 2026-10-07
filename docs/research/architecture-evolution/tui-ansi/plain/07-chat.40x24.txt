@@ -1,0 +1,24 @@
+  yo / 설계 예시                        
+  Chat                                  
+  대기 · 입력 가능                      
+                                        
+  사용자                                
+  parser의 빈 입력 처리를 고쳐줘.       
+  yo                                    
+  입력 경계와 기존 테스트를 먼저        
+  확인하겠습니다.                       
+    [완료] src/parser.rs 읽기           
+    [완료] tests/parser.rs 읽기         
+  모델  native / code-large             
+  프로젝트  ~/work/parser ·             
+  fix/empty-input                       
+                                        
+                                        
+  PgUp/Dn 1/1                           
+  ------------------------------------  
+  일반 초안 · 2줄                       
+  > 빈 문자열과 한글 입력도 검사해줘.   
+  > 기존 공개 API는 유지해줘.           
+  Enter 보내기                          
+  Ctrl+G 외부 편집                      
+                                        

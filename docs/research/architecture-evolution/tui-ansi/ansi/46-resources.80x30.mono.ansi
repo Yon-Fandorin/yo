@@ -1,0 +1,30 @@
+  yo / 설계 예시                                                                [0m
+[1m  도구 자료                                                                     [0m
+[1m  일부 결과 · 원문 보존                                                         [0m
+                                                                                [0m
+[1m  Resource link                                                                 [0m
+  이름  parser specification                                                    [0m
+  URI  docs://project/parser/spec                                               [0m
+  크기  알 수 없음 · 자동 가져오기 안 함                                        [0m
+[1m  Embedded 자료                                                                 [0m
+  text/plain · UTF-8 · 1,248 bytes                                              [0m
+  binary  원문 표시 불가 · metadata 보존                                        [0m
+[1m  파일 묶음 읽기                                                                [0m
+  src/parser.rs:1-80 · 성공 · 다음 범위 있음                                    [0m
+  tests/missing.rs · 실패: 파일 없음                                            [0m
+[1m  디렉터리                                                                      [0m
+  5개 표시 · 전체 개수 알 수 없음                                               [0m
+[1m  검색                                                                          [0m
+  empty · 최대 20개 일치 · 일부 결과                                            [0m
+[1m  실행                                                                          [0m
+  host local / call7 / exit 1 / retained 8 KiB                                  [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+  PgUp/Dn 1/1                                                                   [0m
+  ----------------------------------------------------------------------------  [0m
+[1m  선택: 문서 resource                                                           [0m
+[1m  Enter 보관 자료 보기                                                          [0m
+[1m  Esc 대화로 복귀                                                               [0m
+                                                                                [0m

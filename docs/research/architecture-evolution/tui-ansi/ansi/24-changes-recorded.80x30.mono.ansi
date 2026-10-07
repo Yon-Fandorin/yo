@@ -1,0 +1,30 @@
+  yo / 설계 예시                                                                [0m
+[1m  Changes                                                                       [0m
+[1m  Recorded · 실행 기록                                                          [0m
+                                                                                [0m
+[1m  완료 편집 #call9 · before/written 비교                                        [0m
+  근거  쓰기 직전 snapshot과 완료된 written snapshot                            [0m
+  @@ parse_empty @@                                                             [0m
+  -    return Err(EmptyInput);                                                  [0m
+  +    return Ok(Vec::new());                                                   [0m
+  기록 시각  13:42:10 · 예시                                                    [0m
+  이후 파일이 바뀌었을 수 있습니다.                                             [0m
+  현재 작업 폴더 확인은 별도 행동입니다.                                        [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+  PgUp/Dn 1/1                                                                   [0m
+  ----------------------------------------------------------------------------  [0m
+[1m  src/parser.rs · +1 -1                                                         [0m
+[1m  Esc 대화로 복귀                                                               [0m
+                                                                                [0m

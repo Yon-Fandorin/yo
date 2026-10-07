@@ -1,0 +1,24 @@
+  yo / 설계 예시                        
+  Changes                               
+  Reported · 보고 자료                  
+                                        
+  외부 호스트가 보고한 diff             
+  src/parser.rs                         
+  -    return Err(EmptyInput);          
+  +    return Ok(Vec::new());           
+  원문은 보존했지만 실제 쓰기 전후      
+  비교 근거가 없습니다.                 
+  Recorded 완료 편집과 같은 증거로      
+  취급하지 않습니다.                    
+  현재 Git diff는 별도 조회입니다.      
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+  PgUp/Dn 1/1                           
+  ------------------------------------  
+  쓰기 전후 검증 없음                   
+  Esc 대화로 복귀                       
+                                        

@@ -1,0 +1,30 @@
+  yo / 설계 예시                                                                [0m
+[1m  현재 화면 도움말                                                              [0m
+[1m  Chat · 기본 키 프로토콜                                                       [0m
+                                                                                [0m
+[1m  지금 가능한 행동                                                              [0m
+  Enter  일반 입력 보내기                                                       [0m
+  Ctrl+G  외부 편집기로 여러 줄 작성                                            [0m
+  Esc / Ctrl+C  실행 중 턴 중단                                                 [0m
+[1m  지원 확인 필요                                                                [0m
+  Shift+Enter  enhanced 키 지원 확인 후만 개행 안내                             [0m
+  Alt 키/F-key가 통과하지 않으면 명령 목록 사용                                 [0m
+[1m  명령 찾기                                                                     [0m
+  /help /model /status /find /resume /tree /fork                                [0m
+  /copy /output /attach /prompt /compact /secrets                               [0m
+  /new /interview /exit                                                         [0m
+  /preview는 개발용 preview 실행에서만 사용합니다.                              [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+  PgUp/Dn 1/1                                                                   [0m
+  ----------------------------------------------------------------------------  [0m
+[1m  선택: 입력과 취소                                                             [0m
+[1m  Esc 도움말 닫기                                                               [0m
+                                                                                [0m

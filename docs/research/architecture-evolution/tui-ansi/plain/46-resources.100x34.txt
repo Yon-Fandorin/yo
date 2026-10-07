@@ -1,0 +1,34 @@
+  yo / 설계 예시                                                                                    
+  도구 자료                                                                                         
+  일부 결과 · 원문 보존                                                                             
+                                                                                                    
+  Resource link                                                                                     
+  이름  parser specification                                                                        
+  URI  docs://project/parser/spec                                                                   
+  크기  알 수 없음 · 자동 가져오기 안 함                                                            
+  Embedded 자료                                                                                     
+  text/plain · UTF-8 · 1,248 bytes                                                                  
+  binary  원문 표시 불가 · metadata 보존                                                            
+  파일 묶음 읽기                                                                                    
+  src/parser.rs:1-80 · 성공 · 다음 범위 있음                                                        
+  tests/missing.rs · 실패: 파일 없음                                                                
+  디렉터리                                                                                          
+  5개 표시 · 전체 개수 알 수 없음                                                                   
+  검색                                                                                              
+  empty · 최대 20개 일치 · 일부 결과                                                                
+  실행                                                                                              
+  host local / call7 / exit 1 / retained 8 KiB                                                      
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+  PgUp/Dn 1/1                                                                                       
+  ------------------------------------------------------------------------------------------------  
+  선택: 문서 resource                                                                               
+  Enter 보관 자료 보기                                                                              
+  Esc 대화로 복귀                                                                                   
+                                                                                                    

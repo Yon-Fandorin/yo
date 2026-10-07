@@ -1,0 +1,34 @@
+  yo / 설계 예시                                                                                    
+  승인 상세                                                                                         
+  Proposed · 미실행                                                                                 
+                                                                                                    
+  긴 명령 · 전체 argv                                                                               
+  호스트 local / cwd /work/parser                                                                   
+  실행 파일 /usr/bin/cargo                                                                          
+  argv[0] test                                                                                      
+  argv[1] --manifest-path                                                                           
+  argv[2] /work/parser/crates/parser/Cargo.toml                                                     
+  argv[3] --package                                                                                 
+  argv[4] parser                                                                                    
+  argv[5] --test                                                                                    
+  argv[6] empty_input                                                                               
+  argv[7] --                                                                                        
+  argv[8] --exact                                                                                   
+  argv[9] parse_empty_input                                                                         
+  argv[10] --nocapture                                                                              
+  프로필 workspace-test · target 쓰기만 허용                                                        
+  네트워크 차단 · source 파일 쓰기 없음                                                             
+  마지막 인수까지 이 화면에서 읽을 수 있습니다.                                                     
+  내용 페이지 이동은 승인 선택을 바꾸지 않습니다.                                                   
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+  PgUp/Dn 1/1                                                                                       
+  ------------------------------------------------------------------------------------------------  
+  복귀 선택: 이번 요청 거절                                                                         
+  Esc 승인으로 복귀                                                                                 
+                                                                                                    

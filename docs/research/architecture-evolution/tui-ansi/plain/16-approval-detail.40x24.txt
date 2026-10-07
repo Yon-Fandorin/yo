@@ -1,0 +1,24 @@
+  yo / 설계 예시                        
+  승인 상세                             
+  Proposed · 미실행                     
+                                        
+  전체 실행 내용                        
+  호스트  local                         
+  cwd  /work/parser                     
+  executable  /usr/bin/cargo            
+  argv[0]  test                         
+  argv[1]  -p                           
+  argv[2]  parser                       
+  환경 프로필  workspace-test           
+  네트워크  차단                        
+  쓰기 범위  /work/parser/target        
+  파일 변경 제안은 이 실행 요청에       
+  포함되지 않습니다.                    
+  src/parser.rs 편집 제안은 별도 승인   
+  요청 #r8에서 확인합니다.              
+  상세 화면에서는 승인하지 않습니다.    
+  PgUp/Dn 1/1                           
+  ------------------------------------  
+  복귀 선택: 이번 요청 거절             
+  Esc 승인으로 복귀                     
+                                        

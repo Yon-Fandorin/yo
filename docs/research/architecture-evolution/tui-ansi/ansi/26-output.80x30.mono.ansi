@@ -1,0 +1,30 @@
+  yo / 설계 예시                                                                [0m
+[1m  Output                                                                        [0m
+[1m  실패 · exit 1                                                                 [0m
+                                                                                [0m
+[1m  cargo test -p parser                                                          [0m
+  호스트  local · cwd ~/work/parser                                             [0m
+  보관 범위  첫 2 KiB + 마지막 6 KiB                                            [0m
+  ! 가운데 40 KiB는 보관되지 않았습니다.                                        [0m
+  stdout:                                                                       [0m
+    running 12 tests                                                            [0m
+  stderr:                                                                       [0m
+    assertion failed: parse_empty                                               [0m
+    tests/parser.rs:42                                                          [0m
+  실패 원문 찾기 / 보관된 원문 복사                                             [0m
+  전체 출력 복구가 가능한 것처럼 안내하지 않습니다.                             [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+                                                                                [0m
+  PgUp/Dn 1/1                                                                   [0m
+  ----------------------------------------------------------------------------  [0m
+[1m  선택: #call7 · 부분 출력                                                      [0m
+[1m  Esc 대화로 복귀                                                               [0m
+[1m  Ctrl+K 행동                                                                   [0m
+                                                                                [0m

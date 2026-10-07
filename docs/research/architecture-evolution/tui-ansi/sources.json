@@ -1,0 +1,170 @@
+{
+  "P01": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/custom-editor.ts",
+    "symbol": "CustomEditor.renderTopBorder / handleInput",
+    "adaptation": "Pi는 작업 상태를 입력창 가까이 배치한다. 좁은 폭에서 spinner로 축약될 수 있다. Yo 제안에서는 취소 의미를 보존한다.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/custom-editor.ts"
+  },
+  "P02": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/footer.ts",
+    "symbol": "FooterComponent.render",
+    "adaptation": "작업 폴더·모델·사용량의 위계. Yo에서는 상태를 장식보다 우선.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/footer.ts"
+  },
+  "P03": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/status-indicator.ts",
+    "symbol": "RetryStatusIndicator / CompactionStatusIndicator",
+    "adaptation": "실행·재시도·정리 상태와 실제 시간/횟수 구분.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/status-indicator.ts"
+  },
+  "P04": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/interactive-mode.ts",
+    "symbol": "updatePendingMessagesDisplay / restoreQueuedMessagesToEditor / handleExportCommand",
+    "adaptation": "steer/follow-up 분리. Pi의 큐 텍스트 합치기는 Yo에 도입하지 않음. export는 Yo 신규 제안.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/interactive-mode.ts"
+  },
+  "P05": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/model-selector.ts",
+    "symbol": "filterModels / updateList",
+    "adaptation": "검색·현재·기본·갱신을 구별. Yo 예약 상태와 disabled 이유 추가.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/model-selector.ts"
+  },
+  "P06": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/settings-selector.ts",
+    "symbol": "SettingsSelectorComponent",
+    "adaptation": "설명과 현재 값이 있는 설정 목록. Yo 통합 설정 화면은 제안.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/settings-selector.ts"
+  },
+  "P07": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/session-selector.ts",
+    "symbol": "SessionSelectorHeader.render / SessionList.render",
+    "adaptation": "사람이 읽는 이름·내용·scope·검색·실패 표시.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/session-selector.ts"
+  },
+  "P08": {
+    "project": "Pi",
+    "path": "packages/coding-agent/examples/extensions/permission-gate.ts",
+    "symbol": "tool_call handler",
+    "adaptation": "예제 extension의 확인 패턴만 참고. native 권한 보장/정책 동등성의 근거가 아님.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/examples/extensions/permission-gate.ts"
+  },
+  "P09": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/extension-selector.ts",
+    "symbol": "handleInput / dispose",
+    "adaptation": "선택지·설명·상황별 취소. Yo 요청 ID와 만료 처리는 별도 유지.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/extension-selector.ts"
+  },
+  "P10": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/tool-execution.ts",
+    "symbol": "createResultFallback / updateDisplay",
+    "adaptation": "도구 상태·보이는 출력·생략량. 보관되지 않은 출력 복원은 주장하지 않음.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/tool-execution.ts"
+  },
+  "P11": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/assistant-message.ts",
+    "symbol": "AssistantMessageComponent.updateContent",
+    "adaptation": "본문 위계·공개 reasoning 구별·중단 후 남은 내용.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/assistant-message.ts"
+  },
+  "P12": {
+    "project": "Pi",
+    "path": "packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts",
+    "symbol": "updateDisplay / setExpanded",
+    "adaptation": "정리 진행과 완료 summary 기록을 구별.",
+    "url": "https://github.com/earendil-works/pi/blob/cd32f7725fdbddbaecdff5b1e68491563394e0ca/packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts"
+  },
+  "C01": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/bottom_pane/chat_composer.rs",
+    "symbol": "handle_key_event_without_popup / handle_submission_with_time",
+    "adaptation": "입력·첨부·수락 상태. Yo의 입력 수락 경계는 유지.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/bottom_pane/chat_composer.rs"
+  },
+  "C02": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/bottom_pane/footer.rs",
+    "symbol": "FooterProps / single_line_footer_layout",
+    "adaptation": "action 상태에서 도출하는 footer, 측정과 표시의 일치.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/bottom_pane/footer.rs"
+  },
+  "C03": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/status_indicator_widget.rs",
+    "symbol": "StatusIndicatorRender::lines",
+    "adaptation": "대기열이 있어도 실행 중 중단 안내 유지.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/status_indicator_widget.rs"
+  },
+  "C04": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/bottom_pane/pending_input_preview.rs",
+    "symbol": "as_renderable / PREVIEW_LINE_LIMIT",
+    "adaptation": "steer/실패/다음 턴을 분리. 키는 caller override 가능; snapshot 키를 보편값으로 복사하지 않음.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/bottom_pane/pending_input_preview.rs"
+  },
+  "C05": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/bottom_pane/approval_overlay.rs",
+    "symbol": "build_options / cancel_current_request / approval_footer_hint",
+    "adaptation": "범위·거절·전체 내용 공개. 작은 화면에서는 숨은 실행을 수락시키지 않음.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/bottom_pane/approval_overlay.rs"
+  },
+  "C06": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/bottom_pane/request_user_input/mod.rs",
+    "symbol": "new_with_keymap / advance_queue_or_complete_at",
+    "adaptation": "질문 전용 composer와 질문별 답변 상태. Yo의 일반 초안 분리 제안 근거.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/bottom_pane/request_user_input/mod.rs"
+  },
+  "C07": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/resume_picker.rs",
+    "symbol": "render_dense_session_lines / render_footer_lines / render_empty_state_line",
+    "adaptation": "이름·preview·검색·취소와 실패 복귀.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/resume_picker.rs"
+  },
+  "C08": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/chatwidget/settings_popups.rs",
+    "symbol": "open_theme_picker / open_experimental_popup",
+    "adaptation": "설정 선택과 시작 전/로딩/실패 상태 구분.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/chatwidget/settings_popups.rs"
+  },
+  "C09": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/diff_render.rs",
+    "symbol": "render_changes_block / render_wrapped_diff_line",
+    "adaptation": "부호·파일 summary·좁은 폭. Proposed/Recorded/Current 의미는 Yo 제안이며 Codex 동등 의미 주장이 아님.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/diff_render.rs"
+  },
+  "C10": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/exec_cell/render.rs",
+    "symbol": "output_lines / truncate_lines_middle",
+    "adaptation": "실행/실패·생략 바이트·보관된 출력 범위.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/exec_cell/render.rs"
+  },
+  "C11": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/app/transcript_export.rs",
+    "symbol": "load_export_transcript / write_transcript",
+    "adaptation": "내보내기 범위·fallback·쓰기 실패. Yo의 미저장 suffix 구조는 별도 설계 필요.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/app/transcript_export.rs"
+  },
+  "C12": {
+    "project": "Codex",
+    "path": "codex-rs/tui/src/app/reconnect.rs",
+    "symbol": "begin_reconnect / finish_reconnect",
+    "adaptation": "stale 표시·제출 제한·초안 보관·오래된 요청 응답 폐기.",
+    "url": "https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/app/reconnect.rs"
+  }
+}

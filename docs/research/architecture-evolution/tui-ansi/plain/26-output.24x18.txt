@@ -1,0 +1,54 @@
+  yo / 설계 예시        
+  Output                
+  실패 · exit 1         
+                        
+  cargo test -p parser  
+  호스트  local · cwd   
+  ~/work/parser         
+  보관 범위  첫 2 KiB   
+  + 마지막 6 KiB        
+  ! 가운데 40 KiB는     
+  보관되지 않았습니다.  
+  PgUp/Dn 1/3           
+  --------------------  
+  선택: #call7 · 부분   
+  출력                  
+  Esc 대화로 복귀       
+  Ctrl+K 행동           
+                        
+  yo / 설계 예시        
+  Output                
+  실패 · exit 1         
+                        
+  stdout:               
+    running 12 tests    
+  stderr:               
+    assertion failed:   
+  parse_empty           
+    tests/parser.rs:42  
+                        
+  PgUp/Dn 2/3           
+  --------------------  
+  선택: #call7 · 부분   
+  출력                  
+  Esc 대화로 복귀       
+  Ctrl+K 행동           
+                        
+  yo / 설계 예시        
+  Output                
+  실패 · exit 1         
+                        
+  실패 원문 찾기 /      
+  보관된 원문 복사      
+  전체 출력 복구가      
+  가능한 것처럼         
+  안내하지 않습니다.    
+                        
+                        
+  PgUp/Dn 3/3           
+  --------------------  
+  선택: #call7 · 부분   
+  출력                  
+  Esc 대화로 복귀       
+  Ctrl+K 행동           
+                        
