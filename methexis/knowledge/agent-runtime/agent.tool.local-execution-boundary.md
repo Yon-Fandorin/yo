@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.tool-001
-    revision: sha256:42fcac7712701d2e96c65d833f4e7c4fb3b2b158d785e03ce0a7451f9feb4bf4
+    revision: sha256:c7b1e5e6af8c2a106255c4c5aa7eed0edb00bb5f182be49409c418796cc78412
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -939,11 +939,17 @@ environment, including private `HOME` and `TMPDIR`; it does not pass host
 agent, SSH, credential, desktop, or Session sockets. The per-call profile
 must deny access to host agent, credential, and Session IPC endpoints,
 including pathname and abstract UNIX sockets and Mach service or task-port
-access. Approved network access does not grant host IPC. Process visibility,
+access. A Mac plan may explicitly name benign operating-system/runtime
+Mach-lookup services needed by its admitted toolchain; their policy grants
+MUST remain disjoint from host credential, agent, helper, and Session
+endpoints and MUST NOT admit Mach task ports. Broad Mach lookup is not an
+allowed substitute. Approved network access does not grant host IPC. Process
+visibility,
 signaling, child inheritance, cancellation, termination, reap, and output
-drain are platform capabilities that must be qualified with call-scoped
-fixtures; a platform/version without demonstrated required behavior returns
-unavailable before spawn. Local sockets created inside an admitted writable
+drain are platform capabilities whose required guarantees are specified by
+the selected adapter below and must be qualified with call-scoped fixtures;
+a platform/version without demonstrated required behavior returns unavailable
+before spawn. Local sockets created inside an admitted writable
 root remain possible only where the frozen plan and platform policy permit
 them.
 
@@ -953,22 +959,59 @@ support roots, scoped writable binds, and private temporary/home paths. It
 requires every isolation primitive needed by the frozen plan before spawn;
 no additional Landlock dependency is implied.
 
-A macOS Seatbelt adapter using `/usr/bin/sandbox-exec` is a practical
-candidate, not an asserted support guarantee.
+The macOS adapter uses `/usr/bin/sandbox-exec` with the explicit complete-plan
+adapter/profile revision `macos-seatbelt-path-process-group-v1alpha1` and
+process scope `process-group-bounded-cleanup`. It shares the v2 registry,
+runner, classifier, exact-plan approval, secret-read exclusions, network/IPC
+policy, and descriptor/environment sanitization above. Those existing wire
+profiles and all Linux adapter identities and isolation guarantees remain
+unchanged; no implicit resume migration or unrestricted fallback is admitted.
+The distinct Mac adapter revision and process scope MUST enter the complete
+plan identity before approval or spawn.
+
+Mac filesystem grants apply to the resolved, frozen named paths through
+Seatbelt literal/subpath rules. The runner MUST revalidate captured root and
+secret-exclusion identities immediately before spawn; an observed replacement
+or unresolved exclusion makes that plan unavailable without recalculation.
+This check detects observed changes; it does not make Seatbelt grants
+FD-bound or atomic against concurrent rename, replacement, or alias changes.
+The contract therefore does not guarantee that every admitted or excluded
+root continues to name its captured filesystem object after that check.
+The named-path secret exclusions still take precedence over all grants;
+this limitation never authorizes deliberately exposing a secret path.
+
+The Mac command starts in its own process group. Every terminal path applies
+the existing bounded termination of that original group, direct-child reap,
+and stdout/stderr drain; cleanup failure remains explicit and never retries
+the command. Descendants remaining in the original group are covered by that
+cleanup. A descendant that changes its process group or session, including
+through `posix_spawn` attributes, can outlive it; arbitrary escaped-descendant
+tracking, termination, or reap is not guaranteed. Child processes MUST still
+inherit Seatbelt restrictions when they change group or session. macOS does
+not claim the Linux private PID namespace's process-visibility or signaling
+isolation. None of these Mac limits relax the shared filesystem, secret,
+network, or host-IPC policy.
+
 Binary presence and successful policy parsing are insufficient qualification.
 For each admitted macOS release, actual sandbox-child tests MUST demonstrate
 workspace writes, automatic in-workspace Git-metadata writes, resolved external
 Git-metadata reads with unapproved writes denied, exact approved external
 gitdir/common-dir writes, secret-root read denial, other exact approved-root
-grants, outside-root denial,
-network denial and approved-network behavior, descriptor/environment
-sanitization, and denial of host UNIX-socket, Mach-lookup, Mach-task, and
-credential/Session IPC access. Tests MUST also show that child processes
-inherit the restrictions and that the runner can observe, cancel, terminate,
-reap, and drain the tested descendant tree within its bounded cleanup policy.
-A failure or unavailable Seatbelt capability in any required behavior makes
-the affected profile unavailable before spawn for that OS release; it does
-not establish that another release or future adapter cannot meet the contract.
+grants, outside-root denial, network denial and approved-network behavior,
+descriptor/environment sanitization, and denial of host UNIX-socket,
+forbidden host Mach-lookup, Mach-task, and credential/Session IPC access.
+Any explicitly admitted benign runtime Mach-lookup services MUST be tested
+alongside the forbidden-service denial. Tests MUST demonstrate
+child inheritance and bounded original-process-group termination, direct-child
+reap, and output drain, and must distinguish group/session escape from that
+cleanup scope. Root-identity checks MUST reject an observed pre-spawn change;
+tests MUST NOT present those checks as proof of atomic filesystem binding.
+Qualification is capability-specific: an unsupported network or external-root
+grant returns unavailable for that requested plan without disabling an otherwise
+qualified baseline or selecting a wider profile. A missing baseline guarantee
+makes the affected adapter unavailable before spawn for that OS release.
+A failed proposed mechanism does not establish that every Mac adapter or
+another release is incapable of a stronger guarantee.
 
 Filesystem path confinement protects the named paths and roots. It does not
 establish an exhaustive inode-level guarantee against a pre-existing hard link
