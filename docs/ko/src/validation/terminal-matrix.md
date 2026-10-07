@@ -1337,32 +1337,48 @@ qualify하지 않는다. 설치된 Yo, 일반 설정·인증 정보와 사용자
 
 ### 현재 native Mac 흐름 시도 (2026-10-07)
 
-`18d37e1b`의 stock Fullscreen binary를 격리된 로컬 Mac tmux에서 native
-`qwencloud:default:qwen3.8-max` binding과 주입 키로 두 번 실행했다.
-SHA-256은
+사용자가 Yo의 Mac 저장소에서 key를 교체한 뒤 `18d37e1b`의 stock Fullscreen
+binary가 격리된 로컬 tmux의 주입 키와 native `qwencloud:default:qwen3.8-max`를
+통해 아래 흐름을 통과했다. SHA-256은
 `b9b9a5fcc47b2c03b826dbd162bdd67f86cda06e43bdb5330d710e83e532b951`였다.
 
-| 시도 | 관측 결과 | 소요 시간 |
-|---|---|---|
-| 첫 native 실행 | Observer timeout 뒤 검사에서 stock 종료 상태 1과 durable accepted request·StartTurn command 0건을 확인했다. Provider HTTP 시도는 관측하지 못했다. | 154.49초 |
-| 두 번째 native 실행 | 첫 draft marker가 표시된 뒤 HTTP 401과 stock 종료 상태 1을 관측했다. Durable accepted request·StartTurn·SteerTurn command는 0건이었다. | 4.69초 |
+| 흐름 | 실제 결과 |
+|---|---|
+| 별도 Session의 공개 native 질문 | `ask_user`가 Blue/Green을 표시하고 Blue 응답이 전체 Session/Turn/Activity/Request 참조와 일치했다. Chat에 `blue`와 `QUESTION_ACK_blue`가 남았으며 Turn은 완료됐다. |
+| Edit·새 파일·덮어쓰기 | Native receipt 세 건이 완료됐고 파일 세 개 모두 fixture bytes와 일치했다. Alt+D에 변경 없는 context를 포함한 저장된 edit 전후 비교와 새 파일·전체 쓰기에서 제출한 내용이 표시됐다. Left/Right로 파일을 선택하고 F1으로 선택된 Chat frame을 정확히 복원했다. |
+| 같은 file Session의 typed failure와 cold resume | 첫 process에서 성공한 read를 보존한 뒤 local pre-dispatch rejection으로 가시적인 Failed가 남았다. 새 process가 해당 Session을 복원하고 명시적 입력 전까지 idle을 유지한 뒤 tool 없이 정확한 공개 recovery nonce를 반환했다. |
 
-따라서 native 검사에서 TUI 실행은 두 번, durable accepted request는 0건이었다.
-Durable 수락 0건이 HTTP 시도 0건을 뜻하지는 않는다. 이 경로의 공개 `ask_user`,
-edit·새 파일·덮어쓰기 preview, typed pre-dispatch failure와 cold resume는
-미검증 상태다. 최근 관측한 차단 원인은 HTTP 401이며 native 흐름 통과는 기록하지
-않았다. 두 시도 뒤 소유한 tmux server 부재, 관측한 소유 PID 종료와 임시 task
-config 제거를 확인했다. 두 시도 뒤 Terminal 복원도 확인했다.
+File·failure·resume Session은 실제 process 두 개에 걸친 Turn 세 개로 구성됐다.
+결과는 Completed, Failed, Completed였다. Resume 전에는 accepted backend request
+7건과 StartTurn command 2건, 이후에는 accepted request 8건, StartTurn command
+3건과 SteerTurn command 0건이었다. 입력 없는 3초 동안 새 accepted request나
+assistant 응답은 생성되지 않았다. Continuation에는 새 명시적 Turn 한 건과 새
+accepted request 한 건만 필요했다.
 
-읽기 전용 공개 binding 비교에서 provider, account, model, connector, endpoint,
-profile과 enabled 상태가 예상 Token Plan 정의와 일치했고 `host:codex` 시작
-선호도 유지됐다. 이 비교에서는 credential 값을 읽거나 복사하지 않았고 설정도 다시 쓰지 않았다.
-HTTP 401만으로 구체적인 credential 문제를 식별할 수는 없다.
+Typed `yo.local-failure-context/v1` settlement는 닫힌 성공 read call/result 쌍을
+순서가 맞는 delta/outcome/anchor 증거로 보존했다. 거부된 call은 복원된 delta에
+없었고 provider-private item도 0건이었다. 이전 file Turn에는 nonce가 없었다.
+원래 88,184-byte Journal prefix는 byte 단위로 같았으며 SHA-256은
+`aa43a898fd6e31c3b153eb45ece1470182a64a7afd030aff8f5059312714c89f`였다.
+File/failure process와 continuation process 모두 종료 상태 0과 terminal 설정
+복원을 확인했다. 소유한 server 부재, 관측한 소유 PID 종료와 task config 제거도
+확인했다. 첫 process는 32.32초, continuation은 30.98초가 걸렸다.
 
-별도의 resident Codex 검사에서는 TUI 실행 두 번, 수락되고 완료된 Turn 한 건과
-native-question event 0건을 기록했다. 이는 native managed-tool 흐름을 입증하지
-않았다. 이 시도들은 물리 키보드 검증을 반복하거나 macOS automatic-command
-실행을 qualify하지 않는다. 위 자동 검사의 성공 결과는 별도로 유지한다.
+전체 native 검사는 TUI 실행 6번, accepted backend request 12건과 StartTurn
+command 6건이었다. Turn 결과는 완료 3건, 중단 2건과 Failed 1건이었다. Key 교체
+전 두 시도는 durable accepted request 0건이었고 timeout 뒤 별도 시도에서 HTTP
+401을 관측했다. 이후 fixture 제한으로 file 시도 두 건이 효과 없이 중단됐다.
+Operator decode 오류로 처음에는 resume 전에 멈췄지만 continuation은 유료 작업을
+반복하지 않고 보존된 Session을 재사용했다. Accepted request 개수는 HTTP 시도
+개수가 아니며 실제 HTTP 개수는 관측하지 못했다. 별도의 resident Codex 검사는
+실행 2번, 수락·완료된 Turn 1건과 native-question event 0건인 delegated 증거다.
+
+읽기 전용 공개 binding 비교는 예상 Token Plan 정의와 일치했고 `host:codex` 시작
+선호도 유지됐다. Operator는 credential 값을 읽거나 복사하지 않았다. 이 증거는
+관측한 native 경로, file 표시와 typed local rejection에 한정된다. 일반 failure
+복구, private replay, detached job, 물리 키보드 입력이나 macOS automatic-command/
+network-granted qualification은 입증하지 않는다. 전체 쓰기의 이전 내용 캡처는
+계속 보류하며 위 자동 검사의 성공 결과는 별도로 유지한다.
 
 ### Apple Silicon 빌드와 주입 입력 검사 (2026-09-11)
 

@@ -1452,35 +1452,51 @@ tmux sessions were not changed.
 
 ### Current native Mac journey attempts (2026-10-07)
 
-The stock Fullscreen binary from `18d37e1b` was launched twice in isolated local
-Mac tmux with the native `qwencloud:default:qwen3.8-max` binding and injected keys.
-Its SHA-256 was
+After the user replaced the key in Yo's own Mac store, the stock Fullscreen
+binary from `18d37e1b` passed the native `qwencloud:default:qwen3.8-max` journeys
+below in isolated local tmux with injected keys. Its SHA-256 was
 `b9b9a5fcc47b2c03b826dbd162bdd67f86cda06e43bdb5330d710e83e532b951`.
 
-| Attempt | Observed result | Duration |
-|---|---|---|
-| First native launch | Observer timed out; subsequent inspection found stock exit 1 and no durable accepted request or StartTurn command. Provider HTTP attempts were unobserved. | 154.49 seconds |
-| Second native launch | First draft marker appeared, then stock exit 1 with HTTP 401; no durable accepted request, StartTurn or SteerTurn command. | 4.69 seconds |
+| Journey | Actual result |
+|---|---|
+| Public native question, separate Session | `ask_user` displayed Blue/Green; the Blue response matched the full Session/Turn/Activity/Request reference. Chat retained `blue` and `QUESTION_ACK_blue`; the Turn completed. |
+| Edit, new file and overwrite | Three native receipts completed and all three files matched the fixture bytes. Alt+D showed the saved edit before/after with unchanged context and submitted new/full-write content. Left/Right selected files; F1 restored the selected Chat frame exactly. |
+| Typed failure and cold resume, same file Session | The first process retained a successful read before local pre-dispatch rejection and visibly Failed. A new process restored that Session, remained idle until explicit input, then returned the exact public recovery nonce with zero tools. |
 
-The native campaign therefore recorded two TUI launches and zero durable accepted
-requests. Zero durable acceptance does not establish zero HTTP attempts. Public
-`ask_user`, edit/new-file/overwrite previews, typed pre-dispatch failure and cold
-resume remain unverified on this route. The latest observed blocker is HTTP 401;
-no native journey pass was recorded. Owned tmux servers were absent, observed
-owned PIDs were gone and temporary task configs were removed after both attempts.
-Terminal restoration was confirmed after both attempts.
+The file/failure/resume Session contained three Turns across two actual processes:
+Completed, Failed, Completed. Before resume it held seven accepted backend requests
+and two StartTurn commands; afterward it held eight accepted requests, three
+StartTurn commands and zero SteerTurn commands. The three-second no-input interval
+produced no new accepted request or assistant answer. Only one new explicit Turn
+and one new accepted request were needed for continuation.
+
+The typed `yo.local-failure-context/v1` settlement preserved the closed successful
+read call/result pair in ordered delta/outcome/anchor evidence. The rejected call
+was absent from that recovered delta, which contained zero provider-private items.
+The earlier file Turn contained no nonce. The original 88,184-byte Journal prefix
+remained byte-identical, SHA-256
+`aa43a898fd6e31c3b153eb45ece1470182a64a7afd030aff8f5059312714c89f`.
+Both file/failure and continuation processes exited 0 and restored terminal settings;
+owned servers were absent, observed owned PIDs were gone and task configs removed.
+The first process took 32.32 seconds and continuation took 30.98 seconds.
+
+The complete native campaign used six TUI launches, 12 accepted backend requests
+and six StartTurn commands: three completed, two interrupted and one Failed Turn.
+The earlier two pre-key-replacement attempts had zero durable accepted requests
+(timeout, then HTTP 401); subsequent fixture restrictions interrupted two file
+attempts without effects. An operator decoder error initially stopped before
+resume; continuation reused the retained Session without repeating paid work.
+Accepted requests are not HTTP attempt counts; actual HTTP counts were unobserved.
+A separate resident Codex campaign used two launches, one accepted/completed Turn
+and zero native-question events; it is separate delegated evidence.
 
 A read-only public binding comparison matched the expected Token Plan definition
-for provider, account, model, connector, endpoint, profile and enabled state;
-the `host:codex` startup preference was preserved. The comparison did not read or
-copy credential values or rewrite configuration. HTTP 401 does not identify the
-specific credential problem.
-
-A separate resident Codex campaign recorded two TUI launches, one accepted and
-completed Turn, and zero native-question events; it did not establish the native
-managed-tool journey. These attempts do not repeat physical keyboard validation
-or qualify macOS automatic-command execution. The automated checks above remain
-separate successful results.
+and the `host:codex` startup preference remained preserved. The operator did not
+read or copy credential values. These proofs cover the observed native route,
+file display and typed local rejection. They do not establish general failure
+recovery, private replay, detached jobs, physical keyboard input or macOS
+automatic-command/network-granted qualification. Full-write old-content capture
+remains deferred; the automated checks above remain separate successful results.
 
 ### Apple Silicon build and injected-input check (2026-09-11)
 
