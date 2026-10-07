@@ -1450,6 +1450,38 @@ question journeys. It does not qualify macOS automatic-command or network-grante
 execution profiles. Installed Yo, normal configuration and credentials, and user
 tmux sessions were not changed.
 
+### Current native Mac journey attempts (2026-10-07)
+
+The stock Fullscreen binary from `18d37e1b` was launched twice in isolated local
+Mac tmux with the native `qwencloud:default:qwen3.8-max` binding and injected keys.
+Its SHA-256 was
+`b9b9a5fcc47b2c03b826dbd162bdd67f86cda06e43bdb5330d710e83e532b951`.
+
+| Attempt | Observed result | Duration |
+|---|---|---|
+| First native launch | Observer timed out; subsequent inspection found stock exit 1 and no durable accepted request or StartTurn command. Provider HTTP attempts were unobserved. | 154.49 seconds |
+| Second native launch | First draft marker appeared, then stock exit 1 with HTTP 401; no durable accepted request, StartTurn or SteerTurn command. | 4.69 seconds |
+
+The native campaign therefore recorded two TUI launches and zero durable accepted
+requests. Zero durable acceptance does not establish zero HTTP attempts. Public
+`ask_user`, edit/new-file/overwrite previews, typed pre-dispatch failure and cold
+resume remain unverified on this route. The latest observed blocker is HTTP 401;
+no native journey pass was recorded. Owned tmux servers were absent, observed
+owned PIDs were gone and temporary task configs were removed after both attempts.
+Terminal restoration was confirmed after both attempts.
+
+A read-only public binding comparison matched the expected Token Plan definition
+for provider, account, model, connector, endpoint, profile and enabled state;
+the `host:codex` startup preference was preserved. The comparison did not read or
+copy credential values or rewrite configuration. HTTP 401 does not identify the
+specific credential problem.
+
+A separate resident Codex campaign recorded two TUI launches, one accepted and
+completed Turn, and zero native-question events; it did not establish the native
+managed-tool journey. These attempts do not repeat physical keyboard validation
+or qualify macOS automatic-command execution. The automated checks above remain
+separate successful results.
+
 ### Apple Silicon build and injected-input check (2026-09-11)
 
 On 2026-09-11, the corrected tree based on `f57e61e5` was checked on macOS

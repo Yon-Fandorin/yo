@@ -1335,6 +1335,35 @@ SSH/tmux 상호작용, 물리 키보드, model service나 일반 질문 journey�
 qualify하지 않는다. 설치된 Yo, 일반 설정·인증 정보와 사용자 tmux session은
 변경하지 않았다.
 
+### 현재 native Mac 흐름 시도 (2026-10-07)
+
+`18d37e1b`의 stock Fullscreen binary를 격리된 로컬 Mac tmux에서 native
+`qwencloud:default:qwen3.8-max` binding과 주입 키로 두 번 실행했다.
+SHA-256은
+`b9b9a5fcc47b2c03b826dbd162bdd67f86cda06e43bdb5330d710e83e532b951`였다.
+
+| 시도 | 관측 결과 | 소요 시간 |
+|---|---|---|
+| 첫 native 실행 | Observer timeout 뒤 검사에서 stock 종료 상태 1과 durable accepted request·StartTurn command 0건을 확인했다. Provider HTTP 시도는 관측하지 못했다. | 154.49초 |
+| 두 번째 native 실행 | 첫 draft marker가 표시된 뒤 HTTP 401과 stock 종료 상태 1을 관측했다. Durable accepted request·StartTurn·SteerTurn command는 0건이었다. | 4.69초 |
+
+따라서 native 검사에서 TUI 실행은 두 번, durable accepted request는 0건이었다.
+Durable 수락 0건이 HTTP 시도 0건을 뜻하지는 않는다. 이 경로의 공개 `ask_user`,
+edit·새 파일·덮어쓰기 preview, typed pre-dispatch failure와 cold resume는
+미검증 상태다. 최근 관측한 차단 원인은 HTTP 401이며 native 흐름 통과는 기록하지
+않았다. 두 시도 뒤 소유한 tmux server 부재, 관측한 소유 PID 종료와 임시 task
+config 제거를 확인했다. 두 시도 뒤 Terminal 복원도 확인했다.
+
+읽기 전용 공개 binding 비교에서 provider, account, model, connector, endpoint,
+profile과 enabled 상태가 예상 Token Plan 정의와 일치했고 `host:codex` 시작
+선호도 유지됐다. 이 비교에서는 credential 값을 읽거나 복사하지 않았고 설정도 다시 쓰지 않았다.
+HTTP 401만으로 구체적인 credential 문제를 식별할 수는 없다.
+
+별도의 resident Codex 검사에서는 TUI 실행 두 번, 수락되고 완료된 Turn 한 건과
+native-question event 0건을 기록했다. 이는 native managed-tool 흐름을 입증하지
+않았다. 이 시도들은 물리 키보드 검증을 반복하거나 macOS automatic-command
+실행을 qualify하지 않는다. 위 자동 검사의 성공 결과는 별도로 유지한다.
+
 ### Apple Silicon 빌드와 주입 입력 검사 (2026-09-11)
 
 2026-09-11 `f57e61e5` 기반 수정 트리를 macOS 26.6.2 arm64에서 고정된
