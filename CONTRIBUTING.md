@@ -12,12 +12,12 @@ does not establish equivalent usability. Reuse relevant current comparisons.
 
 ## Starting work
 
-Read the relevant AGENTS routes once. Inspect the branch and
-`git status --short --untracked-files=all`; preserve existing work.
+Read relevant AGENTS routes once; inspect the branch and
+`git status --short --untracked-files=all`. Preserve existing work.
 Use exact paths or `rg`. For unfamiliar work,
-`python3 tools/context.py find "prompt cursor"` returns a few existing
-documentation routes. If they do not answer the question, use `rg`; rephrase
-at most once. Stop when the owner, behavior and useful check are understood.
+`python3 tools/context.py find "prompt cursor"` returns documentation routes.
+If unhelpful, use `rg` after at most one rephrase. Stop once the owner,
+behavior and useful check are understood.
 
 Reuse the checkout unless isolation helps. An optional branch is
 `change/<outcome>`; `develop` is the usual integration target, `main` the
@@ -27,41 +27,41 @@ release boundary. Do not fetch, switch dirty work, or rewrite history for ceremo
 
 A task request approves necessary implementation, fixes, reviews, transfers and
 checks on configured, authenticated targets within the user's constraints.
-Approval follows corrected candidates and continuations; record its task origin.
-New hashes or worktrees require no confirmation. Ask only for missing product
-decisions or effects outside scope.
-Push and destructive recovery require their own user authorization.
-
-Check the conversation and handoff before asking. A short affirmative approves
-the concrete proposal, including stated integration and activation. Compaction,
-continuation and worktrees do not expire approval. Replace stale approval-wait
-notes with scope and next action. Ask again only about a material effect outside
-scope or revocation; identify the delta.
+Routine layout choices within accepted behavior and ownership are included.
+For Codewright's Confirm shape, show the tree, owners, dependencies and shared
+surface before editing, then continue. Wait for a missing product/owner decision
+or explicitly requested design sign-off.
+Approval survives corrected candidates, new hashes, compaction, continuations
+and worktrees; record its task origin. Check conversation and handoff before
+asking. A short affirmative approves the concrete proposal, including stated
+integration and activation. Replace stale approval-wait notes with scope and
+next action. Ask only for missing decisions, revocation or effects outside scope;
+identify the delta. Push and destructive recovery require their own authorization.
 
 Execution-environment approval checks remain controlling. Report rejected
-actions and their stated reasons; never bypass them.
+actions with reasons; never bypass checks.
 
-Goal tracking does not grant permission or expire approval. Continue approved
-work; do not mark unfinished work complete. If an additional effect needs
-approval, finish independent work and ask only about that concrete delta.
+Goal tracking neither grants permission nor expires approval. Do not mark
+unfinished work complete. Pending approval blocks only dependent actions;
+continue independent authorized work and ask about the delta.
+Bound formal Slices retain their exact approval and dependency gates.
 
-Code and tests own actual behavior; Methexis owns accepted design; Developer
-Docs own navigation and checks; this page owns work practices. Update the
-existing owner instead of copying its facts. Read the active Checkpoint and
-affected Knowledge only when the contract matters.
+Code/tests own behavior; Methexis owns accepted design; Developer Docs own
+navigation/checks; this page owns work practices. Update owners, not copies.
+Read the active Checkpoint and affected Knowledge only when contracts matter.
 
-Keep a short local handoff only for unfinished multi-session work: outcome,
-paths, decisions, checks, unresolved work, next action. Retain a reusable lesson
-only if it prevents rediscovery, with a code/command anchor and a condition that
-would invalidate it. No daily log, transcript, mandatory retrospective, or
-separate governance task for an in-scope lesson.
+For unfinished multi-session work, keep a local handoff: outcome, paths,
+decisions, checks, unresolved work, next action. Retain lessons that prevent
+rediscovery, with code/command anchors and invalidation conditions. No daily
+log, transcript, mandatory retrospective or separate in-scope governance task.
 
-When parallel work is authorized, assign a cohesive batch, owned files and
-contract pointers to each agent. Agree on interfaces before editing. Collect
-batches before shared compilation; serialize shared checks and review the stable
-patch once. Avoid tiny followups, unrelated reassignments and repeated source
-or packet dumps. If coordination dominates, reduce concurrency and finish the
-current batch; authorization remains valid.
+When agents are authorized by the task or applicable instructions, assign
+independent batches, owned files, contract pointers and agreed interfaces.
+No separate confirmation per agent, worktree, review or corrected candidate.
+Serialize conflicting writes and checks sharing mutable inputs or outputs;
+isolated checks can overlap. Collect dependencies before integration and review
+the stable patch. Avoid tiny followups and repeated source or packet dumps.
+Reduce concurrency when coordination dominates; authorization remains valid.
 `python3 tools/context.py impact --changed` finds documentation references to
 changed files; `check` detects broken local references. These are navigation
 hints, not semantic freshness or contract-approval proofs.
@@ -81,9 +81,8 @@ Do not duplicate a suite merely for review, commit, or cleanup.
 Self-review the actual diff, including new files. Obtain one independent review
 before integrating public-contract, permission/security, concurrency, failure,
 workflow-authority, or semantic-SOT changes. Routine approved implementation and
-mechanical edits need no mandatory second reviewer. Review can be a patch plus
-brief context. For model review, match capability to review risk. Packet and
-structured verdict are optional.
+mechanical edits need no mandatory second reviewer. Use a patch and brief context;
+match model capability to risk. Packets and structured verdicts are optional.
 Do not launch agents or transmit data without authorization. If review is
 unavailable, finish and validate the change, then report the remaining review.
 
